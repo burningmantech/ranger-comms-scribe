@@ -6,7 +6,7 @@ export async function CreateSession(
         userId: string, 
         data: Record<string, any>, 
         env: Env,
-        ttl: number = 3600
+        ttl: number = 864000 // Default TTL of 10 days in seconds
     ): Promise<string> {
     const sessionId = crypto.randomUUID(); // Generate a unique session ID
     const sessionData = {
