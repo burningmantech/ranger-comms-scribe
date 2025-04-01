@@ -85,10 +85,6 @@ To get started with the project, clone the repository and install the necessary 
 
 4. Run the frontend and backend applications locally for development.
 
-## License
-
-This project is licensed under the MIT License. See the LICENSE file for more details.
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a pull request or open an issue for any suggestions or improvements.
