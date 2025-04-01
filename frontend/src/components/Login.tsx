@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { GOOGLE_CLIENT_ID } from '../config';
-import { loadGoogleOneTap, handleGoogleCredentialResponse } from '../utils/googleAuth';
+import { handleGoogleCredentialResponse } from '../utils/googleAuth';
 import { fetchBlogContent, logoutUser } from '../utils/userActions';
 import LoggedInView from './LoggedInView';
 import LoggedOutView from './LoggedOutView';
@@ -23,12 +23,96 @@ const Login: React.FC = () => {
         }
     }, []);
 
-    // Initialize Google One Tap if the user is not logged in
+    // Dynamically load the Google Identity Services script
     useEffect(() => {
-        if (!user && !localStorage.getItem('user')) {
-            loadGoogleOneTap(GOOGLE_CLIENT_ID, (response: any) =>
-                handleGoogleCredentialResponse(response, setUser)
-            );
+        const loadGoogleScript = () => {
+            const script = document.createElement('script');
+            script.src = 'https://accounts.google.com/gsi/client';
+            script.async = true;
+            script.defer = true;
+            script.onload = () => {
+                console.log('Google Identity Services script loaded');
+                if (!user && window.google) {
+                    console.log('Google object is available');
+                    // Initialize the Google Identity Services library
+                    window.google.accounts.id.initialize({
+                        client_id: GOOGLE_CLIENT_ID,
+                        callback: (response: any) =>
+                            handleGoogleCredentialResponse(response, setUser),
+                    });
+
+                    // Show the One Tap Login with debugging
+                    window.google.accounts.id.prompt((notification: any) => {
+                        if (notification.isNotDisplayed()) {
+                            console.error('One Tap Login not displayed:', notification.getNotDisplayedReason());
+                        }
+                        if (notification.isSkippedMoment()) {
+                            console.error('One Tap Login skipped:', notification.getSkippedReason());
+                        }
+                        if (notification.isDismissedMoment()) {
+                            console.error('One Tap Login dismissed:', notification.getDismissedReason());
+                        }
+                    });
+
+                    // Render the "Sign in with Google" button
+                    const buttonContainer = document.getElementById('google-signin-button');
+                    if (buttonContainer) {
+                        console.log('Button container exists');
+                        window.google.accounts.id.renderButton(buttonContainer, {
+                            theme: 'filled_blue',
+                            size: 'large',
+                            shape: 'pill',
+                            text: 'signin_with',
+                            logo_alignment: 'left',
+                        });
+                    } else {
+                        console.error('Button container does not exist');
+                    }
+                }
+            };
+            script.onerror = () => {
+                console.error('Failed to load Google Identity Services script');
+            };
+            document.body.appendChild(script);
+        };
+
+        if (!window.google) {
+            loadGoogleScript();
+        } else {
+            console.log('Google script already loaded');
+            // Ensure initialization if the script is already loaded
+            if (!user) {
+                window.google.accounts.id.initialize({
+                    client_id: GOOGLE_CLIENT_ID,
+                    callback: (response: any) =>
+                        handleGoogleCredentialResponse(response, setUser),
+                });
+
+                // Show the One Tap Login with debugging
+                window.google.accounts.id.prompt((notification: any) => {
+                    if (notification.isNotDisplayed()) {
+                        console.error('One Tap Login not displayed:', notification.getNotDisplayedReason());
+                    }
+                    if (notification.isSkippedMoment()) {
+                        console.error('One Tap Login skipped:', notification.getSkippedReason());
+                    }
+                    if (notification.isDismissedMoment()) {
+                        console.error('One Tap Login dismissed:', notification.getDismissedReason());
+                    }
+                });
+
+                // Render the "Sign in with Google" button
+                const buttonContainer = document.getElementById('google-signin-button');
+                if (buttonContainer) {
+                    window.google.accounts.id.renderButton(buttonContainer, {
+                        theme: 'filled_blue',
+                        size: 'large',
+                        shape: 'pill',
+                        text: 'signin_with',
+                        logo_alignment: 'left',
+                    });
+                }
+            }
         }
     }, [user]);
 
@@ -54,7 +138,17 @@ const Login: React.FC = () => {
                     handleLogout={handleLogout}
                 />
             ) : (
-                <LoggedOutView />
+                <div>
+                    <LoggedOutView />
+                    <div
+                        id="google-signin-button"
+                        style={{
+                            marginTop: '20px',
+                            display: 'flex',
+                            justifyContent: 'left',
+                        }}
+                    ></div>
+                </div>
             )}
         </div>
     );
