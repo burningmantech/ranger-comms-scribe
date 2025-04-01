@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { API_URL, GOOGLE_CLIENT_ID } from '../config';
+import { loadGoogleOneTap, handleGoogleCredentialResponse } from '../utils/googleAuth';
+import { fetchBlogContent, logoutUser } from '../utils/userActions';
 
 declare global {
     interface Window {
@@ -9,7 +11,9 @@ declare global {
 
 const Login: React.FC = () => {
     const [user, setUser] = useState<{ email: string; name: string } | null>(null);
+    const [blogContent, setBlogContent] = useState<string | null>(null);
 
+    // Load user and session from localStorage on component mount
     useEffect(() => {
         const storedUser = localStorage.getItem('user');
         if (storedUser) {
@@ -17,68 +21,43 @@ const Login: React.FC = () => {
         }
     }, []);
 
+    // Initialize Google One Tap if the user is not logged in
     useEffect(() => {
-        const handleCredentialResponse = (response: any) => {
-            console.log('Encoded JWT ID token:', response.credential);
-
-            // Send the token to your backend for verification
-            fetch(`${API_URL}/auth/loginGoogleToken`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ token: response.credential }),
-            })
-                .then((res) => {
-                    if (!res.ok) {
-                        throw new Error('Failed to log in');
-                    }
-                    return res.json();
-                })
-                .then((data) => {
-                    console.log('Response from backend:', data);
-                
-                    // Persist the user's email and name in localStorage
-                    localStorage.setItem('user', JSON.stringify({ email: data.email, name: data.name }));
-                
-                    // Update state
-                    setUser({ email: data.email, name: data.name });
-                })
-                .catch((error) => {
-                    console.error('Error during login:', error);
-                });
-        };
-
-        const loadGoogleScript = () => {
-            const script = document.createElement('script');
-            script.src = 'https://accounts.google.com/gsi/client';
-            script.async = true;
-            script.defer = true;
-            script.onload = () => {
-                console.log('Google One Tap script loaded');
-                window.google.accounts.id.initialize({
-                    client_id: GOOGLE_CLIENT_ID,
-                    callback: handleCredentialResponse,
-                    auto_select: true,
-                });
-                window.google.accounts.id.prompt();
-            };
-            script.onerror = () => {
-                console.error('Failed to load Google One Tap script');
-            };
-            document.body.appendChild(script);
-        };
-
-        if (!document.getElementById('google-one-tap-script')) {
-            loadGoogleScript();
+        if (!user && !localStorage.getItem('user')) {
+            loadGoogleOneTap(GOOGLE_CLIENT_ID, (response: any) =>
+                handleGoogleCredentialResponse(response, setUser)
+            );
         }
-    }, []);
+    }, [user]);
+
+    // Fetch blog content if the user is signed in
+    useEffect(() => {
+        if (user) {
+            fetchBlogContent(setBlogContent);
+        }
+    }, [user]);
+
+    // Logout function
+    const handleLogout = () => {
+        logoutUser(setUser, setBlogContent);
+    };
 
     return (
         <div>
             <h2>Login</h2>
             {user ? (
-                <p>Welcome, {user.name}!</p> // Display the user's name
+                <div>
+                    <p>Welcome, {user.name}!</p> {/* Display the user's name */}
+                    <button onClick={handleLogout}>Logout</button> {/* Logout button */}
+                    {blogContent ? (
+                        <div>
+                            <h3>Blog</h3>
+                            <div dangerouslySetInnerHTML={{ __html: blogContent }} /> {/* Render blog content */}
+                        </div>
+                    ) : (
+                        <p>Loading blog content...</p>
+                    )}
+                </div>
             ) : (
                 <p>Google One Tap will appear automatically if you're eligible.</p>
             )}
