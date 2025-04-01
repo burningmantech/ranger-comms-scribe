@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { API_URL, GOOGLE_CLIENT_ID } from '../config';
+import { GOOGLE_CLIENT_ID } from '../config';
 import { loadGoogleOneTap, handleGoogleCredentialResponse } from '../utils/googleAuth';
 import { fetchBlogContent, logoutUser } from '../utils/userActions';
+import LoggedInView from './LoggedInView';
+import LoggedOutView from './LoggedOutView';
 
 declare global {
     interface Window {
@@ -46,20 +48,13 @@ const Login: React.FC = () => {
         <div>
             <h2>Login</h2>
             {user ? (
-                <div>
-                    <p>Welcome, {user.name}!</p> {/* Display the user's name */}
-                    <button onClick={handleLogout}>Logout</button> {/* Logout button */}
-                    {blogContent ? (
-                        <div>
-                            <h3>Blog</h3>
-                            <div dangerouslySetInnerHTML={{ __html: blogContent }} /> {/* Render blog content */}
-                        </div>
-                    ) : (
-                        <p>Loading blog content...</p>
-                    )}
-                </div>
+                <LoggedInView
+                    user={user}
+                    blogContent={blogContent}
+                    handleLogout={handleLogout}
+                />
             ) : (
-                <p>Google One Tap will appear automatically if you're eligible.</p>
+                <LoggedOutView />
             )}
         </div>
     );
