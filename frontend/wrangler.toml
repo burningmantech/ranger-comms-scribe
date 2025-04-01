@@ -1,0 +1,11 @@
+name = "dancing-cats"
+
+account_id = "e47c223ef39af0490164800057ef846f"
+workers_dev = true
+compatibility_date = "2023-10-01"
+main = "worker/index.js"
+
+[site]
+bucket = "./build"
+
+[env.frontend]
