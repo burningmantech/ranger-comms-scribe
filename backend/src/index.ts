@@ -12,6 +12,7 @@ import { ensureUserGroups } from './migrations/ensureUserGroups';
 declare global {
     interface Request {
         user?: string;
+        userId?: string;
     }
 }
 
@@ -40,6 +41,19 @@ const withValidSession = async (request: Request, env: Env) => {
 
     const user = session.data.email;
     request.user = user
+    request.userId = session.id
+}
+
+const withOptionalSession = async (request: Request, env: Env) => {
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+    if (sessionId) {
+        const session = await GetSession(sessionId, env);
+        if (session) {
+            const user = session.data.email;
+            request.user = user
+            request.userId = session.userId
+        }
+    }
 }
 
 // Initialize the application
@@ -64,6 +78,7 @@ router
     })
     .all('/auth/*', authRouter.fetch) // Handle all auth routes
     .all('/blog/*', blogRouter.fetch) // Handle all blog routes
+    .all('/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
     .all('/gallery/*', galleryRouter.fetch) // Handle all gallery routes
     .all('/admin/*', withValidSession) // Middleware to check session for admin routes
     .all('/admin/*', adminRouter.fetch) // Handle all admin routes

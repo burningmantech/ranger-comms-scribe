@@ -13,3 +13,7 @@ PUBLIC_URL = "https://api.dancingcats.org"
 binding = "R2"
 bucket_name = "dancing-cats-r2"
 preview_bucket_name = "dancing-cats-r2"
+
+[observability]
+enabled = true
+head_sampling_rate = 1

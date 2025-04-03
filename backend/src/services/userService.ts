@@ -4,13 +4,12 @@ import { User, UserType, Group } from '../types';
 // Store users in R2 with prefix 'user:'
 export async function createUser({ name, email }: { name: string; email: string }, env: Env): Promise<User> {
   // Check if user already exists
-  const existingUser = await getUserByEmail(email, env);
+  const existingUser = await getUser(email, env);
   if (existingUser) {
     return existingUser;
   }
   
-  // Create a new user
-  const id = `user-${Date.now()}`;
+  const id = email
   const isFirstAdmin = email === 'alexander.young@gmail.com';
   
   const newUser: User = { 
@@ -24,7 +23,7 @@ export async function createUser({ name, email }: { name: string; email: string 
   };
   
   // Store in R2
-  await env.R2.put(`user:${email}`, JSON.stringify(newUser), {
+  await env.R2.put(`user/${email}`, JSON.stringify(newUser), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: id }
   });
@@ -33,24 +32,7 @@ export async function createUser({ name, email }: { name: string; email: string 
 }
 
 export async function getUser(id: string, env: Env): Promise<User | null> {
-  // List all user objects and find by ID
-  const objects = await env.R2.list({ prefix: 'user:' });
-  
-  for (const object of objects.objects) {
-    const userData = await env.R2.get(object.key);
-    if (!userData) continue;
-    
-    const user = await userData.json() as User;
-    if (user.id === id) {
-      return user;
-    }
-  }
-  
-  return null;
-}
-
-export async function getUserByEmail(email: string, env: Env): Promise<User | null> {
-  const object = await env.R2.get(`user:${email}`);
+  const object = await env.R2.get(`user/${id}`);
   if (!object) return null;
   
   return await object.json() as User;
@@ -317,15 +299,15 @@ export async function canAccessGroup(userId: string, groupId: string, env: Env):
   return user.groups.includes(groupId);
 }
 
-export async function isAdmin(email: string, env: Env): Promise<boolean> {
-  const user = await getUserByEmail(email, env);
+export async function isAdmin(id: string, env: Env): Promise<boolean> {
+  const user = await getUser(id, env);
   return user ? user.isAdmin : false;
 }
 
 // Initialize first admin if not exists
 export async function initializeFirstAdmin(env: Env): Promise<void> {
   const adminEmail = 'alexander.young@gmail.com';
-  const admin = await getUserByEmail(adminEmail, env);
+  const admin = await getUser(adminEmail, env);
   
   if (!admin) {
     await createUser({ 
@@ -334,7 +316,7 @@ export async function initializeFirstAdmin(env: Env): Promise<void> {
     }, env);
     
     // Ensure admin privileges
-    const newAdmin = await getUserByEmail(adminEmail, env);
+    const newAdmin = await getUser(adminEmail, env);
     if (newAdmin && (!newAdmin.isAdmin || newAdmin.userType !== UserType.Admin)) {
       newAdmin.isAdmin = true;
       newAdmin.approved = true;

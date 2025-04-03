@@ -4,10 +4,12 @@ import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { MediaItem } from '../types';
 import { withAdminCheck } from '../authWrappers';
+import { canAccessGroup } from '../services/userService';
 
 // Extend the Request interface to include user and params properties
 interface ExtendedRequest extends IRequest {
     user?: string;
+    userid?: string;
     params: Record<string, string>;
 }
 
@@ -17,8 +19,7 @@ export const router = AutoRouter({ base: '/gallery' });
 router.get('/', async (request: ExtendedRequest, env: Env) => {
     try {
         console.log('GET /gallery called');
-        const userId = request.user;
-        const media = await getMedia(env, userId);
+        const media = await getMedia(env, request.userId);
         return new Response(JSON.stringify(media), {
             headers: { 'Content-Type': 'application/json' },
         });
@@ -71,17 +72,46 @@ router.get('/:id', async (request: ExtendedRequest, env: Env) => {
     try {
         const id = request.params.id;
         const mediaKey = `gallery/${id}`;
+        const userId = request.userId;
         
-        const mediaObject = await env.R2.get(mediaKey);
+        // First check if the media exists
+        const mediaObject = await env.R2.head(mediaKey);
         if (!mediaObject) {
             return json({ error: 'Media not found' }, { status: 404 });
         }
         
-        const headers = new Headers();
-        mediaObject.writeHttpMetadata(headers);
-        headers.set('etag', mediaObject.httpEtag);
+        // Check access permissions
+        const metadata = mediaObject.customMetadata;
+        const isPublic = metadata?.isPublic !== 'false'; // Default to true for backward compatibility
+        const groupId = metadata?.groupId;
         
-        return new Response(mediaObject.body, {
+        // If not public, check permissions
+        if (!isPublic) {
+            // If no user is authenticated, deny access
+            if (!userId) {
+                return json({ error: 'Access denied' }, { status: 403 });
+            }
+            
+            // If media belongs to a group, check if user has access to that group
+            if (groupId) {
+                const hasAccess = await canAccessGroup(userId, groupId, env);
+                if (!hasAccess) {
+                    return json({ error: 'Access denied' }, { status: 403 });
+                }
+            }
+        }
+        
+        // If we get here, the user has access to the media
+        const mediaContent = await env.R2.get(mediaKey);
+        if (!mediaContent) {
+            return json({ error: 'Media content not found' }, { status: 404 });
+        }
+        
+        const headers = new Headers();
+        mediaContent.writeHttpMetadata(headers);
+        headers.set('etag', mediaContent.httpEtag);
+        
+        return new Response(mediaContent.body, {
             headers
         });
     } catch (error) {
@@ -94,8 +124,38 @@ router.get('/:id', async (request: ExtendedRequest, env: Env) => {
 router.get('/:id/thumbnail', async (request: ExtendedRequest, env: Env) => {
     try {
         const id = request.params.id;
+        const mediaKey = `gallery/${id}`;
         const thumbnailKey = `gallery/thumbnails/${id}`;
+        const userId = request.userid;
         
+        // First check if the media exists
+        const mediaObject = await env.R2.head(mediaKey);
+        if (!mediaObject) {
+            return json({ error: 'Media not found' }, { status: 404 });
+        }
+        
+        // Check access permissions
+        const metadata = mediaObject.customMetadata;
+        const isPublic = metadata?.isPublic !== 'false'; // Default to true for backward compatibility
+        const groupId = metadata?.groupId;
+        
+        // If not public, check permissions
+        if (!isPublic) {
+            // If no user is authenticated, deny access
+            if (!userId) {
+                return json({ error: 'Access denied' }, { status: 403 });
+            }
+            
+            // If media belongs to a group, check if user has access to that group
+            if (groupId) {
+                const hasAccess = await canAccessGroup(userId, groupId, env);
+                if (!hasAccess) {
+                    return json({ error: 'Access denied' }, { status: 403 });
+                }
+            }
+        }
+        
+        // If we get here, the user has access to the thumbnail
         const thumbnailObject = await env.R2.get(thumbnailKey);
         if (!thumbnailObject) {
             return json({ error: 'Thumbnail not found' }, { status: 404 });

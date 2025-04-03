@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { GOOGLE_CLIENT_ID } from '../config';
 import { handleGoogleCredentialResponse } from '../utils/googleAuth';
-import { fetchBlogContent, logoutUser } from '../utils/userActions';
+import { fetchBlogContent, LogoutUserReact } from '../utils/userActions';
 import LoggedInView from './LoggedInView';
 import LoggedOutView from './LoggedOutView';
 
@@ -16,6 +17,7 @@ import { User } from '../types';
 const Login: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
     const [blogContent, setBlogContent] = useState<string | null>(null);
+    const navigate = useNavigate();
 
     // Load user and session from localStorage on component mount
     useEffect(() => {
@@ -147,7 +149,7 @@ const Login: React.FC = () => {
 
     // Logout function
     const handleLogout = () => {
-        logoutUser(setUser, setBlogContent);
+        LogoutUserReact(navigate);
     };
 
     return (

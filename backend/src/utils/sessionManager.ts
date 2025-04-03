@@ -16,7 +16,7 @@ export async function CreateSession(
         expiresAt: Date.now() + ttl * 1000, // Expiration time in milliseconds
     };
 
-    await env.R2.put(sessionId, JSON.stringify(sessionData), {
+    await env.R2.put(`session/${sessionId}`, JSON.stringify(sessionData), {
         httpMetadata: { contentType: 'application/json' },
         customMetadata: { userId },
 });
@@ -26,7 +26,7 @@ return sessionId;
 
 export async function GetSession(
     sessionId: string, env: Env): Promise<Record<string, any> | null> {
-    const object = await env.R2.get(sessionId);
+    const object = await env.R2.get(`session/${sessionId}`);
     if (!object) return null;
 
     const sessionData = await object.json() as { userId: string; data: Record<string, any>; expiresAt: number };
@@ -39,5 +39,5 @@ export async function GetSession(
 }
 
 export async function DeleteSession(sessionId: string, env: Env): Promise<void> {
-    await env.R2.delete(sessionId);
+    await env.R2.delete(`session/${sessionId}`);
 }

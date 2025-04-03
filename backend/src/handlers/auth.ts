@@ -1,7 +1,7 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { CreateSession, DeleteSession, GetSession } from '../utils/sessionManager';
-import { getUser, createUser, approveUser, getUserByEmail } from '../services/userService';
+import { getUser, createUser, approveUser } from '../services/userService';
 import { User } from '../types';
 
 export const router = AutoRouter({ base : '/auth' });
@@ -82,7 +82,6 @@ router.post('/approve', async (request: Request, env) => {
     return json({ error: 'User ID is required' }, { status: 400 });
   }
 
-  // Simulate user approval
   const approvedUser = await approveUser(userId, env);
   if (!approvedUser) {
     return json({ error: 'User not found' }, { status: 404 });

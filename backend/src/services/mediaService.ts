@@ -75,14 +75,41 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
         // Wait for all promises to resolve and filter out null values (thumbnails)
         let mediaItems = (await Promise.all(mediaPromises)).filter(item => item !== null) as MediaItem[];
         
-        // Set all existing media to public by default (for backward compatibility)
-        mediaItems = mediaItems.map(item => ({
-            ...item,
-            isPublic: item.isPublic !== undefined ? item.isPublic : true
+        // Get the isPublic value from metadata for each item
+        mediaItems = await Promise.all(mediaItems.map(async (item) => {
+            // If isPublic is not set in the item, check the metadata
+            try {
+                const objectMetadata = await env.R2.head(item.id);
+                if (objectMetadata && objectMetadata.customMetadata) {
+                    // Check if isPublic is explicitly set to 'true' or 'false'
+                    let isPublic = true; // Default to true for backward compatibility
+                    
+                    if (objectMetadata.customMetadata.isPublic === 'false') {
+                        isPublic = false;
+                    } else if (objectMetadata.customMetadata.isPublic === 'true') {
+                        isPublic = true;
+                    }
+                    
+                    return {
+                        ...item,
+                        isPublic,
+                        groupId: objectMetadata.customMetadata.groupId
+                    };
+                }
+            } catch (error) {
+                console.warn(`Could not get metadata for ${item.id}:`, error);
+            }
+            
+            // Default to true for backward compatibility if metadata check fails
+            return {
+                ...item,
+                isPublic: true
+            };
         }));
         
         // If userId is provided, filter media based on access permissions
         if (userId) {
+            console.log('User ID provided:', userId);
             const user = await getUser(userId, env);
             
             // If user is admin, they can see all media
@@ -106,8 +133,19 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 ).then(filteredItems => filteredItems.filter(item => item !== null) as MediaItem[]);
             }
         } else {
+            console.log('No user ID provided, filtering public items only');
+            console.log(userId);
             // No user ID provided, only return public items
-            mediaItems = mediaItems.filter(item => item.isPublic);
+            // Use strict equality to ensure we only include items that are explicitly true
+            mediaItems = mediaItems.filter(item => item.isPublic === true);
+            console.log(`Filtered to ${mediaItems.length} public items`);
+            
+            // Log all items and their isPublic status for debugging
+            console.log('All items before filtering:', mediaItems.map(item => ({
+                id: item.id,
+                isPublic: item.isPublic,
+                fileName: item.fileName
+            })));
         }
         
         return mediaItems;
