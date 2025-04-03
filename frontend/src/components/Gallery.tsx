@@ -3,192 +3,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MediaItem } from '../types';
 
-// CSS for the Gallery component
-const galleryStyles = `
-.gallery-container {
-    padding: 20px;
-    max-width: 1200px;
-    margin: 0 auto;
-}
-
-.gallery-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-}
-
-.gallery-title {
-    font-size: 24px;
-    margin: 0;
-}
-
-.gallery-nav {
-    display: flex;
-    gap: 10px;
-}
-
-.gallery-nav button {
-    padding: 8px 16px;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.gallery-nav button:hover {
-    background-color: #0056b3;
-}
-
-.gallery-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 20px;
-}
-
-.media-item {
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    transition: transform 0.2s;
-    cursor: pointer;
-}
-
-.media-item:hover {
-    transform: translateY(-5px);
-}
-
-.media-thumbnail {
-    width: 100%;
-    height: 200px;
-    object-fit: cover;
-    display: block;
-}
-
-.media-info {
-    padding: 10px;
-}
-
-.media-name {
-    margin: 0 0 5px;
-    font-size: 16px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.media-date {
-    margin: 0;
-    font-size: 12px;
-    color: #666;
-}
-
-.modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0,0,0,0.8);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-
-.modal-content {
-    max-width: 90%;
-    max-height: 90%;
-}
-
-.modal-content img, .modal-content video {
-    max-width: 100%;
-    max-height: 90vh;
-    display: block;
-}
-
-.modal-close {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: white;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-}
-
-.upload-form {
-    margin-top: 20px;
-    padding: 20px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background-color: #f9f9f9;
-}
-
-.form-group {
-    margin-bottom: 15px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
-}
-
-.form-group input {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-}
-
-.upload-preview {
-    margin-top: 10px;
-    display: flex;
-    gap: 20px;
-}
-
-.preview-container {
-    width: 200px;
-}
-
-.preview-container img {
-    max-width: 100%;
-    max-height: 150px;
-    display: block;
-    margin-bottom: 5px;
-}
-
-.submit-button {
-    padding: 10px 20px;
-    background-color: #28a745;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.submit-button:hover {
-    background-color: #218838;
-}
-
-.error-message {
-    color: #dc3545;
-    margin-top: 10px;
-}
-
-.success-message {
-    color: #28a745;
-    margin-top: 10px;
-}
-`;
-
 interface GalleryProps {
     isAdmin?: boolean;
 }
@@ -413,12 +227,40 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
         return <div>Loading...</div>;
     }
 
-    const isImage = (fileType: string) => fileType.startsWith('image/');
-    const isVideo = (fileType: string) => fileType.startsWith('video/');
+    const isImage = (fileType: string) => {
+        if (!fileType) return false;
+        
+        // Check MIME type
+        if (fileType.startsWith('image/')) return true;
+        
+        // Fallback: check common image extensions if MIME type is application/octet-stream
+        if (fileType === 'application/octet-stream') {
+            const fileName = selectedMedia?.fileName.toLowerCase() || '';
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
+            return imageExtensions.some(ext => fileName.endsWith(ext));
+        }
+        
+        return false;
+    };
+    
+    const isVideo = (fileType: string) => {
+        if (!fileType) return false;
+        
+        // Check MIME type
+        if (fileType.startsWith('video/')) return true;
+        
+        // Fallback: check common video extensions if MIME type is application/octet-stream
+        if (fileType === 'application/octet-stream') {
+            const fileName = selectedMedia?.fileName.toLowerCase() || '';
+            const videoExtensions = ['.mp4', '.webm', '.mov', '.avi', '.mkv', '.flv', '.wmv'];
+            return videoExtensions.some(ext => fileName.endsWith(ext));
+        }
+        
+        return false;
+    };
 
     return (
         <>
-            <style>{galleryStyles}</style>
             <div className="gallery-container">
                 <div className="gallery-header">
                     <h1 className="gallery-title">Gallery</h1>

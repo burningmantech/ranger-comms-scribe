@@ -6,6 +6,9 @@ compatibility_date = "2023-10-01"
 main = "src/index.ts"
 route = "api.dancingcats.org/*"
 
+[vars]
+PUBLIC_URL = "https://api.dancingcats.org"
+
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "dancing-cats-r2"

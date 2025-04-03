@@ -20,15 +20,27 @@ const Login: React.FC = () => {
     // Load user and session from localStorage on component mount
     useEffect(() => {
         const storedUser = localStorage.getItem('user');
+        console.log('Checking localStorage for user:', storedUser);
         if (storedUser) {
-            setUser(JSON.parse(storedUser));
+            const parsedUser = JSON.parse(storedUser);
+            console.log('User found in localStorage:', parsedUser);
+            setUser(parsedUser);
+        } else {
+            console.log('No user found in localStorage');
         }
     }, []);
 
     // Dynamically load the Google Identity Services script
     useEffect(() => {
         // Only proceed with Google Sign-In if user is not logged in
-        if (user) return;
+        if (user) {
+            // Cancel the One Tap prompt if it's showing and user is logged in
+            if (window.google && window.google.accounts) {
+                window.google.accounts.id.cancel();
+                console.log('Google One Tap canceled because user is logged in');
+            }
+            return;
+        }
 
         const loadGoogleScript = () => {
             const script = document.createElement('script');
@@ -92,18 +104,25 @@ const Login: React.FC = () => {
                     handleGoogleCredentialResponse(response, setUser),
             });
 
-            // Show the One Tap Login with debugging
-            window.google.accounts.id.prompt((notification: any) => {
-                if (notification.isNotDisplayed()) {
-                    console.error('One Tap Login not displayed:', notification.getNotDisplayedReason());
-                }
-                if (notification.isSkippedMoment()) {
-                    console.error('One Tap Login skipped:', notification.getSkippedReason());
-                }
-                if (notification.isDismissedMoment()) {
-                    console.error('One Tap Login dismissed:', notification.getDismissedReason());
-                }
-            });
+            // Only show the One Tap Login if the user is not logged in
+            if (!user) {
+                console.log('User not logged in, showing One Tap Login');
+                window.google.accounts.id.prompt((notification: any) => {
+                    if (notification.isNotDisplayed()) {
+                        console.error('One Tap Login not displayed:', notification.getNotDisplayedReason());
+                    }
+                    if (notification.isSkippedMoment()) {
+                        console.error('One Tap Login skipped:', notification.getSkippedReason());
+                    }
+                    if (notification.isDismissedMoment()) {
+                        console.error('One Tap Login dismissed:', notification.getDismissedReason());
+                    }
+                });
+            } else {
+                console.log('User already logged in, not showing One Tap Login');
+                // Cancel any existing One Tap prompt
+                window.google.accounts.id.cancel();
+            }
 
             // Render the "Sign in with Google" button
             const buttonContainer = document.getElementById('google-signin-button');

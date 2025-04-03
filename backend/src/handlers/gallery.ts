@@ -3,6 +3,7 @@ import { getMedia, uploadMedia, isUserAdmin } from '../services/mediaService';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { MediaItem } from '../types';
+import { withAdminCheck } from '../authWrappers';
 
 // Extend the Request interface to include user and params properties
 interface ExtendedRequest extends IRequest {
@@ -25,20 +26,6 @@ router.get('/', async (request: ExtendedRequest, env: Env) => {
         return new Response('Error fetching media', { status: 500 });
     }
 });
-
-// Middleware to check if user is an admin
-const withAdminCheck = async (request: ExtendedRequest, env: Env) => {
-    if (!request.user) {
-        return json({ error: 'User is not authenticated' }, { status: 401 });
-    }
-    
-    const isAdmin = await isUserAdmin(request.user, env);
-    if (!isAdmin) {
-        console.error(JSON.stringify(request.user));
-        console.error('User does not have admin privileges');
-        return json({ error: 'Admin privileges required' }, { status: 403 });
-    }
-};
 
 // Handler to upload media content
 router.post('/upload', withAdminCheck, async (request: ExtendedRequest, env: Env) => {

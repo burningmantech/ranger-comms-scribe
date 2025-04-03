@@ -57,11 +57,9 @@ router
     })
     .all('/auth/*', authRouter.fetch) // Handle all auth routes
     .all('/blog/*', blogRouter.fetch) // Handle all blog routes
-    .all('/gallery/*', withValidSession) // Middleware to check session for gallery routes
     .all('/gallery/*', galleryRouter.fetch) // Handle all gallery routes
     .all('/admin/*', withValidSession) // Middleware to check session for admin routes
     .all('/admin/*', adminRouter.fetch) // Handle all admin routes
-    .get('/foo', () => corsify(json({ message: 'Hello from foo!' }))) // Example route
     
 
 export default router

@@ -32,11 +32,37 @@ export const getMedia = async (env: Env): Promise<MediaItem[]> => {
                 thumbnailUrl = '';
             }
             
+            // Get the file name and extension
+            const fileName = object.key.split('/').pop() || '';
+            const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
+            
+            // Infer file type from extension if httpMetadata is not available
+            let fileType = object.httpMetadata?.contentType || '';
+            
+            if (!fileType || fileType === 'application/octet-stream') {
+                // Map common extensions to MIME types
+                const extensionToMimeType: Record<string, string> = {
+                    'jpg': 'image/jpeg',
+                    'jpeg': 'image/jpeg',
+                    'png': 'image/png',
+                    'gif': 'image/gif',
+                    'webp': 'image/webp',
+                    'svg': 'image/svg+xml',
+                    'mp4': 'video/mp4',
+                    'webm': 'video/webm',
+                    'mov': 'video/quicktime',
+                    'avi': 'video/x-msvideo',
+                    'mkv': 'video/x-matroska'
+                };
+                
+                fileType = extensionToMimeType[fileExtension] || 'application/octet-stream';
+            }
+            
             // Create a MediaItem object
             return {
                 id: object.key,
-                fileName: object.key.split('/').pop() || '',
-                fileType: object.httpMetadata?.contentType || 'application/octet-stream',
+                fileName: fileName,
+                fileType: fileType,
                 url: `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}`,
                 thumbnailUrl: thumbnailUrl,
                 uploadedBy: metadata?.userId || 'unknown',
