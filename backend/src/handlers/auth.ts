@@ -1,8 +1,8 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { CreateSession, DeleteSession, GetSession } from '../utils/sessionManager';
-
-import { getUser, createUser, approveUser } from '../services/userService';
+import { getUser, createUser, approveUser, getUserByEmail } from '../services/userService';
+import { User } from '../types';
 
 export const router = AutoRouter({ base : '/auth' });
 
@@ -28,15 +28,19 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         const payload = await verify(token);
         const { email, name, sub } = payload; // Extract email, name, and user ID (sub)
 
+        // Create or get the user
+        const user = await createUser({ name, email }, env);
+
         // Create a session for the user
-        const sessionId = await CreateSession(sub, { email, name }, env);
-        // const sessionId = await sessionManager.createSession(sub, { email, name });
+        const sessionId = await CreateSession(user.id, { email, name }, env);
 
         return json({
             message: 'Token verified',
             email,
             name,
-            userId: sub,
+            userId: user.id,
+            approved: user.approved,
+            isAdmin: user.isAdmin,
             sessionId, // Return the session ID to the client
         });
     } catch (error) {
@@ -69,7 +73,8 @@ router.post('/logout', async (request: Request, env) => {
     return json({ message: 'Logged out successfully' });
 });
 
-router.post('/approve', async (request: Request) => {
+// This route is now handled by the admin handler
+router.post('/approve', async (request: Request, env) => {
   const body = await request.json() as { userId: string };
   const { userId } = body;
 
@@ -78,6 +83,10 @@ router.post('/approve', async (request: Request) => {
   }
 
   // Simulate user approval
-  const approvedUser = approveUser(userId);
+  const approvedUser = await approveUser(userId, env);
+  if (!approvedUser) {
+    return json({ error: 'User not found' }, { status: 404 });
+  }
+  
   return json({ message: 'User approved', user: approvedUser });
 });

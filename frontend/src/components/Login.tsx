@@ -11,8 +11,10 @@ declare global {
     }
 }
 
+import { User } from '../types';
+
 const Login: React.FC = () => {
-    const [user, setUser] = useState<{ email: string; name: string } | null>(null);
+    const [user, setUser] = useState<User | null>(null);
     const [blogContent, setBlogContent] = useState<string | null>(null);
 
     // Load user and session from localStorage on component mount

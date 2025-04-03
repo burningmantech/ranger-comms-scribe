@@ -1,4 +1,5 @@
 import { API_URL } from '../config';
+import { User } from '../types';
 
 export const fetchBlogContent = (
     setBlogContent: React.Dispatch<React.SetStateAction<string | null>>
@@ -26,8 +27,9 @@ export const fetchBlogContent = (
     }
 };
 
+
 export const logoutUser = (
-    setUser: React.Dispatch<React.SetStateAction<{ email: string; name: string } | null>>,
+    setUser: React.Dispatch<React.SetStateAction<User | null>>,
     setBlogContent: React.Dispatch<React.SetStateAction<string | null>>
 ) => {
     const sessionId = localStorage.getItem('sessionId'); // Retrieve the session ID from localStorage

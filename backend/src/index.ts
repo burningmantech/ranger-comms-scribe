@@ -2,8 +2,10 @@ import { json } from 'itty-router-extras';
 import { router as authRouter } from './handlers/auth';
 import { router as blogRouter } from './handlers/blog';
 import { router as galleryRouter } from './handlers/gallery';
+import { router as adminRouter } from './handlers/admin';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
+import { initializeFirstAdmin } from './services/userService';
 
 declare global {
     interface Request {
@@ -38,12 +40,27 @@ const withValidSession = async (request: Request, env: Env) => {
     request.user = user
 }
 
+// Initialize the first admin user
+const initializeAdmin = async (env: Env) => {
+    await initializeFirstAdmin(env);
+};
+
 router
-    .get('/', () => new Response('API is running'))
+    .get('/', async (request: Request, env: Env) => {
+        // Initialize admin on first request
+        try {
+            await initializeAdmin(env);
+        } catch (error) {
+            console.error('Error initializing admin:', error);
+        }
+        return new Response('API is running');
+    })
     .all('/auth/*', authRouter.fetch) // Handle all auth routes
     .all('/blog/*', blogRouter.fetch) // Handle all blog routes
     .all('/gallery/*', withValidSession) // Middleware to check session for gallery routes
     .all('/gallery/*', galleryRouter.fetch) // Handle all gallery routes
+    .all('/admin/*', withValidSession) // Middleware to check session for admin routes
+    .all('/admin/*', adminRouter.fetch) // Handle all admin routes
     .get('/foo', () => corsify(json({ message: 'Hello from foo!' }))) // Example route
     
 

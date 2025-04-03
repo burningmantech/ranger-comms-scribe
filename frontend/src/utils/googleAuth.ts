@@ -1,4 +1,5 @@
 import { API_URL } from '../config';
+import { User } from '../types';
 
 export const loadGoogleOneTap = (clientId: string, callback: (response: any) => void) => {
     const script = document.createElement('script');
@@ -20,9 +21,10 @@ export const loadGoogleOneTap = (clientId: string, callback: (response: any) => 
     document.body.appendChild(script);
 };
 
+
 export const handleGoogleCredentialResponse = (
     response: any,
-    setUser: React.Dispatch<React.SetStateAction<{ email: string; name: string } | null>>
+    setUser: React.Dispatch<React.SetStateAction<User | null>>
 ) => {
     console.log('Encoded JWT ID token:', response.credential);
 
@@ -43,12 +45,27 @@ export const handleGoogleCredentialResponse = (
         .then((data) => {
             console.log('Response from backend:', data);
 
-            // Persist the user's email, name, and session ID in localStorage
-            localStorage.setItem('user', JSON.stringify({ email: data.email, name: data.name }));
+            // Persist the user's email, name, session ID, and admin status in localStorage
+            localStorage.setItem('user', JSON.stringify({ 
+                email: data.email, 
+                name: data.name,
+                isAdmin: data.isAdmin || false,
+                approved: data.approved || false
+            }));
             localStorage.setItem('sessionId', data.sessionId);
 
             // Update state
-            setUser({ email: data.email, name: data.name });
+            setUser({ 
+                email: data.email, 
+                name: data.name,
+                isAdmin: data.isAdmin || false,
+                approved: data.approved || false
+            });
+
+            // Redirect to admin dashboard if user is an admin
+            if (data.isAdmin) {
+                window.location.href = '/admin';
+            }
         })
         .catch((error) => {
             console.error('Error during login:', error);
