@@ -1,3 +1,5 @@
+import { GetSession, Env } from '../utils/sessionManager';
+
 export const getMedia = async () => {
     // Placeholder function to get media content
     return [
@@ -6,8 +8,15 @@ export const getMedia = async () => {
     ];
 };
 
-export const uploadMedia = async (mediaFile: File) => {
-    // Placeholder function to upload media content
-    // In a real application, you would handle the file upload logic here
+export const uploadMedia = async (mediaFile: File, userId: string, env: Env) => {
+    // Upload file to R2 bucket
+    const objectName = `media/${mediaFile.name}`;
+    const object = await env.R2.put(objectName, mediaFile.stream(), {
+        httpMetadata: { contentType: mediaFile.type },
+        customMetadata: { userId: userId, createdAt: new Date().toISOString() },
+    });
+    if (!object) {
+        throw new Error('Failed to upload media');
+    }
     return { success: true, message: 'Media uploaded successfully', fileName: mediaFile.name };
 };

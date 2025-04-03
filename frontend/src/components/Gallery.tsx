@@ -1,3 +1,4 @@
+import { API_URL } from '../config';
 import React, { useEffect, useState } from 'react';
 
 const Gallery: React.FC = () => {
@@ -7,7 +8,15 @@ const Gallery: React.FC = () => {
     useEffect(() => {
         const fetchMedia = async () => {
             try {
-                const response = await fetch('/gallery');
+                const response = await fetch(`${API_URL}/gallery`, 
+                    {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                        },
+                    }
+                );
                 const data = await response.json();
                 setMedia(data);
             } catch (error) {
