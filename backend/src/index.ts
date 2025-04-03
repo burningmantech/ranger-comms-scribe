@@ -36,7 +36,7 @@ const withValidSession = async (request: Request, env: Env) => {
         return json({ error: 'Session not found or expired' }, { status: 403 });
     }
 
-    const user = session.userId;
+    const user = session.data.email;
     request.user = user
 }
 

@@ -27,6 +27,9 @@ const Login: React.FC = () => {
 
     // Dynamically load the Google Identity Services script
     useEffect(() => {
+        // Only proceed with Google Sign-In if user is not logged in
+        if (user) return;
+
         const loadGoogleScript = () => {
             const script = document.createElement('script');
             script.src = 'https://accounts.google.com/gsi/client';
@@ -34,7 +37,7 @@ const Login: React.FC = () => {
             script.defer = true;
             script.onload = () => {
                 console.log('Google Identity Services script loaded');
-                if (!user && window.google) {
+                if (window.google) {
                     console.log('Google object is available');
                     // Initialize the Google Identity Services library
                     window.google.accounts.id.initialize({
@@ -83,40 +86,38 @@ const Login: React.FC = () => {
         } else {
             console.log('Google script already loaded');
             // Ensure initialization if the script is already loaded
-            if (!user) {
-                window.google.accounts.id.initialize({
-                    client_id: GOOGLE_CLIENT_ID,
-                    callback: (response: any) =>
-                        handleGoogleCredentialResponse(response, setUser),
-                });
+            window.google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback: (response: any) =>
+                    handleGoogleCredentialResponse(response, setUser),
+            });
 
-                // Show the One Tap Login with debugging
-                window.google.accounts.id.prompt((notification: any) => {
-                    if (notification.isNotDisplayed()) {
-                        console.error('One Tap Login not displayed:', notification.getNotDisplayedReason());
-                    }
-                    if (notification.isSkippedMoment()) {
-                        console.error('One Tap Login skipped:', notification.getSkippedReason());
-                    }
-                    if (notification.isDismissedMoment()) {
-                        console.error('One Tap Login dismissed:', notification.getDismissedReason());
-                    }
-                });
-
-                // Render the "Sign in with Google" button
-                const buttonContainer = document.getElementById('google-signin-button');
-                if (buttonContainer) {
-                    window.google.accounts.id.renderButton(buttonContainer, {
-                        theme: 'filled_blue',
-                        size: 'large',
-                        shape: 'pill',
-                        text: 'signin_with',
-                        logo_alignment: 'left',
-                    });
+            // Show the One Tap Login with debugging
+            window.google.accounts.id.prompt((notification: any) => {
+                if (notification.isNotDisplayed()) {
+                    console.error('One Tap Login not displayed:', notification.getNotDisplayedReason());
                 }
+                if (notification.isSkippedMoment()) {
+                    console.error('One Tap Login skipped:', notification.getSkippedReason());
+                }
+                if (notification.isDismissedMoment()) {
+                    console.error('One Tap Login dismissed:', notification.getDismissedReason());
+                }
+            });
+
+            // Render the "Sign in with Google" button
+            const buttonContainer = document.getElementById('google-signin-button');
+            if (buttonContainer) {
+                window.google.accounts.id.renderButton(buttonContainer, {
+                    theme: 'filled_blue',
+                    size: 'large',
+                    shape: 'pill',
+                    text: 'signin_with',
+                    logo_alignment: 'left',
+                });
             }
         }
-    }, [user]);
+    }, [user]); // Dependency on user ensures this effect re-runs when user changes
 
     // Fetch blog content if the user is signed in
     useEffect(() => {

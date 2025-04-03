@@ -43,12 +43,15 @@ const LoggedInView: React.FC<LoggedInViewProps> = ({ user, blogContent, handleLo
         <div>
             <p>Welcome, {user.name}!</p> {/* Display the user's name */}
             <div className="user-actions">
-                <button onClick={handleLogout}>Logout</button> {/* Logout button */}
+                <Link to="/gallery" className="gallery-link">
+                    <button>Gallery</button>
+                </Link>
                 {isAdmin && (
                     <Link to="/admin" className="admin-link">
                         <button>Admin Dashboard</button>
                     </Link>
                 )}
+                <button onClick={handleLogout}>Logout</button> {/* Logout button */}
             </div>
             
             {user.approved === false && (

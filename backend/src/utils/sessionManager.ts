@@ -1,6 +1,7 @@
 export interface Env {
-    R2: R2Bucket
-  }
+    R2: R2Bucket;
+    PUBLIC_URL?: string;
+}
 
 export async function CreateSession(
         userId: string, 
