@@ -1,8 +1,9 @@
 import { GetSession, Env } from '../utils/sessionManager';
-import { MediaItem } from '../types';
+import { MediaItem, UserType } from '../types';
+import { getUser, canAccessGroup } from '../services/userService';
 
 // Get all media from the gallery folder in R2
-export const getMedia = async (env: Env): Promise<MediaItem[]> => {
+export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> => {
     try {
         // List all objects with the gallery/ prefix
         const objects = await env.R2.list({ prefix: 'gallery/' });
@@ -72,7 +73,42 @@ export const getMedia = async (env: Env): Promise<MediaItem[]> => {
         });
         
         // Wait for all promises to resolve and filter out null values (thumbnails)
-        const mediaItems = (await Promise.all(mediaPromises)).filter(item => item !== null) as MediaItem[];
+        let mediaItems = (await Promise.all(mediaPromises)).filter(item => item !== null) as MediaItem[];
+        
+        // Set all existing media to public by default (for backward compatibility)
+        mediaItems = mediaItems.map(item => ({
+            ...item,
+            isPublic: item.isPublic !== undefined ? item.isPublic : true
+        }));
+        
+        // If userId is provided, filter media based on access permissions
+        if (userId) {
+            const user = await getUser(userId, env);
+            
+            // If user is admin, they can see all media
+            if (user && user.userType === UserType.Admin) {
+                // No filtering needed, admins see everything
+            } else {
+                // Filter media based on access
+                mediaItems = await Promise.all(
+                    mediaItems.map(async (item) => {
+                        // Public items are visible to everyone
+                        if (item.isPublic) return item;
+                        
+                        // Group items require membership check
+                        if (item.groupId && user) {
+                            const canAccess = await canAccessGroup(userId, item.groupId, env);
+                            if (canAccess) return item;
+                        }
+                        
+                        return null;
+                    })
+                ).then(filteredItems => filteredItems.filter(item => item !== null) as MediaItem[]);
+            }
+        } else {
+            // No user ID provided, only return public items
+            mediaItems = mediaItems.filter(item => item.isPublic);
+        }
         
         return mediaItems;
     } catch (error) {
@@ -85,8 +121,10 @@ export const getMedia = async (env: Env): Promise<MediaItem[]> => {
 export const uploadMedia = async (
     mediaFile: File, 
     thumbnailFile: File, 
-    userId: string, 
-    env: Env
+    userId: string,
+    env: Env,
+    isPublic: boolean = true,
+    groupId?: string
 ): Promise<{ success: boolean; message: string; mediaItem?: MediaItem }> => {
     try {
         // Generate a unique ID for the file
@@ -139,6 +177,8 @@ export const uploadMedia = async (
             uploadedBy: userId,
             uploadedAt: new Date().toISOString(),
             size: mediaFile.size,
+            isPublic,
+            groupId
         };
         
         return { 

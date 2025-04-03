@@ -33,7 +33,8 @@ router.options('*', preflight);
 router.get('/', async (request: ExtendedRequest, env: Env) => {
     try {
         console.log('GET /blog called');
-        const posts = await getBlogPosts(env);
+        const userId = request.user;
+        const posts = await getBlogPosts(env, userId);
         return json(posts);
     } catch (error) {
         console.error('Error fetching blog posts:', error);
@@ -68,12 +69,14 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
             return json({ error: 'User not authenticated' }, { status: 401 });
         }
         
-        const { title, content, published, commentsEnabled, media } = await request.json() as {
+        const { title, content, published, commentsEnabled, media, isPublic, groupId } = await request.json() as {
             title: string;
             content: string;
             published?: boolean;
             commentsEnabled?: boolean;
             media?: string[];
+            isPublic?: boolean;
+            groupId?: string;
         };
         
         if (!title || !content) {
@@ -98,7 +101,9 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
                 content, 
                 published: published ?? false, 
                 commentsEnabled: commentsEnabled ?? true, 
-                media 
+                media,
+                isPublic: isPublic ?? true, // Default to public
+                groupId
             },
             request.user,
             userName,
@@ -128,6 +133,8 @@ router.put('/:id', withAdminCheck, async (request: ExtendedRequest, env: Env) =>
             published?: boolean;
             commentsEnabled?: boolean;
             media?: string[];
+            isPublic?: boolean;
+            groupId?: string;
         };
         
         const result = await updateBlogPost(id, updates, env);

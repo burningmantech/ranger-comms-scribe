@@ -8,7 +8,6 @@ body {
     color: #333;               /* Dark grey text color for readability */
     height: 100vh;            /* Full viewport height */
     width: 100vw;             /* Full viewport width */
-    overflow: hidden;         /* Prevent scrolling */
     position: relative;       /* Ensure the pseudo-element is positioned correctly */
     box-sizing: border-box;   /* Include padding in width/height calculations */
 }
@@ -95,6 +94,9 @@ p {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     transition: transform 0.2s;
     cursor: pointer;
+    position: relative;
+    aspect-ratio: 1/1;
+    background-color: #f9f9f9;
 }
 
 .media-item:hover {
@@ -103,13 +105,22 @@ p {
 
 .media-thumbnail {
     width: 100%;
-    height: 200px;
-    object-fit: cover;
+    height: 100%;
+    object-fit: contain;
     display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
 }
 
 .media-info {
     padding: 10px;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background-color: rgba(255, 255, 255, 0.8);
+    z-index: 1;
 }
 
 .media-name {
@@ -457,12 +468,61 @@ p {
     overflow-x: hidden; /* Prevent horizontal scrolling */
 }
 
+.all-posts-container {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.all-posts-container .post-detail {
+    margin-bottom: 30px;
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Styles for all-posts-container on large screens */
+.all-posts-container.large-screen {
+    grid-column: 1 / -1; /* Span all columns in the grid */
+}
+
+@media (min-width: 769px) {
+    .all-posts-container.large-screen {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+    
+    .all-posts-container.large-screen .post-detail {
+        height: auto;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .all-posts-container.large-screen .post-content {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 5; /* Limit to 5 lines */
+        -webkit-box-orient: vertical;
+    }
+}
+
 @media (max-width: 768px) {
     .post-detail {
         max-width: 100%; /* Allow it to take the full width of the screen */
         min-width: 87vw; /* Match the viewport width */
-        min-height: 100vh; /* Match the viewport height */
         padding: 10px; /* Reduce padding for smaller screens */
+    }
+    
+    .blog-content {
+        display: block; /* Change from grid to block on small screens */
+    }
+    
+    .all-posts-container {
+        padding: 0;
     }
 }
 

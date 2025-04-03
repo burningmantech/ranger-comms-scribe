@@ -17,7 +17,8 @@ export const router = AutoRouter({ base: '/gallery' });
 router.get('/', async (request: ExtendedRequest, env: Env) => {
     try {
         console.log('GET /gallery called');
-        const media = await getMedia(env);
+        const userId = request.user;
+        const media = await getMedia(env, userId);
         return new Response(JSON.stringify(media), {
             headers: { 'Content-Type': 'application/json' },
         });
@@ -50,7 +51,11 @@ router.post('/upload', withAdminCheck, async (request: ExtendedRequest, env: Env
             return json({ error: 'User is not authenticated' }, { status: 401 });
         }
         
-        const result = await uploadMedia(mediaFile, thumbnailFile, request.user, env);
+        // Get group information from form data
+        const isPublic = formData.get('isPublic') !== 'false'; // Default to true
+        const groupId = formData.get('groupId') as string | null;
+        
+        const result = await uploadMedia(mediaFile, thumbnailFile, request.user, env, isPublic, groupId || undefined);
         return json(result);
     } catch (error) {
         console.error('Error uploading media:', error);

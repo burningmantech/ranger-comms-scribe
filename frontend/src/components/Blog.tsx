@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { API_URL } from '../config';
-import { BlogPost, BlogComment, User } from '../types';
+import { BlogPost, BlogComment, User, Group, UserType } from '../types';
 import Navbar from './Navbar';
 import { Link } from 'react-router-dom';
 
@@ -17,14 +17,55 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [user, setUser] = useState<User | null>(null);
+    const [groups, setGroups] = useState<Group[]>([]);
     const [showNewPostForm, setShowNewPostForm] = useState<boolean>(false);
-    const [newPost, setNewPost] = useState<{ title: string; content: string; commentsEnabled: boolean }>({
+    const [newPost, setNewPost] = useState<{ 
+        title: string; 
+        content: string; 
+        commentsEnabled: boolean;
+        isPublic: boolean;
+        groupId?: string;
+    }>({
         title: '',
         content: '',
-        commentsEnabled: true
+        commentsEnabled: true,
+        isPublic: true
     });
     const [postStatus, setPostStatus] = useState<{ success: boolean; message: string } | null>(null);
     const [editingPost, setEditingPost] = useState<BlogPost | null>(null);
+    const [isSmallScreen, setIsSmallScreen] = useState<boolean>(false);
+    const allPostsRef = useRef<HTMLDivElement>(null);
+
+    // Check if screen is small
+    useEffect(() => {
+        const checkScreenSize = () => {
+            setIsSmallScreen(window.innerWidth <= 768);
+        };
+        
+        // Initial check
+        checkScreenSize();
+        
+        // Add event listener for window resize
+        window.addEventListener('resize', checkScreenSize);
+        
+        // Clean up
+        return () => {
+            window.removeEventListener('resize', checkScreenSize);
+        };
+    }, []);
+
+    // Effect to fetch comments for all posts
+    useEffect(() => {
+        if (posts.length > 0) {
+            // For each post, fetch its comments
+            posts.forEach(post => {
+                fetchComments(post.id);
+            });
+            
+            // Scroll to the top when all posts are loaded
+            window.scrollTo(0, 0);
+        }
+    }, [posts]);
 
     useEffect(() => {
         // Check if user is logged in
@@ -33,6 +74,11 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
             try {
                 const userData = JSON.parse(userJson);
                 setUser(userData);
+                
+                // If user is admin or lead, fetch groups
+                if (userData.isAdmin || userData.userType === UserType.Lead || userData.userType === UserType.Admin) {
+                    fetchGroups();
+                }
             } catch (err) {
                 console.error('Error parsing user data:', err);
             }
@@ -40,6 +86,28 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
 
         fetchPosts();
     }, []);
+    
+    const fetchGroups = async () => {
+        try {
+            const response = await fetch(`${API_URL}/admin/groups`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch groups: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            setGroups(data.groups);
+        } catch (err) {
+            console.error('Error fetching groups:', err);
+            setGroups([]);
+        }
+    };
 
     const fetchPosts = async () => {
         try {
@@ -245,7 +313,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                     title: newPost.title,
                     content: newPost.content,
                     published: true,
-                    commentsEnabled: newPost.commentsEnabled
+                    commentsEnabled: newPost.commentsEnabled,
+                    isPublic: newPost.isPublic,
+                    groupId: !newPost.isPublic ? newPost.groupId : undefined
                 }),
             });
             
@@ -266,7 +336,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                 setNewPost({
                     title: '',
                     content: '',
-                    commentsEnabled: true
+                    commentsEnabled: true,
+                    isPublic: true,
+                    groupId: undefined
                 });
                 setShowNewPostForm(false);
             } else {
@@ -289,7 +361,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
         setNewPost({
             title: post.title,
             content: post.content,
-            commentsEnabled: post.commentsEnabled
+            commentsEnabled: post.commentsEnabled,
+            isPublic: post.isPublic !== undefined ? post.isPublic : true,
+            groupId: post.groupId
         });
         setShowNewPostForm(true);
     };
@@ -315,7 +389,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                 body: JSON.stringify({
                     title: newPost.title,
                     content: newPost.content,
-                    commentsEnabled: newPost.commentsEnabled
+                    commentsEnabled: newPost.commentsEnabled,
+                    isPublic: newPost.isPublic,
+                    groupId: !newPost.isPublic ? newPost.groupId : undefined
                 }),
             });
             
@@ -341,7 +417,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                 setNewPost({
                     title: '',
                     content: '',
-                    commentsEnabled: true
+                    commentsEnabled: true,
+                    isPublic: true,
+                    groupId: undefined
                 });
                 setEditingPost(null);
                 setShowNewPostForm(false);
@@ -467,7 +545,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                 setNewPost({
                                     title: '',
                                     content: '',
-                                    commentsEnabled: true
+                                    commentsEnabled: true,
+                                    isPublic: true,
+                                    groupId: undefined
                                 });
                                 setShowNewPostForm(!showNewPostForm);
                             }}
@@ -518,6 +598,34 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                 Enable comments
                             </label>
                         </div>
+                        <div className="form-group checkbox-group">
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked={newPost.isPublic}
+                                    onChange={(e) => setNewPost({...newPost, isPublic: e.target.checked})}
+                                />
+                                Public (visible to everyone)
+                            </label>
+                        </div>
+                        
+                        {!newPost.isPublic && (
+                            <div className="form-group">
+                                <label htmlFor="post-group">Group:</label>
+                                <select
+                                    id="post-group"
+                                    value={newPost.groupId || ''}
+                                    onChange={(e) => setNewPost({...newPost, groupId: e.target.value || undefined})}
+                                    required={!newPost.isPublic}
+                                >
+                                    <option value="">Select a group</option>
+                                    {groups.map(group => (
+                                        <option key={group.id} value={group.id}>{group.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                        
                         <button type="submit" className="submit-button">
                             {editingPost ? 'Update Post' : 'Create Post'}
                         </button>
@@ -525,125 +633,164 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                 )}
 
                 <div className="blog-content">
-                    <div className="posts-list">
-                        <h2>Posts</h2>
+                    {!isSmallScreen && (
+                        <div className="posts-list">
+                            <h2>Posts</h2>
+                            {posts.length === 0 ? (
+                                <p>No posts available.</p>
+                            ) : (
+                                <ul>
+                                    {posts.map((post) => (
+                                        <li 
+                                            key={post.id} 
+                                            className={`post-item ${selectedPost?.id === post.id ? 'selected' : ''}`}
+                                            onClick={() => handlePostClick(post)}
+                                        >
+                                            <h3>{post.title}</h3>
+                                            <p className="post-meta">
+                                                By {post.author} on {new Date(post.createdAt).toLocaleDateString()}
+                                                {post.isPublic === false && <span className="private-badge"> (Private)</span>}
+                                            </p>
+                                            {isAdmin && (
+                                                <div className="post-admin-controls">
+                                                    <button onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleEditPost(post);
+                                                    }}>
+                                                        Edit
+                                                    </button>
+                                                    <button onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (window.confirm(`Are you sure you want to delete "${post.title}"?`)) {
+                                                            handleDeletePost(post.id);
+                                                        }
+                                                    }}>
+                                                        Delete
+                                                    </button>
+                                                    <button onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleCommentsForPost(post);
+                                                    }}>
+                                                        {post.commentsEnabled ? 'Disable Comments' : 'Enable Comments'}
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+
+                    <div ref={allPostsRef} className={isSmallScreen ? "all-posts-container" : "all-posts-container large-screen"}>
                         {posts.length === 0 ? (
                             <p>No posts available.</p>
                         ) : (
-                            <ul>
-                                {posts.map((post) => (
-                                    <li 
-                                        key={post.id} 
-                                        className={`post-item ${selectedPost?.id === post.id ? 'selected' : ''}`}
-                                        onClick={() => handlePostClick(post)}
-                                    >
-                                        <h3>{post.title}</h3>
-                                        <p className="post-meta">
-                                            By {post.author} on {new Date(post.createdAt).toLocaleDateString()}
-                                        </p>
-                                        {isAdmin && (
-                                            <div className="post-admin-controls">
-                                                <button onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleEditPost(post);
-                                                }}>
-                                                    Edit
-                                                </button>
-                                                <button onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    if (window.confirm(`Are you sure you want to delete "${post.title}"?`)) {
-                                                        handleDeletePost(post.id);
-                                                    }
-                                                }}>
-                                                    Delete
-                                                </button>
-                                                <button onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    toggleCommentsForPost(post);
-                                                }}>
-                                                    {post.commentsEnabled ? 'Disable Comments' : 'Enable Comments'}
-                                                </button>
+                            posts.map(post => (
+                                <div key={post.id} className="post-detail">
+                                    <h2>{post.title}</h2>
+                                    <p className="post-meta">
+                                        By {post.author} on {new Date(post.createdAt).toLocaleDateString()}
+                                        {post.updatedAt !== post.createdAt && 
+                                            ` (Updated: ${new Date(post.updatedAt).toLocaleDateString()})`}
+                                        {post.isPublic === false && post.groupId && 
+                                            ` - Group: ${groups.find(g => g.id === post.groupId)?.name || 'Private Group'}`}
+                                    </p>
+                                    {isAdmin && (
+                                        <div className="post-admin-controls">
+                                            <button onClick={() => handleEditPost(post)}>
+                                                Edit
+                                            </button>
+                                            <button onClick={() => {
+                                                if (window.confirm(`Are you sure you want to delete "${post.title}"?`)) {
+                                                    handleDeletePost(post.id);
+                                                }
+                                            }}>
+                                                Delete
+                                            </button>
+                                            <button onClick={() => toggleCommentsForPost(post)}>
+                                                {post.commentsEnabled ? 'Disable Comments' : 'Enable Comments'}
+                                            </button>
+                                        </div>
+                                    )}
+                                    <div className="post-content">
+                                        {post.content.split('\n').map((paragraph, index) => (
+                                            <p key={index}>{paragraph}</p>
+                                        ))}
+                                    </div>
+
+                                    <div className="comments-section">
+                                        <h3>Comments</h3>
+                                        
+                                        {commentStatus && (
+                                            <div className={commentStatus.success ? 'success-message' : 'error-message'}>
+                                                {commentStatus.message}
                                             </div>
                                         )}
-                                    </li>
-                                ))}
-                            </ul>
+                                        
+                                        {post.commentsEnabled ? (
+                                            <>
+                                                {user ? (
+                                                    <form className="comment-form" onSubmit={(e) => {
+                                                        e.preventDefault();
+                                                        if (selectedPost?.id !== post.id) {
+                                                            setSelectedPost(post);
+                                                        }
+                                                        handleCommentSubmit(e);
+                                                    }}>
+                                                        <textarea
+                                                            value={selectedPost?.id === post.id ? newComment : ''}
+                                                            onChange={(e) => {
+                                                                if (selectedPost?.id !== post.id) {
+                                                                    setSelectedPost(post);
+                                                                }
+                                                                setNewComment(e.target.value);
+                                                            }}
+                                                            placeholder="Write a comment..."
+                                                            rows={3}
+                                                            required
+                                                        />
+                                                        <button type="submit">Post Comment</button>
+                                                    </form>
+                                                ) : (
+                                                    <p className="login-prompt">
+                                                        Please <Link to="/">log in</Link> to comment.
+                                                    </p>
+                                                )}
+                                                
+                                                <ul className="comments-list">
+                                                    {comments.filter(comment => comment.postId === post.id).length === 0 ? (
+                                                        <p>No comments yet.</p>
+                                                    ) : (
+                                                        comments.filter(comment => comment.postId === post.id).map((comment) => (
+                                                            <li key={comment.id} className="comment-item">
+                                                                <p className="comment-meta">
+                                                                    {comment.author} on {new Date(comment.createdAt).toLocaleDateString()}
+                                                                </p>
+                                                                <p className="comment-content">{comment.content}</p>
+                                                                {isAdmin && (
+                                                                    <div className="comment-admin-controls">
+                                                                        <button onClick={() => handleDeleteComment(comment.id)}>
+                                                                            Delete
+                                                                        </button>
+                                                                        <button onClick={() => handleBlockUser(comment.authorId)}>
+                                                                            Block User
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </li>
+                                                        ))
+                                                    )}
+                                                </ul>
+                                            </>
+                                        ) : (
+                                            <p>Comments are disabled for this post.</p>
+                                        )}
+                                    </div>
+                                </div>
+                            ))
                         )}
                     </div>
-
-                    {selectedPost && (
-                        <div className="post-detail">
-                            <h2>{selectedPost.title}</h2>
-                            <p className="post-meta">
-                                By {selectedPost.author} on {new Date(selectedPost.createdAt).toLocaleDateString()}
-                                {selectedPost.updatedAt !== selectedPost.createdAt && 
-                                    ` (Updated: ${new Date(selectedPost.updatedAt).toLocaleDateString()})`}
-                            </p>
-                            <div className="post-content">
-                                {selectedPost.content.split('\n').map((paragraph, index) => (
-                                    <p key={index}>{paragraph}</p>
-                                ))}
-                            </div>
-
-                            <div className="comments-section">
-                                <h3>Comments</h3>
-                                
-                                {commentStatus && (
-                                    <div className={commentStatus.success ? 'success-message' : 'error-message'}>
-                                        {commentStatus.message}
-                                    </div>
-                                )}
-                                
-                                {selectedPost.commentsEnabled ? (
-                                    <>
-                                        {user ? (
-                                            <form className="comment-form" onSubmit={handleCommentSubmit}>
-                                                <textarea
-                                                    value={newComment}
-                                                    onChange={(e) => setNewComment(e.target.value)}
-                                                    placeholder="Write a comment..."
-                                                    rows={3}
-                                                    required
-                                                />
-                                                <button type="submit">Post Comment</button>
-                                            </form>
-                                        ) : (
-                                            <p className="login-prompt">
-                                                Please <Link to="/">log in</Link> to comment.
-                                            </p>
-                                        )}
-                                        
-                                        {comments.length === 0 ? (
-                                            <p>No comments yet.</p>
-                                        ) : (
-                                            <ul className="comments-list">
-                                                {comments.map((comment) => (
-                                                    <li key={comment.id} className="comment-item">
-                                                        <p className="comment-meta">
-                                                            {comment.author} on {new Date(comment.createdAt).toLocaleDateString()}
-                                                        </p>
-                                                        <p className="comment-content">{comment.content}</p>
-                                                        {isAdmin && (
-                                                            <div className="comment-admin-controls">
-                                                                <button onClick={() => handleDeleteComment(comment.id)}>
-                                                                    Delete
-                                                                </button>
-                                                                <button onClick={() => handleBlockUser(comment.authorId)}>
-                                                                    Block User
-                                                                </button>
-                                                            </div>
-                                                        )}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        )}
-                                    </>
-                                ) : (
-                                    <p>Comments are disabled for this post.</p>
-                                )}
-                            </div>
-                        </div>
-                    )}
                 </div>
             </div>
         </>

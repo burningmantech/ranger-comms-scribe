@@ -6,6 +6,7 @@ import { router as adminRouter } from './handlers/admin';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin } from './services/userService';
+import { setExistingContentPublic } from './migrations/setExistingContentPublic';
 
 declare global {
     interface Request {
@@ -40,18 +41,22 @@ const withValidSession = async (request: Request, env: Env) => {
     request.user = user
 }
 
-// Initialize the first admin user
-const initializeAdmin = async (env: Env) => {
+// Initialize the application
+const initializeApp = async (env: Env) => {
+    // Initialize the first admin user
     await initializeFirstAdmin(env);
+    
+    // Run migrations
+    await setExistingContentPublic(env);
 };
 
 router
     .get('/', async (request: Request, env: Env) => {
-        // Initialize admin on first request
+        // Initialize app on first request
         try {
-            await initializeAdmin(env);
+            await initializeApp(env);
         } catch (error) {
-            console.error('Error initializing admin:', error);
+            console.error('Error initializing application:', error);
         }
         return new Response('API is running');
     })
