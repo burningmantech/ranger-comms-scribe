@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        button:hover {
+            background-color: #3367d6;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .logged-in {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .logged-out {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Login State</h1>
+    
+    <div id="status" class="status"></div>
+    
+    <button id="login">Simulate Login</button>
+    <button id="logout">Simulate Logout</button>
+    <button id="open-app">Open App</button>
+    
+    <script>
+        // Check current login state
+        function updateStatus() {
+            const statusDiv = document.getElementById('status');
+            const user = localStorage.getItem('user');
+            
+            if (user) {
+                const userData = JSON.parse(user);
+                statusDiv.innerHTML = `<h3>Currently logged in as:</h3>
+                    <p>Name: ${userData.name}</p>
+                    <p>Email: ${userData.email}</p>
+                    <p>Admin: ${userData.isAdmin ? 'Yes' : 'No'}</p>
+                    <p>Approved: ${userData.approved ? 'Yes' : 'No'}</p>`;
+                statusDiv.className = 'status logged-in';
+            } else {
+                statusDiv.innerHTML = '<h3>Currently logged out</h3>';
+                statusDiv.className = 'status logged-out';
+            }
+        }
+        
+        // Simulate login
+        document.getElementById('login').addEventListener('click', () => {
+            const testUser = {
+                name: 'Test User',
+                email: 'test@example.com',
+                isAdmin: false,
+                approved: true
+            };
+            
+            localStorage.setItem('user', JSON.stringify(testUser));
+            localStorage.setItem('sessionId', 'test-session-id');
+            
+            updateStatus();
+        });
+        
+        // Simulate logout
+        document.getElementById('logout').addEventListener('click', () => {
+            localStorage.removeItem('user');
+            localStorage.removeItem('sessionId');
+            
+            updateStatus();
+        });
+        
+        // Open the app
+        document.getElementById('open-app').addEventListener('click', () => {
+            window.open('/', '_blank');
+        });
+        
+        // Initialize status
+        updateStatus();
+    </script>
+</body>
+</html>

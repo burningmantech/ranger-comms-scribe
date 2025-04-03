@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Login State</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        button:hover {
+            background-color: #3367d6;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .logged-in {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .logged-out {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .section {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Debug Login State</h1>
+    
+    <div class="warning">
+        <strong>Note:</strong> This page is for debugging purposes only. It helps test the Google One Tap login behavior.
+    </div>
+    
+    <div class="section">
+        <h2>Current Login State</h2>
+        <div id="status" class="status"></div>
+    </div>
+    
+    <div class="section">
+        <h2>Actions</h2>
+        <button id="login">Simulate Login</button>
+        <button id="logout">Simulate Logout</button>
+        <button id="navigate">Navigate to Main App</button>
+        <button id="open-new-tab">Open Main App in New Tab</button>
+    </div>
+    
+    <div class="section">
+        <h2>LocalStorage Contents</h2>
+        <pre id="localStorage-content"></pre>
+    </div>
+    
+    <div class="section">
+        <h2>Debug Console</h2>
+        <pre id="debug-console"></pre>
+    </div>
+    
+    <script>
+        // Debug logging function
+        function log(message) {
+            const debugConsole = document.getElementById('debug-console');
+            const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+            debugConsole.textContent += `[${timestamp}] ${message}\n`;
+            console.log(message);
+        }
+        
+        // Update localStorage display
+        function updateLocalStorageDisplay() {
+            const localStorageContent = document.getElementById('localStorage-content');
+            let content = '';
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                let value = localStorage.getItem(key);
+                
+                try {
+                    // Try to parse JSON values for better display
+                    const parsedValue = JSON.parse(value);
+                    value = JSON.stringify(parsedValue, null, 2);
+                } catch (e) {
+                    // If not JSON, use as is
+                }
+                
+                content += `${key}: ${value}\n\n`;
+            }
+            
+            localStorageContent.textContent = content || 'LocalStorage is empty';
+        }
+        
+        // Update login status display
+        function updateStatus() {
+            const statusDiv = document.getElementById('status');
+            const user = localStorage.getItem('user');
+            
+            if (user) {
+                try {
+                    const userData = JSON.parse(user);
+                    statusDiv.innerHTML = `<h3>Currently logged in as:</h3>
+                        <p>Name: ${userData.name}</p>
+                        <p>Email: ${userData.email}</p>
+                        <p>Admin: ${userData.isAdmin ? 'Yes' : 'No'}</p>
+                        <p>Approved: ${userData.approved ? 'Yes' : 'No'}</p>`;
+                    statusDiv.className = 'status logged-in';
+                    log('User is logged in: ' + JSON.stringify(userData));
+                } catch (e) {
+                    statusDiv.innerHTML = '<h3>Error parsing user data</h3>';
+                    statusDiv.className = 'status logged-out';
+                    log('Error parsing user data: ' + e.message);
+                }
+            } else {
+                statusDiv.innerHTML = '<h3>Currently logged out</h3>';
+                statusDiv.className = 'status logged-out';
+                log('User is logged out');
+            }
+            
+            updateLocalStorageDisplay();
+        }
+        
+        // Simulate login
+        document.getElementById('login').addEventListener('click', () => {
+            log('Simulating login...');
+            
+            const testUser = {
+                name: 'Test User',
+                email: 'test@example.com',
+                isAdmin: false,
+                approved: true
+            };
+            
+            localStorage.setItem('user', JSON.stringify(testUser));
+            localStorage.setItem('sessionId', 'test-session-id-' + Date.now());
+            
+            log('Login data set in localStorage');
+            updateStatus();
+        });
+        
+        // Simulate logout
+        document.getElementById('logout').addEventListener('click', () => {
+            log('Simulating logout...');
+            
+            localStorage.removeItem('user');
+            localStorage.removeItem('sessionId');
+            
+            log('Login data removed from localStorage');
+            updateStatus();
+        });
+        
+        // Navigate to main app
+        document.getElementById('navigate').addEventListener('click', () => {
+            log('Navigating to main app...');
+            window.location.href = '/';
+        });
+        
+        // Open main app in new tab
+        document.getElementById('open-new-tab').addEventListener('click', () => {
+            log('Opening main app in new tab...');
+            window.open('/', '_blank');
+        });
+        
+        // Initialize
+        window.addEventListener('DOMContentLoaded', () => {
+            log('Debug page loaded');
+            updateStatus();
+        });
+    </script>
+</body>
+</html>
