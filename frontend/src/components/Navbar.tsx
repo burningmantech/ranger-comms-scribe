@@ -6,6 +6,7 @@ import { LogoutUserReact } from '../utils/userActions';
 const Navbar: React.FC = () => {
     const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
     const [isAdmin, setIsAdmin] = useState<boolean>(false);
+    const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -39,12 +40,19 @@ const Navbar: React.FC = () => {
         LogoutUserReact(navigate);
     };
 
+    const toggleMobileMenu = () => {
+        setMobileMenuOpen(!mobileMenuOpen);
+    };
+
     return (
         <nav className="navbar">
             <div className="navbar-brand">
                 <Link to="/">DCWB</Link>
             </div>
-            <div className="navbar-menu">
+            <button className="mobile-menu-toggle" onClick={toggleMobileMenu}>
+                ☰
+            </button>
+            <div className={`navbar-menu ${mobileMenuOpen ? 'active' : ''}`}>
                 <Link to="/gallery" className="navbar-item">Gallery</Link>
                 <Link to="/blog" className="navbar-item">Blog</Link>
                 {isAdmin && (

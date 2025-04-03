@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobile Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            margin-bottom: 20px;
+        }
+        .device {
+            border: 16px solid #333;
+            border-radius: 36px;
+            margin-bottom: 30px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.2);
+        }
+        .device-header {
+            background: #333;
+            height: 60px;
+            border-radius: 20px 20px 0 0;
+            position: relative;
+        }
+        .device-header:before {
+            content: '';
+            position: absolute;
+            width: 60px;
+            height: 10px;
+            background: #222;
+            border-radius: 10px;
+            top: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        iframe {
+            border: none;
+            width: 375px;
+            height: 667px;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Mobile View Test (iPhone SE / 375x667)</h1>
+    <div class="device">
+        <div class="device-header"></div>
+        <iframe src="http://localhost:3000" title="Mobile View"></iframe>
+    </div>
+</body>
+</html>
