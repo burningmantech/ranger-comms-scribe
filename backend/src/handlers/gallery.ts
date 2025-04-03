@@ -137,6 +137,86 @@ router.delete('/:id', withAdminCheck, async (request: ExtendedRequest, env: Env)
     }
 });
 
+// Update a media item's group
+router.put('/:id/group', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
+    try {
+        const id = request.params.id;
+        const mediaKey = `gallery/${id}`;
+        
+        // Get the media item
+        const mediaObject = await env.R2.head(mediaKey);
+        if (!mediaObject) {
+            return json({ error: 'Media not found' }, { status: 404 });
+        }
+        
+        // Get the request body
+        const body = await request.json() as { isPublic: boolean; groupId?: string };
+        const { isPublic, groupId } = body;
+        
+        // Update the custom metadata
+        const updatedMetadata = { ...mediaObject.customMetadata };
+        updatedMetadata.isPublic = isPublic ? 'true' : 'false';
+        if (groupId) {
+            updatedMetadata.groupId = groupId;
+        } else {
+            delete updatedMetadata.groupId;
+        }
+        
+        // Get the existing content
+        const existingContent = await env.R2.get(mediaKey);
+        if (!existingContent) {
+            return json({ error: 'Media content not found' }, { status: 404 });
+        }
+        
+        // Save the updated media item with the same content but updated metadata
+        await env.R2.put(mediaKey, existingContent.body, {
+            httpMetadata: mediaObject.httpMetadata,
+            customMetadata: updatedMetadata
+        });
+        
+        // Create a MediaItem object to return
+        const fileName = mediaKey.split('/').pop() || '';
+        const fileType = mediaObject.httpMetadata?.contentType || '';
+        
+        // Check if a thumbnail exists
+        const thumbnailKey = mediaKey.replace('gallery/', 'gallery/thumbnails/');
+        let thumbnailUrl = '';
+        try {
+            const thumbnailExists = await env.R2.head(thumbnailKey);
+            if (thumbnailExists) {
+                thumbnailUrl = `${env.PUBLIC_URL}/gallery/${fileName}/thumbnail`;
+            }
+        } catch (error) {
+            // Thumbnail doesn't exist
+        }
+        
+        const mediaItem: MediaItem = {
+            id: mediaKey,
+            fileName: fileName,
+            fileType: fileType,
+            url: `${env.PUBLIC_URL}/gallery/${fileName}`,
+            thumbnailUrl: thumbnailUrl,
+            uploadedBy: updatedMetadata.userId || 'unknown',
+            uploadedAt: updatedMetadata.createdAt || new Date().toISOString(),
+            size: mediaObject.size,
+            isPublic: isPublic,
+            groupId: groupId
+        };
+        
+        return json({ 
+            success: true, 
+            message: 'Media group updated successfully',
+            mediaItem
+        });
+    } catch (error) {
+        console.error('Error updating media group:', error);
+        return json({ 
+            error: 'Error updating media group',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 });
+    }
+});
+
 // Fallback route for unmatched requests
 router.all('*', () => {
     console.error('No matching route found');

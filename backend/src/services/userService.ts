@@ -161,6 +161,11 @@ export async function createGroup(
     customMetadata: { createdBy: creatorId }
   });
   
+  // Ensure creator.groups exists and is an array before pushing to it
+  if (!creator.groups || !Array.isArray(creator.groups)) {
+    creator.groups = [];
+  }
+  
   // Add group to creator's groups
   creator.groups.push(id);
   await env.R2.put(`user:${creator.email}`, JSON.stringify(creator), {
@@ -214,7 +219,11 @@ export async function addUserToGroup(userId: string, groupId: string, env: Env):
     customMetadata: { updatedAt: group.updatedAt }
   });
   
-  // Add group to user's groups
+  // Ensure user.groups exists and add group to user's groups
+  if (!user.groups) {
+    user.groups = [];
+  }
+  
   if (!user.groups.includes(groupId)) {
     user.groups.push(groupId);
     
@@ -246,13 +255,47 @@ export async function removeUserFromGroup(userId: string, groupId: string, env: 
     customMetadata: { updatedAt: group.updatedAt }
   });
   
-  // Remove group from user's groups
-  user.groups = user.groups.filter(id => id !== groupId);
+  // Ensure user.groups exists before filtering
+  if (!user.groups) {
+    user.groups = [];
+  } else {
+    // Remove group from user's groups
+    user.groups = user.groups.filter(id => id !== groupId);
+  }
   
   await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: user.id }
   });
+  
+  return true;
+}
+
+// Delete a group
+export async function deleteGroup(groupId: string, env: Env): Promise<boolean> {
+  const group = await getGroup(groupId, env);
+  if (!group) return false;
+  
+  // Get all users who are members of this group
+  const users = await getAllUsers(env);
+  const groupMembers = users.filter(user => 
+    user.groups && user.groups.includes(groupId)
+  );
+  
+  // Remove the group from all users' groups arrays
+  for (const user of groupMembers) {
+    if (user.groups) {
+      user.groups = user.groups.filter(id => id !== groupId);
+      
+      await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
+        httpMetadata: { contentType: 'application/json' },
+        customMetadata: { userId: user.id }
+      });
+    }
+  }
+  
+  // Delete the group from R2
+  await env.R2.delete(`group:${groupId}`);
   
   return true;
 }
@@ -264,6 +307,11 @@ export async function canAccessGroup(userId: string, groupId: string, env: Env):
   if (!user) return false;
   
   if (user.userType === UserType.Admin) return true;
+  
+  // Ensure user.groups exists before checking
+  if (!user.groups) {
+    return false;
+  }
   
   // Check if user is a member of the group
   return user.groups.includes(groupId);

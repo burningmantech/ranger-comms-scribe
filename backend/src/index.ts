@@ -7,6 +7,7 @@ import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin } from './services/userService';
 import { setExistingContentPublic } from './migrations/setExistingContentPublic';
+import { ensureUserGroups } from './migrations/ensureUserGroups';
 
 declare global {
     interface Request {
@@ -48,6 +49,7 @@ const initializeApp = async (env: Env) => {
     
     // Run migrations
     await setExistingContentPublic(env);
+    await ensureUserGroups(env);
 };
 
 router
