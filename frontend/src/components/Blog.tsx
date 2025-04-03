@@ -1,53 +1,652 @@
 import React, { useEffect, useState } from 'react';
+import { API_URL } from '../config';
+import { BlogPost, BlogComment, User } from '../types';
+import Navbar from './Navbar';
+import { Link } from 'react-router-dom';
 
-const Blog: React.FC = () => {
-    const [posts, setPosts] = useState<any[]>([]);
+interface BlogProps {
+    isAdmin?: boolean;
+}
+
+const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
+    const [posts, setPosts] = useState<BlogPost[]>([]);
+    const [selectedPost, setSelectedPost] = useState<BlogPost | null>(null);
+    const [comments, setComments] = useState<BlogComment[]>([]);
+    const [newComment, setNewComment] = useState<string>('');
+    const [commentStatus, setCommentStatus] = useState<{ success: boolean; message: string } | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
+    const [user, setUser] = useState<User | null>(null);
+    const [showNewPostForm, setShowNewPostForm] = useState<boolean>(false);
+    const [newPost, setNewPost] = useState<{ title: string; content: string; commentsEnabled: boolean }>({
+        title: '',
+        content: '',
+        commentsEnabled: true
+    });
+    const [postStatus, setPostStatus] = useState<{ success: boolean; message: string } | null>(null);
+    const [editingPost, setEditingPost] = useState<BlogPost | null>(null);
 
     useEffect(() => {
-        const fetchPosts = async () => {
+        // Check if user is logged in
+        const userJson = localStorage.getItem('user');
+        if (userJson) {
             try {
-                const response = await fetch('https://api.dancingcats.org/blog');
-                if (!response.ok) {
-                    throw new Error('Failed to fetch posts');
-                }
-                const data = await response.json();
-                setPosts(data);
+                const userData = JSON.parse(userJson);
+                setUser(userData);
             } catch (err) {
-                if (err instanceof Error) {
-                    setError(err.message);
-                } else {
-                    setError('An unknown error occurred');
-                }
-            } finally {
-                setLoading(false);
+                console.error('Error parsing user data:', err);
             }
-        };
+        }
 
         fetchPosts();
     }, []);
 
-    if (loading) {
+    const fetchPosts = async () => {
+        try {
+            setLoading(true);
+            const response = await fetch(`${API_URL}/blog`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch posts: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            setPosts(data);
+        } catch (err) {
+            console.error('Error fetching posts:', err);
+            if (err instanceof Error) {
+                setError(err.message);
+            } else {
+                setError('An unknown error occurred');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchComments = async (postId: string) => {
+        try {
+            const response = await fetch(`${API_URL}/blog/${postId}/comments`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch comments: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            setComments(data);
+        } catch (err) {
+            console.error('Error fetching comments:', err);
+            setComments([]);
+        }
+    };
+
+    const handlePostClick = async (post: BlogPost) => {
+        setSelectedPost(post);
+        await fetchComments(post.id);
+    };
+
+    const handleCommentSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        if (!selectedPost || !newComment.trim() || !user) {
+            setCommentStatus({
+                success: false,
+                message: 'Please enter a comment and make sure you are logged in'
+            });
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_URL}/blog/${selectedPost.id}/comments`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+                body: JSON.stringify({ content: newComment }),
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok) {
+                setCommentStatus({
+                    success: true,
+                    message: 'Comment added successfully'
+                });
+                
+                // Add the new comment to the list
+                if (result.comment) {
+                    setComments([...comments, result.comment]);
+                }
+                
+                // Clear the comment form
+                setNewComment('');
+            } else {
+                setCommentStatus({
+                    success: false,
+                    message: result.message || 'Failed to add comment'
+                });
+            }
+        } catch (err) {
+            console.error('Error adding comment:', err);
+            setCommentStatus({
+                success: false,
+                message: 'An error occurred while adding the comment'
+            });
+        }
+    };
+
+    const handleDeleteComment = async (commentId: string) => {
+        if (!selectedPost || !isAdmin) return;
+        
+        try {
+            const response = await fetch(`${API_URL}/blog/${selectedPost.id}/comments/${commentId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (response.ok) {
+                // Remove the deleted comment from the list
+                setComments(comments.filter(comment => comment.id !== commentId));
+                
+                setCommentStatus({
+                    success: true,
+                    message: 'Comment deleted successfully'
+                });
+            } else {
+                const result = await response.json();
+                setCommentStatus({
+                    success: false,
+                    message: result.message || 'Failed to delete comment'
+                });
+            }
+        } catch (err) {
+            console.error('Error deleting comment:', err);
+            setCommentStatus({
+                success: false,
+                message: 'An error occurred while deleting the comment'
+            });
+        }
+    };
+
+    const handleBlockUser = async (userId: string) => {
+        if (!isAdmin) return;
+        
+        try {
+            const response = await fetch(`${API_URL}/blog/block-user/${userId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+                body: JSON.stringify({ reason: 'Inappropriate comments' }),
+            });
+            
+            if (response.ok) {
+                setCommentStatus({
+                    success: true,
+                    message: 'User blocked successfully'
+                });
+                
+                // Refresh comments to show the changes
+                if (selectedPost) {
+                    await fetchComments(selectedPost.id);
+                }
+            } else {
+                const result = await response.json();
+                setCommentStatus({
+                    success: false,
+                    message: result.message || 'Failed to block user'
+                });
+            }
+        } catch (err) {
+            console.error('Error blocking user:', err);
+            setCommentStatus({
+                success: false,
+                message: 'An error occurred while blocking the user'
+            });
+        }
+    };
+
+    const handleNewPostSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        if (!newPost.title.trim() || !newPost.content.trim() || !isAdmin) {
+            setPostStatus({
+                success: false,
+                message: 'Please enter a title and content'
+            });
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_URL}/blog`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+                body: JSON.stringify({
+                    title: newPost.title,
+                    content: newPost.content,
+                    published: true,
+                    commentsEnabled: newPost.commentsEnabled
+                }),
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok) {
+                setPostStatus({
+                    success: true,
+                    message: 'Post created successfully'
+                });
+                
+                // Add the new post to the list
+                if (result.post) {
+                    setPosts([result.post, ...posts]);
+                }
+                
+                // Clear the form and hide it
+                setNewPost({
+                    title: '',
+                    content: '',
+                    commentsEnabled: true
+                });
+                setShowNewPostForm(false);
+            } else {
+                setPostStatus({
+                    success: false,
+                    message: result.message || 'Failed to create post'
+                });
+            }
+        } catch (err) {
+            console.error('Error creating post:', err);
+            setPostStatus({
+                success: false,
+                message: 'An error occurred while creating the post'
+            });
+        }
+    };
+
+    const handleEditPost = (post: BlogPost) => {
+        setEditingPost(post);
+        setNewPost({
+            title: post.title,
+            content: post.content,
+            commentsEnabled: post.commentsEnabled
+        });
+        setShowNewPostForm(true);
+    };
+
+    const handleUpdatePost = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        if (!editingPost || !newPost.title.trim() || !newPost.content.trim() || !isAdmin) {
+            setPostStatus({
+                success: false,
+                message: 'Please enter a title and content'
+            });
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_URL}/blog/${editingPost.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+                body: JSON.stringify({
+                    title: newPost.title,
+                    content: newPost.content,
+                    commentsEnabled: newPost.commentsEnabled
+                }),
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok) {
+                setPostStatus({
+                    success: true,
+                    message: 'Post updated successfully'
+                });
+                
+                // Update the post in the list
+                if (result.post) {
+                    setPosts(posts.map(p => p.id === editingPost.id ? result.post : p));
+                    
+                    // If this is the selected post, update it
+                    if (selectedPost && selectedPost.id === editingPost.id) {
+                        setSelectedPost(result.post);
+                    }
+                }
+                
+                // Clear the form and hide it
+                setNewPost({
+                    title: '',
+                    content: '',
+                    commentsEnabled: true
+                });
+                setEditingPost(null);
+                setShowNewPostForm(false);
+            } else {
+                setPostStatus({
+                    success: false,
+                    message: result.message || 'Failed to update post'
+                });
+            }
+        } catch (err) {
+            console.error('Error updating post:', err);
+            setPostStatus({
+                success: false,
+                message: 'An error occurred while updating the post'
+            });
+        }
+    };
+
+    const handleDeletePost = async (postId: string) => {
+        if (!isAdmin) return;
+        
+        try {
+            const response = await fetch(`${API_URL}/blog/${postId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (response.ok) {
+                // Remove the deleted post from the list
+                setPosts(posts.filter(post => post.id !== postId));
+                
+                // If this is the selected post, clear it
+                if (selectedPost && selectedPost.id === postId) {
+                    setSelectedPost(null);
+                    setComments([]);
+                }
+                
+                setPostStatus({
+                    success: true,
+                    message: 'Post deleted successfully'
+                });
+            } else {
+                const result = await response.json();
+                setPostStatus({
+                    success: false,
+                    message: result.message || 'Failed to delete post'
+                });
+            }
+        } catch (err) {
+            console.error('Error deleting post:', err);
+            setPostStatus({
+                success: false,
+                message: 'An error occurred while deleting the post'
+            });
+        }
+    };
+
+    const toggleCommentsForPost = async (post: BlogPost) => {
+        if (!isAdmin) return;
+        
+        try {
+            const response = await fetch(`${API_URL}/blog/${post.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+                body: JSON.stringify({
+                    commentsEnabled: !post.commentsEnabled
+                }),
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok) {
+                // Update the post in the list
+                if (result.post) {
+                    setPosts(posts.map(p => p.id === post.id ? result.post : p));
+                    
+                    // If this is the selected post, update it
+                    if (selectedPost && selectedPost.id === post.id) {
+                        setSelectedPost(result.post);
+                    }
+                }
+                
+                setPostStatus({
+                    success: true,
+                    message: `Comments ${post.commentsEnabled ? 'disabled' : 'enabled'} successfully`
+                });
+            } else {
+                setPostStatus({
+                    success: false,
+                    message: result.message || 'Failed to update post'
+                });
+            }
+        } catch (err) {
+            console.error('Error updating post:', err);
+            setPostStatus({
+                success: false,
+                message: 'An error occurred while updating the post'
+            });
+        }
+    };
+
+    if (loading && posts.length === 0) {
         return <div>Loading...</div>;
     }
 
-    if (error) {
-        return <div>Error: {error}</div>;
-    }
-
     return (
-        <div>
-            <h1>Blog Posts</h1>
-            <ul>
-                {posts.map((post) => (
-                    <li key={post.id}>
-                        <h2>{post.title}</h2>
-                        <p>{post.content}</p>
-                    </li>
-                ))}
-            </ul>
-        </div>
+        <>
+            <Navbar />
+            <div className="blog-container">
+                <div className="blog-header">
+                    <h1 className="blog-title">Blog</h1>
+                    {isAdmin && (
+                        <button 
+                            className="new-post-button"
+                            onClick={() => {
+                                setEditingPost(null);
+                                setNewPost({
+                                    title: '',
+                                    content: '',
+                                    commentsEnabled: true
+                                });
+                                setShowNewPostForm(!showNewPostForm);
+                            }}
+                        >
+                            {showNewPostForm ? 'Cancel' : 'New Post'}
+                        </button>
+                    )}
+                </div>
+
+                {error && <div className="error-message">{error}</div>}
+                
+                {postStatus && (
+                    <div className={postStatus.success ? 'success-message' : 'error-message'}>
+                        {postStatus.message}
+                    </div>
+                )}
+
+                {showNewPostForm && isAdmin && (
+                    <form className="post-form" onSubmit={editingPost ? handleUpdatePost : handleNewPostSubmit}>
+                        <h2>{editingPost ? 'Edit Post' : 'New Post'}</h2>
+                        <div className="form-group">
+                            <label htmlFor="post-title">Title:</label>
+                            <input
+                                id="post-title"
+                                type="text"
+                                value={newPost.title}
+                                onChange={(e) => setNewPost({...newPost, title: e.target.value})}
+                                required
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label htmlFor="post-content">Content:</label>
+                            <textarea
+                                id="post-content"
+                                value={newPost.content}
+                                onChange={(e) => setNewPost({...newPost, content: e.target.value})}
+                                rows={10}
+                                required
+                            />
+                        </div>
+                        <div className="form-group checkbox-group">
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked={newPost.commentsEnabled}
+                                    onChange={(e) => setNewPost({...newPost, commentsEnabled: e.target.checked})}
+                                />
+                                Enable comments
+                            </label>
+                        </div>
+                        <button type="submit" className="submit-button">
+                            {editingPost ? 'Update Post' : 'Create Post'}
+                        </button>
+                    </form>
+                )}
+
+                <div className="blog-content">
+                    <div className="posts-list">
+                        <h2>Posts</h2>
+                        {posts.length === 0 ? (
+                            <p>No posts available.</p>
+                        ) : (
+                            <ul>
+                                {posts.map((post) => (
+                                    <li 
+                                        key={post.id} 
+                                        className={`post-item ${selectedPost?.id === post.id ? 'selected' : ''}`}
+                                        onClick={() => handlePostClick(post)}
+                                    >
+                                        <h3>{post.title}</h3>
+                                        <p className="post-meta">
+                                            By {post.author} on {new Date(post.createdAt).toLocaleDateString()}
+                                        </p>
+                                        {isAdmin && (
+                                            <div className="post-admin-controls">
+                                                <button onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleEditPost(post);
+                                                }}>
+                                                    Edit
+                                                </button>
+                                                <button onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (window.confirm(`Are you sure you want to delete "${post.title}"?`)) {
+                                                        handleDeletePost(post.id);
+                                                    }
+                                                }}>
+                                                    Delete
+                                                </button>
+                                                <button onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleCommentsForPost(post);
+                                                }}>
+                                                    {post.commentsEnabled ? 'Disable Comments' : 'Enable Comments'}
+                                                </button>
+                                            </div>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+
+                    {selectedPost && (
+                        <div className="post-detail">
+                            <h2>{selectedPost.title}</h2>
+                            <p className="post-meta">
+                                By {selectedPost.author} on {new Date(selectedPost.createdAt).toLocaleDateString()}
+                                {selectedPost.updatedAt !== selectedPost.createdAt && 
+                                    ` (Updated: ${new Date(selectedPost.updatedAt).toLocaleDateString()})`}
+                            </p>
+                            <div className="post-content">
+                                {selectedPost.content.split('\n').map((paragraph, index) => (
+                                    <p key={index}>{paragraph}</p>
+                                ))}
+                            </div>
+
+                            <div className="comments-section">
+                                <h3>Comments</h3>
+                                
+                                {commentStatus && (
+                                    <div className={commentStatus.success ? 'success-message' : 'error-message'}>
+                                        {commentStatus.message}
+                                    </div>
+                                )}
+                                
+                                {selectedPost.commentsEnabled ? (
+                                    <>
+                                        {user ? (
+                                            <form className="comment-form" onSubmit={handleCommentSubmit}>
+                                                <textarea
+                                                    value={newComment}
+                                                    onChange={(e) => setNewComment(e.target.value)}
+                                                    placeholder="Write a comment..."
+                                                    rows={3}
+                                                    required
+                                                />
+                                                <button type="submit">Post Comment</button>
+                                            </form>
+                                        ) : (
+                                            <p className="login-prompt">
+                                                Please <Link to="/">log in</Link> to comment.
+                                            </p>
+                                        )}
+                                        
+                                        {comments.length === 0 ? (
+                                            <p>No comments yet.</p>
+                                        ) : (
+                                            <ul className="comments-list">
+                                                {comments.map((comment) => (
+                                                    <li key={comment.id} className="comment-item">
+                                                        <p className="comment-meta">
+                                                            {comment.author} on {new Date(comment.createdAt).toLocaleDateString()}
+                                                        </p>
+                                                        <p className="comment-content">{comment.content}</p>
+                                                        {isAdmin && (
+                                                            <div className="comment-admin-controls">
+                                                                <button onClick={() => handleDeleteComment(comment.id)}>
+                                                                    Delete
+                                                                </button>
+                                                                <button onClick={() => handleBlockUser(comment.authorId)}>
+                                                                    Block User
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </>
+                                ) : (
+                                    <p>Comments are disabled for this post.</p>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </>
     );
 };
 

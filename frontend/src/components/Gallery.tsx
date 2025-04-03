@@ -2,6 +2,7 @@ import { API_URL } from '../config';
 import React, { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MediaItem } from '../types';
+import Navbar from './Navbar';
 
 interface GalleryProps {
     isAdmin?: boolean;
@@ -12,6 +13,8 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
+    const [deleteConfirmation, setDeleteConfirmation] = useState<MediaItem | null>(null);
+    const [deleteStatus, setDeleteStatus] = useState<{ success: boolean; message: string } | null>(null);
     const [showUploadForm, setShowUploadForm] = useState<boolean>(false);
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
@@ -219,8 +222,53 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
         setSelectedMedia(null);
     };
 
-    const goToHome = () => {
-        navigate('/');
+    const handleDeleteClick = (item: MediaItem, e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent opening the modal
+        setDeleteConfirmation(item);
+    };
+    
+    const confirmDelete = async () => {
+        if (!deleteConfirmation) return;
+        
+        try {
+            const response = await fetch(`${API_URL}/gallery/${deleteConfirmation.fileName}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok) {
+                setDeleteStatus({
+                    success: true,
+                    message: 'Media deleted successfully'
+                });
+                
+                // Remove the deleted item from the media list
+                setMedia(media.filter(item => item.id !== deleteConfirmation.id));
+                
+                // Close the confirmation dialog
+                setDeleteConfirmation(null);
+            } else {
+                setDeleteStatus({
+                    success: false,
+                    message: result.message || 'Failed to delete media'
+                });
+            }
+        } catch (error) {
+            console.error('Error deleting media:', error);
+            setDeleteStatus({
+                success: false,
+                message: 'An error occurred while deleting the media'
+            });
+        }
+    };
+    
+    const cancelDelete = () => {
+        setDeleteConfirmation(null);
     };
 
     if (loading) {
@@ -261,11 +309,11 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
 
     return (
         <>
+            <Navbar />
             <div className="gallery-container">
                 <div className="gallery-header">
                     <h1 className="gallery-title">Gallery</h1>
                     <div className="gallery-nav">
-                        <button onClick={goToHome}>Home</button>
                         {isAdmin && (
                             <button onClick={() => setShowUploadForm(!showUploadForm)}>
                                 {showUploadForm ? 'Cancel Upload' : 'Upload Media'}
@@ -348,6 +396,14 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                                     <p className="media-date">
                                         {new Date(item.uploadedAt).toLocaleDateString()}
                                     </p>
+                                    {isAdmin && (
+                                        <button 
+                                            className="delete-button"
+                                            onClick={(e) => handleDeleteClick(item, e)}
+                                        >
+                                            Delete
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         ))
@@ -367,6 +423,37 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                                 </video>
                             ) : (
                                 <div>Unsupported media type</div>
+                            )}
+                        </div>
+                    </div>
+                )}
+                
+                {deleteConfirmation && (
+                    <div className="modal delete-confirmation-modal">
+                        <div className="delete-confirmation-content">
+                            <h3>Confirm Deletion</h3>
+                            <p>Are you sure you want to delete "{deleteConfirmation.fileName}"?</p>
+                            <p>This action cannot be undone.</p>
+                            
+                            <div className="delete-confirmation-buttons">
+                                <button 
+                                    className="cancel-button"
+                                    onClick={cancelDelete}
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    className="confirm-button"
+                                    onClick={confirmDelete}
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                            
+                            {deleteStatus && (
+                                <div className={deleteStatus.success ? 'success-message' : 'error-message'}>
+                                    {deleteStatus.message}
+                                </div>
                             )}
                         </div>
                     </div>

@@ -1,5 +1,5 @@
 import { AutoRouter, IRequest } from 'itty-router';
-import { getMedia, uploadMedia, isUserAdmin } from '../services/mediaService';
+import { getMedia, uploadMedia, deleteMedia, isUserAdmin } from '../services/mediaService';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { MediaItem } from '../types';
@@ -106,6 +106,29 @@ router.get('/:id/thumbnail', async (request: ExtendedRequest, env: Env) => {
     } catch (error) {
         console.error('Error fetching thumbnail:', error);
         return json({ error: 'Error fetching thumbnail' }, { status: 500 });
+    }
+});
+
+// Handler to delete a media item
+router.delete('/:id', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
+    try {
+        console.log('DELETE /gallery/:id called');
+        const id = request.params.id;
+        const mediaKey = `gallery/${id}`;
+        
+        const result = await deleteMedia(mediaKey, env);
+        
+        if (result.success) {
+            return json(result);
+        } else {
+            return json(result, { status: 404 });
+        }
+    } catch (error) {
+        console.error('Error deleting media:', error);
+        return json({ 
+            error: 'Error deleting media',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 });
     }
 });
 

@@ -10,7 +10,7 @@ export const getMedia = async (env: Env): Promise<MediaItem[]> => {
         // Create a list of promises to get each object's metadata
         const mediaPromises = objects.objects.map(async (object) => {
             // Skip thumbnail files when listing (they'll be included with their main file)
-            if (object.key.includes('_thumbnail')) {
+            if (object.key.includes('thumbnails')) {
                 return null;
             }
             
@@ -151,6 +151,51 @@ export const uploadMedia = async (
         return { 
             success: false, 
             message: error instanceof Error ? error.message : 'Unknown error occurred during upload' 
+        };
+    }
+};
+
+// Delete a media item from R2
+export const deleteMedia = async (
+    mediaId: string,
+    env: Env
+): Promise<{ success: boolean; message: string }> => {
+    try {
+        // Check if the media exists
+        const mediaKey = mediaId;
+        const mediaExists = await env.R2.head(mediaKey);
+        
+        if (!mediaExists) {
+            return { 
+                success: false, 
+                message: 'Media not found' 
+            };
+        }
+        
+        // Delete the media file
+        await env.R2.delete(mediaKey);
+        
+        // Check if a thumbnail exists and delete it too
+        const thumbnailKey = mediaKey.replace('gallery/', 'gallery/thumbnails/');
+        try {
+            const thumbnailExists = await env.R2.head(thumbnailKey);
+            if (thumbnailExists) {
+                await env.R2.delete(thumbnailKey);
+            }
+        } catch (error) {
+            // Thumbnail doesn't exist or couldn't be deleted
+            console.warn('Could not delete thumbnail:', error);
+        }
+        
+        return { 
+            success: true, 
+            message: 'Media deleted successfully' 
+        };
+    } catch (error) {
+        console.error('Error deleting media from R2:', error);
+        return { 
+            success: false, 
+            message: error instanceof Error ? error.message : 'Unknown error occurred during deletion' 
         };
     }
 };
