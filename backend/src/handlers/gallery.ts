@@ -53,7 +53,8 @@ router.post('/upload', withAdminCheck, async (request: ExtendedRequest, env: Env
         }
         
         // Get group information from form data
-        const isPublic = formData.get('isPublic') !== 'false'; // Default to true
+        const isPublicValue = formData.get('isPublic');
+        const isPublic = isPublicValue === 'true' || isPublicValue !== 'false'; // Default to true
         const groupId = formData.get('groupId') as string | null;
         
         const result = await uploadMedia(mediaFile, thumbnailFile, request.user, env, isPublic, groupId || undefined);
@@ -126,7 +127,7 @@ router.get('/:id/thumbnail', async (request: ExtendedRequest, env: Env) => {
         const id = request.params.id;
         const mediaKey = `gallery/${id}`;
         const thumbnailKey = `gallery/thumbnails/${id}`;
-        const userId = request.userid;
+        const userId = request.userId;
         
         // First check if the media exists
         const mediaObject = await env.R2.head(mediaKey);

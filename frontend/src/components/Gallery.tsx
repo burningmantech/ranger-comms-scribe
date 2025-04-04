@@ -1,8 +1,9 @@
 import { API_URL } from '../config';
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MediaItem, Group } from '../types';
 import Navbar from './Navbar';
+import './Gallery.css';
 
 interface GalleryProps {
     isAdmin?: boolean;
@@ -14,20 +15,55 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
+    const [fetchedImageData, setFetchedImageData] = useState<string | null>(null);
+    const [fetchingImage, setFetchingImage] = useState<boolean>(false);
+    const [fetchError, setFetchError] = useState<string | null>(null);
     const [deleteConfirmation, setDeleteConfirmation] = useState<MediaItem | null>(null);
     const [deleteStatus, setDeleteStatus] = useState<{ success: boolean; message: string } | null>(null);
     const [showUploadForm, setShowUploadForm] = useState<boolean>(false);
-    const [uploadFile, setUploadFile] = useState<File | null>(null);
-    const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
-    const [uploadPreview, setUploadPreview] = useState<string | null>(null);
-    const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
+    const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+    const [thumbnailFiles, setThumbnailFiles] = useState<(File | null)[]>([]);
+    const [uploadPreviews, setUploadPreviews] = useState<string[]>([]);
+    const [thumbnailPreviews, setThumbnailPreviews] = useState<string[]>([]);
+    const [bulkUploadGroupId, setBulkUploadGroupId] = useState<string>('');
+    const [bulkUploadIsPublic, setBulkUploadIsPublic] = useState<boolean>(true);
     const [uploadStatus, setUploadStatus] = useState<{ success: boolean; message: string } | null>(null);
+    const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; percent: number } | null>(null);
     const [editingMediaId, setEditingMediaId] = useState<string | null>(null);
     const [selectedGroupId, setSelectedGroupId] = useState<string>('');
     const [isPublic, setIsPublic] = useState<boolean>(true);
+    const [authenticatedThumbnails, setAuthenticatedThumbnails] = useState<Record<string, string>>({});
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const navigate = useNavigate();
+
+    // Function to fetch a thumbnail with authentication
+    const fetchThumbnailWithAuth = useCallback(async (item: MediaItem) => {
+        if (!item.thumbnailUrl) return;
+        
+        try {
+            const response = await fetch(item.thumbnailUrl, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch thumbnail: ${response.status}`);
+            }
+            
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            
+            setAuthenticatedThumbnails(prev => ({
+                ...prev,
+                [item.id]: objectUrl
+            }));
+        } catch (error) {
+            console.error(`Error fetching thumbnail for ${item.fileName}:`, error);
+        }
+    }, []);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -67,16 +103,64 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                         setGroups(groupsData.groups);
                     }
                 }
+                
+                // Set loading to false after fetching the main data
+                setLoading(false);
+                
+                // Now load thumbnails asynchronously
+                setTimeout(() => {
+                    loadThumbnailsAsync(mediaData);
+                }, 100); // Small delay to ensure the page renders first
+                
             } catch (error) {
                 console.error('Error fetching data:', error);
                 setError('Failed to load gallery items. Please try again later.');
-            } finally {
                 setLoading(false);
             }
         };
 
         fetchData();
     }, [isAdmin]);
+    
+    // Function to load thumbnails asynchronously
+    const loadThumbnailsAsync = useCallback((mediaItems: MediaItem[]) => {
+        // Create a queue of items to load thumbnails for
+        const queue = [...mediaItems].filter(item => item.thumbnailUrl);
+        
+        // Process thumbnails in batches to avoid overwhelming the browser
+        const processBatch = async (startIndex: number, batchSize: number) => {
+            const endIndex = Math.min(startIndex + batchSize, queue.length);
+            const batch = queue.slice(startIndex, endIndex);
+            
+            // Load thumbnails for this batch in parallel
+            await Promise.all(
+                batch.map(item => fetchThumbnailWithAuth(item))
+            );
+            
+            // If there are more items, process the next batch
+            if (endIndex < queue.length) {
+                // Use setTimeout to give the browser a chance to breathe
+                setTimeout(() => {
+                    processBatch(endIndex, batchSize);
+                }, 50);
+            }
+        };
+        
+        // Start processing with a reasonable batch size
+        if (queue.length > 0) {
+            processBatch(0, 5);
+        }
+    }, [fetchThumbnailWithAuth]);
+    
+    // Clean up object URLs when component unmounts
+    useEffect(() => {
+        return () => {
+            // Clean up authenticated thumbnail object URLs
+            Object.values(authenticatedThumbnails).forEach(url => {
+                URL.revokeObjectURL(url);
+            });
+        };
+    }, [authenticatedThumbnails]);
     
     const updateMediaGroup = async (mediaId: string, isPublic: boolean, groupId?: string) => {
         try {
@@ -129,20 +213,25 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     };
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
         
-        setUploadFile(file);
+        // Convert FileList to array
+        const filesArray = Array.from(files);
+        setUploadFiles(filesArray);
         
-        // Create a preview URL for the file
-        const previewUrl = URL.createObjectURL(file);
-        setUploadPreview(previewUrl);
+        // Create preview URLs for the files
+        const previewUrls = filesArray.map(file => URL.createObjectURL(file));
+        setUploadPreviews(previewUrls);
         
-        // Generate a thumbnail for the file
-        generateThumbnail(file);
+        // Initialize thumbnailFiles array with nulls for each file
+        setThumbnailFiles(new Array(filesArray.length).fill(null));
+        
+        // Generate thumbnails for each file
+        filesArray.forEach((file, index) => generateThumbnail(file, index));
     };
     
-    const generateThumbnail = async (file: File) => {
+    const generateThumbnail = async (file: File, fileIndex: number) => {
         if (file.type.startsWith('image/')) {
             // For images, create a smaller version
             const canvas = document.createElement('canvas');
@@ -182,8 +271,19 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                             lastModified: Date.now()
                         });
                         
-                        setThumbnailFile(thumbnailFile);
-                        setThumbnailPreview(canvas.toDataURL('image/jpeg'));
+                        // Update thumbnailFiles array at the specific index
+                        setThumbnailFiles(prev => {
+                            const newArray = [...prev];
+                            newArray[fileIndex] = thumbnailFile;
+                            return newArray;
+                        });
+                        
+                        // Update thumbnailPreviews array at the specific index
+                        setThumbnailPreviews(prev => {
+                            const newArray = [...prev];
+                            newArray[fileIndex] = canvas.toDataURL('image/jpeg');
+                            return newArray;
+                        });
                     }
                 }, 'image/jpeg', 0.8);
             };
@@ -214,8 +314,19 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                             lastModified: Date.now()
                         });
                         
-                        setThumbnailFile(thumbnailFile);
-                        setThumbnailPreview(canvas.toDataURL('image/jpeg'));
+                        // Update thumbnailFiles array at the specific index
+                        setThumbnailFiles(prev => {
+                            const newArray = [...prev];
+                            newArray[fileIndex] = thumbnailFile;
+                            return newArray;
+                        });
+                        
+                        // Update thumbnailPreviews array at the specific index
+                        setThumbnailPreviews(prev => {
+                            const newArray = [...prev];
+                            newArray[fileIndex] = canvas.toDataURL('image/jpeg');
+                            return newArray;
+                        });
                     }
                 }, 'image/jpeg', 0.8);
             };
@@ -227,72 +338,178 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     const handleUpload = async (event: React.FormEvent) => {
         event.preventDefault();
         
-        if (!uploadFile || !thumbnailFile) {
+        if (uploadFiles.length === 0 || thumbnailFiles.length !== uploadFiles.length) {
             setUploadStatus({
                 success: false,
-                message: 'Please select a file and wait for the thumbnail to generate'
+                message: 'Please select files and wait for all thumbnails to generate'
             });
             return;
         }
         
-        const formData = new FormData();
-        formData.append('file', uploadFile);
-        formData.append('thumbnail', thumbnailFile);
+        // Check if any thumbnail is null
+        const missingThumbnails = thumbnailFiles.some(file => file === null);
+        if (missingThumbnails) {
+            setUploadStatus({
+                success: false,
+                message: 'Some thumbnails are still generating. Please wait.'
+            });
+            return;
+        }
+        
+        setUploadStatus({
+            success: true,
+            message: 'Preparing to upload files...'
+        });
+        
+        // Initialize progress tracking
+        setUploadProgress({
+            current: 0,
+            total: uploadFiles.length,
+            percent: 0
+        });
+        
+        const uploadedItems: MediaItem[] = [];
+        let failedUploads = 0;
+        
+        // Upload each file individually
+        for (let i = 0; i < uploadFiles.length; i++) {
+            // Update progress before starting each file
+            setUploadProgress({
+                current: i,
+                total: uploadFiles.length,
+                percent: Math.round((i / uploadFiles.length) * 100)
+            });
+            
+            setUploadStatus({
+                success: true,
+                message: `Uploading file ${i + 1} of ${uploadFiles.length}: ${uploadFiles[i].name}`
+            });
+            
+            const formData = new FormData();
+            formData.append('file', uploadFiles[i]);
+            
+            // We've already checked that no thumbnails are null, but TypeScript doesn't know that
+            // So we need to assert that the thumbnail is not null
+            const thumbnailFile = thumbnailFiles[i]!; // Non-null assertion
+            formData.append('thumbnail', thumbnailFile);
+            
+            // Add group information
+            formData.append('isPublic', bulkUploadIsPublic.toString());
+            if (!bulkUploadIsPublic && bulkUploadGroupId) {
+                formData.append('groupId', bulkUploadGroupId);
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/gallery/upload`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                    },
+                    body: formData,
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.mediaItem) {
+                    uploadedItems.push(result.mediaItem);
+                } else {
+                    console.error(`Failed to upload file ${uploadFiles[i].name}:`, result.message);
+                    failedUploads++;
+                }
+            } catch (error) {
+                console.error(`Error uploading file ${uploadFiles[i].name}:`, error);
+                failedUploads++;
+            }
+        }
+        
+        // Set final progress
+        setUploadProgress({
+            current: uploadFiles.length,
+            total: uploadFiles.length,
+            percent: 100
+        });
+        
+        // Update status based on results
+        if (failedUploads === 0) {
+            setUploadStatus({
+                success: true,
+                message: `Successfully uploaded ${uploadedItems.length} files!`
+            });
+        } else if (uploadedItems.length > 0) {
+            setUploadStatus({
+                success: true,
+                message: `Uploaded ${uploadedItems.length} files, but ${failedUploads} failed.`
+            });
+        } else {
+            setUploadStatus({
+                success: false,
+                message: 'Failed to upload any files.'
+            });
+        }
+        
+        // Reset form
+        setUploadFiles([]);
+        setThumbnailFiles([]);
+        setUploadPreviews([]);
+        setThumbnailPreviews([]);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+        
+        // Add the new media to the list
+        if (uploadedItems.length > 0) {
+            setMedia([...uploadedItems, ...media]);
+        }
+        
+        // Hide the upload form if all uploads were successful
+        if (failedUploads === 0) {
+            setShowUploadForm(false);
+        }
+    };
+
+    const fetchImageWithAuth = async (url: string) => {
+        setFetchingImage(true);
+        setFetchError(null);
+        setFetchedImageData(null);
         
         try {
-            const response = await fetch(`${API_URL}/gallery/upload`, {
-                method: 'POST',
+            const response = await fetch(url, {
+                method: 'GET',
                 headers: {
                     Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
                 },
-                body: formData,
             });
             
-            const result = await response.json();
-            
-            if (response.ok) {
-                setUploadStatus({
-                    success: true,
-                    message: 'File uploaded successfully!'
-                });
-                
-                // Reset form
-                setUploadFile(null);
-                setThumbnailFile(null);
-                setUploadPreview(null);
-                setThumbnailPreview(null);
-                if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                }
-                
-                // Add the new media to the list
-                if (result.mediaItem) {
-                    setMedia([result.mediaItem, ...media]);
-                }
-                
-                // Hide the upload form
-                setShowUploadForm(false);
-            } else {
-                setUploadStatus({
-                    success: false,
-                    message: result.message || 'Failed to upload file'
-                });
+            if (!response.ok) {
+                throw new Error(`Failed to fetch image: ${response.status}`);
             }
+            
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            setFetchedImageData(objectUrl);
         } catch (error) {
-            console.error('Error uploading file:', error);
-            setUploadStatus({
-                success: false,
-                message: 'An error occurred while uploading the file'
-            });
+            console.error('Error fetching image:', error);
+            setFetchError('Failed to load image. Please try again later.');
+        } finally {
+            setFetchingImage(false);
         }
     };
 
     const openModal = (item: MediaItem) => {
         setSelectedMedia(item);
+        // Fetch the image with authentication
+        if (item.url) {
+            fetchImageWithAuth(item.url);
+        }
     };
 
     const closeModal = () => {
         setSelectedMedia(null);
+        // Clean up any object URLs to prevent memory leaks
+        if (fetchedImageData) {
+            URL.revokeObjectURL(fetchedImageData);
+            setFetchedImageData(null);
+        }
     };
 
     const handleDeleteClick = (item: MediaItem, e: React.MouseEvent) => {
@@ -400,40 +617,69 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                 {showUploadForm && isAdmin && (
                     <form className="upload-form" onSubmit={handleUpload}>
                         <div className="form-group">
-                            <label htmlFor="file-upload">Select a file to upload:</label>
+                            <label htmlFor="file-upload">Select files to upload:</label>
                             <input
                                 id="file-upload"
                                 type="file"
                                 accept="image/*,video/*"
                                 onChange={handleFileChange}
                                 ref={fileInputRef}
+                                multiple
                                 required
                             />
                         </div>
+                        
+                        {/* Group selection for bulk upload */}
+                        <div className="form-group bulk-upload-options">
+                            <div className="visibility-option">
+                                <label>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={bulkUploadIsPublic}
+                                        onChange={(e) => setBulkUploadIsPublic(e.target.checked)}
+                                    />
+                                    Make files public
+                                </label>
+                            </div>
+                            
+                            {!bulkUploadIsPublic && (
+                                <div className="group-selection">
+                                    <label htmlFor="group-select">Select a group:</label>
+                                    <select 
+                                        id="group-select"
+                                        value={bulkUploadGroupId}
+                                        onChange={(e) => setBulkUploadGroupId(e.target.value)}
+                                        disabled={bulkUploadIsPublic}
+                                    >
+                                        <option value="">Select a group</option>
+                                        {groups.map(group => (
+                                            <option key={group.id} value={group.id}>
+                                                {group.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
 
-                        {(uploadPreview || thumbnailPreview) && (
+                        {uploadPreviews.length > 0 && (
                             <div className="upload-preview">
-                                {uploadPreview && (
-                                    <div className="preview-container">
-                                        <h3>Original</h3>
-                                        {uploadFile?.type.startsWith('image/') ? (
-                                            <img src={uploadPreview} alt="Upload preview" />
-                                        ) : (
-                                            <video width="200" controls>
-                                                <source src={uploadPreview} type={uploadFile?.type} />
-                                                Your browser does not support the video tag.
-                                            </video>
-                                        )}
-                                        <p>{uploadFile?.name}</p>
-                                    </div>
-                                )}
-
-                                {thumbnailPreview && (
-                                    <div className="preview-container">
-                                        <h3>Thumbnail</h3>
-                                        <img src={thumbnailPreview} alt="Thumbnail preview" />
-                                    </div>
-                                )}
+                                <h3>Selected Files ({uploadPreviews.length})</h3>
+                                <div className="preview-grid">
+                                    {uploadPreviews.map((preview, index) => (
+                                        <div key={index} className="preview-container">
+                                            {uploadFiles[index]?.type.startsWith('image/') ? (
+                                                <img src={preview} alt={`Upload preview ${index + 1}`} />
+                                            ) : (
+                                                <video width="100" controls>
+                                                    <source src={preview} type={uploadFiles[index]?.type} />
+                                                    Your browser does not support the video tag.
+                                                </video>
+                                            )}
+                                            <p className="file-name">{uploadFiles[index]?.name}</p>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
@@ -442,13 +688,27 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                                 {uploadStatus.message}
                             </div>
                         )}
+                        
+                        {uploadProgress && uploadProgress.total > 0 && (
+                            <div className="upload-progress">
+                                <div className="progress-text">
+                                    {uploadProgress.current} of {uploadProgress.total} files uploaded ({uploadProgress.percent}%)
+                                </div>
+                                <div className="progress-bar-container">
+                                    <div 
+                                        className="progress-bar" 
+                                        style={{ width: `${uploadProgress.percent}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+                        )}
 
                         <button 
                             type="submit" 
                             className="submit-button"
-                            disabled={!uploadFile || !thumbnailFile}
+                            disabled={uploadFiles.length === 0 || thumbnailFiles.length !== uploadFiles.length}
                         >
-                            Upload
+                            Upload {uploadFiles.length} {uploadFiles.length === 1 ? 'File' : 'Files'}
                         </button>
                     </form>
                 )}
@@ -459,10 +719,31 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                     ) : (
                         media.map(item => (
                             <div key={item.id} className="media-item" onClick={() => openModal(item)}>
+                                {/* Use authenticated thumbnail for non-public items, or direct URL for public items */}
                                 <img 
-                                    src={item.thumbnailUrl || item.url} 
+                                    src={
+                                        // Always use authenticated thumbnail if available
+                                        authenticatedThumbnails[item.id] || 
+                                        // Fallback to placeholder while we fetch the authenticated version
+                                        'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlPC90ZXh0Pjwvc3ZnPg=='
+                                    }
                                     alt={item.fileName}
-                                    className="media-thumbnail"
+                                    className={`media-thumbnail ${!authenticatedThumbnails[item.id] && item.thumbnailUrl ? 'media-thumbnail-loading' : ''}`}
+                                    onError={(e) => {
+                                        console.error(`Error loading thumbnail for ${item.fileName}`);
+                                        console.error(e);
+                                        // If we don't have an authenticated thumbnail yet and there's a thumbnail URL
+                                        if (!authenticatedThumbnails[item.id] && item.thumbnailUrl) {
+                                            // Try to fetch with authentication
+                                            fetchThumbnailWithAuth(item);
+                                        }
+                                        
+                                        // Show placeholder while fetching
+                                        (e.target as HTMLImageElement).src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlPC90ZXh0Pjwvc3ZnPg==';
+                                    }}
+                                    style={{
+                                        opacity: authenticatedThumbnails[item.id] ? 1 : 0.7
+                                    }}
                                 />
                                 <div className="media-info">
                                     <h3 className="media-name">{item.fileName}</h3>
@@ -562,11 +843,21 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                     <div className="modal" onClick={closeModal}>
                         <div className="modal-close">×</div>
                         <div className="modal-content" onClick={e => e.stopPropagation()}>
-                            {isImage(selectedMedia.fileType) ? (
-                                <img src={selectedMedia.url} alt={selectedMedia.fileName} />
-                            ) : isVideo(selectedMedia.fileType) ? (
+                            {fetchingImage ? (
+                                <div className="loading-indicator">Loading...</div>
+                            ) : fetchError ? (
+                                <div className="error-message">{fetchError}</div>
+                            ) : isImage(selectedMedia.fileType) ? (
+                                <img 
+                                    src={fetchedImageData || ''} 
+                                    alt={selectedMedia.fileName} 
+                                />
+                            ) : isVideo(selectedMedia.fileType) && fetchedImageData ? (
                                 <video controls>
-                                    <source src={selectedMedia.url} type={selectedMedia.fileType} />
+                                    <source 
+                                        src={fetchedImageData || ''} 
+                                        type={selectedMedia.fileType} 
+                                    />
                                     Your browser does not support the video tag.
                                 </video>
                             ) : (
@@ -575,6 +866,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                         </div>
                     </div>
                 )}
+                
                 
                 {deleteConfirmation && (
                     <div className="modal delete-confirmation-modal">

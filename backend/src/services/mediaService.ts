@@ -181,6 +181,8 @@ export const uploadMedia = async (
                 createdAt: new Date().toISOString(),
                 originalName: mediaFile.name,
                 fileSize: mediaFile.size.toString(),
+                isPublic: isPublic ? 'true' : 'false',
+                ...(groupId ? { groupId } : {})
             },
         });
         
