@@ -63,11 +63,16 @@
 }
 
 .move-button, .edit-button, .delete-button {
-  padding: 5px 10px;
+  padding: 8px 12px;
   border: none;
   border-radius: 3px;
   cursor: pointer;
   font-size: 14px;
+  height: 36px;
+  line-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .move-button {
@@ -132,6 +137,7 @@
 .checkbox-group {
   display: flex;
   align-items: center;
+  margin-bottom: 10px;
 }
 
 .checkbox-group label {
@@ -139,19 +145,28 @@
   align-items: center;
   font-weight: normal;
   margin-bottom: 0;
+  width: 100%;
 }
 
 .checkbox-group input[type="checkbox"] {
   margin-right: 8px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
-.create-button, .save-button, .cancel-button {
+.create-button, .save-button, .cancel-button, .create-home-button {
   padding: 8px 16px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
   margin-right: 10px;
+  height: 36px;
+  line-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .create-button, .save-button {

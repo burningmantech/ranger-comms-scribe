@@ -111,6 +111,7 @@ const Admin: React.FC = () => {
   const [showEmailDialog, setShowEmailDialog] = useState<boolean>(false);
   const [selectedGroup, setSelectedGroup] = useState<{id: string, name: string} | null>(null);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
+  const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [bulkUsers, setBulkUsers] = useState<BulkUserEntry[]>(Array(5).fill(null).map(() => ({ 
     name: '', 
     email: '', 
@@ -345,12 +346,19 @@ const Admin: React.FC = () => {
         throw new Error('Failed to add user to group');
       }
 
-  // Update the local state
-  setUsers(users.map(user => 
-    user.id === userId 
-      ? { ...user, groups: user.groups ? [...user.groups, groupId] : [groupId] } 
-      : user
-  ));
+      // Update the local state for users
+      setUsers(users.map(user => 
+        user.id === userId 
+          ? { ...user, groups: user.groups ? [...user.groups, groupId] : [groupId] } 
+          : user
+      ));
+      
+      // Update the local state for groups to show the new member immediately
+      setGroups(groups.map(group => 
+        group.id === groupId
+          ? { ...group, members: [...(group.members || []), userId] }
+          : group
+      ));
     } catch (err) {
       setError('Error adding user to group');
     }
@@ -707,12 +715,18 @@ const Admin: React.FC = () => {
             ) : (
               <div className="groups-container">
                 {groups.map(group => (
-                  <div key={group.id} className="group-card">
+                  <div 
+                    key={group.id} 
+                    className="group-card"
+                    onClick={() => setEditingGroup(group)}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <div className="group-header">
                       <h4>{group.name}</h4>
                       <div className="group-actions">
                         <button 
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent card click event
                             setSelectedGroup({ id: group.id, name: group.name });
                             setShowEmailDialog(true);
                           }}
@@ -721,7 +735,10 @@ const Admin: React.FC = () => {
                           Send Email
                         </button>
                         <button 
-                          onClick={() => deleteGroup(group.id)}
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent card click event
+                            deleteGroup(group.id);
+                          }}
                           className="delete-button"
                         >
                           Delete Group
@@ -868,6 +885,81 @@ const Admin: React.FC = () => {
       
       {activeTab === AdminTab.Pages && (
         <PageManagement />
+      )}
+      
+      {editingGroup && (
+        <div className="email-dialog-overlay">
+          <div className="email-dialog">
+            <div className="email-dialog-header">
+              <h3>Edit Group: {editingGroup.name}</h3>
+              <button className="close-button" onClick={() => setEditingGroup(null)}>×</button>
+            </div>
+            <div className="email-dialog-content">
+              <div className="form-group">
+                <label htmlFor="editGroupName">Group Name:</label>
+                <input 
+                  type="text" 
+                  id="editGroupName" 
+                  value={editingGroup.name}
+                  onChange={(e) => setEditingGroup({...editingGroup, name: e.target.value})}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="editGroupDescription">Description:</label>
+                <textarea 
+                  id="editGroupDescription" 
+                  value={editingGroup.description}
+                  onChange={(e) => setEditingGroup({...editingGroup, description: e.target.value})}
+                  rows={4}
+                />
+              </div>
+              <div className="group-members">
+                <h5>Members</h5>
+                <ul>
+                  {editingGroup.members && editingGroup.members.length > 0 ? editingGroup.members.map(memberId => {
+                    const member = users.find(u => u.id === memberId);
+                    return member ? (
+                      <li key={memberId}>
+                        {member.name} ({member.email})
+                        <button 
+                          onClick={() => removeUserFromGroup(memberId, editingGroup.id)}
+                          className="remove-button"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ) : null;
+                  }) : <li>No members</li>}
+                </ul>
+              </div>
+              <div className="add-member-form">
+                <h5>Add Member</h5>
+                <select 
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      addUserToGroup(e.target.value, editingGroup.id);
+                      e.target.value = ''; // Reset select after adding
+                    }
+                  }}
+                  defaultValue=""
+                >
+                  <option value="" disabled>Select a user</option>
+                  {users
+                    .filter(user => !editingGroup.members || !editingGroup.members.includes(user.id))
+                    .map(user => (
+                      <option key={user.id} value={user.id}>
+                        {user.name} ({user.email})
+                      </option>
+                    ))
+                  }
+                </select>
+              </div>
+            </div>
+            <div className="email-dialog-footer">
+              <button className="cancel-button" onClick={() => setEditingGroup(null)}>Close</button>
+            </div>
+          </div>
+        </div>
       )}
       {showEmailDialog && selectedGroup && (
         <EmailDialog 
