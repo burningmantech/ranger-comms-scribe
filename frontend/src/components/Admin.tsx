@@ -6,6 +6,7 @@ import Navbar from './Navbar';
 
 import { User, UserType, Group } from '../types';
 import { LogoutUserReact } from '../utils/userActions';
+import PageManagement from './PageManagement';
 
 // Extended User interface with required fields for admin panel
 interface AdminUser extends User {
@@ -27,7 +28,8 @@ interface BulkUserEntry {
 enum AdminTab {
   Users = 'users',
   Groups = 'groups',
-  BulkAdd = 'bulkAdd'
+  BulkAdd = 'bulkAdd',
+  Pages = 'pages'
 }
 
 // Email dialog interface
@@ -563,6 +565,12 @@ const Admin: React.FC = () => {
           >
             Bulk Add Users
           </button>
+          <button 
+            className={activeTab === AdminTab.Pages ? 'active' : ''} 
+            onClick={() => setActiveTab(AdminTab.Pages)}
+          >
+            Page Management
+          </button>
         </div>
         <div className="admin-actions">
           <Link to="/" className="home-button">Home</Link>
@@ -820,6 +828,10 @@ const Admin: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      
+      {activeTab === AdminTab.Pages && (
+        <PageManagement />
       )}
       {showEmailDialog && selectedGroup && (
         <EmailDialog 

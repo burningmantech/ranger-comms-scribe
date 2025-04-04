@@ -3,6 +3,7 @@ import { router as authRouter } from './handlers/auth';
 import { router as blogRouter } from './handlers/blog';
 import { router as galleryRouter } from './handlers/gallery';
 import { router as adminRouter } from './handlers/admin';
+import { router as pageRouter } from './handlers/page';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin } from './services/userService';
@@ -80,6 +81,8 @@ router
     .all('/blog/*', blogRouter.fetch) // Handle all blog routes
     .all('/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
     .all('/gallery/*', galleryRouter.fetch) // Handle all gallery routes
+    .all('/page/*', withOptionalSession) // Allow page to identify users with a session
+    .all('/page/*', pageRouter.fetch) // Handle all page routes
     .all('/admin/*', withValidSession) // Middleware to check session for admin routes
     .all('/admin/*', adminRouter.fetch) // Handle all admin routes
     

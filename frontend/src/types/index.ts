@@ -7,6 +7,21 @@ export enum UserType {
     Admin = 'Admin'
 }
 
+export interface Page {
+    id: string;
+    title: string;
+    slug: string;
+    content: string;
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
+    published: boolean;
+    isPublic: boolean;
+    groupId?: string; // Optional group ID if not public
+    order: number; // For ordering in navigation
+    showInNavigation: boolean; // Whether to show in main navigation
+}
+
 export interface User {
     email: string;
     name: string;
