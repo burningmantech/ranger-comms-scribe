@@ -29,7 +29,16 @@ export async function sendEmail(
 							Data: message.replace(/<br\s*[\/]?>/gi, "\n"),
 						},
 						Html: {
-							Data: '<body><div align="center" style="font-family:Calibri, Arial, Helvetica, sans-serif;"><table width="600" cellpadding="0" cellspacing="0" border="0" style="font-family:Calibri, Arial, Helvetica, sans-serif"><tr style="background-color:white;"><td><table width="600" cellpadding="0"><tr><td><h1>Dancing Cats</h1><p>' + message +'</p></td></tr></table></td></tr></table></div></body>',
+							Data: `
+							<body>
+								<div align="center" style="font-family:Calibri, Arial, Helvetica, sans-serif;">
+									<table width="600" cellpadding="0" cellspacing="0" border="0" style="font-family:Calibri, Arial, Helvetica, sans-serif">
+									<tr style="background-color:white;"><td><table width="600" cellpadding="0">
+									<tr>
+									<td>
+									<h1>Dancing Cats</h1>
+									<p>` + message.replace(/\n/g, '<br>') +`
+									</p></td></tr></table></td></tr></table></div></body>`,
 						}
 					}
 				},
