@@ -487,6 +487,14 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
             const blob = await response.blob();
             const objectUrl = URL.createObjectURL(blob);
             setFetchedImageData(objectUrl);
+            // Automatically play the video if it's a video file
+            if (selectedMedia && isVideo(selectedMedia.fileType)) {
+                const videoElement = document.querySelector('video');
+                if (videoElement) {
+                    videoElement.currentTime = 0; // Reset to the beginning
+                    videoElement.play(); // Start playing
+                }
+            }
         } catch (error) {
             console.error('Error fetching image:', error);
             setFetchError('Failed to load image. Please try again later.');
@@ -853,7 +861,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                                     alt={selectedMedia.fileName} 
                                 />
                             ) : isVideo(selectedMedia.fileType) && fetchedImageData ? (
-                                <video controls>
+                                <video controls autoPlay>
                                     <source 
                                         src={fetchedImageData || ''} 
                                         type={selectedMedia.fileType} 
