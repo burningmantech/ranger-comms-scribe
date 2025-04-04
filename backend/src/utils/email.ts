@@ -1,0 +1,47 @@
+import { AwsClient } from "aws4fetch";
+
+export async function sendEmail(
+	toEmail: string, 
+	subjectLine: string, 
+	message: string,
+	IAM_ACCESS_KEY: string, 
+	IAM_ACCESS_KEY_SECRET: string): Promise<number> {
+	const aws: AwsClient = new AwsClient({ accessKeyId: IAM_ACCESS_KEY, secretAccessKey: IAM_ACCESS_KEY_SECRET });
+	let resp = await aws.fetch('https://email.us-east-1.amazonaws.com/v2/email/outbound-emails', {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+		},
+		body: JSON.stringify({
+			Destination: 
+			{
+				ToAddresses: [ toEmail ],
+				BccAddresses: [ 'alexander.young@gmail.com' ],
+			},
+			FromEmailAddress: 'Dancing Cats <alex@dancingcats.org>',
+			Content: {
+				Simple: {
+					Subject: {
+						Data: subjectLine
+					},
+					Body: {
+						Text: {
+							Data: message.replace(/<br\s*[\/]?>/gi, "\n"),
+						},
+						Html: {
+							Data: '<body><div align="center" style="font-family:Calibri, Arial, Helvetica, sans-serif;"><table width="600" cellpadding="0" cellspacing="0" border="0" style="font-family:Calibri, Arial, Helvetica, sans-serif"><tr style="background-color:white;"><td><table width="600" cellpadding="0"><tr><td><h1>Dancing Cats</h1><p>' + message +'</p></td></tr></table></td></tr></table></div></body>',
+						}
+					}
+				},
+			},
+		}),
+	});
+
+	const respText = await resp.json();
+	console.log(resp.status + " " + resp.statusText);
+	console.log(respText);
+	if (resp.status != 200 && resp.status != 201) {
+		throw new Error('Error sending email: ' + resp.status + " " + resp.statusText + " " + respText);
+	}
+	return resp.status;
+}

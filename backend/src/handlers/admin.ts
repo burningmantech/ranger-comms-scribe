@@ -11,7 +11,8 @@ import {
   getGroup,
   addUserToGroup,
   removeUserFromGroup,
-  deleteGroup
+  deleteGroup,
+  createUser
 } from '../services/userService';
 import { sendEmail } from '../utils/email';
 import { UserType } from '../types';
@@ -238,6 +239,55 @@ router.post('/groups/:groupId/send-email', withAdminCheck, async (request: Reque
   return json({ 
     message: `Email sent to ${results.length} users in the group`,
     results
+  });
+});
+
+// Bulk create users
+router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: Env) => {
+  const body = await request.json() as { users: { name: string; email: string; approved: boolean }[] };
+  const { users } = body;
+
+  if (!users || !Array.isArray(users) || users.length === 0) {
+    return json({ error: 'Valid user entries are required' }, { status: 400 });
+  }
+
+  // Validate user entries
+  const validUsers = users.filter(user => user.name && user.email);
+  if (validUsers.length === 0) {
+    return json({ error: 'No valid user entries provided' }, { status: 400 });
+  }
+
+  // Create users
+  const createdUsers = [];
+  const errors = [];
+
+  for (const userEntry of validUsers) {
+    try {
+      // Create the user
+      const newUser = await createUser({
+        name: userEntry.name,
+        email: userEntry.email
+      }, env);
+
+      // Approve the user if requested
+      if (userEntry.approved && !newUser.approved) {
+        await approveUser(newUser.id, env);
+        newUser.approved = true;
+      }
+
+      createdUsers.push(newUser);
+    } catch (error) {
+      errors.push({
+        user: userEntry,
+        error: (error as Error).message
+      });
+    }
+  }
+
+  return json({
+    message: `Successfully created ${createdUsers.length} users`,
+    users: createdUsers,
+    errors: errors.length > 0 ? errors : undefined
   });
 });
 

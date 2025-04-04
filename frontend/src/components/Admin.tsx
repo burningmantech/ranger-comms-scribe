@@ -16,10 +16,18 @@ interface AdminUser extends User {
   groups: string[];
 }
 
+// Interface for bulk user entry
+interface BulkUserEntry {
+  name: string;
+  email: string;
+  approved: boolean;
+}
+
 // Admin panel tabs
 enum AdminTab {
   Users = 'users',
-  Groups = 'groups'
+  Groups = 'groups',
+  BulkAdd = 'bulkAdd'
 }
 
 // Email dialog interface
@@ -101,6 +109,12 @@ const Admin: React.FC = () => {
   const [showEmailDialog, setShowEmailDialog] = useState<boolean>(false);
   const [selectedGroup, setSelectedGroup] = useState<{id: string, name: string} | null>(null);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
+  const [bulkUsers, setBulkUsers] = useState<BulkUserEntry[]>(Array(5).fill(null).map(() => ({ 
+    name: '', 
+    email: '', 
+    approved: false 
+  })));
+  const [bulkAddStatus, setBulkAddStatus] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -432,6 +446,83 @@ const Admin: React.FC = () => {
     }
   };
 
+  // Handle bulk user entry updates
+  const updateBulkUserEntry = (index: number, field: keyof BulkUserEntry, value: string | boolean) => {
+    const updatedEntries = [...bulkUsers];
+    updatedEntries[index] = { 
+      ...updatedEntries[index], 
+      [field]: value 
+    };
+    setBulkUsers(updatedEntries);
+  };
+
+  // Add a new row to the bulk user entries
+  const addBulkUserRow = () => {
+    setBulkUsers([...bulkUsers, { name: '', email: '', approved: false }]);
+  };
+
+  // Remove a row from the bulk user entries
+  const removeBulkUserRow = (index: number) => {
+    const updatedEntries = [...bulkUsers];
+    updatedEntries.splice(index, 1);
+    setBulkUsers(updatedEntries);
+  };
+
+  // Submit bulk user creation
+  const submitBulkUsers = async () => {
+    // Validate entries
+    const validEntries = bulkUsers.filter(entry => entry.name.trim() && entry.email.trim());
+    
+    if (validEntries.length === 0) {
+      setBulkAddStatus('Error: No valid entries to submit');
+      return;
+    }
+
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+      navigate('/');
+      return;
+    }
+
+    try {
+      setBulkAddStatus('Creating users...');
+      const response = await fetch(`${API_URL}/admin/bulk-create-users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({ users: validEntries }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create users');
+      }
+
+      const data = await response.json();
+      
+      // Update the users list with the newly created users
+      setUsers([...users, ...data.users]);
+      
+      // Reset the form
+      setBulkUsers(Array(5).fill(null).map(() => ({ 
+        name: '', 
+        email: '', 
+        approved: false 
+      })));
+      
+      setBulkAddStatus(`Success: Created ${data.users.length} users`);
+      
+      // Clear success message after a few seconds
+      setTimeout(() => {
+        setBulkAddStatus(null);
+      }, 5000);
+    } catch (err) {
+      setBulkAddStatus(`Error: ${(err as Error).message}`);
+    }
+  };
+
   const handleLogout = () => {
     LogoutUserReact(navigate);
   };
@@ -465,6 +556,12 @@ const Admin: React.FC = () => {
             onClick={() => setActiveTab(AdminTab.Groups)}
           >
             Group Management
+          </button>
+          <button 
+            className={activeTab === AdminTab.BulkAdd ? 'active' : ''} 
+            onClick={() => setActiveTab(AdminTab.BulkAdd)}
+          >
+            Bulk Add Users
           </button>
         </div>
         <div className="admin-actions">
@@ -637,6 +734,90 @@ const Admin: React.FC = () => {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === AdminTab.BulkAdd && (
+        <div className="admin-section">
+          <h2>Bulk Add Users</h2>
+          
+          {bulkAddStatus && (
+            <div className={bulkAddStatus.startsWith('Error') ? 'error' : 'success-message'}>
+              {bulkAddStatus}
+            </div>
+          )}
+          
+          <div className="bulk-add-form">
+            <p>Add multiple users at once. Fill in the name and email for each user. Check the "Approve" box to automatically approve the user.</p>
+            
+            <div className="bulk-users-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Approve</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bulkUsers.map((user, index) => (
+                    <tr key={index}>
+                      <td>
+                        <input 
+                          type="text" 
+                          value={user.name}
+                          onChange={(e) => updateBulkUserEntry(index, 'name', e.target.value)}
+                          placeholder="Enter name"
+                        />
+                      </td>
+                      <td>
+                        <input 
+                          type="email" 
+                          value={user.email}
+                          onChange={(e) => updateBulkUserEntry(index, 'email', e.target.value)}
+                          placeholder="Enter email"
+                        />
+                      </td>
+                      <td className="approve-checkbox">
+                        <input 
+                          type="checkbox" 
+                          checked={user.approved}
+                          onChange={(e) => updateBulkUserEntry(index, 'approved', e.target.checked)}
+                        />
+                      </td>
+                      <td>
+                        <button 
+                          onClick={() => removeBulkUserRow(index)}
+                          className="remove-button"
+                          disabled={bulkUsers.length <= 1}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            <div className="bulk-add-actions">
+              <button 
+                onClick={addBulkUserRow}
+                className="add-row-button"
+              >
+                + Add Row
+              </button>
+              
+              <button 
+                onClick={submitBulkUsers}
+                className="submit-button"
+                disabled={bulkUsers.every(user => !user.name.trim() || !user.email.trim())}
+              >
+                Submit
+              </button>
+            </div>
           </div>
         </div>
       )}
