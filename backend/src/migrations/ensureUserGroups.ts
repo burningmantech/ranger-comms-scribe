@@ -10,7 +10,7 @@ export const ensureUserGroups = async (env: Env): Promise<void> => {
   
   try {
     // Get all users
-    const objects = await env.R2.list({ prefix: 'user:' });
+    const objects = await env.R2.list({ prefix: 'user/' });
     console.log(`Found ${objects.objects.length} users to check`);
     
     let updatedCount = 0;

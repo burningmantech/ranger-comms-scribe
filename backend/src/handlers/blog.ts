@@ -84,7 +84,7 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
         }
         
         // Get user name from session
-        const userKey = `user:${request.user}`;
+        const userKey = `user/${request.user}`;
         const userObject = await env.R2.get(userKey);
         let userName = 'Admin';
         
@@ -200,7 +200,7 @@ router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env
         }
         
         // Get user name from session
-        const userKey = `user:${request.user}`;
+        const userKey = `user/${request.user}`;
         const userObject = await env.R2.get(userKey);
         let userName = 'User';
         

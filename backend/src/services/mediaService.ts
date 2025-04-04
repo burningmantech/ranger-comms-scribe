@@ -282,7 +282,7 @@ export const deleteMedia = async (
 export const isUserAdmin = async (userId: string, env: Env): Promise<boolean> => {
     try {
         // Get the user's session
-        const userKey = `user:${userId}`;
+        const userKey = `user/${userId}`;
         const userObject = await env.R2.get(userKey);
         
         if (!userObject) {

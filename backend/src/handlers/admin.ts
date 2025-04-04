@@ -13,6 +13,7 @@ import {
   removeUserFromGroup,
   deleteGroup
 } from '../services/userService';
+import { sendEmail } from '../utils/email';
 import { UserType } from '../types';
 import { GetSession, Env } from '../utils/sessionManager';
 import { withAdminCheck } from '../authWrappers';
@@ -180,6 +181,64 @@ router.delete('/groups/:id', withAdminCheck, async (request: Request, env: Env) 
   }
 
   return json({ message: 'Group deleted successfully' });
+});
+
+// Send email to all users in a group
+router.post('/groups/:groupId/send-email', withAdminCheck, async (request: Request, env: Env) => {
+  const groupId = (request as any).params.groupId;
+  const body = await request.json() as { subject: string; message: string };
+  const { subject, message } = body;
+
+  if (!groupId) {
+    return json({ error: 'Group ID is required' }, { status: 400 });
+  }
+
+  if (!subject || !message) {
+    return json({ error: 'Subject and message are required' }, { status: 400 });
+  }
+
+  // Get the group
+  const group = await getGroup(groupId, env);
+  if (!group) {
+    return json({ error: 'Group not found' }, { status: 404 });
+  }
+
+  // Get all users in the group
+  const users = await getAllUsers(env);
+  const groupMembers = users.filter(user => 
+    group.members.includes(user.id)
+  );
+
+  if (groupMembers.length === 0) {
+    return json({ error: 'No users in this group' }, { status: 400 });
+  }
+
+  // Check if SES credentials are available
+  if (!env.SESKey || !env.SESSecret) {
+    return json({ error: 'Email service credentials not configured' }, { status: 500 });
+  }
+
+  // Send email to each user
+  const results = [];
+  for (const user of groupMembers) {
+    try {
+      const status = await sendEmail(
+        user.email, 
+        subject, 
+        message, 
+        env.SESKey, 
+        env.SESSecret
+      );
+      results.push({ email: user.email, status });
+    } catch (error) {
+      results.push({ email: user.email, error: (error as Error).message });
+    }
+  }
+
+  return json({ 
+    message: `Email sent to ${results.length} users in the group`,
+    results
+  });
 });
 
 // Check if current user is an admin

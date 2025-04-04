@@ -17,6 +17,7 @@
     "node": ">=14.0.0"
   },
   "dependencies": {
+    "aws4fetch": "^1.0.20",
     "google-auth-library": "^9.15.1",
     "itty-router": "^5.0.18",
     "itty-router-extras": "^0.4.6"

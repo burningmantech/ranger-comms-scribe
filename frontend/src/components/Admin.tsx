@@ -22,6 +22,73 @@ enum AdminTab {
   Groups = 'groups'
 }
 
+// Email dialog interface
+interface EmailDialogProps {
+  groupId: string;
+  groupName: string;
+  onClose: () => void;
+  onSend: (subject: string, message: string) => void;
+  status?: string | null;
+}
+
+// Email dialog component
+const EmailDialog: React.FC<EmailDialogProps> = ({ groupId, groupName, onClose, onSend, status }) => {
+  const [subject, setSubject] = useState<string>('');
+  const [message, setMessage] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSend = () => {
+    if (!subject.trim()) {
+      setError('Subject is required');
+      return;
+    }
+    if (!message.trim()) {
+      setError('Message is required');
+      return;
+    }
+    onSend(subject, message);
+  };
+
+  return (
+    <div className="email-dialog-overlay">
+      <div className="email-dialog">
+        <div className="email-dialog-header">
+          <h3>Send Email to {groupName}</h3>
+          <button className="close-button" onClick={onClose}>×</button>
+        </div>
+        <div className="email-dialog-content">
+          {error && <div className="error">{error}</div>}
+          {status && <div className={status.startsWith('Error') ? 'error' : 'success-message'}>{status}</div>}
+          <div className="form-group">
+            <label htmlFor="emailSubject">Subject:</label>
+            <input 
+              type="text" 
+              id="emailSubject" 
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="Enter email subject"
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="emailMessage">Message:</label>
+            <textarea 
+              id="emailMessage" 
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Enter email message"
+              rows={6}
+            />
+          </div>
+        </div>
+        <div className="email-dialog-footer">
+          <button className="cancel-button" onClick={onClose}>Cancel</button>
+          <button className="send-button" onClick={handleSend}>Send Email</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const Admin: React.FC = () => {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -31,6 +98,9 @@ const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>(AdminTab.Users);
   const [newGroupName, setNewGroupName] = useState<string>('');
   const [newGroupDescription, setNewGroupDescription] = useState<string>('');
+  const [showEmailDialog, setShowEmailDialog] = useState<boolean>(false);
+  const [selectedGroup, setSelectedGroup] = useState<{id: string, name: string} | null>(null);
+  const [emailStatus, setEmailStatus] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -499,12 +569,23 @@ const Admin: React.FC = () => {
                   <div key={group.id} className="group-card">
                     <div className="group-header">
                       <h4>{group.name}</h4>
-                      <button 
-                        onClick={() => deleteGroup(group.id)}
-                        className="delete-button"
-                      >
-                        Delete Group
-                      </button>
+                      <div className="group-actions">
+                        <button 
+                          onClick={() => {
+                            setSelectedGroup({ id: group.id, name: group.name });
+                            setShowEmailDialog(true);
+                          }}
+                          className="email-button"
+                        >
+                          Send Email
+                        </button>
+                        <button 
+                          onClick={() => deleteGroup(group.id)}
+                          className="delete-button"
+                        >
+                          Delete Group
+                        </button>
+                      </div>
                     </div>
                     <p>{group.description}</p>
                     <div className="group-details">
@@ -559,7 +640,52 @@ const Admin: React.FC = () => {
           </div>
         </div>
       )}
-      
+      {showEmailDialog && selectedGroup && (
+        <EmailDialog 
+          groupId={selectedGroup.id}
+          groupName={selectedGroup.name}
+          status={emailStatus}
+          onClose={() => {
+            setShowEmailDialog(false);
+            setSelectedGroup(null);
+            setEmailStatus(null);
+          }}
+          onSend={async (subject, message) => {
+            const sessionId = localStorage.getItem('sessionId');
+            if (!sessionId) {
+              navigate('/');
+              return;
+            }
+
+            try {
+              setEmailStatus('Sending emails...');
+              const response = await fetch(`${API_URL}/admin/groups/${selectedGroup.id}/send-email`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${sessionId}`,
+                },
+                body: JSON.stringify({ subject, message }),
+              });
+
+              const data = await response.json();
+              
+              if (!response.ok) {
+                throw new Error(data.error || 'Failed to send emails');
+              }
+
+              setEmailStatus(`Success: ${data.message}`);
+              setTimeout(() => {
+                setShowEmailDialog(false);
+                setSelectedGroup(null);
+                setEmailStatus(null);
+              }, 3000);
+            } catch (err) {
+              setEmailStatus(`Error: ${(err as Error).message}`);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -45,7 +45,7 @@ export async function approveUser(id: string, env: Env): Promise<User | null> {
   user.approved = true;
   
   // Update in R2
-  await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
+  await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: id }
   });
@@ -54,7 +54,7 @@ export async function approveUser(id: string, env: Env): Promise<User | null> {
 }
 
 export async function getAllUsers(env: Env): Promise<User[]> {
-  const objects = await env.R2.list({ prefix: 'user:' });
+  const objects = await env.R2.list({ prefix: 'user/' });
   const users: User[] = [];
   
   for (const object of objects.objects) {
@@ -76,7 +76,7 @@ export async function makeAdmin(id: string, env: Env): Promise<User | null> {
   user.userType = UserType.Admin;
   
   // Update in R2
-  await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
+  await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: id }
   });
@@ -100,7 +100,7 @@ export async function changeUserType(id: string, userType: UserType, env: Env): 
   }
   
   // Update in R2
-  await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
+  await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: id }
   });
@@ -138,7 +138,7 @@ export async function createGroup(
   };
   
   // Store in R2
-  await env.R2.put(`group:${id}`, JSON.stringify(newGroup), {
+  await env.R2.put(`group/${id}`, JSON.stringify(newGroup), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { createdBy: creatorId }
   });
@@ -150,7 +150,7 @@ export async function createGroup(
   
   // Add group to creator's groups
   creator.groups.push(id);
-  await env.R2.put(`user:${creator.email}`, JSON.stringify(creator), {
+  await env.R2.put(`user/${creator.email}`, JSON.stringify(creator), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: creatorId }
   });
@@ -160,7 +160,7 @@ export async function createGroup(
 
 // Get a group by ID
 export async function getGroup(id: string, env: Env): Promise<Group | null> {
-  const object = await env.R2.get(`group:${id}`);
+  const object = await env.R2.get(`group/${id}`);
   if (!object) return null;
   
   return await object.json() as Group;
@@ -168,7 +168,7 @@ export async function getGroup(id: string, env: Env): Promise<Group | null> {
 
 // Get all groups
 export async function getAllGroups(env: Env): Promise<Group[]> {
-  const objects = await env.R2.list({ prefix: 'group:' });
+  const objects = await env.R2.list({ prefix: 'group/' });
   const groups: Group[] = [];
   
   for (const object of objects.objects) {
@@ -196,7 +196,7 @@ export async function addUserToGroup(userId: string, groupId: string, env: Env):
   group.members.push(userId);
   group.updatedAt = new Date().toISOString();
   
-  await env.R2.put(`group:${groupId}`, JSON.stringify(group), {
+  await env.R2.put(`group/${groupId}`, JSON.stringify(group), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { updatedAt: group.updatedAt }
   });
@@ -209,7 +209,7 @@ export async function addUserToGroup(userId: string, groupId: string, env: Env):
   if (!user.groups.includes(groupId)) {
     user.groups.push(groupId);
     
-    await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
+    await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
       httpMetadata: { contentType: 'application/json' },
       customMetadata: { userId: user.id }
     });
@@ -232,7 +232,7 @@ export async function removeUserFromGroup(userId: string, groupId: string, env: 
   group.members = group.members.filter(id => id !== userId);
   group.updatedAt = new Date().toISOString();
   
-  await env.R2.put(`group:${groupId}`, JSON.stringify(group), {
+  await env.R2.put(`group/${groupId}`, JSON.stringify(group), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { updatedAt: group.updatedAt }
   });
@@ -245,7 +245,7 @@ export async function removeUserFromGroup(userId: string, groupId: string, env: 
     user.groups = user.groups.filter(id => id !== groupId);
   }
   
-  await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
+  await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: user.id }
   });
@@ -269,7 +269,7 @@ export async function deleteGroup(groupId: string, env: Env): Promise<boolean> {
     if (user.groups) {
       user.groups = user.groups.filter(id => id !== groupId);
       
-      await env.R2.put(`user:${user.email}`, JSON.stringify(user), {
+      await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
         httpMetadata: { contentType: 'application/json' },
         customMetadata: { userId: user.id }
       });
@@ -277,7 +277,7 @@ export async function deleteGroup(groupId: string, env: Env): Promise<boolean> {
   }
   
   // Delete the group from R2
-  await env.R2.delete(`group:${groupId}`);
+  await env.R2.delete(`group/${groupId}`);
   
   return true;
 }
@@ -322,7 +322,7 @@ export async function initializeFirstAdmin(env: Env): Promise<void> {
       newAdmin.approved = true;
       newAdmin.userType = UserType.Admin;
       
-      await env.R2.put(`user:${adminEmail}`, JSON.stringify(newAdmin), {
+      await env.R2.put(`user/${adminEmail}`, JSON.stringify(newAdmin), {
         httpMetadata: { contentType: 'application/json' },
         customMetadata: { userId: newAdmin.id }
       });
