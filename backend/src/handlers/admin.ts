@@ -12,7 +12,8 @@ import {
   addUserToGroup,
   removeUserFromGroup,
   deleteGroup,
-  createUser
+  createUser,
+  deleteUser
 } from '../services/userService';
 import { sendEmail } from '../utils/email';
 import { UserType } from '../types';
@@ -182,6 +183,22 @@ router.delete('/groups/:id', withAdminCheck, async (request: Request, env: Env) 
   }
 
   return json({ message: 'Group deleted successfully' });
+});
+
+// Delete a user
+router.delete('/users/:id', withAdminCheck, async (request: Request, env: Env) => {
+  const id = (request as any).params.id;
+  
+  if (!id) {
+    return json({ error: 'User ID is required' }, { status: 400 });
+  }
+
+  const success = await deleteUser(id, env);
+  if (!success) {
+    return json({ error: 'Failed to delete user' }, { status: 500 });
+  }
+
+  return json({ message: 'User deleted successfully' });
 });
 
 // Send email to all users in a group

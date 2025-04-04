@@ -448,6 +448,32 @@ const Admin: React.FC = () => {
     }
   };
 
+  const deleteUser = async (userId: string) => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+      navigate('/');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete user');
+      }
+
+      // Remove the deleted user from the list
+      setUsers(users.filter(user => user.id !== userId));
+    } catch (err) {
+      setError('Error deleting user');
+    }
+  };
+
   // Handle bulk user entry updates
   const updateBulkUserEntry = (index: number, field: keyof BulkUserEntry, value: string | boolean) => {
     const updatedEntries = [...bulkUsers];
@@ -621,6 +647,16 @@ const Admin: React.FC = () => {
                           <option value={UserType.Lead}>Lead</option>
                           <option value={UserType.Admin}>Admin</option>
                         </select>
+                        <button 
+                          onClick={() => {
+                            if (window.confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
+                              deleteUser(user.id);
+                            }
+                          }}
+                          className="delete-button"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>

@@ -282,6 +282,34 @@ export async function deleteGroup(groupId: string, env: Env): Promise<boolean> {
   return true;
 }
 
+// Delete a user
+export async function deleteUser(userId: string, env: Env): Promise<boolean> {
+  const user = await getUser(userId, env);
+  if (!user) return false;
+  
+  // Remove user from all groups they belong to
+  if (user.groups && user.groups.length > 0) {
+    for (const groupId of user.groups) {
+      const group = await getGroup(groupId, env);
+      if (group) {
+        // Remove user from group members
+        group.members = group.members.filter(id => id !== userId);
+        group.updatedAt = new Date().toISOString();
+        
+        await env.R2.put(`group/${groupId}`, JSON.stringify(group), {
+          httpMetadata: { contentType: 'application/json' },
+          customMetadata: { updatedAt: group.updatedAt }
+        });
+      }
+    }
+  }
+  
+  // Delete the user from R2
+  await env.R2.delete(`user/${user.email}`);
+  
+  return true;
+}
+
 // Check if a user can access a group's content
 export async function canAccessGroup(userId: string, groupId: string, env: Env): Promise<boolean> {
   // Admins can access everything
