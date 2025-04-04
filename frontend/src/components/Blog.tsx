@@ -713,11 +713,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                             </button>
                                         </div>
                                     )}
-                                    <div className="post-content">
-                                        {post.content.split('\n').map((paragraph, index) => (
-                                            <p key={index}>{paragraph}</p>
-                                        ))}
-                                    </div>
+                                    <div className="post-content" dangerouslySetInnerHTML={{ __html: post.content }} />
 
                                     <div className="comments-section">
                                         <h3>Comments</h3>
@@ -767,7 +763,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                                                 <p className="comment-meta">
                                                                     {comment.author} on {new Date(comment.createdAt).toLocaleDateString()}
                                                                 </p>
-                                                                <p className="comment-content">{comment.content}</p>
+                                                                <p className="comment-content" dangerouslySetInnerHTML={{ __html: comment.content }} />
                                                                 {isAdmin && (
                                                                     <div className="comment-admin-controls">
                                                                         <button onClick={() => handleDeleteComment(comment.id)}>
