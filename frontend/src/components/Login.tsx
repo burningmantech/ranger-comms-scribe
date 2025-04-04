@@ -3,16 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { GOOGLE_CLIENT_ID } from '../config';
 import { handleGoogleCredentialResponse } from '../utils/googleAuth';
 import { fetchBlogContent, LogoutUserReact } from '../utils/userActions';
-import LoggedInView from './LoggedInView';
 import LoggedOutView from './LoggedOutView';
+import Home from './Home';
+import { User } from '../types';
 
 declare global {
     interface Window {
         google: any;
     }
 }
-
-import { User } from '../types';
 
 const Login: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
@@ -143,7 +142,7 @@ const Login: React.FC = () => {
     // Fetch blog content if the user is signed in
     useEffect(() => {
         if (user) {
-            fetchBlogContent(setBlogContent);
+            navigate('/blog');
         }
     }, [user]);
 
@@ -156,11 +155,7 @@ const Login: React.FC = () => {
         <div>
             <h2>Login</h2>
             {user ? (
-                <LoggedInView
-                    user={user}
-                    blogContent={blogContent}
-                    handleLogout={handleLogout}
-                />
+                <><Home /></>
             ) : (
                 <div>
                     <LoggedOutView />
