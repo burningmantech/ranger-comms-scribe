@@ -383,12 +383,27 @@ const Admin: React.FC = () => {
         throw new Error('Failed to remove user from group');
       }
 
-      // Update the local state
+      // Update the users state
       setUsers(users.map(user => 
         user.id === userId 
           ? { ...user, groups: user.groups ? user.groups.filter(g => g !== groupId) : [] } 
           : user
       ));
+      
+      // Update the groups state to remove the user from the group's members array
+      setGroups(groups.map(group => 
+        group.id === groupId
+          ? { ...group, members: group.members ? group.members.filter(memberId => memberId !== userId) : [] }
+          : group
+      ));
+      
+      // If we're editing a group, update the editingGroup state as well
+      if (editingGroup && editingGroup.id === groupId) {
+        setEditingGroup({
+          ...editingGroup,
+          members: editingGroup.members ? editingGroup.members.filter(memberId => memberId !== userId) : []
+        });
+      }
     } catch (err) {
       setError('Error removing user from group');
     }
@@ -718,15 +733,19 @@ const Admin: React.FC = () => {
                   <div 
                     key={group.id} 
                     className="group-card"
-                    onClick={() => setEditingGroup(group)}
-                    style={{ cursor: 'pointer' }}
+                    style={{ cursor: 'default' }}
                   >
                     <div className="group-header">
                       <h4>{group.name}</h4>
                       <div className="group-actions">
                         <button 
-                          onClick={(e) => {
-                            e.stopPropagation(); // Prevent card click event
+                          onClick={() => setEditingGroup(group)}
+                          className="edit-button"
+                        >
+                          Edit
+                        </button>
+                        <button 
+                          onClick={() => {
                             setSelectedGroup({ id: group.id, name: group.name });
                             setShowEmailDialog(true);
                           }}
@@ -735,10 +754,7 @@ const Admin: React.FC = () => {
                           Send Email
                         </button>
                         <button 
-                          onClick={(e) => {
-                            e.stopPropagation(); // Prevent card click event
-                            deleteGroup(group.id);
-                          }}
+                          onClick={() => deleteGroup(group.id)}
                           className="delete-button"
                         >
                           Delete Group
@@ -759,7 +775,10 @@ const Admin: React.FC = () => {
                             <li key={memberId}>
                               {member.name} ({member.email})
                               <button 
-                                onClick={() => removeUserFromGroup(memberId, group.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation(); // Prevent event bubbling
+                                  removeUserFromGroup(memberId, group.id);
+                                }}
                                 className="remove-button"
                               >
                                 Remove
@@ -773,11 +792,13 @@ const Admin: React.FC = () => {
                       <h5>Add Member</h5>
                       <select 
                         onChange={(e) => {
+                          e.stopPropagation(); // Prevent event bubbling
                           if (e.target.value) {
                             addUserToGroup(e.target.value, group.id);
                             e.target.value = ''; // Reset select after adding
                           }
                         }}
+                        onClick={(e) => e.stopPropagation()} // Prevent event bubbling on click
                         defaultValue=""
                       >
                         <option value="" disabled>Select a user</option>
@@ -922,7 +943,10 @@ const Admin: React.FC = () => {
                       <li key={memberId}>
                         {member.name} ({member.email})
                         <button 
-                          onClick={() => removeUserFromGroup(memberId, editingGroup.id)}
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent event bubbling
+                            removeUserFromGroup(memberId, editingGroup.id);
+                          }}
                           className="remove-button"
                         >
                           Remove
@@ -936,11 +960,13 @@ const Admin: React.FC = () => {
                 <h5>Add Member</h5>
                 <select 
                   onChange={(e) => {
+                    e.stopPropagation(); // Prevent event bubbling
                     if (e.target.value) {
                       addUserToGroup(e.target.value, editingGroup.id);
                       e.target.value = ''; // Reset select after adding
                     }
                   }}
+                  onClick={(e) => e.stopPropagation()} // Prevent event bubbling on click
                   defaultValue=""
                 >
                   <option value="" disabled>Select a user</option>
@@ -956,7 +982,49 @@ const Admin: React.FC = () => {
               </div>
             </div>
             <div className="email-dialog-footer">
-              <button className="cancel-button" onClick={() => setEditingGroup(null)}>Close</button>
+              <button className="cancel-button" onClick={() => setEditingGroup(null)}>Cancel</button>
+              <button 
+                className="save-button" 
+                onClick={async () => {
+                  if (!editingGroup) return;
+                  
+                  const sessionId = localStorage.getItem('sessionId');
+                  if (!sessionId) {
+                    navigate('/');
+                    return;
+                  }
+                  
+                  try {
+                    const response = await fetch(`${API_URL}/admin/groups/${editingGroup.id}`, {
+                      method: 'PUT',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${sessionId}`,
+                      },
+                      body: JSON.stringify({
+                        name: editingGroup.name,
+                        description: editingGroup.description
+                      }),
+                    });
+                    
+                    if (!response.ok) {
+                      throw new Error('Failed to update group');
+                    }
+                    
+                    // Update the groups list with the edited group
+                    setGroups(groups.map(group => 
+                      group.id === editingGroup.id ? editingGroup : group
+                    ));
+                    
+                    setEditingGroup(null);
+                    setError(null);
+                  } catch (err) {
+                    setError('Error updating group');
+                  }
+                }}
+              >
+                Save Changes
+              </button>
             </div>
           </div>
         </div>

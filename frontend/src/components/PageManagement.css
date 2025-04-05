@@ -58,8 +58,10 @@
 
 .page-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .move-button, .edit-button, .delete-button {

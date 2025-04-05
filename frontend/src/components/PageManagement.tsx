@@ -344,7 +344,7 @@ const PageManagement: React.FC = () => {
           ) : (
             <div className="pages-list">
               {pages.map(page => (
-                <div key={page.id} className={`page-item ${page.slug === 'home' ? 'home-page-item' : ''}`}>
+                <div key={page.id} className={`page-item ${page.slug === 'home' ? 'home-page-item' : ''}`} style={{ cursor: 'default' }}>
                   <div className="page-info">
                     <h4>{page.title} {page.slug === 'home' && <span className="home-indicator">(Home Page)</span>}</h4>
                     <p><strong>Slug:</strong> /{page.slug}</p>
