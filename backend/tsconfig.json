@@ -4,13 +4,13 @@
     "module": "commonjs",
     "lib": ["es2017", "dom"],
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types", "jest", "node"]
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "**/*.spec.ts"]
+  "include": ["src/**/*.ts", "__tests__/**/*.ts", "types/**/*.ts"],
+  "exclude": ["node_modules"]
 }
