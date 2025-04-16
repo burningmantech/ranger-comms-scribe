@@ -1,7 +1,7 @@
 import { API_URL } from '../config';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { MediaItem, Group, User } from '../types';
+import { MediaItem, Group, User, GalleryComment } from '../types';
 import Navbar from './Navbar';
 import './Gallery.css';
 
@@ -34,6 +34,16 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     const [isPublic, setIsPublic] = useState<boolean>(true);
     const [authenticatedThumbnails, setAuthenticatedThumbnails] = useState<Record<string, string>>({});
     const [user, setUser] = useState<User | null>(null);
+    
+    // Comments state
+    const [comments, setComments] = useState<GalleryComment[]>([]);
+    const [commentLoading, setCommentLoading] = useState<boolean>(false);
+    const [commentError, setCommentError] = useState<string | null>(null);
+    const [newComment, setNewComment] = useState<string>('');
+    const [replyingTo, setReplyingTo] = useState<string | null>(null);
+    const [commentStatus, setCommentStatus] = useState<{ success: boolean; message: string } | null>(null);
+    // State to track comment to be deleted (for confirmation)
+    const [commentToDelete, setCommentToDelete] = useState<{mediaId: string, commentId: string} | null>(null);
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const navigate = useNavigate();
@@ -405,6 +415,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
             
             // We've already checked that no thumbnails are null, but TypeScript doesn't know that
             // So we need to assert that the thumbnail is not null
+            // So we need to assert that the thumbnail is not null
             const thumbnailFile = thumbnailFiles[i]!; // Non-null assertion
             formData.append('thumbnail', thumbnailFile);
             
@@ -524,6 +535,19 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
         if (item.url) {
             fetchImageWithAuth(item.url);
         }
+        
+        // Only fetch comments if user is logged in or the media is public
+        if (user || item.isPublic) {
+            fetchComments(item.fileName);
+        } else {
+            // Clear comments for non-public media when user is not logged in
+            setComments([]);
+        }
+        
+        // Clear any existing comment state
+        setNewComment('');
+        setReplyingTo(null);
+        setCommentStatus(null);
     };
 
     const closeModal = () => {
@@ -582,6 +606,131 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     
     const cancelDelete = () => {
         setDeleteConfirmation(null);
+    };
+
+    // Function to fetch comments for a media item
+    const fetchComments = async (mediaId: string) => {
+        setCommentLoading(true);
+        setCommentError(null);
+        
+        try {
+            const response = await fetch(`${API_URL}/gallery/${mediaId}/comments`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to fetch comments: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            setComments(data);
+        } catch (error) {
+            console.error('Error fetching comments:', error);
+            setCommentError('Failed to load comments. Please try again later.');
+            setComments([]);
+        } finally {
+            setCommentLoading(false);
+        }
+    };
+
+    // Function to handle submitting a new comment
+    const handleCommentSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        if (!selectedMedia || !newComment.trim() || !user) {
+            setCommentStatus({
+                success: false,
+                message: 'Please enter a comment and make sure you are logged in'
+            });
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_URL}/gallery/${selectedMedia.fileName}/comments`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+                body: JSON.stringify({ 
+                    content: newComment,
+                    parentId: replyingTo 
+                }),
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok) {
+                setCommentStatus({
+                    success: true,
+                    message: 'Comment added successfully'
+                });
+                
+                // Add the new comment to the list
+                if (result.comment) {
+                    // Refresh comments to show the new nested structure
+                    await fetchComments(selectedMedia.fileName);
+                }
+                
+                // Clear the comment form
+                setNewComment('');
+                setReplyingTo(null);
+            } else {
+                setCommentStatus({
+                    success: false,
+                    message: result.message || 'Failed to add comment'
+                });
+            }
+        } catch (error) {
+            console.error('Error adding comment:', error);
+            setCommentStatus({
+                success: false,
+                message: 'An error occurred while adding the comment'
+            });
+        }
+    };
+
+    // Function to handle deleting a comment with confirmation
+    const handleDeleteComment = async (mediaId: string, commentId: string) => {
+        if (!isAdmin) return;
+        
+        try {
+            const response = await fetch(`${API_URL}/gallery/${mediaId}/comments/${commentId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+            
+            if (response.ok) {
+                setCommentStatus({
+                    success: true,
+                    message: 'Comment deleted successfully'
+                });
+                
+                // Refresh comments after deletion
+                await fetchComments(mediaId);
+                // Clear comment to delete
+                setCommentToDelete(null);
+            } else {
+                const result = await response.json();
+                setCommentStatus({
+                    success: false,
+                    message: result.message || 'Failed to delete comment'
+                });
+            }
+        } catch (error) {
+            console.error('Error deleting comment:', error);
+            setCommentStatus({
+                success: false,
+                message: 'An error occurred while deleting the comment'
+            });
+        }
     };
 
     if (loading) {
@@ -886,10 +1035,218 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                             ) : (
                                 <div>Unsupported media type</div>
                             )}
+                            
+                            {/* Comments Section */}
+                            <div className="comments-section">
+                                <h3>Comments</h3>
+                                
+                                {commentStatus && (
+                                    <div className={commentStatus.success ? 'success-message' : 'error-message'}>
+                                        {commentStatus.message}
+                                    </div>
+                                )}
+                                
+                                {user ? (
+                                    replyingTo ? (
+                                        <div className="reply-form">
+                                            <div className="reply-header">
+                                                <span>Reply to comment</span>
+                                                <button 
+                                                    className="reply-cancel" 
+                                                    onClick={() => setReplyingTo(null)}
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                            <form className="comment-form" onSubmit={handleCommentSubmit}>
+                                                <textarea
+                                                    value={newComment}
+                                                    onChange={(e) => setNewComment(e.target.value)}
+                                                    placeholder="Write your reply..."
+                                                    rows={3}
+                                                    required
+                                                />
+                                                <button type="submit">Post Reply</button>
+                                            </form>
+                                        </div>
+                                    ) : (
+                                        <form className="comment-form" onSubmit={handleCommentSubmit}>
+                                            <textarea
+                                                value={newComment}
+                                                onChange={(e) => setNewComment(e.target.value)}
+                                                placeholder="Write a comment..."
+                                                rows={3}
+                                                required
+                                            />
+                                            <button type="submit">Post Comment</button>
+                                        </form>
+                                    )
+                                ) : (
+                                    <p className="login-prompt">
+                                        Please <Link to="/">log in</Link> to comment.
+                                    </p>
+                                )}
+                                
+                                {commentLoading ? (
+                                    <div className="loading-indicator">Loading comments...</div>
+                                ) : commentError ? (
+                                    <div className="error-message">{commentError}</div>
+                                ) : comments.length === 0 ? (
+                                    <p>No comments yet. Be the first to comment!</p>
+                                ) : (
+                                    <ul className="comments-list">
+                                        {comments.map((comment) => (
+                                            <li key={comment.id} className={`comment-item level-${comment.level}`}>
+                                                <div className="comment-meta">
+                                                    <span>{comment.author} on {new Date(comment.createdAt).toLocaleDateString()}</span>
+                                                </div>
+                                                <p className="comment-content">{comment.content}</p>
+                                                <div className="comment-actions">
+                                                    {user && comment.level < 2 && (
+                                                        <button 
+                                                            className="reply-button"
+                                                            onClick={() => setReplyingTo(comment.id)}
+                                                        >
+                                                            Reply
+                                                        </button>
+                                                    )}
+                                                    {isAdmin && (
+                                                        <button 
+                                                            className="delete-comment-button"
+                                                            onClick={() => setCommentToDelete({ mediaId: selectedMedia.fileName, commentId: comment.id })}
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* Show reply form directly beneath this comment if replying to it */}
+                                                {replyingTo === comment.id && user && (
+                                                    <div className="inline-reply-form">
+                                                        <form className="comment-form" onSubmit={handleCommentSubmit}>
+                                                            <textarea
+                                                                value={newComment}
+                                                                onChange={(e) => setNewComment(e.target.value)}
+                                                                placeholder="Write your reply..."
+                                                                rows={3}
+                                                                required
+                                                            />
+                                                            <div className="reply-form-actions">
+                                                                <button type="submit">Post Reply</button>
+                                                                <button type="button" onClick={() => setReplyingTo(null)}>Cancel</button>
+                                                            </div>
+                                                        </form>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Render replies */}
+                                                {comment.replies && comment.replies.length > 0 && (
+                                                    <ul className="replies-list">
+                                                        {comment.replies.map((reply) => (
+                                                            <li key={reply.id} className="reply-item">
+                                                                <div className="comment-meta">
+                                                                    <span>{reply.author} on {new Date(reply.createdAt).toLocaleDateString()}</span>
+                                                                </div>
+                                                                <p className="comment-content">{reply.content}</p>
+                                                                <div className="comment-actions">
+                                                                    {user && reply.level < 2 && (
+                                                                        <button 
+                                                                            className="reply-button"
+                                                                            onClick={() => setReplyingTo(reply.id)}
+                                                                        >
+                                                                            Reply
+                                                                        </button>
+                                                                    )}
+                                                                    {isAdmin && (
+                                                                        <button 
+                                                                            className="delete-comment-button"
+                                                                            onClick={() => setCommentToDelete({ mediaId: selectedMedia.fileName, commentId: reply.id })}
+                                                                        >
+                                                                            Delete
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                                
+                                                                {/* Show reply form for level 1 replies */}
+                                                                {replyingTo === reply.id && user && (
+                                                                    <div className="inline-reply-form">
+                                                                        <form className="comment-form" onSubmit={handleCommentSubmit}>
+                                                                            <textarea
+                                                                                value={newComment}
+                                                                                onChange={(e) => setNewComment(e.target.value)}
+                                                                                placeholder="Write your reply..."
+                                                                                rows={3}
+                                                                                required
+                                                                            />
+                                                                            <div className="reply-form-actions">
+                                                                                <button type="submit">Post Reply</button>
+                                                                                <button type="button" onClick={() => setReplyingTo(null)}>Cancel</button>
+                                                                            </div>
+                                                                        </form>
+                                                                    </div>
+                                                                )}
+                                                                
+                                                                {/* Level 2 replies (3rd level in total) */}
+                                                                {reply.replies && reply.replies.length > 0 && (
+                                                                    <ul className="replies-list">
+                                                                        {reply.replies.map((deepReply) => (
+                                                                            <li key={deepReply.id} className="reply-item">
+                                                                                <div className="comment-meta">
+                                                                                    <span>{deepReply.author} on {new Date(deepReply.createdAt).toLocaleDateString()}</span>
+                                                                                </div>
+                                                                                <p className="comment-content">{deepReply.content}</p>
+                                                                                <div className="comment-actions">
+                                                                                    {isAdmin && (
+                                                                                        <button 
+                                                                                            className="delete-comment-button"
+                                                                                            onClick={() => setCommentToDelete({ mediaId: selectedMedia.fileName, commentId: deepReply.id })}
+                                                                                        >
+                                                                                            Delete
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            </li>
+                                                                        ))}
+                                                                    </ul>
+                                                                )}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}
                 
+                {commentToDelete && (
+                    <div className="modal confirmation-modal">
+                        <div className="modal-overlay" onClick={() => setCommentToDelete(null)}></div>
+                        <div className="confirmation-content">
+                            <h3>Confirm Comment Deletion</h3>
+                            <p>Are you sure you want to delete this comment?</p>
+                            <div className="confirmation-buttons">
+                                <button 
+                                    onClick={() => {
+                                        if (commentToDelete) {
+                                            handleDeleteComment(commentToDelete.mediaId, commentToDelete.commentId);
+                                        }
+                                    }}
+                                >
+                                    Yes, Delete
+                                </button>
+                                <button 
+                                    onClick={() => setCommentToDelete(null)}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 
                 {deleteConfirmation && (
                     <div className="modal delete-confirmation-modal">

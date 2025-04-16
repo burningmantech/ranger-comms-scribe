@@ -77,4 +77,20 @@ export interface BlogComment {
     authorId: string;
     createdAt: string;
     isBlocked: boolean;
+    parentId?: string; // If this is a reply, this will point to the parent comment
+    replies?: BlogComment[]; // Array of reply comments
+    level: number; // Comment nesting level (0, 1, 2 for up to 3 levels)
+}
+
+export interface GalleryComment {
+    id: string;
+    mediaId: string;
+    content: string;
+    author: string;
+    authorId: string;
+    createdAt: string;
+    isBlocked: boolean;
+    parentId?: string; // If this is a reply, this will point to the parent comment
+    replies?: GalleryComment[]; // Array of reply comments
+    level: number; // Comment nesting level (0, 1, 2 for up to 3 levels)
 }

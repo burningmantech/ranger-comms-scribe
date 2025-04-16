@@ -193,7 +193,7 @@ router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env
             return json({ error: 'User not authenticated' }, { status: 401 });
         }
         
-        const { content } = await request.json() as { content: string };
+        const { content, parentId } = await request.json() as { content: string; parentId?: string };
         
         if (!content) {
             return json({ error: 'Comment content is required' }, { status: 400 });
@@ -211,7 +211,7 @@ router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env
             }
         }
         
-        const result = await addComment(id, content, request.user, userName, env);
+        const result = await addComment(id, content, request.user, userName, env, parentId);
         
         if (result.success) {
             return json(result, { status: 201 });

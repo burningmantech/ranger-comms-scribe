@@ -363,6 +363,168 @@
     text-align: center;
 }
 
+.modal-content {
+    max-width: 90%;
+    max-height: 90%;
+    overflow: auto;
+    background-color: white;
+    padding: 20px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-content img,
+.modal-content video {
+    max-width: 100%;
+    max-height: 70vh;
+    margin-bottom: 20px;
+}
+
+/* Comments section styles */
+.comments-section {
+    margin-top: 20px;
+    border-top: 1px solid #ddd;
+    padding-top: 20px;
+    width: 100%;
+}
+
+.comments-section h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+}
+
+.comment-form {
+    margin-bottom: 20px;
+}
+
+.comment-form textarea {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: vertical;
+    min-height: 80px;
+}
+
+.comment-form button {
+    margin-top: 10px;
+    padding: 8px 16px;
+    background-color: #4a90e2;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.comment-form button:hover {
+    background-color: #3a7bc8;
+}
+
+.reply-form {
+    margin-top: 10px;
+    margin-left: 30px;
+    padding: 10px;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+}
+
+.reply-form .reply-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.reply-cancel {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.comments-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.comment-item {
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 15px;
+    background-color: #fff;
+}
+
+.comment-meta {
+    font-size: 0.8rem;
+    color: #666;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.comment-content {
+    margin: 0 0 10px 0;
+    line-height: 1.5;
+}
+
+.comment-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 5px;
+}
+
+.comment-actions button {
+    padding: 5px 10px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.reply-button {
+    background-color: #e9ecef;
+    color: #495057;
+}
+
+.delete-comment-button {
+    background-color: #f44336;
+    color: white;
+}
+
+/* Nested replies */
+.replies-list {
+    margin-top: 10px;
+    padding-left: 30px;
+    list-style: none;
+}
+
+.reply-item {
+    padding: 10px;
+    border-left: 2px solid #4a90e2;
+    margin-bottom: 10px;
+    background-color: #f9f9f9;
+    border-radius: 0 4px 4px 0;
+}
+
+/* Level 2 replies */
+.level-2 .replies-list {
+    padding-left: 20px;
+}
+
+.level-2 .reply-item {
+    border-left: 2px solid #9c27b0;
+}
+
+/* Login prompt */
+.login-prompt {
+    font-style: italic;
+    color: #666;
+    margin: 10px 0;
+}
+
 .modal-content .error-message {
     margin: 0;
     padding: 30px;
@@ -432,6 +594,103 @@
 .delete-confirmation-buttons .confirm-button {
     background-color: #f44336;
     color: white;
+}
+
+/* Modal and confirmation dialog styles */
+.modal.confirmation-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1100; /* Higher than regular modals */
+}
+
+.confirmation-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 5px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  position: relative;
+  z-index: 1101;
+}
+
+.confirmation-content h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.confirmation-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.confirmation-buttons button {
+  padding: 8px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.confirmation-buttons button:first-child {
+  background-color: #dc3545;
+  color: white;
+}
+
+.confirmation-buttons button:last-child {
+  background-color: #6c757d;
+  color: white;
+}
+
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1090;
+}
+
+/* Styles for inline reply form */
+.inline-reply-form {
+  margin: 10px 0 10px 20px;
+  padding: 10px;
+  background-color: #f8f9fa;
+  border-radius: 5px;
+  border-left: 3px solid #007bff;
+}
+
+.reply-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.reply-form-actions button {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.reply-form-actions button:first-child {
+  background-color: #28a745;
+  color: white;
+}
+
+.reply-form-actions button:last-child {
+  background-color: #6c757d;
+  color: white;
 }
 
 /* Responsive adjustments */

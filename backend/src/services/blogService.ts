@@ -247,8 +247,32 @@ export const getComments = async (postId: string, env: Env): Promise<BlogComment
         // Wait for all promises to resolve and filter out null values
         const comments = (await Promise.all(commentPromises)).filter((comment: any): comment is BlogComment => comment !== null);
         
-        // Sort comments by creation date (oldest first)
-        return comments.sort((a: BlogComment, b: BlogComment) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        // Create a map to store comments by ID for easy lookup
+        const commentsMap = new Map<string, BlogComment>();
+        
+        // Initialize comments map with all comments, adding an empty replies array
+        comments.forEach(comment => {
+            commentsMap.set(comment.id, {...comment, replies: []});
+        });
+        
+        // Process comments to build the reply tree
+        const rootComments: BlogComment[] = [];
+        
+        comments.forEach(comment => {
+            if (comment.parentId) {
+                // This is a reply, add it to its parent's replies array
+                const parent = commentsMap.get(comment.parentId);
+                if (parent && parent.replies) {
+                    parent.replies.push(commentsMap.get(comment.id) || comment);
+                }
+            } else {
+                // This is a root comment, add it to the result array
+                rootComments.push(commentsMap.get(comment.id) || comment);
+            }
+        });
+        
+        // Sort root comments by creation date (oldest first)
+        return rootComments.sort((a: BlogComment, b: BlogComment) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     } catch (error) {
         console.error('Error fetching comments from R2:', error);
         return [];
@@ -261,7 +285,8 @@ export const addComment = async (
     content: string,
     userId: string,
     userName: string,
-    env: Env
+    env: Env,
+    parentId?: string
 ): Promise<{ success: boolean; message: string; comment?: BlogComment }> => {
     try {
         // Check if the post exists and comments are enabled
@@ -290,6 +315,25 @@ export const addComment = async (
             };
         }
         
+        // For replies, verify the parent comment exists and determine level
+        let level = 0;
+        if (parentId) {
+            const commentKey = `blog/comments/${postId}/${parentId}`;
+            const parentComment = await env.R2.get(commentKey);
+            
+            if (!parentComment) {
+                return {
+                    success: false,
+                    message: 'Parent comment not found'
+                };
+            }
+            
+            // Parse parent comment to get its level
+            const parentCommentData = await parentComment.json() as BlogComment;
+            // Increment level for the reply (max level is 2 for up to 3 total levels including top level)
+            level = Math.min(2, (parentCommentData.level || 0) + 1);
+        }
+        
         // Generate a unique ID for the comment
         const timestamp = Date.now?.() || 1609459200000; // Fallback to fixed timestamp if Date.now is not a function
         const randomSuffix = Math.random().toString(36).substring(2, 9);
@@ -305,6 +349,8 @@ export const addComment = async (
             authorId: userId,
             createdAt: isoTimestamp,
             isBlocked: false,
+            parentId: parentId,
+            level: level
         };
         
         // Store the comment in R2
@@ -315,6 +361,8 @@ export const addComment = async (
                 userId: userId,
                 createdAt: isoTimestamp,
                 type: 'blog-comment',
+                parentId: parentId || '',
+                level: level.toString()
             },
         });
         
@@ -332,7 +380,7 @@ export const addComment = async (
     }
 };
 
-// Delete a comment
+// Delete a comment and all its replies
 export const deleteComment = async (
     postId: string,
     commentId: string,
@@ -350,12 +398,49 @@ export const deleteComment = async (
             };
         }
         
-        // Delete the comment
-        await env.R2.delete(commentKey);
+        // Get all comments for the post to find replies
+        const objects = await env.R2.list({ prefix: `blog/comments/${postId}/` });
+        
+        // Load all comments to identify which ones are replies to the deleted comment
+        const commentPromises = objects.objects.map(async (object: { key: string }) => {
+            const commentObject = await env.R2.get(object.key);
+            if (!commentObject) return null;
+            
+            const comment = await commentObject.json() as BlogComment;
+            return comment;
+        });
+        
+        const comments = (await Promise.all(commentPromises)).filter((comment: any): comment is BlogComment => comment !== null);
+        
+        // Identify all comments that need to be deleted (the target comment and all its descendants)
+        const commentsToDelete = new Set<string>();
+        commentsToDelete.add(commentId);
+        
+        // Helper function to recursively find child comments
+        const findReplies = (parentId: string) => {
+            comments.forEach(comment => {
+                if (comment.parentId === parentId) {
+                    commentsToDelete.add(comment.id);
+                    // Recursively find replies to this reply
+                    findReplies(comment.id);
+                }
+            });
+        };
+        
+        // Find all replies to the comment we're deleting
+        findReplies(commentId);
+        
+        // Delete the comment and all its replies
+        const deletePromises = Array.from(commentsToDelete).map(id => {
+            const key = `blog/comments/${postId}/${id}`;
+            return env.R2.delete(key);
+        });
+        
+        await Promise.all(deletePromises);
         
         return { 
             success: true, 
-            message: 'Comment deleted successfully' 
+            message: 'Comment and all replies deleted successfully' 
         };
     } catch (error) {
         console.error('Error deleting comment from R2:', error);

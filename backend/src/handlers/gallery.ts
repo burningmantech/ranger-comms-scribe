@@ -3,8 +3,9 @@ import { getMedia, uploadMedia, deleteMedia, isUserAdmin } from '../services/med
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { MediaItem } from '../types';
-import { withAdminCheck } from '../authWrappers';
+import { withAdminCheck, withAuthCheck } from '../authWrappers';
 import { canAccessGroup } from '../services/userService';
+import { getGalleryComments, addGalleryComment, deleteGalleryComment } from '../services/galleryCommentService';
 
 // Extend the Request interface to include user and params properties
 interface ExtendedRequest extends IRequest {
@@ -288,6 +289,114 @@ router.put('/:id/group', withAdminCheck, async (request: ExtendedRequest, env: E
             error: 'Error updating media group',
             message: error instanceof Error ? error.message : 'Unknown error'
         }, { status: 500 });
+    }
+});
+
+// Get comments for a media item
+router.get('/:id/comments', async (request: ExtendedRequest, env: Env) => {
+    try {
+        const { id } = request.params;
+        console.log(`GET /gallery/${id}/comments called`);
+        
+        const comments = await getGalleryComments(id, env);
+        return json(comments);
+    } catch (error) {
+        console.error('Error fetching gallery comments:', error);
+        return json({ error: 'Error fetching comments' }, { status: 500 });
+    }
+});
+
+// Add a comment to a media item (authenticated users only)
+router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env: Env) => {
+    try {
+        const { id } = request.params;
+        console.log(`POST /gallery/${id}/comments called`);
+        
+        if (!request.user) {
+            return json({ error: 'User not authenticated' }, { status: 401 });
+        }
+        
+        const { content, parentId } = await request.json() as { 
+            content: string;
+            parentId?: string; 
+        };
+        
+        if (!content) {
+            return json({ error: 'Comment content is required' }, { status: 400 });
+        }
+        
+        // Get user name from session
+        const userKey = `user/${request.user}`;
+        const userObject = await env.R2.get(userKey);
+        let userName = 'User';
+        
+        if (userObject) {
+            const userData = await userObject.json() as { name?: string };
+            if (userData.name) {
+                userName = userData.name;
+            }
+        }
+        
+        // Determine the nesting level based on parentId
+        let level = 0;
+        
+        if (parentId) {
+            // If this is a reply, find the parent comment to get its level
+            const comments = await getGalleryComments(id, env);
+            const findParentWithLevel = (comments: any[], parentId: string): number => {
+                for (const comment of comments) {
+                    if (comment.id === parentId) {
+                        return comment.level;
+                    }
+                    
+                    if (comment.replies && comment.replies.length > 0) {
+                        const found = findParentWithLevel(comment.replies, parentId);
+                        if (found >= 0) {
+                            return found;
+                        }
+                    }
+                }
+                return -1;
+            };
+            
+            const parentLevel = findParentWithLevel(comments, parentId);
+            if (parentLevel >= 0) {
+                // Maximum nesting level is 2 (allowing 3 levels total: 0, 1, 2)
+                level = Math.min(parentLevel + 1, 2);
+            } else {
+                return json({ error: 'Parent comment not found' }, { status: 404 });
+            }
+        }
+        
+        const result = await addGalleryComment(id, content, request.user, userName, parentId || null, level, env);
+        
+        if (result.success) {
+            return json(result, { status: 201 });
+        } else {
+            return json(result, { status: 400 });
+        }
+    } catch (error) {
+        console.error('Error adding gallery comment:', error);
+        return json({ error: 'Error adding comment' }, { status: 500 });
+    }
+});
+
+// Delete a comment (admin only)
+router.delete('/:mediaId/comments/:commentId', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
+    try {
+        const { mediaId, commentId } = request.params;
+        console.log(`DELETE /gallery/${mediaId}/comments/${commentId} called`);
+        
+        const result = await deleteGalleryComment(mediaId, commentId, env);
+        
+        if (result.success) {
+            return json(result);
+        } else {
+            return json(result, { status: 404 });
+        }
+    } catch (error) {
+        console.error('Error deleting gallery comment:', error);
+        return json({ error: 'Error deleting comment' }, { status: 500 });
     }
 });
 

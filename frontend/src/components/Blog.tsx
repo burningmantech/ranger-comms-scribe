@@ -14,6 +14,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
     const [comments, setComments] = useState<BlogComment[]>([]);
     const [newComment, setNewComment] = useState<string>('');
     const [commentStatus, setCommentStatus] = useState<{ success: boolean; message: string } | null>(null);
+    const [replyingTo, setReplyingTo] = useState<string | null>(null);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [user, setUser] = useState<User | null>(null);
@@ -35,6 +36,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
     const [editingPost, setEditingPost] = useState<BlogPost | null>(null);
     const [isSmallScreen, setIsSmallScreen] = useState<boolean>(false);
     const allPostsRef = useRef<HTMLDivElement>(null);
+
+    // State to track comment to be deleted (for confirmation)
+    const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
 
     // Check if screen is small
     useEffect(() => {
@@ -183,7 +187,10 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
                 },
-                body: JSON.stringify({ content: newComment }),
+                body: JSON.stringify({ 
+                    content: newComment,
+                    parentId: replyingTo
+                }),
             });
             
             const result = await response.json();
@@ -194,13 +201,12 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                     message: 'Comment added successfully'
                 });
                 
-                // Add the new comment to the list
-                if (result.comment) {
-                    setComments([...comments, result.comment]);
-                }
+                // Refresh comments to get the updated structure with replies
+                await fetchComments(selectedPost.id);
                 
-                // Clear the comment form
+                // Clear the comment form and reset reply state
                 setNewComment('');
+                setReplyingTo(null);
             } else {
                 setCommentStatus({
                     success: false,
@@ -216,10 +222,13 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
         }
     };
 
+    // Fix comment deletion to properly handle the backend response
     const handleDeleteComment = async (commentId: string) => {
         if (!selectedPost || !isAdmin) return;
         
         try {
+            console.log(`Deleting comment: ${commentId} from post: ${selectedPost.id}`);
+            
             const response = await fetch(`${API_URL}/blog/${selectedPost.id}/comments/${commentId}`, {
                 method: 'DELETE',
                 headers: {
@@ -229,15 +238,19 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
             });
             
             if (response.ok) {
-                // Remove the deleted comment from the list
-                setComments(comments.filter(comment => comment.id !== commentId));
+                // Force a full refresh of comments from the server
+                await fetchComments(selectedPost.id);
                 
                 setCommentStatus({
                     success: true,
                     message: 'Comment deleted successfully'
                 });
+                
+                // Clear comment to delete
+                setCommentToDelete(null);
             } else {
                 const result = await response.json();
+                console.error('Error response from delete comment API:', result);
                 setCommentStatus({
                     success: false,
                     message: result.message || 'Failed to delete comment'
@@ -527,6 +540,142 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
         }
     };
 
+    // Helper function to render a comment and its replies
+    const renderComment = (comment: BlogComment, postId: string) => {
+        return (
+            <li key={comment.id} className={`comment-item level-${comment.level || 0}`}>
+                <div className="comment-meta">
+                    <span>{comment.author} on {new Date(comment.createdAt).toLocaleDateString()}</span>
+                </div>
+                <p className="comment-content" dangerouslySetInnerHTML={{ __html: comment.content }} />
+                <div className="comment-actions">
+                    {user && (!comment.level || comment.level < 2) && (
+                        <button 
+                            className="reply-button"
+                            onClick={() => {
+                                setReplyingTo(comment.id);
+                                setSelectedPost(posts.find(p => p.id === postId) || null);
+                                setNewComment('');
+                            }}
+                        >
+                            Reply
+                        </button>
+                    )}
+                    {isAdmin && (
+                        <div className="comment-admin-controls">
+                            <button onClick={() => setCommentToDelete(comment.id)}>
+                                Delete
+                            </button>
+                            <button onClick={() => handleBlockUser(comment.authorId)}>
+                                Block User
+                            </button>
+                        </div>
+                    )}
+                </div>
+                
+                {/* Render reply form under this specific comment if replying to it */}
+                {replyingTo === comment.id && user && (
+                    <div className="inline-reply-form">
+                        <form className="comment-form" onSubmit={(e) => {
+                            e.preventDefault();
+                            if (selectedPost) {
+                                handleCommentSubmit(e);
+                            }
+                        }}>
+                            <textarea
+                                value={newComment}
+                                onChange={(e) => setNewComment(e.target.value)}
+                                placeholder="Write your reply..."
+                                rows={3}
+                                required
+                            />
+                            <div className="reply-form-actions">
+                                <button type="submit">Post Reply</button>
+                                <button type="button" onClick={() => setReplyingTo(null)}>Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                )}
+                
+                {/* Render replies if any */}
+                {comment.replies && comment.replies.length > 0 && (
+                    <ul className="replies-list">
+                        {comment.replies.map(reply => renderComment(reply, postId))}
+                    </ul>
+                )}
+            </li>
+        );
+    };
+
+    // Find post for a comment by checking all comments
+    const findPostForComment = (commentId: string): BlogPost | null => {
+        // Look through all comments to find which post contains this comment
+        for (const comment of comments) {
+            if (comment.id === commentId) {
+                // Found the comment, now find its post
+                return posts.find(post => post.id === comment.postId) || null;
+            }
+            
+            // Also check in replies
+            if (comment.replies) {
+                for (const reply of comment.replies) {
+                    if (reply.id === commentId) {
+                        return posts.find(post => post.id === comment.postId) || null;
+                    }
+                    
+                    // Check deeper replies (3rd level)
+                    if (reply.replies) {
+                        for (const deepReply of reply.replies) {
+                            if (deepReply.id === commentId) {
+                                return posts.find(post => post.id === comment.postId) || null;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    };
+
+    const findCommentPostId = (commentId: string): string | null => {
+        const post = findPostForComment(commentId);
+        return post ? post.id : null;
+    };
+
+    const deleteCommentDirectly = async (postId: string, commentId: string) => {
+        try {
+            const response = await fetch(`${API_URL}/blog/${postId}/comments/${commentId}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                },
+            });
+
+            if (response.ok) {
+                await fetchComments(postId);
+                setCommentStatus({
+                    success: true,
+                    message: 'Comment deleted successfully'
+                });
+            } else {
+                const result = await response.json();
+                setCommentStatus({
+                    success: false,
+                    message: result.message || 'Failed to delete comment'
+                });
+            }
+        } catch (err) {
+            console.error('Error deleting comment:', err);
+            setCommentStatus({
+                success: false,
+                message: 'An error occurred while deleting the comment'
+            });
+        } finally {
+            setCommentToDelete(null);
+        }
+    };
+
     if (loading && posts.length === 0) {
         return <div>Loading...</div>;
     }
@@ -727,27 +876,57 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                         {post.commentsEnabled ? (
                                             <>
                                                 {user ? (
-                                                    <form className="comment-form" onSubmit={(e) => {
-                                                        e.preventDefault();
-                                                        if (selectedPost?.id !== post.id) {
-                                                            setSelectedPost(post);
-                                                        }
-                                                        handleCommentSubmit(e);
-                                                    }}>
-                                                        <textarea
-                                                            value={selectedPost?.id === post.id ? newComment : ''}
-                                                            onChange={(e) => {
+                                                    replyingTo ? (
+                                                        <div className="reply-form">
+                                                            <div className="reply-header">
+                                                                <span>Reply to comment</span>
+                                                                <button 
+                                                                    className="reply-cancel" 
+                                                                    onClick={() => setReplyingTo(null)}
+                                                                >
+                                                                    Cancel
+                                                                </button>
+                                                            </div>
+                                                            <form className="comment-form" onSubmit={(e) => {
+                                                                e.preventDefault();
                                                                 if (selectedPost?.id !== post.id) {
                                                                     setSelectedPost(post);
                                                                 }
-                                                                setNewComment(e.target.value);
-                                                            }}
-                                                            placeholder="Write a comment..."
-                                                            rows={3}
-                                                            required
-                                                        />
-                                                        <button type="submit">Post Comment</button>
-                                                    </form>
+                                                                handleCommentSubmit(e);
+                                                            }}>
+                                                                <textarea
+                                                                    value={newComment}
+                                                                    onChange={(e) => setNewComment(e.target.value)}
+                                                                    placeholder="Write your reply..."
+                                                                    rows={3}
+                                                                    required
+                                                                />
+                                                                <button type="submit">Post Reply</button>
+                                                            </form>
+                                                        </div>
+                                                    ) : (
+                                                        <form className="comment-form" onSubmit={(e) => {
+                                                            e.preventDefault();
+                                                            if (selectedPost?.id !== post.id) {
+                                                                setSelectedPost(post);
+                                                            }
+                                                            handleCommentSubmit(e);
+                                                        }}>
+                                                            <textarea
+                                                                value={selectedPost?.id === post.id && !replyingTo ? newComment : ''}
+                                                                onChange={(e) => {
+                                                                    if (selectedPost?.id !== post.id) {
+                                                                        setSelectedPost(post);
+                                                                    }
+                                                                    setNewComment(e.target.value);
+                                                                }}
+                                                                placeholder="Write a comment..."
+                                                                rows={3}
+                                                                required
+                                                            />
+                                                            <button type="submit">Post Comment</button>
+                                                        </form>
+                                                    )
                                                 ) : (
                                                     <p className="login-prompt">
                                                         Please <Link to="/">log in</Link> to comment.
@@ -755,27 +934,12 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                                 )}
                                                 
                                                 <ul className="comments-list">
-                                                    {comments.filter(comment => comment.postId === post.id).length === 0 ? (
+                                                    {comments.filter(comment => comment.postId === post.id && !comment.parentId).length === 0 ? (
                                                         <p>No comments yet.</p>
                                                     ) : (
-                                                        comments.filter(comment => comment.postId === post.id).map((comment) => (
-                                                            <li key={comment.id} className="comment-item">
-                                                                <p className="comment-meta">
-                                                                    {comment.author} on {new Date(comment.createdAt).toLocaleDateString()}
-                                                                </p>
-                                                                <p className="comment-content" dangerouslySetInnerHTML={{ __html: comment.content }} />
-                                                                {isAdmin && (
-                                                                    <div className="comment-admin-controls">
-                                                                        <button onClick={() => handleDeleteComment(comment.id)}>
-                                                                            Delete
-                                                                        </button>
-                                                                        <button onClick={() => handleBlockUser(comment.authorId)}>
-                                                                            Block User
-                                                                        </button>
-                                                                    </div>
-                                                                )}
-                                                            </li>
-                                                        ))
+                                                        comments
+                                                            .filter(comment => comment.postId === post.id && !comment.parentId)
+                                                            .map((comment) => renderComment(comment, post.id))
                                                     )}
                                                 </ul>
                                             </>
@@ -789,6 +953,43 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                     </div>
                 </div>
             </div>
+
+            {/* Delete comment confirmation dialog */}
+            {commentToDelete && (
+                <div className="modal confirmation-modal">
+                    <div className="confirmation-content">
+                        <h3>Confirm Comment Deletion</h3>
+                        <p>Are you sure you want to delete this comment?</p>
+                        <div className="confirmation-buttons">
+                            <button 
+                                onClick={() => {
+                                    console.log("Delete button clicked for comment ID:", commentToDelete);
+                                    // Find which post this comment belongs to
+                                    const postId = findCommentPostId(commentToDelete);
+                                    if (postId) {
+                                        // Call delete directly without timeout or setState
+                                        deleteCommentDirectly(postId, commentToDelete);
+                                    } else {
+                                        console.error("Could not find post ID for comment:", commentToDelete);
+                                        setCommentStatus({
+                                            success: false,
+                                            message: 'Error: Could not determine which post contains this comment'
+                                        });
+                                        setCommentToDelete(null);
+                                    }
+                                }}
+                            >
+                                Yes, Delete
+                            </button>
+                            <button 
+                                onClick={() => setCommentToDelete(null)}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };

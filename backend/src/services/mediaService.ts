@@ -10,8 +10,8 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
         
         // Create a list of promises to get each object's metadata
         const mediaPromises = objects.objects.map(async (object) => {
-            // Skip thumbnail files when listing (they'll be included with their main file)
-            if (object.key.includes('thumbnails')) {
+            // Skip thumbnail files and comment files when listing
+            if (object.key.includes('thumbnails') || object.key.includes('comments')) {
                 return null;
             }
             
@@ -72,7 +72,7 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             } as MediaItem;
         });
         
-        // Wait for all promises to resolve and filter out null values (thumbnails)
+        // Wait for all promises to resolve and filter out null values (thumbnails and comments)
         let mediaItems = (await Promise.all(mediaPromises)).filter(item => item !== null) as MediaItem[];
         
         // Get the isPublic value from metadata for each item
@@ -134,18 +134,10 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             }
         } else {
             console.log('No user ID provided, filtering public items only');
-            console.log(userId);
             // No user ID provided, only return public items
             // Filter to only include items where isPublic is strictly true
             mediaItems = mediaItems.filter(item => item.isPublic === true);
             console.log(`Filtered to ${mediaItems.length} public items`);
-            
-            // Log all items and their isPublic status for debugging
-            console.log('All items before filtering:', mediaItems.map(item => ({
-                id: item.id,
-                isPublic: item.isPublic,
-                fileName: item.fileName
-            })));
         }
         
         return mediaItems;
