@@ -1,7 +1,7 @@
 import { API_URL } from '../config';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { MediaItem, Group } from '../types';
+import { MediaItem, Group, User } from '../types';
 import Navbar from './Navbar';
 import './Gallery.css';
 
@@ -33,9 +33,23 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     const [selectedGroupId, setSelectedGroupId] = useState<string>('');
     const [isPublic, setIsPublic] = useState<boolean>(true);
     const [authenticatedThumbnails, setAuthenticatedThumbnails] = useState<Record<string, string>>({});
+    const [user, setUser] = useState<User | null>(null);
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const navigate = useNavigate();
+
+    // Check if user is logged in
+    useEffect(() => {
+        const userJson = localStorage.getItem('user');
+        if (userJson) {
+            try {
+                const userData = JSON.parse(userJson);
+                setUser(userData);
+            } catch (err) {
+                console.error('Error parsing user data:', err);
+            }
+        }
+    }, []);
 
     // Function to fetch a thumbnail with authentication
     const fetchThumbnailWithAuth = useCallback(async (item: MediaItem) => {
@@ -233,14 +247,14 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
     
     const generateThumbnail = async (file: File, fileIndex: number) => {
         if (file.type.startsWith('image/')) {
-            // For images, create a smaller version
+            // For images, create a higher resolution version for thumbnails
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             const img = new Image();
             
             img.onload = () => {
-                // Calculate thumbnail dimensions (max 200px width/height)
-                const maxSize = 200;
+                // Calculate thumbnail dimensions (max 400px width/height for higher resolution)
+                const maxSize = 400;
                 let width = img.width;
                 let height = img.height;
                 
@@ -262,7 +276,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                 // Draw the image at the new size
                 ctx?.drawImage(img, 0, 0, width, height);
                 
-                // Convert canvas to blob
+                // Convert canvas to blob with higher quality (0.9 instead of 0.8)
                 canvas.toBlob((blob) => {
                     if (blob) {
                         // Create a File object from the blob
@@ -281,11 +295,11 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                         // Update thumbnailPreviews array at the specific index
                         setThumbnailPreviews(prev => {
                             const newArray = [...prev];
-                            newArray[fileIndex] = canvas.toDataURL('image/jpeg');
+                            newArray[fileIndex] = canvas.toDataURL('image/jpeg', 0.9);
                             return newArray;
                         });
                     }
-                }, 'image/jpeg', 0.8);
+                }, 'image/jpeg', 0.9); // Higher quality for better thumbnails
             };
             
             img.src = URL.createObjectURL(file);
@@ -301,8 +315,9 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
             
             video.onseeked = () => {
                 const canvas = document.createElement('canvas');
-                canvas.width = 200;
-                canvas.height = 200 * (video.videoHeight / video.videoWidth);
+                // Higher resolution for video thumbnails (400px wide)
+                canvas.width = 400;
+                canvas.height = 400 * (video.videoHeight / video.videoWidth);
                 
                 const ctx = canvas.getContext('2d');
                 ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -324,11 +339,11 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                         // Update thumbnailPreviews array at the specific index
                         setThumbnailPreviews(prev => {
                             const newArray = [...prev];
-                            newArray[fileIndex] = canvas.toDataURL('image/jpeg');
+                            newArray[fileIndex] = canvas.toDataURL('image/jpeg', 0.9);
                             return newArray;
                         });
                     }
-                }, 'image/jpeg', 0.8);
+                }, 'image/jpeg', 0.9); // Higher quality for better thumbnails
             };
             
             video.src = URL.createObjectURL(file);
@@ -612,7 +627,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                 <div className="gallery-header">
                     <h1 className="gallery-title">Gallery</h1>
                     <div className="gallery-nav">
-                        {isAdmin && (
+                        {isAdmin && user && (
                             <button onClick={() => setShowUploadForm(!showUploadForm)}>
                                 {showUploadForm ? 'Cancel Upload' : 'Upload Media'}
                             </button>
@@ -622,7 +637,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
 
                 {error && <div className="error-message">{error}</div>}
 
-                {showUploadForm && isAdmin && (
+                {showUploadForm && isAdmin && user && (
                     <form className="upload-form" onSubmit={handleUpload}>
                         <div className="form-group">
                             <label htmlFor="file-upload">Select files to upload:</label>
@@ -767,7 +782,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                                     </p>
                                     
                                     {/* Group editing UI */}
-                                    {isAdmin && editingMediaId === item.id ? (
+                                    {isAdmin && user && editingMediaId === item.id ? (
                                         <div className="group-edit-form" onClick={(e) => e.stopPropagation()}>
                                             <div className="form-group">
                                                 <label>
@@ -820,7 +835,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
                                         </div>
                                     ) : (
                                         <div className="media-actions">
-                                            {isAdmin && (
+                                            {isAdmin && user && (
                                                 <>
                                                     <button 
                                                         className="edit-button"

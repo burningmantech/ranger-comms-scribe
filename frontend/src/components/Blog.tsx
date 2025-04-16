@@ -537,7 +537,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
             <div className="blog-container">
                 <div className="blog-header">
                     <h1 className="blog-title">Blog</h1>
-                    {isAdmin && (
+                    {isAdmin && user && (
                         <button 
                             className="new-post-button"
                             onClick={() => {
@@ -651,7 +651,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                                 By {post.author} on {new Date(post.createdAt).toLocaleDateString()}
                                                 {post.isPublic === false && <span className="private-badge"> (Private)</span>}
                                             </p>
-                                            {isAdmin && (
+                                            {isAdmin && user && (
                                                 <div className="post-admin-controls">
                                                     <button onClick={(e) => {
                                                         e.stopPropagation();
@@ -696,7 +696,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
                                         {post.isPublic === false && post.groupId && 
                                             ` - Group: ${groups.find(g => g.id === post.groupId)?.name || 'Private Group'}`}
                                     </p>
-                                    {isAdmin && (
+                                    {isAdmin && user && (
                                         <div className="post-admin-controls">
                                             <button onClick={() => handleEditPost(post)}>
                                                 Edit
