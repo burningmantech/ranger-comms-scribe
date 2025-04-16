@@ -556,3 +556,114 @@
   background-color: #cccccc;
   cursor: not-allowed;
 }
+
+/* Mobile responsiveness for admin dashboard */
+@media (max-width: 768px) {
+  .admin-dashboard {
+    padding: 10px;
+  }
+
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .admin-tabs button {
+    padding: 8px;
+    font-size: 12px;
+    width: 100%;
+    text-align: center;
+  }
+
+  .admin-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  /* Users table responsive styles */
+  .users-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-size: 14px;
+  }
+
+  .users-table th,
+  .users-table td {
+    padding: 8px;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .action-buttons select,
+  .action-buttons button {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  /* Group cards responsive styles */
+  .groups-container {
+    grid-template-columns: 1fr;
+  }
+
+  .group-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .group-actions {
+    margin-top: 10px;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .group-actions button {
+    width: 100%;
+  }
+
+  /* Email dialog responsive styles */
+  .email-dialog {
+    width: 95%;
+    max-height: 80vh;
+  }
+
+  /* Bulk add users responsive styles */
+  .bulk-users-table {
+    overflow-x: auto;
+  }
+
+  .bulk-users-table table {
+    min-width: 500px;
+  }
+
+  .bulk-add-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .bulk-add-actions button {
+    width: 100%;
+  }
+
+  /* Email dialog footer responsive */
+  .email-dialog-footer {
+    flex-direction: column;
+  }
+
+  .email-dialog-footer button {
+    width: 100%;
+  }
+}
