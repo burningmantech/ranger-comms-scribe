@@ -1,3 +1,6 @@
+// Import the R2Bucket type from Cloudflare Workers types
+import { R2Bucket } from '@cloudflare/workers-types';
+
 export interface Env {
     R2: R2Bucket;
     PUBLIC_URL?: string;

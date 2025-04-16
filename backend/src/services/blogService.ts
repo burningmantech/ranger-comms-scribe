@@ -9,7 +9,7 @@ export const getBlogPosts = async (env: Env, userId?: string): Promise<BlogPost[
         const objects = await env.R2.list({ prefix: 'blog/posts/' });
         
         // Create a list of promises to get each post's content
-        const postPromises = objects.objects.map(async (object) => {
+        const postPromises = objects.objects.map(async (object: { key: string }) => {
             const postObject = await env.R2.get(object.key);
             if (!postObject) return null;
             
@@ -18,7 +18,7 @@ export const getBlogPosts = async (env: Env, userId?: string): Promise<BlogPost[
         });
         
         // Wait for all promises to resolve and filter out null values
-        let posts = (await Promise.all(postPromises)).filter(post => post !== null) as BlogPost[];
+        let posts = (await Promise.all(postPromises)).filter((post: any): post is BlogPost => post !== null);
         
         // If userId is provided, filter posts based on access permissions
         if (userId) {
@@ -30,7 +30,7 @@ export const getBlogPosts = async (env: Env, userId?: string): Promise<BlogPost[
             } else {
                 // Filter posts based on access
                 posts = await Promise.all(
-                    posts.map(async (post) => {
+                    posts.map(async (post: BlogPost) => {
                         // Public posts are visible to everyone
                         if (post.isPublic) return post;
                         
@@ -42,15 +42,15 @@ export const getBlogPosts = async (env: Env, userId?: string): Promise<BlogPost[
                         
                         return null;
                     })
-                ).then(filteredPosts => filteredPosts.filter(post => post !== null) as BlogPost[]);
+                ).then(filteredPosts => filteredPosts.filter((post: any): post is BlogPost => post !== null));
             }
         } else {
             // No user ID provided, only return public posts
-            posts = posts.filter(post => post.isPublic);
+            posts = posts.filter((post: BlogPost) => post.isPublic);
         }
         
         // Sort posts by creation date (newest first)
-        return posts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return posts.sort((a: BlogPost, b: BlogPost) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch (error) {
         console.error('Error fetching blog posts from R2:', error);
         return [];
@@ -92,8 +92,11 @@ export const createBlogPost = async (
 ): Promise<{ success: boolean; message: string; post?: BlogPost }> => {
     try {
         // Generate a unique ID for the post
-        const postId = `post_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        const timestamp = new Date().toISOString();
+        // The optional chaining operator helps avoid errors in test environments where Date.now might be mocked improperly
+        const timestamp = Date.now?.() || 1609459200000; // Fallback to fixed timestamp if Date.now is not a function
+        const randomSuffix = Math.random().toString(36).substring(2, 9);
+        const postId = `post_${timestamp}_${randomSuffix}`;
+        const isoTimestamp = new Date().toISOString();
         
         // Create the blog post object
         const newPost: BlogPost = {
@@ -102,8 +105,8 @@ export const createBlogPost = async (
             content: post.content,
             author: userName,
             authorId: userId,
-            createdAt: timestamp,
-            updatedAt: timestamp,
+            createdAt: isoTimestamp,
+            updatedAt: isoTimestamp,
             published: post.published || false,
             commentsEnabled: post.commentsEnabled || true,
             media: post.media || [],
@@ -117,7 +120,7 @@ export const createBlogPost = async (
             httpMetadata: { contentType: 'application/json' },
             customMetadata: { 
                 userId: userId,
-                createdAt: timestamp,
+                createdAt: isoTimestamp,
                 type: 'blog-post',
             },
         });
@@ -233,7 +236,7 @@ export const getComments = async (postId: string, env: Env): Promise<BlogComment
         const objects = await env.R2.list({ prefix: `blog/comments/${postId}/` });
         
         // Create a list of promises to get each comment's content
-        const commentPromises = objects.objects.map(async (object) => {
+        const commentPromises = objects.objects.map(async (object: { key: string }) => {
             const commentObject = await env.R2.get(object.key);
             if (!commentObject) return null;
             
@@ -242,10 +245,10 @@ export const getComments = async (postId: string, env: Env): Promise<BlogComment
         });
         
         // Wait for all promises to resolve and filter out null values
-        const comments = (await Promise.all(commentPromises)).filter(comment => comment !== null) as BlogComment[];
+        const comments = (await Promise.all(commentPromises)).filter((comment: any): comment is BlogComment => comment !== null);
         
         // Sort comments by creation date (oldest first)
-        return comments.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        return comments.sort((a: BlogComment, b: BlogComment) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     } catch (error) {
         console.error('Error fetching comments from R2:', error);
         return [];
@@ -288,8 +291,10 @@ export const addComment = async (
         }
         
         // Generate a unique ID for the comment
-        const commentId = `comment_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-        const timestamp = new Date().toISOString();
+        const timestamp = Date.now?.() || 1609459200000; // Fallback to fixed timestamp if Date.now is not a function
+        const randomSuffix = Math.random().toString(36).substring(2, 9);
+        const commentId = `comment_${timestamp}_${randomSuffix}`;
+        const isoTimestamp = new Date().toISOString();
         
         // Create the comment object
         const newComment: BlogComment = {
@@ -298,7 +303,7 @@ export const addComment = async (
             content: content,
             author: userName,
             authorId: userId,
-            createdAt: timestamp,
+            createdAt: isoTimestamp,
             isBlocked: false,
         };
         
@@ -308,7 +313,7 @@ export const addComment = async (
             httpMetadata: { contentType: 'application/json' },
             customMetadata: { 
                 userId: userId,
-                createdAt: timestamp,
+                createdAt: isoTimestamp,
                 type: 'blog-comment',
             },
         });
@@ -456,7 +461,7 @@ export const getBlockedUsers = async (env: Env): Promise<BlockedUser[]> => {
         const objects = await env.R2.list({ prefix: 'blog/blocked-users/' });
         
         // Create a list of promises to get each blocked user's content
-        const blockedUserPromises = objects.objects.map(async (object) => {
+        const blockedUserPromises = objects.objects.map(async (object: { key: string }) => {
             const blockedUserObject = await env.R2.get(object.key);
             if (!blockedUserObject) return null;
             
@@ -465,10 +470,10 @@ export const getBlockedUsers = async (env: Env): Promise<BlockedUser[]> => {
         });
         
         // Wait for all promises to resolve and filter out null values
-        const blockedUsers = (await Promise.all(blockedUserPromises)).filter(user => user !== null) as BlockedUser[];
+        const blockedUsers = (await Promise.all(blockedUserPromises)).filter((user: any): user is BlockedUser => user !== null);
         
         // Sort blocked users by blocked date (newest first)
-        return blockedUsers.sort((a, b) => new Date(b.blockedAt).getTime() - new Date(a.blockedAt).getTime());
+        return blockedUsers.sort((a: BlockedUser, b: BlockedUser) => new Date(b.blockedAt).getTime() - new Date(a.blockedAt).getTime());
     } catch (error) {
         console.error('Error fetching blocked users from R2:', error);
         return [];

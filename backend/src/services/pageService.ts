@@ -6,52 +6,64 @@ import { v4 as uuidv4 } from 'uuid';
 export async function getPages(env: Env, userId?: string): Promise<Page[]> {
   const pages: Page[] = [];
   
-  // List all pages
-  const pagesList = await env.R2.list({ prefix: 'page/' });
-  
-  // Process each page
-  for (const page of pagesList.objects) {
-    try {
-      const pageObject = await env.R2.get(page.key);
-      if (pageObject) {
-        const pageData = await pageObject.json() as Page;
-        
-        // Filter based on visibility permissions
-        if (pageData.published && (pageData.isPublic || userId)) {
-          pages.push(pageData);
+  try {
+    // List all pages
+    const pagesList = await env.R2.list({ prefix: 'page/' });
+    
+    // Process each page
+    for (const page of pagesList.objects) {
+      try {
+        const pageObject = await env.R2.get(page.key);
+        if (pageObject) {
+          const pageData = await pageObject.json() as Page;
+          
+          // Filter based on visibility permissions
+          if (pageData.published && (pageData.isPublic || userId)) {
+            pages.push(pageData);
+          }
         }
+      } catch (error) {
+        console.error(`Error processing page ${page.key}:`, error);
+        // Continue processing other pages even if one fails
       }
-    } catch (error) {
-      console.error(`Error processing page ${page.key}:`, error);
     }
+    
+    // Sort pages by order
+    return pages.sort((a, b) => a.order - b.order);
+  } catch (error) {
+    console.error('Error listing pages from R2:', error);
+    return [];
   }
-  
-  // Sort pages by order
-  return pages.sort((a, b) => a.order - b.order);
 }
 
 // Get all pages (admin version - includes unpublished)
 export async function getAllPages(env: Env): Promise<Page[]> {
   const pages: Page[] = [];
   
-  // List all pages
-  const pagesList = await env.R2.list({ prefix: 'page/' });
-  
-  // Process each page
-  for (const page of pagesList.objects) {
-    try {
-      const pageObject = await env.R2.get(page.key);
-      if (pageObject) {
-        const pageData = await pageObject.json() as Page;
-        pages.push(pageData);
+  try {
+    // List all pages
+    const pagesList = await env.R2.list({ prefix: 'page/' });
+    
+    // Process each page
+    for (const page of pagesList.objects) {
+      try {
+        const pageObject = await env.R2.get(page.key);
+        if (pageObject) {
+          const pageData = await pageObject.json() as Page;
+          pages.push(pageData);
+        }
+      } catch (error) {
+        console.error(`Error processing page ${page.key}:`, error);
+        // Continue processing other pages even if one fails
       }
-    } catch (error) {
-      console.error(`Error processing page ${page.key}:`, error);
     }
+    
+    // Sort pages by order
+    return pages.sort((a, b) => a.order - b.order);
+  } catch (error) {
+    console.error('Error listing all pages from R2:', error);
+    return [];
   }
-  
-  // Sort pages by order
-  return pages.sort((a, b) => a.order - b.order);
 }
 
 // Get a single page by ID

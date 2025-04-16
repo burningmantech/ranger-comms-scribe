@@ -136,7 +136,7 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             console.log('No user ID provided, filtering public items only');
             console.log(userId);
             // No user ID provided, only return public items
-            // Use strict equality to ensure we only include items that are explicitly true
+            // Filter to only include items where isPublic is strictly true
             mediaItems = mediaItems.filter(item => item.isPublic === true);
             console.log(`Filtered to ${mediaItems.length} public items`);
             
@@ -173,8 +173,9 @@ export const uploadMedia = async (
         const mediaKey = `gallery/${fileName}`;
         const thumbnailKey = `gallery/thumbnails/${fileName}`;
         
-        // Upload the original file
-        const mediaObject = await env.R2.put(mediaKey, mediaFile.stream(), {
+        // Get the file data as ArrayBuffer which is compatible with R2
+        const mediaBuffer = await mediaFile.arrayBuffer();
+        const mediaObject = await env.R2.put(mediaKey, mediaBuffer, {
             httpMetadata: { contentType: mediaFile.type },
             customMetadata: { 
                 userId: userId, 
@@ -190,8 +191,9 @@ export const uploadMedia = async (
             throw new Error('Failed to upload media file');
         }
         
-        // Upload the thumbnail
-        const thumbnailObject = await env.R2.put(thumbnailKey, thumbnailFile.stream(), {
+        // Get the thumbnail data as ArrayBuffer which is compatible with R2
+        const thumbnailBuffer = await thumbnailFile.arrayBuffer();
+        const thumbnailObject = await env.R2.put(thumbnailKey, thumbnailBuffer, {
             httpMetadata: { contentType: thumbnailFile.type },
             customMetadata: { 
                 userId: userId, 

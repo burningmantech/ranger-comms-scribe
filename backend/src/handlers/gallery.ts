@@ -108,11 +108,18 @@ router.get('/:id', async (request: ExtendedRequest, env: Env) => {
             return json({ error: 'Media content not found' }, { status: 404 });
         }
         
+        // Create a new headers object that's compatible with Cloudflare Workers
         const headers = new Headers();
-        mediaContent.writeHttpMetadata(headers);
+        
+        // Manually copy the headers instead of using writeHttpMetadata
+        if (mediaContent.httpMetadata?.contentType) {
+            headers.set('Content-Type', mediaContent.httpMetadata.contentType);
+        }
         headers.set('etag', mediaContent.httpEtag);
         
-        return new Response(mediaContent.body, {
+        // Convert the R2 body to a type that Response can accept
+        // This avoids the ReadableStream compatibility issues
+        return new Response(mediaContent.body as unknown as BodyInit, {
             headers
         });
     } catch (error) {
@@ -162,11 +169,17 @@ router.get('/:id/thumbnail', async (request: ExtendedRequest, env: Env) => {
             return json({ error: 'Thumbnail not found' }, { status: 404 });
         }
         
+        // Create a new headers object that's compatible with Cloudflare Workers
         const headers = new Headers();
-        thumbnailObject.writeHttpMetadata(headers);
+        
+        // Manually copy the headers instead of using writeHttpMetadata
+        if (thumbnailObject.httpMetadata?.contentType) {
+            headers.set('Content-Type', thumbnailObject.httpMetadata.contentType);
+        }
         headers.set('etag', thumbnailObject.httpEtag);
         
-        return new Response(thumbnailObject.body, {
+        // Convert the R2 body to a type that Response can accept
+        return new Response(thumbnailObject.body as unknown as BodyInit, {
             headers
         });
     } catch (error) {
