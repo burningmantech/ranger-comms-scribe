@@ -11,17 +11,40 @@ const Navbar: React.FC = () => {
     const [pages, setPages] = useState<Page[]>([]);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        // Check if user is logged in
+    // Function to check login status
+    const checkLoginStatus = () => {
         const sessionId = localStorage.getItem('sessionId');
         if (sessionId) {
             setIsLoggedIn(true);
             checkAdminStatus(sessionId);
+        } else {
+            setIsLoggedIn(false);
+            setIsAdmin(false);
         }
+    };
+
+    useEffect(() => {
+        // Check if user is logged in
+        checkLoginStatus();
         
         // Fetch published pages for navigation
         fetchPages();
+
+        // Add event listener for storage changes
+        window.addEventListener('storage', handleStorageChange);
+        
+        // Clean up event listener
+        return () => {
+            window.removeEventListener('storage', handleStorageChange);
+        };
     }, []);
+
+    // Handle localStorage changes
+    const handleStorageChange = (event: StorageEvent) => {
+        if (event.key === 'sessionId' || event.key === 'user') {
+            checkLoginStatus();
+        }
+    };
     
     const fetchPages = async () => {
         try {
@@ -64,6 +87,8 @@ const Navbar: React.FC = () => {
 
     const handleLogout = () => {
         LogoutUserReact(navigate);
+        setIsLoggedIn(false);
+        setIsAdmin(false);
     };
 
     const toggleMobileMenu = () => {
