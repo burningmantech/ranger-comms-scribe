@@ -410,13 +410,149 @@ const PageManagement: React.FC = () => {
               />
             </div>
             <div className="form-group">
-              <label htmlFor="editContent">Content (HTML):</label>
-              <textarea 
-                id="editContent" 
-                value={editingPage.content}
-                onChange={(e) => setEditingPage({...editingPage, content: e.target.value})}
-                rows={10}
-              />
+              <label htmlFor="editContent">Content:</label>
+              <div className="html-editor-container">
+                <div className="editor-toolbar">
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<strong>${selectedText}</strong>${afterText}`;
+                      setEditingPage({...editingPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 8; // "<strong>".length
+                        textarea.selectionEnd = start + 8 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Bold</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<em>${selectedText}</em>${afterText}`;
+                      setEditingPage({...editingPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 4; // "<em>".length
+                        textarea.selectionEnd = start + 4 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Italic</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<a href="#">${selectedText}</a>${afterText}`;
+                      setEditingPage({...editingPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 9; // '<a href="#">'.length
+                        textarea.selectionEnd = start + 9 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Link</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<h2>${selectedText}</h2>${afterText}`;
+                      setEditingPage({...editingPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 4; // "<h2>".length
+                        textarea.selectionEnd = start + 4 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Heading</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<ul>\n  <li>${selectedText}</li>\n</ul>${afterText}`;
+                      setEditingPage({...editingPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 9; // "<ul>\n  <li>".length
+                        textarea.selectionEnd = start + 9 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>List</button>
+
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<div class="highlight">${selectedText}</div>${afterText}`;
+                      setEditingPage({...editingPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 21; // '<div class="highlight">'.length
+                        textarea.selectionEnd = start + 21 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Highlight</button>
+                </div>
+                <textarea
+                  id="editContent"
+                  value={editingPage.content}
+                  onChange={(e) => setEditingPage({...editingPage, content: e.target.value})}
+                  rows={12}
+                />
+                <div className="editor-preview">
+                  <h4>Preview:</h4>
+                  <div 
+                    className="preview-content"
+                    dangerouslySetInnerHTML={{ __html: editingPage.content }}
+                  />
+                </div>
+              </div>
             </div>
             <div className="form-group checkbox-group">
               <label>
@@ -488,14 +624,149 @@ const PageManagement: React.FC = () => {
               <small>This will be the URL path: /{newPage.slug}</small>
             </div>
             <div className="form-group">
-              <label htmlFor="newContent">Content (HTML):</label>
-              <textarea 
-                id="newContent" 
-                value={newPage.content}
-                onChange={(e) => setNewPage({...newPage, content: e.target.value})}
-                placeholder="Enter page content (HTML allowed)"
-                rows={10}
-              />
+              <label htmlFor="newContent">Content:</label>
+              <div className="html-editor-container">
+                <div className="editor-toolbar">
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<strong>${selectedText}</strong>${afterText}`;
+                      setNewPage({...newPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 8; // "<strong>".length
+                        textarea.selectionEnd = start + 8 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Bold</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<em>${selectedText}</em>${afterText}`;
+                      setNewPage({...newPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 4; // "<em>".length
+                        textarea.selectionEnd = start + 4 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Italic</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<a href="#">${selectedText}</a>${afterText}`;
+                      setNewPage({...newPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 9; // '<a href="#">'.length
+                        textarea.selectionEnd = start + 9 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Link</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<h2>${selectedText}</h2>${afterText}`;
+                      setNewPage({...newPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 4; // "<h2>".length
+                        textarea.selectionEnd = start + 4 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Heading</button>
+                  
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<ul>\n  <li>${selectedText}</li>\n</ul>${afterText}`;
+                      setNewPage({...newPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 9; // "<ul>\n  <li>".length
+                        textarea.selectionEnd = start + 9 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>List</button>
+
+                  <button type="button" onClick={() => {
+                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
+                    if (textarea) {
+                      const start = textarea.selectionStart;
+                      const end = textarea.selectionEnd;
+                      const selectedText = textarea.value.substring(start, end);
+                      const beforeText = textarea.value.substring(0, start);
+                      const afterText = textarea.value.substring(end);
+                      
+                      const newContent = `${beforeText}<div class="highlight">${selectedText}</div>${afterText}`;
+                      setNewPage({...newPage, content: newContent});
+                      
+                      // Set cursor position after the selection
+                      setTimeout(() => {
+                        textarea.focus();
+                        textarea.selectionStart = start + 21; // '<div class="highlight">'.length
+                        textarea.selectionEnd = start + 21 + selectedText.length;
+                      }, 0);
+                    }
+                  }}>Highlight</button>
+                </div>
+                <textarea
+                  id="newContent"
+                  value={newPage.content}
+                  onChange={(e) => setNewPage({...newPage, content: e.target.value})}
+                  rows={12}
+                />
+                <div className="editor-preview">
+                  <h4>Preview:</h4>
+                  <div 
+                    className="preview-content"
+                    dangerouslySetInnerHTML={{ __html: newPage.content }}
+                  />
+                </div>
+              </div>
             </div>
             <div className="form-group checkbox-group">
               <label>

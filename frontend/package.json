@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.0",
+    "@tinymce/tinymce-react": "^6.1.0",
     "google-auth-library": "^9.15.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

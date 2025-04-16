@@ -728,13 +728,128 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                         </div>
                         <div className="form-group">
                             <label htmlFor="post-content">Content:</label>
-                            <textarea
-                                id="post-content"
-                                value={newPost.content}
-                                onChange={(e) => setNewPost({...newPost, content: e.target.value})}
-                                rows={10}
-                                required
-                            />
+                            <div className="html-editor-container">
+                                <div className="editor-toolbar">
+                                    <button type="button" onClick={() => {
+                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
+                                        if (textarea) {
+                                            const start = textarea.selectionStart;
+                                            const end = textarea.selectionEnd;
+                                            const selectedText = textarea.value.substring(start, end);
+                                            const beforeText = textarea.value.substring(0, start);
+                                            const afterText = textarea.value.substring(end);
+                                            
+                                            const newContent = `${beforeText}<strong>${selectedText}</strong>${afterText}`;
+                                            setNewPost({...newPost, content: newContent});
+                                            
+                                            // Set cursor position after the selection
+                                            setTimeout(() => {
+                                                textarea.focus();
+                                                textarea.selectionStart = start + 8; // "<strong>".length
+                                                textarea.selectionEnd = start + 8 + selectedText.length;
+                                            }, 0);
+                                        }
+                                    }}>Bold</button>
+                                    
+                                    <button type="button" onClick={() => {
+                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
+                                        if (textarea) {
+                                            const start = textarea.selectionStart;
+                                            const end = textarea.selectionEnd;
+                                            const selectedText = textarea.value.substring(start, end);
+                                            const beforeText = textarea.value.substring(0, start);
+                                            const afterText = textarea.value.substring(end);
+                                            
+                                            const newContent = `${beforeText}<em>${selectedText}</em>${afterText}`;
+                                            setNewPost({...newPost, content: newContent});
+                                            
+                                            // Set cursor position after the selection
+                                            setTimeout(() => {
+                                                textarea.focus();
+                                                textarea.selectionStart = start + 4; // "<em>".length
+                                                textarea.selectionEnd = start + 4 + selectedText.length;
+                                            }, 0);
+                                        }
+                                    }}>Italic</button>
+                                    
+                                    <button type="button" onClick={() => {
+                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
+                                        if (textarea) {
+                                            const start = textarea.selectionStart;
+                                            const end = textarea.selectionEnd;
+                                            const selectedText = textarea.value.substring(start, end);
+                                            const beforeText = textarea.value.substring(0, start);
+                                            const afterText = textarea.value.substring(end);
+                                            
+                                            const newContent = `${beforeText}<a href="#">${selectedText}</a>${afterText}`;
+                                            setNewPost({...newPost, content: newContent});
+                                            
+                                            // Set cursor position after the selection
+                                            setTimeout(() => {
+                                                textarea.focus();
+                                                textarea.selectionStart = start + 9; // '<a href="#">'.length
+                                                textarea.selectionEnd = start + 9 + selectedText.length;
+                                            }, 0);
+                                        }
+                                    }}>Link</button>
+                                    
+                                    <button type="button" onClick={() => {
+                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
+                                        if (textarea) {
+                                            const start = textarea.selectionStart;
+                                            const end = textarea.selectionEnd;
+                                            const selectedText = textarea.value.substring(start, end);
+                                            const beforeText = textarea.value.substring(0, start);
+                                            const afterText = textarea.value.substring(end);
+                                            
+                                            const newContent = `${beforeText}<h2>${selectedText}</h2>${afterText}`;
+                                            setNewPost({...newPost, content: newContent});
+                                            
+                                            // Set cursor position after the selection
+                                            setTimeout(() => {
+                                                textarea.focus();
+                                                textarea.selectionStart = start + 4; // "<h2>".length
+                                                textarea.selectionEnd = start + 4 + selectedText.length;
+                                            }, 0);
+                                        }
+                                    }}>Heading</button>
+                                    
+                                    <button type="button" onClick={() => {
+                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
+                                        if (textarea) {
+                                            const start = textarea.selectionStart;
+                                            const end = textarea.selectionEnd;
+                                            const selectedText = textarea.value.substring(start, end);
+                                            const beforeText = textarea.value.substring(0, start);
+                                            const afterText = textarea.value.substring(end);
+                                            
+                                            const newContent = `${beforeText}<ul>\n  <li>${selectedText}</li>\n</ul>${afterText}`;
+                                            setNewPost({...newPost, content: newContent});
+                                            
+                                            // Set cursor position after the selection
+                                            setTimeout(() => {
+                                                textarea.focus();
+                                                textarea.selectionStart = start + 9; // "<ul>\n  <li>".length
+                                                textarea.selectionEnd = start + 9 + selectedText.length;
+                                            }, 0);
+                                        }
+                                    }}>List</button>
+                                </div>
+                                <textarea
+                                    id="post-content"
+                                    value={newPost.content}
+                                    onChange={(e) => setNewPost({...newPost, content: e.target.value})}
+                                    rows={10}
+                                    required
+                                />
+                                <div className="editor-preview">
+                                    <h4>Preview:</h4>
+                                    <div 
+                                        className="preview-content"
+                                        dangerouslySetInnerHTML={{ __html: newPost.content }}
+                                    />
+                                </div>
+                            </div>
                         </div>
                         <div className="form-group checkbox-group">
                             <label>
