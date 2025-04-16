@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import Navbar from './Navbar';
 import { API_URL } from '../config';
 import { User } from '../types';
 
-const Home: React.FC = () => {
+interface HomeProps {
+  skipNavbar?: boolean;
+}
+
+const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
     const [user, setUser] = useState<User | null>(null);
     const [content, setContent] = useState<string>('');
     const [loading, setLoading] = useState<boolean>(true);
@@ -61,23 +64,17 @@ const Home: React.FC = () => {
 
     if (loading) {
         return (
-            <>
-                <Navbar />
-                <div className="home">
-                    <p>Loading...</p>
-                </div>
-            </>
+            <div className="home">
+                <p>Loading...</p>
+            </div>
         );
     }
 
     return (
-        <>
-            <Navbar />
-            <div className="home">
-                {error && <div className="error">{error}</div>}
-                <div dangerouslySetInnerHTML={{ __html: content }} />
-            </div>
-        </>
+        <div className="home">
+            {error && <div className="error">{error}</div>}
+            <div dangerouslySetInnerHTML={{ __html: content }} />
+        </div>
     );
 };
 

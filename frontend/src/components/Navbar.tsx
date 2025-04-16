@@ -70,6 +70,10 @@ const Navbar: React.FC = () => {
         setMobileMenuOpen(!mobileMenuOpen);
     };
 
+    const handleMenuItemClick = () => {
+        setMobileMenuOpen(false);
+    };
+
     return (
         <nav className="navbar">
             <div className="navbar-brand">
@@ -79,8 +83,8 @@ const Navbar: React.FC = () => {
                 ☰
             </button>
             <div className={`navbar-menu ${mobileMenuOpen ? 'active' : ''}`}>
-                <Link to="/gallery" className="navbar-item">Gallery</Link>
-                <Link to="/blog" className="navbar-item">Blog</Link>
+                <Link to="/gallery" className="navbar-item" onClick={handleMenuItemClick}>Gallery</Link>
+                <Link to="/blog" className="navbar-item" onClick={handleMenuItemClick}>Blog</Link>
                 
                 {/* Dynamic pages in navigation */}
                 {pages.map(page => (
@@ -92,6 +96,8 @@ const Navbar: React.FC = () => {
                             if (!page.slug) {
                                 e.preventDefault();
                                 console.error('Invalid slug for page:', page);
+                            } else {
+                                handleMenuItemClick();
                             }
                         }}
                     >
@@ -100,12 +106,12 @@ const Navbar: React.FC = () => {
                 ))}
                 
                 {isAdmin && (
-                    <Link to="/admin" className="navbar-item">Admin</Link>
+                    <Link to="/admin" className="navbar-item" onClick={handleMenuItemClick}>Admin</Link>
                 )}
                 {isLoggedIn ? (
-                    <button onClick={handleLogout} className="navbar-item logout-button">Logout</button>
+                    <button onClick={() => { handleLogout(); handleMenuItemClick(); }} className="navbar-item logout-button">Logout</button>
                 ) : (
-                    <Link to="/login" className="navbar-item">Login</Link>
+                    <Link to="/login" className="navbar-item" onClick={handleMenuItemClick}>Login</Link>
                 )}
             </div>
         </nav>

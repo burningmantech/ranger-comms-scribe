@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import Navbar from './Navbar';
 import { API_URL } from '../config';
 import { Page } from '../types';
 
 interface DynamicPageProps {
   slug: string;
+  skipNavbar?: boolean;
 }
 
-const DynamicPage: React.FC<DynamicPageProps> = ({ slug }) => {
+const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
   const [page, setPage] = useState<Page | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,34 +37,25 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug }) => {
 
   if (loading) {
     return (
-      <>
-        <Navbar />
-        <div className="dynamic-page">
-          <p>Loading...</p>
-        </div>
-      </>
+      <div className="dynamic-page">
+        <p>Loading...</p>
+      </div>
     );
   }
 
   if (error || !page) {
     return (
-      <>
-        <Navbar />
-        <div className="dynamic-page">
-          <div className="error">{error || 'Page not found'}</div>
-        </div>
-      </>
+      <div className="dynamic-page">
+        <div className="error">{error || 'Page not found'}</div>
+      </div>
     );
   }
 
   return (
-    <>
-      <Navbar />
-      <div className="dynamic-page">
-        <h1>{page.title}</h1>
-        <div dangerouslySetInnerHTML={{ __html: page.content }} />
-      </div>
-    </>
+    <div className="dynamic-page">
+      <h1>{page.title}</h1>
+      <div dangerouslySetInnerHTML={{ __html: page.content }} />
+    </div>
   );
 };
 

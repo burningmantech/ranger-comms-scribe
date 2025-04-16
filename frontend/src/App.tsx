@@ -8,6 +8,7 @@ import { User, Page } from './types';
 import Home from './components/Home';
 import { API_URL } from './config';
 import DynamicPage from './components/DynamicPage';
+import Navbar from './components/Navbar';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -55,31 +56,40 @@ const App: React.FC = () => {
     }
   };
 
-  if (loading) {
-    return <div>Loading...</div>;
-  }
-
   return (
     <Router>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/blog" element={<Blog isAdmin={isAdmin} />} />
-        <Route path="/gallery" element={<Gallery isAdmin={isAdmin} />} />
-        <Route path="/admin" element={<Admin />} />
+      {/* Fixed position for navbar to prevent layout jumps */}
+      <div className="app-container">
+        {/* Navbar is included once for all routes */}
+        <Navbar />
         
-        {/* Dynamic page routes */}
-        {pages.map(page => (
-          <Route 
-            key={page.id} 
-            path={`/${page.slug}`} 
-            element={<DynamicPage slug={page.slug} />} 
-          />
-        ))}
-        
-        {/* Catch-all route for unknown pages */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+        {/* Add a placeholder with the same height as the navbar during loading */}
+        <div className="content-container">
+          {loading ? (
+            <div className="loading-container">Loading...</div>
+          ) : (
+            <Routes>
+              <Route path="/" element={<Home skipNavbar={true} />} />
+              <Route path="/login" element={<Login skipNavbar={true} />} />
+              <Route path="/blog" element={<Blog isAdmin={isAdmin} skipNavbar={true} />} />
+              <Route path="/gallery" element={<Gallery isAdmin={isAdmin} skipNavbar={true} />} />
+              <Route path="/admin" element={<Admin skipNavbar={true} />} />
+              
+              {/* Dynamic page routes */}
+              {pages.map(page => (
+                <Route 
+                  key={page.id} 
+                  path={`/${page.slug}`} 
+                  element={<DynamicPage slug={page.slug} skipNavbar={true} />} 
+                />
+              ))}
+              
+              {/* Catch-all route for unknown pages */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          )}
+        </div>
+      </div>
     </Router>
   );
 };

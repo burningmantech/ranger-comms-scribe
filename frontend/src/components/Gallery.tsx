@@ -7,9 +7,10 @@ import './Gallery.css';
 
 interface GalleryProps {
     isAdmin?: boolean;
+    skipNavbar?: boolean;
 }
 
-const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
+const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }) => {
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [groups, setGroups] = useState<Group[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
@@ -771,7 +772,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false }) => {
 
     return (
         <>
-            <Navbar />
+            {!skipNavbar && <Navbar />}
             <div className="gallery-container">
                 <div className="gallery-header">
                     <h1 className="gallery-title">Gallery</h1>

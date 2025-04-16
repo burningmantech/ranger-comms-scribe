@@ -51,6 +51,28 @@ p {
     margin: 0.5em 0;
 }
 
+/* App Container Styles */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    width: 100%;
+}
+
+.content-container {
+    flex: 1;
+    padding-top: 20px;
+    width: 100%;
+}
+
+.loading-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    width: 100%;
+}
+
 /* Gallery Component Styles */
 .gallery-container {
     padding: 20px;
@@ -339,9 +361,13 @@ p {
     background-color: #333;
     color: white;
     padding: 0 20px;
-    height: 60px;
+    height: 60px; /* Fixed height to prevent jumping */
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    position: relative;
+    position: sticky; /* Keep navbar at the top */
+    top: 0;
+    z-index: 1000; /* Ensure navbar stays on top */
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .navbar-brand {
@@ -357,6 +383,8 @@ p {
 .navbar-menu {
     display: flex;
     gap: 20px;
+    height: 100%; /* Match navbar height */
+    align-items: center;
 }
 
 .navbar-item {
@@ -389,19 +417,20 @@ p {
         position: absolute;
         top: 60px;
         right: 0;
+        left: 0;
         flex-direction: column;
         background-color: #333;
         width: 100%;
-        max-height: 0;
+        height: 0; /* Use height instead of max-height */
         overflow: hidden;
-        transition: max-height 0.3s ease-out;
-        z-index: 100;
-        gap: 0;
+        transition: height 0.3s ease-out;
+        z-index: 999;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     
     .navbar-menu.active {
-        max-height: 300px;
+        height: auto; /* Allow natural height based on content */
+        overflow: visible; /* Ensure all items are visible */
     }
     
     .navbar-item {
@@ -410,6 +439,12 @@ p {
         box-sizing: border-box;
         text-align: center;
         border-bottom: 1px solid #444;
+        background-color: #333; /* Ensure consistent background */
+        color: white; /* Ensure text is visible */
+    }
+    
+    .navbar-item:hover {
+        background-color: #555; /* Highlight on hover */
     }
     
     .navbar-item:last-child {

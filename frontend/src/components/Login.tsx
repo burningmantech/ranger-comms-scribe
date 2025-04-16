@@ -13,7 +13,11 @@ declare global {
     }
 }
 
-const Login: React.FC = () => {
+interface LoginProps {
+    skipNavbar?: boolean;
+}
+
+const Login: React.FC<LoginProps> = ({ skipNavbar }) => {
     const [user, setUser] = useState<User | null>(null);
     const [blogContent, setBlogContent] = useState<string | null>(null);
     const navigate = useNavigate();
@@ -155,7 +159,7 @@ const Login: React.FC = () => {
         <div>
             <h2>Login</h2>
             {user ? (
-                <><Home /></>
+                <><Home skipNavbar={skipNavbar} /></>
             ) : (
                 <div>
                     <LoggedOutView />

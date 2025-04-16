@@ -1,14 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { API_URL } from '../config';
 import { BlogPost, BlogComment, User, Group, UserType } from '../types';
-import Navbar from './Navbar';
 import { Link } from 'react-router-dom';
 
 interface BlogProps {
     isAdmin?: boolean;
+    skipNavbar?: boolean;
 }
 
-const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
+const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
     const [posts, setPosts] = useState<BlogPost[]>([]);
     const [selectedPost, setSelectedPost] = useState<BlogPost | null>(null);
     const [comments, setComments] = useState<BlogComment[]>([]);
@@ -682,7 +682,6 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false }) => {
 
     return (
         <>
-            <Navbar />
             <div className="blog-container">
                 <div className="blog-header">
                     <h1 className="blog-title">Blog</h1>

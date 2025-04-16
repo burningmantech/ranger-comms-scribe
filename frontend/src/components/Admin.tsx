@@ -99,7 +99,11 @@ const EmailDialog: React.FC<EmailDialogProps> = ({ groupId, groupName, onClose, 
   );
 };
 
-const Admin: React.FC = () => {
+interface AdminProps {
+  skipNavbar?: boolean;
+}
+
+const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -592,7 +596,7 @@ const Admin: React.FC = () => {
 
   return (
     <div className="admin-dashboard">
-      <Navbar />
+      {!skipNavbar && <Navbar />}
       <h1>Admin Dashboard</h1>
       <div className="admin-header">
         <div className="admin-tabs">
