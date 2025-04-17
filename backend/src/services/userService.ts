@@ -444,3 +444,49 @@ export async function initializeFirstAdmin(env: Env): Promise<void> {
     }
   }
 }
+
+// Update a user's notification settings
+export async function updateUserNotificationSettings(
+  userId: string, 
+  notificationSettings: {
+    notifyOnReplies: boolean;
+    notifyOnGroupContent: boolean;
+  },
+  env: Env
+): Promise<User | null> {
+  const user = await getUser(userId, env);
+  if (!user) return null;
+  
+  // Update notification settings
+  user.notificationSettings = notificationSettings;
+  
+  // Update in R2
+  await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { userId: user.id }
+  });
+  
+  return user;
+}
+
+// Get a user's notification settings (with defaults if not set)
+export async function getUserNotificationSettings(
+  userId: string,
+  env: Env
+): Promise<{ notifyOnReplies: boolean; notifyOnGroupContent: boolean }> {
+  const user = await getUser(userId, env);
+  
+  // Default settings if user not found or no settings exist
+  if (!user || !user.notificationSettings) {
+    return {
+      notifyOnReplies: true,
+      notifyOnGroupContent: true
+    };
+  }
+  
+  // Return user's settings with defaults for any missing properties
+  return {
+    notifyOnReplies: user.notificationSettings.notifyOnReplies ?? true,
+    notifyOnGroupContent: user.notificationSettings.notifyOnGroupContent ?? true
+  };
+}

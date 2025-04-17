@@ -134,7 +134,10 @@ const Navbar: React.FC = () => {
                     <Link to="/admin" className="navbar-item" onClick={handleMenuItemClick}>Admin</Link>
                 )}
                 {isLoggedIn ? (
-                    <button onClick={() => { handleLogout(); handleMenuItemClick(); }} className="navbar-item logout-button">Logout</button>
+                    <>
+                        <Link to="/settings" className="navbar-item" onClick={handleMenuItemClick}>Settings</Link>
+                        <button onClick={() => { handleLogout(); handleMenuItemClick(); }} className="navbar-item logout-button">Logout</button>
+                    </>
                 ) : (
                     <Link to="/login" className="navbar-item" onClick={handleMenuItemClick}>Login</Link>
                 )}

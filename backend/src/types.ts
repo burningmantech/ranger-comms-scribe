@@ -30,6 +30,10 @@ export interface User {
   isAdmin: boolean; // Keeping for backward compatibility
   userType: UserType;
   groups: string[]; // Array of group IDs the user belongs to
+  notificationSettings?: {
+    notifyOnReplies: boolean; // Notify when someone replies to posts or comments
+    notifyOnGroupContent: boolean; // Notify when content is posted in groups
+  };
 }
 
 export interface Group {

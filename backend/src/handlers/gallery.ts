@@ -2,10 +2,12 @@ import { AutoRouter, IRequest } from 'itty-router';
 import { getMedia, uploadMedia, deleteMedia, isUserAdmin } from '../services/mediaService';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
-import { MediaItem } from '../types';
+import { MediaItem, GalleryComment } from '../types';
 import { withAdminCheck, withAuthCheck } from '../authWrappers';
-import { canAccessGroup } from '../services/userService';
+import { canAccessGroup, getUserNotificationSettings, getUser } from '../services/userService';
 import { getGalleryComments, addGalleryComment, deleteGalleryComment } from '../services/galleryCommentService';
+import { notifyAboutReply, notifyGroupAboutNewContent } from '../services/notificationService';
+import { sendReplyNotification } from '../utils/email';
 
 // Extend the Request interface to include user and params properties
 interface ExtendedRequest extends IRequest {
@@ -59,6 +61,39 @@ router.post('/upload', withAdminCheck, async (request: ExtendedRequest, env: Env
         const groupId = formData.get('groupId') as string | null;
         
         const result = await uploadMedia(mediaFile, thumbnailFile, request.user, env, isPublic, groupId || undefined);
+        
+        // If this is a group media item, notify group members
+        if (groupId && isPublic && result.success && result.mediaItem) {
+            try {
+                // Get user name from session
+                const userKey = `user/${request.user}`;
+                const userObject = await env.R2.get(userKey);
+                let userName = 'Admin';
+                
+                if (userObject) {
+                    const userData = await userObject.json() as { name?: string };
+                    if (userData.name) {
+                        userName = userData.name;
+                    }
+                }
+                
+                // Send notifications to group members
+                await notifyGroupAboutNewContent(
+                    groupId,
+                    request.user,
+                    userName,
+                    'gallery',
+                    result.mediaItem.id.replace('gallery/', ''), // Get the ID without the prefix
+                    result.mediaItem.fileName || 'New gallery item',
+                    'A new image has been uploaded to the gallery.', // Generic description for media
+                    env
+                );
+            } catch (notifyError) {
+                console.error('Error sending group notifications:', notifyError);
+                // Continue even if notification fails
+            }
+        }
+        
         return json(result);
     } catch (error) {
         console.error('Error uploading media:', error);
@@ -371,6 +406,114 @@ router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env
         const result = await addGalleryComment(id, content, request.user, userName, parentId || null, level, env);
         
         if (result.success) {
+            // If this is a reply to a comment, send a notification to the parent comment author
+            if (parentId && result.comment) {
+                // Get the parent comment to find its author
+                const comments = await getGalleryComments(id, env);
+                const findParentComment = (comments: any[], parentId: string): GalleryComment | null => {
+                    for (const comment of comments) {
+                        if (comment.id === parentId) {
+                            return comment;
+                        }
+                        
+                        if (comment.replies && comment.replies.length > 0) {
+                            const found = findParentComment(comment.replies, parentId);
+                            if (found) {
+                                return found;
+                            }
+                        }
+                    }
+                    return null;
+                };
+                
+                const parentComment = findParentComment(comments, parentId);
+                
+                if (parentComment && parentComment.authorId) {
+                    try {
+                        // Don't notify if user is replying to their own comment
+                        if (parentComment.authorId !== request.user) {
+                            await notifyAboutReply(
+                                parentComment.authorId,
+                                userName,
+                                'gallery',
+                                result.comment.id,
+                                id, // Media ID
+                                content.substring(0, 200), // Truncate long comments
+                                env
+                            );
+                            
+                            // Get user email settings and email address
+                            const parentAuthorSettings = await getUserNotificationSettings(parentComment.authorId, env);
+                            const parentAuthor = await getUser(parentComment.authorId, env);
+                            
+                            // Send email notification if the user has notifications enabled
+                            if (parentAuthorSettings.notifyOnReplies && parentAuthor?.email && env.SESKey && env.SESSecret) {
+                                const contentUrl = `https://dancingcats.org/gallery?comment=${result.comment.id}#${result.comment.id}`;
+                                await sendReplyNotification(
+                                    parentAuthor.email,
+                                    userName,
+                                    'gallery',
+                                    content.substring(0, 150), // Truncate for email
+                                    contentUrl,
+                                    env.SESKey,
+                                    env.SESSecret
+                                );
+                                console.log(`Email notification sent to ${parentAuthor.email}`);
+                            }
+                        }
+                    } catch (notifyError) {
+                        console.error('Error sending notification:', notifyError);
+                        // Continue even if notification fails
+                    }
+                }
+            } else if (result.comment) {
+                // This is a top-level comment, get media item to find the uploader
+                try {
+                    // Get the media item metadata to find the uploader
+                    const mediaKey = `gallery/${id}`;
+                    const mediaObject = await env.R2.head(mediaKey);
+                    
+                    if (mediaObject && mediaObject.customMetadata && mediaObject.customMetadata.userId) {
+                        const mediaUploaderId = mediaObject.customMetadata.userId;
+                        
+                        // Don't notify if user is commenting on their own upload
+                        if (mediaUploaderId !== request.user) {
+                            await notifyAboutReply(
+                                mediaUploaderId,
+                                userName,
+                                'gallery',
+                                result.comment.id,
+                                id, // Media ID
+                                content.substring(0, 200), // Truncate long comments
+                                env
+                            );
+                            
+                            // Get user email settings and email address
+                            const uploaderSettings = await getUserNotificationSettings(mediaUploaderId, env);
+                            const uploader = await getUser(mediaUploaderId, env);
+                            
+                            // Send email notification if the user has notifications enabled
+                            if (uploaderSettings.notifyOnReplies && uploader?.email && env.SESKey && env.SESSecret) {
+                                const contentUrl = `https://dancingcats.org/gallery?comment=${result.comment.id}#${result.comment.id}`;
+                                await sendReplyNotification(
+                                    uploader.email,
+                                    userName,
+                                    'gallery',
+                                    content.substring(0, 150), // Truncate for email
+                                    contentUrl,
+                                    env.SESKey,
+                                    env.SESSecret
+                                );
+                                console.log(`Email notification sent to ${uploader.email}`);
+                            }
+                        }
+                    }
+                } catch (notifyError) {
+                    console.error('Error sending notification:', notifyError);
+                    // Continue even if notification fails
+                }
+            }
+            
             return json(result, { status: 201 });
         } else {
             return json(result, { status: 400 });

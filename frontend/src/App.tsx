@@ -4,6 +4,7 @@ import Blog from './components/Blog';
 import Gallery from './components/Gallery';
 import Login from './components/Login';
 import Admin from './components/Admin';
+import UserSettings from './components/UserSettings';
 import { User, Page } from './types';
 import Home from './components/Home';
 import { API_URL } from './config';
@@ -74,6 +75,7 @@ const App: React.FC = () => {
               <Route path="/blog" element={<Blog isAdmin={isAdmin} skipNavbar={true} />} />
               <Route path="/gallery" element={<Gallery isAdmin={isAdmin} skipNavbar={true} />} />
               <Route path="/admin" element={<Admin skipNavbar={true} />} />
+              <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
               
               {/* Dynamic page routes */}
               {pages.map(page => (

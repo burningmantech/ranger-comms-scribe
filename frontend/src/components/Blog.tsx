@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { API_URL } from '../config';
 import { BlogPost, BlogComment, User, Group, UserType } from '../types';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 interface BlogProps {
     isAdmin?: boolean;
@@ -39,6 +39,10 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
 
     // State to track comment to be deleted (for confirmation)
     const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
+
+    // State to track highlighted comment from URL
+    const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
+    const location = useLocation();
 
     // Check if screen is small
     useEffect(() => {
@@ -90,6 +94,63 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
 
         fetchPosts();
     }, []);
+
+    // Parse URL query parameters for comment ID
+    useEffect(() => {
+        const searchParams = new URLSearchParams(location.search);
+        const commentId = searchParams.get('comment');
+        const hash = location.hash.replace('#', '');
+        
+        // If we have a comment ID from either query params or hash, set it as highlighted
+        if (commentId || hash) {
+            setHighlightedCommentId(commentId || hash);
+            
+            // If we have a comment ID but no selected post, find and select the post
+            if (!selectedPost && (commentId || hash)) {
+                const targetCommentId = commentId || hash;
+                const postWithComment = findPostForComment(targetCommentId);
+                if (postWithComment) {
+                    handlePostClick(postWithComment);
+                }
+            }
+        }
+    }, [location, posts]);
+
+    // Effect to scroll to highlighted comment when comments are loaded
+    useEffect(() => {
+        if (highlightedCommentId && comments.length > 0) {
+            // Use timeout to ensure DOM has rendered the comments
+            setTimeout(() => {
+                // First, try to find a direct element with the ID
+                const commentElement = document.getElementById(`comment-${highlightedCommentId}`);
+                
+                if (commentElement) {
+                    // Scroll the comment into view
+                    commentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    // Add a highlighting effect
+                    commentElement.classList.add('highlighted-comment');
+                    
+                    // Remove highlighting after a few seconds
+                    setTimeout(() => {
+                        commentElement.classList.remove('highlighted-comment');
+                    }, 5000);
+                } else {
+                    // As a fallback, try finding comment by its class name
+                    const commentElements = document.querySelectorAll(`.comment-item[data-comment-id="${highlightedCommentId}"]`);
+                    if (commentElements.length > 0) {
+                        const element = commentElements[0];
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        element.classList.add('highlighted-comment');
+                        
+                        setTimeout(() => {
+                            element.classList.remove('highlighted-comment');
+                        }, 5000);
+                    }
+                }
+            }, 500);
+        }
+    }, [highlightedCommentId, comments]);
     
     const fetchGroups = async () => {
         try {
@@ -543,7 +604,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
     // Helper function to render a comment and its replies
     const renderComment = (comment: BlogComment, postId: string) => {
         return (
-            <li key={comment.id} className={`comment-item level-${comment.level || 0}`}>
+            <li key={comment.id} id={`comment-${comment.id}`} data-comment-id={comment.id} className={`comment-item level-${comment.level || 0} ${highlightedCommentId === comment.id ? 'highlighted-comment' : ''}`}>
                 <div className="comment-meta">
                     <span>{comment.author} on {new Date(comment.createdAt).toLocaleDateString()}</span>
                 </div>

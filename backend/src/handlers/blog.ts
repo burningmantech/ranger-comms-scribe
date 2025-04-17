@@ -15,6 +15,7 @@ import {
     unblockUser,
     getBlockedUsers
 } from '../services/blogService';
+import { notifyAboutReply, notifyGroupAboutNewContent } from '../services/notificationService';
 
 const { preflight } = cors();
 
@@ -111,6 +112,26 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
         );
         
         if (result.success) {
+            // If this is a group post and it's published, notify group members
+            if (groupId && (published ?? false) && result.post) {
+                try {
+                    // Send notifications to group members
+                    await notifyGroupAboutNewContent(
+                        groupId,
+                        request.user,
+                        userName,
+                        'post',
+                        result.post.id,
+                        title,
+                        content.substring(0, 200), // truncate long content
+                        env
+                    );
+                } catch (notifyError) {
+                    console.error('Error sending group notifications:', notifyError);
+                    // Continue even if notification fails
+                }
+            }
+            
             return json(result, { status: 201 });
         } else {
             return json(result, { status: 400 });
@@ -214,6 +235,49 @@ router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env
         const result = await addComment(id, content, request.user, userName, env, parentId);
         
         if (result.success) {
+            // If this is a reply to a comment, send a notification to the parent comment author
+            if (parentId && result.comment) {
+                try {
+                    // Get the parent comment author to send notification
+                    const parentAuthorId = result.parentAuthorId;
+                    
+                    if (parentAuthorId && parentAuthorId !== request.user) {
+                        // Don't notify if user is replying to their own comment
+                        await notifyAboutReply(
+                            parentAuthorId, 
+                            userName, 
+                            'comment',
+                            result.comment.id,
+                            id, // postId as parent content id
+                            content.substring(0, 200), // truncate long comments
+                            env
+                        );
+                    }
+                } catch (notifyError) {
+                    console.error('Error sending notification:', notifyError);
+                    // Continue even if notification fails
+                }
+            } else if (result.comment && result.postAuthorId) {
+                // This is a top-level comment, notify the post author
+                if (result.postAuthorId !== request.user) {
+                    // Don't notify if user is commenting on their own post
+                    try {
+                        await notifyAboutReply(
+                            result.postAuthorId,
+                            userName,
+                            'post',
+                            result.comment.id,
+                            id, // postId
+                            content.substring(0, 200), // truncate long comments
+                            env
+                        );
+                    } catch (notifyError) {
+                        console.error('Error sending notification:', notifyError);
+                        // Continue even if notification fails
+                    }
+                }
+            }
+            
             return json(result, { status: 201 });
         } else {
             return json(result, { status: 400 });

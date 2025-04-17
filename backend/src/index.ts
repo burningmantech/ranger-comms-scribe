@@ -4,6 +4,7 @@ import { router as blogRouter } from './handlers/blog';
 import { router as galleryRouter } from './handlers/gallery';
 import { router as adminRouter } from './handlers/admin';
 import { router as pageRouter } from './handlers/page';
+import { router as userRouter } from './handlers/user';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin } from './services/userService';
@@ -85,6 +86,8 @@ router
     .all('/page/*', pageRouter.fetch) // Handle all page routes
     .all('/admin/*', withValidSession) // Middleware to check session for admin routes
     .all('/admin/*', adminRouter.fetch) // Handle all admin routes
+    .all('/user/*', withValidSession) // Middleware to check session for user routes
+    .all('/user/*', userRouter.fetch) // Handle all user routes
     
 
 export default router

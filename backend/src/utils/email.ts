@@ -54,3 +54,84 @@ export async function sendEmail(
 	}
 	return resp.status;
 }
+
+// Function to send reply notification emails
+export async function sendReplyNotification(
+	toEmail: string,
+	replyAuthor: string,
+	contentType: 'post' | 'comment' | 'gallery',
+	contentSnippet: string,
+	contentUrl: string,
+	IAM_ACCESS_KEY: string,
+	IAM_ACCESS_KEY_SECRET: string
+): Promise<number> {
+	const subject = `New Reply from ${replyAuthor} on Dancing Cats`;
+	
+	let contentTypeStr = 'content';
+	switch (contentType) {
+		case 'post':
+			contentTypeStr = 'blog post';
+			break;
+		case 'comment':
+			contentTypeStr = 'comment';
+			break;
+		case 'gallery':
+			contentTypeStr = 'gallery item';
+			break;
+	}
+	
+	const message = `
+Hello,
+
+${replyAuthor} has replied to your ${contentTypeStr} on Dancing Cats.
+
+Their reply:
+"${contentSnippet}"
+
+Click here to view the reply:
+${contentUrl}
+
+If you don't want to receive these notifications in the future, you can update your settings in your account preferences.
+
+Thank you,
+Dancing Cats Team
+	`;
+	
+	return await sendEmail(toEmail, subject, message, IAM_ACCESS_KEY, IAM_ACCESS_KEY_SECRET);
+}
+
+// Function to send new group content notification emails
+export async function sendGroupContentNotification(
+	toEmail: string,
+	authorName: string,
+	groupName: string,
+	contentType: 'post' | 'gallery',
+	contentTitle: string,
+	contentSnippet: string,
+	contentUrl: string,
+	IAM_ACCESS_KEY: string,
+	IAM_ACCESS_KEY_SECRET: string
+): Promise<number> {
+	const contentTypeStr = contentType === 'post' ? 'blog post' : 'gallery item';
+	const subject = `New ${contentTypeStr} in ${groupName} on Dancing Cats`;
+	
+	const message = `
+Hello,
+
+${authorName} has posted a new ${contentTypeStr} in the ${groupName} group on Dancing Cats.
+
+${contentTitle ? `Title: ${contentTitle}` : ''}
+
+${contentSnippet ? `Preview: "${contentSnippet}"` : ''}
+
+Click here to view the content:
+${contentUrl}
+
+If you don't want to receive these notifications in the future, you can update your settings in your account preferences.
+
+Thank you,
+Dancing Cats Team
+	`;
+	
+	return await sendEmail(toEmail, subject, message, IAM_ACCESS_KEY, IAM_ACCESS_KEY_SECRET);
+}

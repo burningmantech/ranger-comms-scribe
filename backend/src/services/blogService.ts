@@ -287,7 +287,13 @@ export const addComment = async (
     userName: string,
     env: Env,
     parentId?: string
-): Promise<{ success: boolean; message: string; comment?: BlogComment }> => {
+): Promise<{ 
+    success: boolean; 
+    message: string; 
+    comment?: BlogComment;
+    parentAuthorId?: string; // Adding parentAuthorId to the return type
+    postAuthorId?: string;   // Adding postAuthorId to the return type
+}> => {
     try {
         // Check if the post exists and comments are enabled
         const post = await getBlogPost(postId, env);
@@ -317,6 +323,8 @@ export const addComment = async (
         
         // For replies, verify the parent comment exists and determine level
         let level = 0;
+        let parentAuthorId: string | undefined;
+        
         if (parentId) {
             const commentKey = `blog/comments/${postId}/${parentId}`;
             const parentComment = await env.R2.get(commentKey);
@@ -328,8 +336,10 @@ export const addComment = async (
                 };
             }
             
-            // Parse parent comment to get its level
+            // Parse parent comment to get its level and author
             const parentCommentData = await parentComment.json() as BlogComment;
+            parentAuthorId = parentCommentData.authorId;
+            
             // Increment level for the reply (max level is 2 for up to 3 total levels including top level)
             level = Math.min(2, (parentCommentData.level || 0) + 1);
         }
@@ -366,10 +376,14 @@ export const addComment = async (
             },
         });
         
+        const postAuthorId = post.authorId;
+        
         return { 
             success: true, 
             message: 'Comment added successfully', 
-            comment: newComment 
+            comment: newComment,
+            parentAuthorId,   // Include the parent comment author's ID if this is a reply
+            postAuthorId      // Include the post author's ID for all comments
         };
     } catch (error) {
         console.error('Error adding comment to R2:', error);

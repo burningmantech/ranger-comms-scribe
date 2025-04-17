@@ -1,6 +1,6 @@
 import { API_URL } from '../config';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { MediaItem, Group, User, GalleryComment } from '../types';
 import Navbar from './Navbar';
 import './Gallery.css';
@@ -45,9 +45,25 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
     const [commentStatus, setCommentStatus] = useState<{ success: boolean; message: string } | null>(null);
     // State to track comment to be deleted (for confirmation)
     const [commentToDelete, setCommentToDelete] = useState<{mediaId: string, commentId: string} | null>(null);
+    // State to track highlighted comment from URL
+    const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
     
     const fileInputRef = useRef<HTMLInputElement>(null);
     const navigate = useNavigate();
+    const location = useLocation();
+    const commentRefs = useRef<{ [key: string]: HTMLLIElement | null }>({});
+
+    // Parse URL query parameters for comment ID
+    useEffect(() => {
+        const searchParams = new URLSearchParams(location.search);
+        const commentId = searchParams.get('comment');
+        const hash = location.hash.replace('#', '');
+        
+        // If we have a comment ID from either query params or hash, set it as highlighted
+        if (commentId || hash) {
+            setHighlightedCommentId(commentId || hash);
+        }
+    }, [location]);
 
     // Check if user is logged in
     useEffect(() => {
@@ -734,6 +750,106 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         }
     };
 
+    // Function to find comment in the nested structure
+    const findCommentInTree = useCallback((commentId: string) => {
+        // Check in top-level comments
+        const topLevelComment = comments.find(c => c.id === commentId);
+        if (topLevelComment) return topLevelComment;
+        
+        // Check in replies (first level)
+        for (const comment of comments) {
+            if (comment.replies && comment.replies.length > 0) {
+                const reply = comment.replies.find(r => r.id === commentId);
+                if (reply) return reply;
+                
+                // Check in deep replies (second level)
+                for (const r of comment.replies) {
+                    if (r.replies && r.replies.length > 0) {
+                        const deepReply = r.replies.find(dr => dr.id === commentId);
+                        if (deepReply) return deepReply;
+                    }
+                }
+            }
+        }
+        return null;
+    }, [comments]);
+    
+    // Function to find the media item that contains a specific comment
+    const findMediaForComment = useCallback(async (commentId: string) => {
+        // We need to check all media items for their comments
+        for (const item of media) {
+            try {
+                const response = await fetch(`${API_URL}/gallery/${item.fileName}/comments`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                    },
+                });
+                
+                if (!response.ok) continue;
+                
+                const itemComments = await response.json();
+                
+                // Helper function to search the comment tree
+                const searchCommentTree = (comments: GalleryComment[]) => {
+                    for (const comment of comments) {
+                        if (comment.id === commentId) return true;
+                        
+                        if (comment.replies && comment.replies.length > 0) {
+                            const found = searchCommentTree(comment.replies);
+                            if (found) return true;
+                        }
+                    }
+                    return false;
+                };
+                
+                if (searchCommentTree(itemComments)) {
+                    return item;
+                }
+            } catch (error) {
+                console.error(`Error checking comments for ${item.fileName}:`, error);
+            }
+        }
+        return null;
+    }, [media]);
+    
+    // Effect to handle highlighted comments when comments are loaded
+    useEffect(() => {
+        if (highlightedCommentId && comments.length > 0) {
+            // Timeout gives DOM time to render comments
+            setTimeout(() => {
+                const commentElement = document.getElementById(`comment-${highlightedCommentId}`);
+                if (commentElement) {
+                    // Scroll the comment into view
+                    commentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    // Add a highlighting effect
+                    commentElement.classList.add('highlighted-comment');
+                    
+                    // Remove highlighting after a few seconds
+                    setTimeout(() => {
+                        commentElement.classList.remove('highlighted-comment');
+                    }, 5000);
+                }
+            }, 500);
+        }
+    }, [comments, highlightedCommentId]);
+    
+    // Effect to find and open the media item containing the highlighted comment
+    useEffect(() => {
+        if (highlightedCommentId && media.length > 0 && !selectedMedia) {
+            const findAndOpenMedia = async () => {
+                const mediaItem = await findMediaForComment(highlightedCommentId);
+                if (mediaItem) {
+                    openModal(mediaItem);
+                }
+            };
+            
+            findAndOpenMedia();
+        }
+    }, [highlightedCommentId, media, selectedMedia, findMediaForComment]);
+
     if (loading) {
         return <div>Loading...</div>;
     }
@@ -1097,7 +1213,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                                 ) : (
                                     <ul className="comments-list">
                                         {comments.map((comment) => (
-                                            <li key={comment.id} className={`comment-item level-${comment.level}`}>
+                                            <li key={comment.id} id={`comment-${comment.id}`} className={`comment-item level-${comment.level}`}>
                                                 <div className="comment-meta">
                                                     <span>{comment.author} on {new Date(comment.createdAt).toLocaleDateString()}</span>
                                                 </div>
@@ -1144,7 +1260,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                                                 {comment.replies && comment.replies.length > 0 && (
                                                     <ul className="replies-list">
                                                         {comment.replies.map((reply) => (
-                                                            <li key={reply.id} className="reply-item">
+                                                            <li key={reply.id} id={`comment-${reply.id}`} className="reply-item">
                                                                 <div className="comment-meta">
                                                                     <span>{reply.author} on {new Date(reply.createdAt).toLocaleDateString()}</span>
                                                                 </div>
@@ -1191,7 +1307,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                                                                 {reply.replies && reply.replies.length > 0 && (
                                                                     <ul className="replies-list">
                                                                         {reply.replies.map((deepReply) => (
-                                                                            <li key={deepReply.id} className="reply-item">
+                                                                            <li key={deepReply.id} id={`comment-${deepReply.id}`} className="reply-item">
                                                                                 <div className="comment-meta">
                                                                                     <span>{deepReply.author} on {new Date(deepReply.createdAt).toLocaleDateString()}</span>
                                                                                 </div>

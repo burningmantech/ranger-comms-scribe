@@ -693,6 +693,25 @@
   color: white;
 }
 
+/* Highlighted comment styling */
+.highlighted-comment {
+    animation: highlightPulse 2s ease-in-out;
+    border: 2px solid #4a90e2 !important;
+    box-shadow: 0 0 10px rgba(74, 144, 226, 0.5) !important;
+}
+
+@keyframes highlightPulse {
+    0% {
+        background-color: rgba(74, 144, 226, 0.3);
+    }
+    70% {
+        background-color: rgba(74, 144, 226, 0.1);
+    }
+    100% {
+        background-color: transparent;
+    }
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .gallery-grid {
