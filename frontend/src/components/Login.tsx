@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GOOGLE_CLIENT_ID, API_URL } from '../config';
 import { handleGoogleCredentialResponse } from '../utils/googleAuth';
@@ -10,6 +10,10 @@ import { User } from '../types';
 declare global {
     interface Window {
         google: any;
+        turnstile: {
+            render: (container: string | HTMLElement, options: any) => string;
+            reset: (widgetId: string) => void;
+        };
     }
 }
 
@@ -53,7 +57,8 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
         { label: 'Contains number', test: (p) => /[0-9]/.test(p), met: false },
         { label: 'Contains special character', test: (p) => /[^A-Za-z0-9]/.test(p), met: false }
     ]);
-    
+    const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+    const turnstileWidgetId = useRef<string | null>(null);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -172,6 +177,54 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
         }
     }, [user]);
 
+    useEffect(() => {
+        const loadTurnstileScript = () => {
+            const script = document.createElement('script');
+            script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+            script.async = true;
+            script.defer = true;
+            script.onload = () => {
+                console.log('Cloudflare Turnstile script loaded');
+                renderTurnstile();
+            };
+            script.onerror = () => {
+                console.error('Failed to load Cloudflare Turnstile script');
+            };
+            document.body.appendChild(script);
+        };
+
+        const renderTurnstile = () => {
+            const container = document.getElementById('turnstile-container');
+            if (container && window.turnstile) {
+                if (turnstileWidgetId.current) {
+                    window.turnstile.reset(turnstileWidgetId.current);
+                }
+                turnstileWidgetId.current = window.turnstile.render(container, {
+                    sitekey: '0x4AAAAAABPuI5DC6aoVeeXB',
+                    theme: 'light',
+                    callback: function(token: string) {
+                        console.log('Turnstile token received');
+                        // Store token in form data
+                        setTurnstileToken(token);
+                    },
+                });
+            }
+        };
+
+        if (!window.turnstile) {
+            loadTurnstileScript();
+        } else {
+            renderTurnstile();
+        }
+
+        // Reset Turnstile when auth mode changes
+        return () => {
+            if (turnstileWidgetId.current && window.turnstile) {
+                window.turnstile.reset(turnstileWidgetId.current);
+            }
+        };
+    }, [authMode]);
+
     const checkPasswordRequirements = (password: string) => {
         setPasswordRequirements(prev => 
             prev.map(req => ({
@@ -221,6 +274,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                         name: formData.name,
                         email: formData.email,
                         password: formData.password,
+                        turnstileToken,
                     }),
                 });
                 
@@ -249,6 +303,10 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                     throw new Error('Email address is required');
                 }
 
+                if (!turnstileToken) {
+                    throw new Error('Please complete the security check');
+                }
+
                 const response = await fetch(`${API_URL}/auth/forgot-password`, {
                     method: 'POST',
                     headers: {
@@ -256,6 +314,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                     },
                     body: JSON.stringify({
                         email: formData.email,
+                        turnstileToken,
                     }),
                 });
                 
@@ -268,6 +327,11 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                 setMessage(data.message || 'Password reset link has been sent to your email');
                 
                 setFormData({...formData, email: ''});
+                // Reset turnstile after successful password reset request
+                if (turnstileWidgetId.current && window.turnstile) {
+                    window.turnstile.reset(turnstileWidgetId.current);
+                    setTurnstileToken(null);
+                }
             } else {
                 const response = await fetch(`${API_URL}/auth/login`, {
                     method: 'POST',
@@ -277,6 +341,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                     body: JSON.stringify({
                         email: formData.email,
                         password: formData.password,
+                        turnstileToken,
                     }),
                 });
                 
@@ -336,6 +401,8 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                         />
                     </div>
                     
+                    <div id="turnstile-container" style={{ marginBottom: '15px' }}></div>
+                    
                     {error && (
                         <div style={{ color: 'red', marginBottom: '10px' }}>
                             {error}
@@ -350,15 +417,15 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                     
                     <button 
                         type="submit" 
-                        disabled={loading}
+                        disabled={loading || !turnstileToken}
                         style={{
                             padding: '10px',
                             backgroundColor: '#1a73e8',
                             color: 'white',
                             border: 'none',
                             borderRadius: '5px',
-                            cursor: loading ? 'not-allowed' : 'pointer',
-                            opacity: loading ? 0.7 : 1
+                            cursor: loading || !turnstileToken ? 'not-allowed' : 'pointer',
+                            opacity: loading || !turnstileToken ? 0.7 : 1
                         }}
                     >
                         {loading ? 'Sending...' : 'Send Reset Link'}
@@ -524,6 +591,8 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                             )}
                         </div>
                     )}
+                    
+                    <div id="turnstile-container" style={{ marginBottom: '15px' }}></div>
                     
                     {error && (
                         <div style={{ color: '#f44336', marginBottom: '10px' }}>

@@ -2,10 +2,12 @@
 import { R2Bucket } from '@cloudflare/workers-types';
 
 export interface Env {
+    TURNSTILESECRET: any;
     R2: R2Bucket;
     PUBLIC_URL?: string;
     SESKey?: string;
     SESSecret?: string;
+    TURSTILESECRET?: string; // Added Turnstile secret binding
 }
 
 export async function CreateSession(

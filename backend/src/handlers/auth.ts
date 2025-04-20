@@ -5,6 +5,7 @@ import { CreateSession, DeleteSession, GetSession } from '../utils/sessionManage
 import { getUser, createUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
+import { verifyTurnstileToken } from '../utils/turnstile';
 
 export const router = AutoRouter({ base : '/auth' });
 
@@ -56,11 +57,22 @@ const validatePassword = (password: string): { valid: boolean; message: string }
 // Register a new user with email and password
 router.post('/register', async (request: Request, env) => {
     console.log('POST /auth/register called');
-    const body = await request.json() as { name: string; email: string; password: string };
-    const { name, email, password } = body;
+    const body = await request.json() as { name: string; email: string; password: string; turnstileToken: string };
+    const { name, email, password, turnstileToken } = body;
 
     if (!name || !email || !password) {
         return json({ error: 'Name, email and password are required' }, { status: 400 });
+    }
+
+    if (!turnstileToken) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
+    }
+
+    // Verify Turnstile token
+    const clientIp = request.headers.get('CF-Connecting-IP');
+    const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
+    if (!isTurnstileValid) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
     }
 
     // Validate password strength
@@ -267,11 +279,22 @@ router.post('/resend-verification', async (request: Request, env) => {
 // Login with email and password
 router.post('/login', async (request: Request, env) => {
     console.log('POST /auth/login called');
-    const body = await request.json() as { email: string; password: string };
-    const { email, password } = body;
+    const body = await request.json() as { email: string; password: string; turnstileToken: string };
+    const { email, password, turnstileToken } = body;
 
     if (!email || !password) {
         return json({ error: 'Email and password are required' }, { status: 400 });
+    }
+
+    if (!turnstileToken) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
+    }
+
+    // Verify Turnstile token
+    const clientIp = request.headers.get('CF-Connecting-IP');
+    const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
+    if (!isTurnstileValid) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
     }
 
     try {
@@ -340,11 +363,22 @@ router.post('/set-password', async (request: Request, env) => {
 // Request password reset - sends reset email
 router.post('/forgot-password', async (request: Request, env) => {
     console.log('POST /auth/forgot-password called');
-    const body = await request.json() as { email: string };
-    const { email } = body;
+    const body = await request.json() as { email: string; turnstileToken: string };
+    const { email, turnstileToken } = body;
 
     if (!email) {
         return json({ error: 'Email is required' }, { status: 400 });
+    }
+    
+    if (!turnstileToken) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
+    }
+
+    // Verify Turnstile token
+    const clientIp = request.headers.get('CF-Connecting-IP');
+    const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
+    if (!isTurnstileValid) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
     }
 
     try {
@@ -411,11 +445,22 @@ router.post('/forgot-password', async (request: Request, env) => {
 // Reset password using token
 router.post('/reset-password', async (request: Request, env) => {
     console.log('POST /auth/reset-password called');
-    const body = await request.json() as { token: string; password: string };
-    const { token, password } = body;
+    const body = await request.json() as { token: string; password: string; turnstileToken: string };
+    const { token, password, turnstileToken } = body;
 
     if (!token || !password) {
         return json({ error: 'Token and password are required' }, { status: 400 });
+    }
+
+    if (!turnstileToken) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
+    }
+
+    // Verify Turnstile token
+    const clientIp = request.headers.get('CF-Connecting-IP');
+    const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
+    if (!isTurnstileValid) {
+        return json({ error: 'Turnstile verification failed' }, { status: 400 });
     }
 
     // Validate password strength
