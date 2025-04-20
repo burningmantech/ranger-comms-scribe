@@ -2,34 +2,6 @@ import { GetSession, Env } from '../utils/sessionManager';
 import { MediaItem, UserType } from '../types';
 import { getUser, canAccessGroup } from '../services/userService';
 
-// Function to get group names for media items
-const getGroupName = async (groupId: string, env: Env): Promise<string> => {
-    try {
-        const groupKey = `group/${groupId}`;
-        const groupObject = await env.R2.get(groupKey);
-        if (groupObject) {
-            const groupData = await groupObject.json() as { name: string };
-            return groupData.name;
-        }
-    } catch (error) {
-        console.error(`Error getting group name for ${groupId}:`, error);
-    }
-    return 'Unknown';
-};
-
-// Function to properly convert isPublic from string to boolean
-const parseIsPublic = (value: any): boolean => {
-    if (typeof value === 'boolean') {
-        return value;
-    }
-    // Handle string values 'true'/'false'
-    if (typeof value === 'string') {
-        return value.toLowerCase() === 'true';
-    }
-    // Default to false for security (changed from true)
-    return false;
-};
-
 // Get all media from the gallery folder in R2
 export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> => {
     try {
@@ -53,81 +25,119 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             try {
                 const thumbnailExists = await env.R2.head(thumbnailKey);
                 if (thumbnailExists) {
+                    // Create a URL for the thumbnail
                     thumbnailUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/thumbnail`;
                 }
             } catch (error) {
+                // Thumbnail doesn't exist, use a default or empty string
                 thumbnailUrl = '';
             }
             
             // Get the file name and extension
             const fileName = object.key.split('/').pop() || '';
-
-            // Use our helper function to consistently parse isPublic
-            const isPublic = parseIsPublic(metadata?.isPublic);
+            const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
             
-            const mediaItem: MediaItem = {
+            // Infer file type from extension if httpMetadata is not available
+            let fileType = object.httpMetadata?.contentType || '';
+            
+            if (!fileType || fileType === 'application/octet-stream') {
+                // Map common extensions to MIME types
+                const extensionToMimeType: Record<string, string> = {
+                    'jpg': 'image/jpeg',
+                    'jpeg': 'image/jpeg',
+                    'png': 'image/png',
+                    'gif': 'image/gif',
+                    'webp': 'image/webp',
+                    'svg': 'image/svg+xml',
+                    'mp4': 'video/mp4',
+                    'webm': 'video/webm',
+                    'mov': 'video/quicktime',
+                    'avi': 'video/x-msvideo',
+                    'mkv': 'video/x-matroska'
+                };
+                
+                fileType = extensionToMimeType[fileExtension] || 'application/octet-stream';
+            }
+            
+            // Create a MediaItem object
+            return {
                 id: object.key,
-                fileName,
-                fileType: object.httpMetadata?.contentType || 'application/octet-stream',
-                url: `${env.PUBLIC_URL}/gallery/${fileName}`,
-                thumbnailUrl,
+                fileName: fileName,
+                fileType: fileType,
+                url: `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}`,
+                thumbnailUrl: thumbnailUrl,
                 uploadedBy: metadata?.userId || 'unknown',
                 uploadedAt: metadata?.createdAt || new Date().toISOString(),
                 size: object.size,
-                isPublic: isPublic,  // Using our consistently parsed boolean
-                groupId: metadata?.groupId,
-            };
-
-            // Add group name if item belongs to a group
-            if (mediaItem.groupId) {
-                mediaItem.groupName = await getGroupName(mediaItem.groupId, env);
-            }
-
-            return mediaItem;
+            } as MediaItem;
         });
         
-        // Wait for all promises to resolve and filter out null values
-        let mediaItems = (await Promise.all(mediaPromises)).filter((item): item is MediaItem => item !== null);
+        // Wait for all promises to resolve and filter out null values (thumbnails and comments)
+        let mediaItems = (await Promise.all(mediaPromises)).filter(item => item !== null) as MediaItem[];
+        
+        // Get the isPublic value from metadata for each item
+        mediaItems = await Promise.all(mediaItems.map(async (item) => {
+            // If isPublic is not set in the item, check the metadata
+            try {
+                const objectMetadata = await env.R2.head(item.id);
+                if (objectMetadata && objectMetadata.customMetadata) {
+                    // Check if isPublic is explicitly set to 'true' or 'false'
+                    let isPublic = true; // Default to true for backward compatibility
+                    
+                    if (objectMetadata.customMetadata.isPublic === 'false') {
+                        isPublic = false;
+                    } else if (objectMetadata.customMetadata.isPublic === 'true') {
+                        isPublic = true;
+                    }
+                    
+                    return {
+                        ...item,
+                        isPublic,
+                        groupId: objectMetadata.customMetadata.groupId
+                    };
+                }
+            } catch (error) {
+                console.warn(`Could not get metadata for ${item.id}:`, error);
+            }
+            
+            // Default to true for backward compatibility if metadata check fails
+            return {
+                ...item,
+                isPublic: true
+            };
+        }));
         
         // If userId is provided, filter media based on access permissions
         if (userId) {
+            console.log('User ID provided:', userId);
             const user = await getUser(userId, env);
             
-            // If user is admin, they can see everything
-            if (user && (user.isAdmin || user.userType === UserType.Admin)) {
-                return mediaItems;
-            }
-            
-            // For non-admin users, filter based on access rights
-            mediaItems = await Promise.all(
-                mediaItems.map(async (item) => {
-                    // Public items are always visible
-                    if (item.isPublic === true) {
-                        return item;
-                    }
-                    
-                    // For private items with group access, check group membership
-                    if (item.groupId && user) {
-                        const canAccess = await canAccessGroup(userId, item.groupId, env);
-                        if (canAccess) {
-                            return item;
+            // If user is admin, they can see all media
+            if (user && user.userType === UserType.Admin) {
+                // No filtering needed, admins see everything
+            } else {
+                // Filter media based on access
+                mediaItems = await Promise.all(
+                    mediaItems.map(async (item) => {
+                        // Public items are visible to everyone
+                        if (item.isPublic) return item;
+                        
+                        // Group items require membership check
+                        if (item.groupId && user) {
+                            const canAccess = await canAccessGroup(userId, item.groupId, env);
+                            if (canAccess) return item;
                         }
-                    }
-                    
-                    // User owns the item
-                    if (item.uploadedBy === userId) {
-                        return item;
-                    }
-                    
-                    return null;
-                })
-            ).then(items => items.filter((item): item is MediaItem => item !== null));
+                        
+                        return null;
+                    })
+                ).then(filteredItems => filteredItems.filter(item => item !== null) as MediaItem[]);
+            }
         } else {
+            console.log('No user ID provided, filtering public items only');
             // No user ID provided, only return public items
+            // Filter to only include items where isPublic is strictly true
             mediaItems = mediaItems.filter(item => item.isPublic === true);
-            
-            // Log for debugging
-            console.log(`Returning ${mediaItems.length} public items for non-logged-in user`);
+            console.log(`Filtered to ${mediaItems.length} public items`);
         }
         
         return mediaItems;

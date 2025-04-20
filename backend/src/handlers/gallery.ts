@@ -309,7 +309,8 @@ router.put('/:id/group', withAdminCheck, async (request: ExtendedRequest, env: E
             uploadedBy: updatedMetadata.userId || 'unknown',
             uploadedAt: updatedMetadata.createdAt || new Date().toISOString(),
             size: mediaObject.size,
-            isPublic: updatedMetadata.isPublic === 'true', // Ensure consistent conversion to boolean
+            isPublic: isPublic,
+            // isPublic: updatedMetadata.isPublic === 'true', // Ensure consistent conversion to boolean
             groupId: groupId
         };
         
