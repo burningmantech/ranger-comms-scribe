@@ -106,6 +106,21 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         }
     }, []);
 
+    // Improved utility function to determine if an item is public
+    const isItemPublic = (item: MediaItem): boolean => {
+        // First check if it's a boolean
+        if (typeof item.isPublic === 'boolean') {
+            return item.isPublic;
+        }
+        // Then check if it's a string
+        if (typeof item.isPublic === 'string') {
+            return item.isPublic === 'true';
+        }
+        // Default to true for backward compatibility
+        return true;
+    };
+
+    // Get all media from the gallery
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -115,7 +130,10 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                         method: 'GET',
                         headers: {
                             'Content-Type': 'application/json',
-                            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                            // Include authorization header only if user is logged in
+                            ...(localStorage.getItem('sessionId') ? {
+                                Authorization: `Bearer ${localStorage.getItem('sessionId')}`
+                            } : {})
                         },
                     }
                 );
@@ -125,6 +143,24 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                 }
                 
                 const mediaData = await mediaResponse.json();
+                console.log('Media API response:', JSON.stringify(mediaData, null, 2));
+                
+                // Add detailed debugging for isPublic values
+                if (mediaData.length > 0) {
+                    console.log('--- DETAILED MEDIA VISIBILITY DEBUG ---');
+                    mediaData.forEach((item: MediaItem, index: number) => {
+                        console.log(`Media item ${index} - ${item.fileName}:`, {
+                            rawIsPublic: item.isPublic,
+                            isPublicType: typeof item.isPublic,
+                            isPublicAsBoolean: Boolean(item.isPublic),
+                            isPublicStringTrue: String(item.isPublic) === 'true',
+                            itemPublicCheck: isItemPublic(item),
+                            groupId: item.groupId || 'none',
+                            groupName: item.groupName || 'none'
+                        });
+                    });
+                }
+                
                 setMedia(mediaData);
                 
                 // Fetch groups if admin
@@ -142,6 +178,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                     if (groupsResponse.ok) {
                         const groupsData = await groupsResponse.json();
                         setGroups(groupsData.groups);
+                        console.log("Loaded groups:", groupsData.groups);
                     }
                 }
                 
@@ -1035,16 +1072,14 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                                     }}
                                 />
                                 <div className="media-info">
-                                    <h3 className="media-name">{item.fileName}</h3>
-                                    <p className="media-date">
-                                        {new Date(item.uploadedAt).toLocaleDateString()}
-                                    </p>
-                                    
-                                    {/* Display group information */}
                                     <p className="media-group">
-                                        {item.isPublic ? 'Public' : item.groupId ? 
-                                            `Group: ${groups.find(g => g.id === item.groupId)?.name || 'Unknown'}` : 
-                                            'Private'}
+                                        {isItemPublic(item) ? (
+                                            'Public'
+                                        ) : item.groupId ? (
+                                            `Group: ${groups.find(g => g.id === item.groupId)?.name || item.groupName || 'Unknown Group'}`
+                                        ) : (
+                                            'Private'
+                                        )}
                                     </p>
                                     
                                     {/* Group editing UI */}
@@ -1112,12 +1147,14 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                                                     >
                                                         Edit Group
                                                     </button>
-                                                    <button 
-                                                        className="delete-button"
-                                                        onClick={(e) => handleDeleteClick(item, e)}
-                                                    >
-                                                        Delete
-                                                    </button>
+                                                    {(isAdmin || (user && item.uploadedBy === user.email)) && (
+                                                        <button 
+                                                            className="delete-button"
+                                                            onClick={(e) => handleDeleteClick(item, e)}
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    )}
                                                 </>
                                             )}
                                         </div>

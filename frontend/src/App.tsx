@@ -5,11 +5,14 @@ import Gallery from './components/Gallery';
 import Login from './components/Login';
 import Admin from './components/Admin';
 import UserSettings from './components/UserSettings';
+import ResetPassword from './components/ResetPassword';
+import VerifyEmail from './components/VerifyEmail';
 import { User, Page } from './types';
 import Home from './components/Home';
 import { API_URL } from './config';
 import DynamicPage from './components/DynamicPage';
 import Navbar from './components/Navbar';
+import { USER_LOGIN_EVENT } from './utils/userActions';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -30,8 +33,21 @@ const App: React.FC = () => {
       }
     }
 
+    // Listen for login state changes
+    const handleLoginStateChange = (event: CustomEvent<User | null>) => {
+      const userData = event.detail;
+      setUser(userData);
+      setIsAdmin(userData?.isAdmin === true);
+    };
+
+    window.addEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
+
     // Fetch published pages for navigation
     fetchPages();
+
+    return () => {
+      window.removeEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
+    };
   }, []);
 
   const fetchPages = async () => {
@@ -71,11 +87,13 @@ const App: React.FC = () => {
           ) : (
             <Routes>
               <Route path="/" element={<Home skipNavbar={true} />} />
-              <Route path="/login" element={<Login skipNavbar={true} />} />
+              <Route path="/login" element={<Login skipNavbar={true} setParentUser={setUser} />} />
               <Route path="/blog" element={<Blog isAdmin={isAdmin} skipNavbar={true} />} />
               <Route path="/gallery" element={<Gallery isAdmin={isAdmin} skipNavbar={true} />} />
               <Route path="/admin" element={<Admin skipNavbar={true} />} />
               <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
               
               {/* Dynamic page routes */}
               {pages.map(page => (

@@ -24,7 +24,8 @@ export const loadGoogleOneTap = (clientId: string, callback: (response: any) => 
 
 export const handleGoogleCredentialResponse = (
     response: any,
-    setUser: React.Dispatch<React.SetStateAction<User | null>>
+    setUser: React.Dispatch<React.SetStateAction<User | null>>,
+    setParentUser?: React.Dispatch<React.SetStateAction<User | null>>
 ) => {
     console.log('Encoded JWT ID token:', response.credential);
 
@@ -45,22 +46,24 @@ export const handleGoogleCredentialResponse = (
         .then((data) => {
             console.log('Response from backend:', data);
 
-            // Persist the user's email, name, session ID, and admin status in localStorage
-            localStorage.setItem('user', JSON.stringify({ 
+            const userData = { 
                 email: data.email, 
                 name: data.name,
                 isAdmin: data.isAdmin || false,
                 approved: data.approved || false
-            }));
+            };
+
+            // Persist the user's email, name, session ID, and admin status in localStorage
+            localStorage.setItem('user', JSON.stringify(userData));
             localStorage.setItem('sessionId', data.sessionId);
 
-            // Update state
-            setUser({ 
-                email: data.email, 
-                name: data.name,
-                isAdmin: data.isAdmin || false,
-                approved: data.approved || false
-            });
+            // Update local state
+            setUser(userData);
+            
+            // Update parent state if provided
+            if (setParentUser) {
+                setParentUser(userData);
+            }
 
             // Redirect to admin dashboard if user is an admin
             if (data.isAdmin) {

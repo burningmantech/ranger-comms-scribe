@@ -975,7 +975,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                                                 By {post.author} on {new Date(post.createdAt).toLocaleDateString()}
                                                 {post.isPublic === false && <span className="private-badge"> (Private)</span>}
                                             </p>
-                                            {isAdmin && user && (
+                                            {(isAdmin || (user && post.authorId === user.id)) && (
                                                 <div className="post-admin-controls">
                                                     <button onClick={(e) => {
                                                         e.stopPropagation();
@@ -991,12 +991,14 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                                                     }}>
                                                         Delete
                                                     </button>
-                                                    <button onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        toggleCommentsForPost(post);
-                                                    }}>
-                                                        {post.commentsEnabled ? 'Disable Comments' : 'Enable Comments'}
-                                                    </button>
+                                                    {isAdmin && (
+                                                        <button onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            toggleCommentsForPost(post);
+                                                        }}>
+                                                            {post.commentsEnabled ? 'Disable Comments' : 'Enable Comments'}
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )}
                                         </li>

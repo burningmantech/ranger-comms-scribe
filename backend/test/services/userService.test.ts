@@ -12,10 +12,13 @@ import {
   removeUserFromGroup,
   deleteGroup,
   deleteUser,
-  canAccessGroup
+  canAccessGroup,
+  authenticateUser,
+  setUserPassword
 } from '../../src/services/userService';
 import { mockEnv } from './test-helpers';
 import { UserType } from '../../src/types';
+import { hashPassword } from '../../src/utils/password';
 
 describe('User Service', () => {
   let env: any;
@@ -147,6 +150,28 @@ describe('User Service', () => {
       
       expect(admin.isAdmin).toBe(true);
       expect(admin.userType).toBe(UserType.Admin);
+    });
+  });
+
+  describe('createUser with password', () => {
+    it('should create a user with password hash', async () => {
+      const userData = {
+        name: 'Password User',
+        email: 'password@example.com',
+        password: 'securePassword123'
+      };
+      
+      const user = await createUser(userData, env);
+      
+      expect(user).toBeDefined();
+      expect(user.id).toBe('password@example.com');
+      expect(user.name).toBe('Password User');
+      expect(user.email).toBe('password@example.com');
+      expect(user.passwordHash).toBeDefined();
+      expect(typeof user.passwordHash).toBe('string');
+      
+      // Verify the user was stored in R2
+      expect(env.R2.put).toHaveBeenCalled();
     });
   });
 
@@ -397,6 +422,90 @@ describe('User Service', () => {
       expect(member).toBeDefined();
       expect(member?.userType).toBe(UserType.Member);
       expect(member?.isAdmin).toBe(false); // Should no longer be admin
+    });
+  });
+
+  describe('setUserPassword', () => {
+    it('should set a password for an existing user', async () => {
+      // Create a user first
+      const userData = {
+        name: 'Password User',
+        email: 'password@example.com'
+      };
+      
+      await createUser(userData, env);
+      
+      // Set password for the user
+      const success = await setUserPassword('password@example.com', 'newSecurePassword123', env);
+      
+      expect(success).toBe(true);
+      
+      // Verify user has password hash
+      const user = await getUser('password@example.com', env);
+      expect(user?.passwordHash).toBeDefined();
+    });
+    
+    it('should return false for non-existent users', async () => {
+      const success = await setUserPassword('nonexistent@example.com', 'password123', env);
+      
+      expect(success).toBe(false);
+    });
+  });
+  
+  describe('authenticateUser', () => {
+    it('should authenticate a user with correct password', async () => {
+      // Create a user with password
+      const password = 'securePassword123';
+      const userData = {
+        name: 'Auth User',
+        email: 'auth@example.com',
+        password
+      };
+      
+      await createUser(userData, env);
+      
+      // Authenticate the user
+      const user = await authenticateUser('auth@example.com', password, env);
+      
+      expect(user).toBeDefined();
+      expect(user?.email).toBe('auth@example.com');
+    });
+    
+    it('should reject authentication with incorrect password', async () => {
+      // Create a user with password
+      const userData = {
+        name: 'Auth User',
+        email: 'auth@example.com',
+        password: 'correctPassword123'
+      };
+      
+      await createUser(userData, env);
+      
+      // Attempt authentication with wrong password
+      const user = await authenticateUser('auth@example.com', 'wrongPassword', env);
+      
+      expect(user).toBeNull();
+    });
+    
+    it('should reject authentication for users without passwords', async () => {
+      // Create a user without password
+      const userData = {
+        name: 'No Password User',
+        email: 'nopassword@example.com'
+      };
+      
+      await createUser(userData, env);
+      
+      // Attempt authentication
+      const user = await authenticateUser('nopassword@example.com', 'anyPassword', env);
+      
+      expect(user).toBeNull();
+    });
+    
+    it('should reject authentication for non-existent users', async () => {
+      const user = await authenticateUser('nonexistent@example.com', 'anyPassword', env);
+      
+      expect(user).toBeNull();
     });
   });
 
