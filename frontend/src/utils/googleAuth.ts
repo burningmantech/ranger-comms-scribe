@@ -1,5 +1,6 @@
 import { API_URL } from '../config';
 import { User } from '../types';
+import { handleUserLogin } from './userActions';
 
 export const loadGoogleOneTap = (clientId: string, callback: (response: any) => void) => {
     const script = document.createElement('script');
@@ -53,9 +54,9 @@ export const handleGoogleCredentialResponse = (
                 approved: data.approved || false
             };
 
-            // Persist the user's email, name, session ID, and admin status in localStorage
-            localStorage.setItem('user', JSON.stringify(userData));
-            localStorage.setItem('sessionId', data.sessionId);
+            // Use handleUserLogin instead of directly setting localStorage
+            // This will both update localStorage and dispatch the login event
+            handleUserLogin(userData, data.sessionId);
 
             // Update local state
             setUser(userData);
