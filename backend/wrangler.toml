@@ -8,6 +8,7 @@ route = "api.dancingcats.org/*"
 
 [vars]
 PUBLIC_URL = "https://api.dancingcats.org"
+FRONTEND_URL = "https://dancingcats.org"
 SESKey = "AKIA36OXS3SM4YRL76M4"
 
 [[r2_buckets]]

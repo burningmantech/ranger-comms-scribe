@@ -1,8 +1,9 @@
 import { Env } from '../utils/sessionManager';
 import { User, UserType, Group } from '../types';
+import { hashPassword, verifyPassword } from '../utils/password';
 
 // Store users in R2 with prefix 'user:'
-export async function createUser({ name, email }: { name: string; email: string }, env: Env): Promise<User> {
+export async function createUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
   // Check if user already exists
   const existingUser = await getUser(email, env);
   if (existingUser) {
@@ -21,6 +22,11 @@ export async function createUser({ name, email }: { name: string; email: string 
     userType: isFirstAdmin ? UserType.Admin : UserType.Public,
     groups: []
   };
+
+  // If password is provided, hash it and store it
+  if (password) {
+    newUser.passwordHash = await hashPassword(password);
+  }
   
   // Store in R2
   await env.R2.put(`user/${email}`, JSON.stringify(newUser), {
@@ -489,4 +495,60 @@ export async function getUserNotificationSettings(
     notifyOnReplies: user.notificationSettings.notifyOnReplies ?? true,
     notifyOnGroupContent: user.notificationSettings.notifyOnGroupContent ?? true
   };
+}
+
+// Add or update user password
+export async function setUserPassword(userId: string, password: string, env: Env): Promise<boolean> {
+  try {
+    const user = await getUser(userId, env);
+    if (!user) return false;
+    
+    // Hash the password
+    user.passwordHash = await hashPassword(password);
+    
+    // Update user in storage
+    await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { userId: user.id }
+    });
+    
+    return true;
+  } catch (error) {
+    console.error(`Error setting password for user ${userId}:`, error);
+    return false;
+  }
+}
+
+// Authenticate user with email and password
+export async function authenticateUser(email: string, password: string, env: Env): Promise<User | null> {
+  try {
+    const user = await getUser(email, env);
+    if (!user || !user.passwordHash) return null;
+    
+    // Verify the password
+    const isValid = await verifyPassword(password, user.passwordHash);
+    if (!isValid) return null;
+    
+    return user;
+  } catch (error) {
+    console.error(`Error authenticating user ${email}:`, error);
+    return null;
+  }
+}
+
+// Add a new function to mark a user as verified
+export async function markUserAsVerified(userId: string, env: Env): Promise<User | null> {
+  const user = await getUser(userId, env);
+  if (!user) return null;
+  
+  // Mark as verified
+  user.verified = true;
+  
+  // Update in R2
+  await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { userId: user.id }
+  });
+  
+  return user;
 }

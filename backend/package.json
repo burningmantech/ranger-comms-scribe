@@ -24,6 +24,7 @@
     "node": ">=14.0.0"
   },
   "dependencies": {
+    "@zxcvbn-ts/core": "^3.0.4",
     "aws4fetch": "^1.0.20",
     "google-auth-library": "^9.15.1",
     "itty-router": "^5.0.18",

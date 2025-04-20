@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { API_URL } from '../config';
-import { LogoutUserReact } from '../utils/userActions';
-import { Page } from '../types';
+import { LogoutUserReact, USER_LOGIN_EVENT } from '../utils/userActions';
+import { Page, User } from '../types';
 
 const Navbar: React.FC = () => {
     const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
@@ -30,12 +30,14 @@ const Navbar: React.FC = () => {
         // Fetch published pages for navigation
         fetchPages();
 
-        // Add event listener for storage changes
+        // Add event listeners for both storage and custom login events
         window.addEventListener('storage', handleStorageChange);
+        window.addEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
         
-        // Clean up event listener
+        // Clean up event listeners
         return () => {
             window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
         };
     }, []);
 
@@ -44,6 +46,13 @@ const Navbar: React.FC = () => {
         if (event.key === 'sessionId' || event.key === 'user') {
             checkLoginStatus();
         }
+    };
+
+    // Handle custom login state changes
+    const handleLoginStateChange = (event: CustomEvent<User | null>) => {
+        const userData = event.detail;
+        setIsLoggedIn(!!userData);
+        setIsAdmin(userData?.isAdmin === true);
     };
     
     const fetchPages = async () => {

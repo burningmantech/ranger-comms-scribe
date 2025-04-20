@@ -23,6 +23,7 @@ export interface Page {
 }
 
 export interface User {
+    id?: string; // Adding the id property that's used in the Blog component
     email: string;
     name: string;
     approved?: boolean;
@@ -56,6 +57,7 @@ export interface MediaItem {
     size: number;
     isPublic: boolean;
     groupId?: string; // Optional group ID if not public
+    groupName?: string; // Optional group name for display
 }
 
 export interface BlogPost {
