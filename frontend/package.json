@@ -14,6 +14,8 @@
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.0",
     "@tinymce/tinymce-react": "^6.1.0",
+    "draft-js": "^0.11.7",
+    "draft-js-export-html": "^1.4.1",
     "google-auth-library": "^9.15.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -22,6 +24,7 @@
     "typescript": "^4.0.0"
   },
   "devDependencies": {
+    "@types/draft-js": "^0.11.18",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
     "@types/react-router-dom": "^5.3.3",

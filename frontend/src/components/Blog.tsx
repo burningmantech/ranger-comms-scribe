@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { API_URL } from '../config';
 import { BlogPost, BlogComment, User, Group, UserType } from '../types';
 import { Link, useLocation } from 'react-router-dom';
+import { Editor, EditorState, RichUtils, convertToRaw, convertFromRaw, DraftHandleValue, ContentState, Modifier } from 'draft-js';
+import { stateToHTML } from 'draft-js-export-html';
 
 interface BlogProps {
     isAdmin?: boolean;
@@ -36,6 +38,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
     const [editingPost, setEditingPost] = useState<BlogPost | null>(null);
     const [isSmallScreen, setIsSmallScreen] = useState<boolean>(false);
     const allPostsRef = useRef<HTMLDivElement>(null);
+    const [editorState, setEditorState] = useState<EditorState>(() => EditorState.createEmpty());
 
     // State to track comment to be deleted (for confirmation)
     const [commentToDelete, setCommentToDelete] = useState<string | null>(null);
@@ -43,6 +46,92 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
     // State to track highlighted comment from URL
     const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
     const location = useLocation();
+
+    // State for gallery modal
+    const [showGalleryModal, setShowGalleryModal] = useState(false);
+    const [galleryImages, setGalleryImages] = useState<any[]>([]);
+
+    // Helper: convert editorState to raw JSON
+    const getRawContent = (state: EditorState) => JSON.stringify(convertToRaw(state.getCurrentContent()));
+    // Helper: convert raw JSON to editorState
+    const getEditorStateFromRaw = (raw: string) => {
+        try {
+            return EditorState.createWithContent(convertFromRaw(JSON.parse(raw)));
+        } catch {
+            return EditorState.createEmpty();
+        }
+    };
+    // Helper: convert editorState to HTML for preview/render
+    const getHTMLFromEditorState = (state: EditorState) => stateToHTML(state.getCurrentContent());
+
+    // Formatting handlers
+    const handleKeyCommand = (command: string, state: EditorState): DraftHandleValue => {
+        const newState = RichUtils.handleKeyCommand(state, command);
+        if (newState) {
+            setEditorState(newState);
+            return 'handled';
+        }
+        return 'not-handled';
+    };
+    const onTab = (e: React.KeyboardEvent) => {
+        setEditorState(RichUtils.onTab(e, editorState, 4));
+    };
+    const toggleBlockType = (blockType: string) => {
+        setEditorState(RichUtils.toggleBlockType(editorState, blockType));
+    };
+    const toggleInlineStyle = (inlineStyle: string) => {
+        setEditorState(RichUtils.toggleInlineStyle(editorState, inlineStyle));
+    };
+    // Insert link
+    const promptForLink = () => {
+        const selection = editorState.getSelection();
+        const url = window.prompt('Enter a URL');
+        if (!url) return;
+        const content = editorState.getCurrentContent();
+        const contentWithEntity = content.createEntity('LINK', 'MUTABLE', { url });
+        const entityKey = contentWithEntity.getLastCreatedEntityKey();
+        let newState = EditorState.set(editorState, { currentContent: contentWithEntity });
+        newState = RichUtils.toggleLink(newState, selection, entityKey);
+        setEditorState(newState);
+    };
+    // Insert image (placeholder for gallery integration)
+    const insertImage = (src: string) => {
+        const contentState = editorState.getCurrentContent();
+        const contentStateWithEntity = contentState.createEntity('IMAGE', 'IMMUTABLE', { src });
+        const entityKey = contentStateWithEntity.getLastCreatedEntityKey();
+        let newContentState = Modifier.insertText(
+            contentStateWithEntity,
+            editorState.getSelection(),
+            ' ',
+            undefined,
+            entityKey
+        );
+        setEditorState(EditorState.push(editorState, newContentState, 'insert-characters'));
+    };
+
+    // Open gallery modal
+    const openGalleryModal = async () => {
+        setShowGalleryModal(true);
+        // Fetch images from gallery
+        try {
+            const res = await fetch(`${API_URL}/gallery`, {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('sessionId')}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setGalleryImages(data.filter((img: any) => img.fileType && img.fileType.startsWith('image/')));
+            }
+        } catch {}
+    };
+
+    // Close gallery modal
+    const closeGalleryModal = () => setShowGalleryModal(false);
+
+    // Handle gallery image selection
+    const handleGalleryImageSelect = (img: any) => {
+        insertImage(img.url);
+        setShowGalleryModal(false);
+    };
 
     // Check if screen is small
     useEffect(() => {
@@ -151,7 +240,18 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
             }, 500);
         }
     }, [highlightedCommentId, comments]);
-    
+
+    // When editing a post, load its content into the editor
+    useEffect(() => {
+        if (showNewPostForm) {
+            if (editingPost) {
+                setEditorState(getEditorStateFromRaw(editingPost.content));
+            } else {
+                setEditorState(EditorState.createEmpty());
+            }
+        }
+    }, [showNewPostForm, editingPost]);
+
     const fetchGroups = async () => {
         try {
             const response = await fetch(`${API_URL}/admin/groups`, {
@@ -368,7 +468,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
     const handleNewPostSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         
-        if (!newPost.title.trim() || !newPost.content.trim() || !isAdmin) {
+        if (!newPost.title.trim() || !getRawContent(editorState).trim() || !isAdmin) {
             setPostStatus({
                 success: false,
                 message: 'Please enter a title and content'
@@ -385,7 +485,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                 },
                 body: JSON.stringify({
                     title: newPost.title,
-                    content: newPost.content,
+                    content: getRawContent(editorState),
                     published: true,
                     commentsEnabled: newPost.commentsEnabled,
                     isPublic: newPost.isPublic,
@@ -445,7 +545,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
     const handleUpdatePost = async (e: React.FormEvent) => {
         e.preventDefault();
         
-        if (!editingPost || !newPost.title.trim() || !newPost.content.trim() || !isAdmin) {
+        if (!editingPost || !newPost.title.trim() || !getRawContent(editorState).trim() || !isAdmin) {
             setPostStatus({
                 success: false,
                 message: 'Please enter a title and content'
@@ -462,7 +562,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                 },
                 body: JSON.stringify({
                     title: newPost.title,
-                    content: newPost.content,
+                    content: getRawContent(editorState),
                     commentsEnabled: newPost.commentsEnabled,
                     isPublic: newPost.isPublic,
                     groupId: !newPost.isPublic ? newPost.groupId : undefined
@@ -788,127 +888,32 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                             />
                         </div>
                         <div className="form-group">
-                            <label htmlFor="post-content">Content:</label>
-                            <div className="html-editor-container">
+                            <label>Content:</label>
+                            <div className="draftjs-editor-container">
                                 <div className="editor-toolbar">
-                                    <button type="button" onClick={() => {
-                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
-                                        if (textarea) {
-                                            const start = textarea.selectionStart;
-                                            const end = textarea.selectionEnd;
-                                            const selectedText = textarea.value.substring(start, end);
-                                            const beforeText = textarea.value.substring(0, start);
-                                            const afterText = textarea.value.substring(end);
-                                            
-                                            const newContent = `${beforeText}<strong>${selectedText}</strong>${afterText}`;
-                                            setNewPost({...newPost, content: newContent});
-                                            
-                                            // Set cursor position after the selection
-                                            setTimeout(() => {
-                                                textarea.focus();
-                                                textarea.selectionStart = start + 8; // "<strong>".length
-                                                textarea.selectionEnd = start + 8 + selectedText.length;
-                                            }, 0);
-                                        }
-                                    }}>Bold</button>
-                                    
-                                    <button type="button" onClick={() => {
-                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
-                                        if (textarea) {
-                                            const start = textarea.selectionStart;
-                                            const end = textarea.selectionEnd;
-                                            const selectedText = textarea.value.substring(start, end);
-                                            const beforeText = textarea.value.substring(0, start);
-                                            const afterText = textarea.value.substring(end);
-                                            
-                                            const newContent = `${beforeText}<em>${selectedText}</em>${afterText}`;
-                                            setNewPost({...newPost, content: newContent});
-                                            
-                                            // Set cursor position after the selection
-                                            setTimeout(() => {
-                                                textarea.focus();
-                                                textarea.selectionStart = start + 4; // "<em>".length
-                                                textarea.selectionEnd = start + 4 + selectedText.length;
-                                            }, 0);
-                                        }
-                                    }}>Italic</button>
-                                    
-                                    <button type="button" onClick={() => {
-                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
-                                        if (textarea) {
-                                            const start = textarea.selectionStart;
-                                            const end = textarea.selectionEnd;
-                                            const selectedText = textarea.value.substring(start, end);
-                                            const beforeText = textarea.value.substring(0, start);
-                                            const afterText = textarea.value.substring(end);
-                                            
-                                            const newContent = `${beforeText}<a href="#">${selectedText}</a>${afterText}`;
-                                            setNewPost({...newPost, content: newContent});
-                                            
-                                            // Set cursor position after the selection
-                                            setTimeout(() => {
-                                                textarea.focus();
-                                                textarea.selectionStart = start + 9; // '<a href="#">'.length
-                                                textarea.selectionEnd = start + 9 + selectedText.length;
-                                            }, 0);
-                                        }
-                                    }}>Link</button>
-                                    
-                                    <button type="button" onClick={() => {
-                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
-                                        if (textarea) {
-                                            const start = textarea.selectionStart;
-                                            const end = textarea.selectionEnd;
-                                            const selectedText = textarea.value.substring(start, end);
-                                            const beforeText = textarea.value.substring(0, start);
-                                            const afterText = textarea.value.substring(end);
-                                            
-                                            const newContent = `${beforeText}<h2>${selectedText}</h2>${afterText}`;
-                                            setNewPost({...newPost, content: newContent});
-                                            
-                                            // Set cursor position after the selection
-                                            setTimeout(() => {
-                                                textarea.focus();
-                                                textarea.selectionStart = start + 4; // "<h2>".length
-                                                textarea.selectionEnd = start + 4 + selectedText.length;
-                                            }, 0);
-                                        }
-                                    }}>Heading</button>
-                                    
-                                    <button type="button" onClick={() => {
-                                        const textarea = document.getElementById('post-content') as HTMLTextAreaElement;
-                                        if (textarea) {
-                                            const start = textarea.selectionStart;
-                                            const end = textarea.selectionEnd;
-                                            const selectedText = textarea.value.substring(start, end);
-                                            const beforeText = textarea.value.substring(0, start);
-                                            const afterText = textarea.value.substring(end);
-                                            
-                                            const newContent = `${beforeText}<ul>\n  <li>${selectedText}</li>\n</ul>${afterText}`;
-                                            setNewPost({...newPost, content: newContent});
-                                            
-                                            // Set cursor position after the selection
-                                            setTimeout(() => {
-                                                textarea.focus();
-                                                textarea.selectionStart = start + 9; // "<ul>\n  <li>".length
-                                                textarea.selectionEnd = start + 9 + selectedText.length;
-                                            }, 0);
-                                        }
-                                    }}>List</button>
+                                    <button type="button" onClick={() => toggleInlineStyle('BOLD')}>Bold</button>
+                                    <button type="button" onClick={() => toggleInlineStyle('ITALIC')}>Italic</button>
+                                    <button type="button" onClick={() => toggleInlineStyle('UNDERLINE')}>Underline</button>
+                                    <button type="button" onClick={() => toggleBlockType('header-one')}>H1</button>
+                                    <button type="button" onClick={() => toggleBlockType('header-two')}>H2</button>
+                                    <button type="button" onClick={() => toggleBlockType('unordered-list-item')}>UL</button>
+                                    <button type="button" onClick={() => toggleBlockType('ordered-list-item')}>OL</button>
+                                    <button type="button" onClick={promptForLink}>Link</button>
+                                    <button type="button" onClick={openGalleryModal}>Image</button>
                                 </div>
-                                <textarea
-                                    id="post-content"
-                                    value={newPost.content}
-                                    onChange={(e) => setNewPost({...newPost, content: e.target.value})}
-                                    rows={10}
-                                    required
-                                />
+                                <div className="editor-box" style={{border: '1px solid #ccc', minHeight: 120, padding: 8}} onClick={() => {}}>
+                                    <Editor
+                                        editorState={editorState}
+                                        onChange={setEditorState}
+                                        handleKeyCommand={handleKeyCommand}
+                                        onTab={onTab}
+                                        placeholder="Write your post..."
+                                        spellCheck={true}
+                                    />
+                                </div>
                                 <div className="editor-preview">
                                     <h4>Preview:</h4>
-                                    <div 
-                                        className="preview-content"
-                                        dangerouslySetInnerHTML={{ __html: newPost.content }}
-                                    />
+                                    <div className="preview-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(editorState) }} />
                                 </div>
                             </div>
                         </div>
@@ -1039,7 +1044,7 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                                             </button>
                                         </div>
                                     )}
-                                    <div className="post-content" dangerouslySetInnerHTML={{ __html: post.content }} />
+                                    <div className="post-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(getEditorStateFromRaw(post.content)) }} />
 
                                     <div className="comments-section">
                                         <h3>Comments</h3>
@@ -1164,6 +1169,21 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                                 Cancel
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Gallery Modal for image selection */}
+            {showGalleryModal && (
+                <div className="modal" style={{zIndex: 1000, position: 'fixed', top:0, left:0, right:0, bottom:0, background: 'rgba(0,0,0,0.5)'}}>
+                    <div style={{background: '#fff', margin: '40px auto', padding: 20, maxWidth: 600, borderRadius: 8}}>
+                        <h3>Select an image from the gallery</h3>
+                        <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, maxHeight: 300, overflowY: 'auto'}}>
+                            {galleryImages.map(img => (
+                                <img key={img.id} src={img.thumbnailUrl || img.url} alt={img.fileName} style={{width: 100, height: 100, objectFit: 'cover', cursor: 'pointer', border: '2px solid #eee'}} onClick={() => handleGalleryImageSelect(img)} />
+                            ))}
+                        </div>
+                        <button onClick={closeGalleryModal} style={{marginTop: 20}}>Cancel</button>
                     </div>
                 </div>
             )}

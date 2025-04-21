@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { Page } from '../types';
 import './PageManagement.css';
+import { Editor, EditorState, RichUtils, convertToRaw, convertFromRaw, DraftHandleValue, Modifier } from 'draft-js';
+import { stateToHTML } from 'draft-js-export-html';
 
 const PageManagement: React.FC = () => {
   const [pages, setPages] = useState<Page[]>([]);
@@ -26,9 +28,97 @@ const PageManagement: React.FC = () => {
   });
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  const [newPageEditorState, setNewPageEditorState] = useState<EditorState>(() => EditorState.createEmpty());
+  const [editingPageEditorState, setEditingPageEditorState] = useState<EditorState>(() => EditorState.createEmpty());
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
+  const [galleryImages, setGalleryImages] = useState<any[]>([]);
+
+  const getRawContent = (state: EditorState) => JSON.stringify(convertToRaw(state.getCurrentContent()));
+  const getEditorStateFromRaw = (raw: string) => {
+    try {
+      return EditorState.createWithContent(convertFromRaw(JSON.parse(raw)));
+    } catch {
+      return EditorState.createEmpty();
+    }
+  };
+  const getHTMLFromEditorState = (state: EditorState) => stateToHTML(state.getCurrentContent());
+
+  const handleKeyCommand = (command: string, state: EditorState, setState: (s: EditorState) => void): DraftHandleValue => {
+    const newState = RichUtils.handleKeyCommand(state, command);
+    if (newState) {
+      setState(newState);
+      return 'handled';
+    }
+    return 'not-handled';
+  };
+  const onTab = (
+    e: any, // Accept any type to satisfy both React and draft-js
+    state: EditorState,
+    setState: (s: EditorState) => void
+  ) => {
+    setState(RichUtils.onTab(e, state, 4));
+  };
+  const toggleBlockType = (blockType: string, state: EditorState, setState: (s: EditorState) => void) => {
+    setState(RichUtils.toggleBlockType(state, blockType));
+  };
+  const toggleInlineStyle = (inlineStyle: string, state: EditorState, setState: (s: EditorState) => void) => {
+    setState(RichUtils.toggleInlineStyle(state, inlineStyle));
+  };
+  const promptForLink = (state: EditorState, setState: (s: EditorState) => void) => {
+    const selection = state.getSelection();
+    const url = window.prompt('Enter a URL');
+    if (!url) return;
+    const content = state.getCurrentContent();
+    const contentWithEntity = content.createEntity('LINK', 'MUTABLE', { url });
+    const entityKey = contentWithEntity.getLastCreatedEntityKey();
+    let newState = EditorState.set(state, { currentContent: contentWithEntity });
+    newState = RichUtils.toggleLink(newState, selection, entityKey);
+    setState(newState);
+  };
+  const insertImage = (src: string, state: EditorState, setState: (s: EditorState) => void) => {
+    const contentState = state.getCurrentContent();
+    const contentStateWithEntity = contentState.createEntity('IMAGE', 'IMMUTABLE', { src });
+    const entityKey = contentStateWithEntity.getLastCreatedEntityKey();
+    let newContentState = Modifier.insertText(
+      contentStateWithEntity,
+      state.getSelection(),
+      ' ',
+      undefined,
+      entityKey
+    );
+    setState(EditorState.push(state, newContentState, 'insert-characters'));
+  };
+  const openGalleryModal = async () => {
+    setShowGalleryModal(true);
+    try {
+      const res = await fetch(`${API_URL}/gallery`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('sessionId')}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGalleryImages(data.filter((img: any) => img.fileType && img.fileType.startsWith('image/')));
+      }
+    } catch {}
+  };
+  const closeGalleryModal = () => setShowGalleryModal(false);
+  const handleGalleryImageSelect = (img: any) => {
+    if (editingPage) {
+      insertImage(img.url, editingPageEditorState, setEditingPageEditorState);
+    } else {
+      insertImage(img.url, newPageEditorState, setNewPageEditorState);
+    }
+    setShowGalleryModal(false);
+  };
+
   useEffect(() => {
     fetchPages();
   }, []);
+
+  useEffect(() => {
+    if (editingPage) {
+      setEditingPageEditorState(getEditorStateFromRaw(editingPage.content));
+    }
+  }, [editingPage]);
 
   const fetchPages = async () => {
     try {
@@ -52,7 +142,6 @@ const PageManagement: React.FC = () => {
       const data = await response.json();
       setPages(data);
       
-      // Check if home page exists
       const homePage = data.find((page: Page) => page.slug === 'home');
       setHomePageExists(!!homePage);
       
@@ -66,7 +155,6 @@ const PageManagement: React.FC = () => {
 
   const handleCreateHomePage = async () => {
     try {
-      // Default content for home page
       const defaultHomeContent = `
         <h1>Welcome to Dancing Cat Wine Bar</h1>
         <p>Check out our <a href="/gallery">Gallery</a> and <a href="/blog">Blog</a>.</p>
@@ -103,7 +191,6 @@ const PageManagement: React.FC = () => {
       
       const data = await response.json();
       
-      // Add the new page to the list
       if (data.success && data.page) {
         setPages([...pages, data.page]);
         setHomePageExists(true);
@@ -119,9 +206,8 @@ const PageManagement: React.FC = () => {
 
   const handleCreatePage = async () => {
     try {
-      // Validate inputs
-      if (!newPage.title.trim() || !newPage.slug.trim() || !newPage.content.trim()) {
-        setError('Title, slug, and content are required');
+      if (!newPage.title.trim() || !newPage.slug.trim()) {
+        setError('Title and slug are required');
         return;
       }
       
@@ -137,7 +223,10 @@ const PageManagement: React.FC = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionId}`
         },
-        body: JSON.stringify(newPage)
+        body: JSON.stringify({
+          ...newPage,
+          content: getRawContent(newPageEditorState)
+        })
       });
       
       if (!response.ok) {
@@ -147,11 +236,9 @@ const PageManagement: React.FC = () => {
       
       const data = await response.json();
       
-      // Add the new page to the list
       if (data.success && data.page) {
         setPages([...pages, data.page]);
         
-        // Reset the form
         setNewPage({
           title: '',
           slug: '',
@@ -160,6 +247,7 @@ const PageManagement: React.FC = () => {
           isPublic: true,
           showInNavigation: true
         });
+        setNewPageEditorState(EditorState.createEmpty());
         
         setSuccessMessage('Page created successfully');
         setTimeout(() => setSuccessMessage(null), 3000);
@@ -188,12 +276,8 @@ const PageManagement: React.FC = () => {
           Authorization: `Bearer ${sessionId}`
         },
         body: JSON.stringify({
-          title: editingPage.title,
-          slug: editingPage.slug,
-          content: editingPage.content,
-          published: editingPage.published,
-          isPublic: editingPage.isPublic,
-          showInNavigation: editingPage.showInNavigation
+          ...editingPage,
+          content: getRawContent(editingPageEditorState)
         })
       });
       
@@ -205,7 +289,6 @@ const PageManagement: React.FC = () => {
       const data = await response.json();
       
       if (data.success && data.page) {
-        // Update the page in the list
         setPages(pages.map(page => 
           page.id === editingPage.id ? data.page : page
         ));
@@ -245,7 +328,6 @@ const PageManagement: React.FC = () => {
         throw new Error(errorData.error || 'Failed to delete page');
       }
       
-      // Remove the page from the list
       setPages(pages.filter(page => page.id !== pageId));
       setSuccessMessage('Page deleted successfully');
       setTimeout(() => setSuccessMessage(null), 3000);
@@ -260,7 +342,6 @@ const PageManagement: React.FC = () => {
     const pageIndex = pages.findIndex(page => page.id === pageId);
     if (pageIndex === -1) return;
     
-    // Can't move first item up or last item down
     if ((direction === 'up' && pageIndex === 0) || 
         (direction === 'down' && pageIndex === pages.length - 1)) {
       return;
@@ -269,12 +350,10 @@ const PageManagement: React.FC = () => {
     const newPages = [...pages];
     const swapIndex = direction === 'up' ? pageIndex - 1 : pageIndex + 1;
     
-    // Swap the order values
     const tempOrder = newPages[pageIndex].order;
     newPages[pageIndex].order = newPages[swapIndex].order;
     newPages[swapIndex].order = tempOrder;
     
-    // Swap the positions in the array
     [newPages[pageIndex], newPages[swapIndex]] = [newPages[swapIndex], newPages[pageIndex]];
     
     setPages(newPages);
@@ -309,7 +388,6 @@ const PageManagement: React.FC = () => {
       setError((err as Error).message);
       setTimeout(() => setError(null), 5000);
       
-      // Revert the changes on error
       fetchPages();
     }
   };
@@ -410,147 +488,32 @@ const PageManagement: React.FC = () => {
               />
             </div>
             <div className="form-group">
-              <label htmlFor="editContent">Content:</label>
-              <div className="html-editor-container">
+              <label>Content:</label>
+              <div className="draftjs-editor-container">
                 <div className="editor-toolbar">
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<strong>${selectedText}</strong>${afterText}`;
-                      setEditingPage({...editingPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 8; // "<strong>".length
-                        textarea.selectionEnd = start + 8 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Bold</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<em>${selectedText}</em>${afterText}`;
-                      setEditingPage({...editingPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 4; // "<em>".length
-                        textarea.selectionEnd = start + 4 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Italic</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<a href="#">${selectedText}</a>${afterText}`;
-                      setEditingPage({...editingPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 9; // '<a href="#">'.length
-                        textarea.selectionEnd = start + 9 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Link</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<h2>${selectedText}</h2>${afterText}`;
-                      setEditingPage({...editingPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 4; // "<h2>".length
-                        textarea.selectionEnd = start + 4 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Heading</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<ul>\n  <li>${selectedText}</li>\n</ul>${afterText}`;
-                      setEditingPage({...editingPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 9; // "<ul>\n  <li>".length
-                        textarea.selectionEnd = start + 9 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>List</button>
-
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('editContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<div class="highlight">${selectedText}</div>${afterText}`;
-                      setEditingPage({...editingPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 21; // '<div class="highlight">'.length
-                        textarea.selectionEnd = start + 21 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Highlight</button>
+                  <button type="button" onClick={() => toggleInlineStyle('BOLD', editingPageEditorState, setEditingPageEditorState)}>Bold</button>
+                  <button type="button" onClick={() => toggleInlineStyle('ITALIC', editingPageEditorState, setEditingPageEditorState)}>Italic</button>
+                  <button type="button" onClick={() => toggleInlineStyle('UNDERLINE', editingPageEditorState, setEditingPageEditorState)}>Underline</button>
+                  <button type="button" onClick={() => toggleBlockType('header-one', editingPageEditorState, setEditingPageEditorState)}>H1</button>
+                  <button type="button" onClick={() => toggleBlockType('header-two', editingPageEditorState, setEditingPageEditorState)}>H2</button>
+                  <button type="button" onClick={() => toggleBlockType('unordered-list-item', editingPageEditorState, setEditingPageEditorState)}>UL</button>
+                  <button type="button" onClick={() => toggleBlockType('ordered-list-item', editingPageEditorState, setEditingPageEditorState)}>OL</button>
+                  <button type="button" onClick={() => promptForLink(editingPageEditorState, setEditingPageEditorState)}>Link</button>
+                  <button type="button" onClick={openGalleryModal}>Image</button>
                 </div>
-                <textarea
-                  id="editContent"
-                  value={editingPage.content}
-                  onChange={(e) => setEditingPage({...editingPage, content: e.target.value})}
-                  rows={12}
-                />
+                <div className="editor-box" style={{border: '1px solid #ccc', minHeight: 120, padding: 8}}>
+                  <Editor
+                    editorState={editingPageEditorState}
+                    onChange={setEditingPageEditorState}
+                    handleKeyCommand={(cmd, state) => handleKeyCommand(cmd, state, setEditingPageEditorState)}
+                    onTab={e => { e.preventDefault(); onTab(e, editingPageEditorState, setEditingPageEditorState); }}
+                    placeholder="Write your page..."
+                    spellCheck={true}
+                  />
+                </div>
                 <div className="editor-preview">
                   <h4>Preview:</h4>
-                  <div 
-                    className="preview-content"
-                    dangerouslySetInnerHTML={{ __html: editingPage.content }}
-                  />
+                  <div className="preview-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(editingPageEditorState) }} />
                 </div>
               </div>
             </div>
@@ -592,12 +555,31 @@ const PageManagement: React.FC = () => {
                 Cancel
               </button>
               <button 
-                onClick={handleUpdatePage}
+                onClick={() => {
+                  setEditingPage({
+                    ...editingPage,
+                    content: getRawContent(editingPageEditorState)
+                  });
+                  handleUpdatePage();
+                }}
                 className="save-button"
               >
                 Save Changes
               </button>
             </div>
+            {showGalleryModal && (
+              <div className="modal" style={{zIndex: 1000, position: 'fixed', top:0, left:0, right:0, bottom:0, background: 'rgba(0,0,0,0.5)'}}>
+                <div style={{background: '#fff', margin: '40px auto', padding: 20, maxWidth: 600, borderRadius: 8}}>
+                  <h3>Select an image from the gallery</h3>
+                  <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, maxHeight: 300, overflowY: 'auto'}}>
+                    {galleryImages.map(img => (
+                      <img key={img.id} src={img.thumbnailUrl || img.url} alt={img.fileName} style={{width: 100, height: 100, objectFit: 'cover', cursor: 'pointer', border: '2px solid #eee'}} onClick={() => handleGalleryImageSelect(img)} />
+                    ))}
+                  </div>
+                  <button onClick={closeGalleryModal} style={{marginTop: 20}}>Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="create-page-form">
@@ -624,147 +606,32 @@ const PageManagement: React.FC = () => {
               <small>This will be the URL path: /{newPage.slug}</small>
             </div>
             <div className="form-group">
-              <label htmlFor="newContent">Content:</label>
-              <div className="html-editor-container">
+              <label>Content:</label>
+              <div className="draftjs-editor-container">
                 <div className="editor-toolbar">
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<strong>${selectedText}</strong>${afterText}`;
-                      setNewPage({...newPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 8; // "<strong>".length
-                        textarea.selectionEnd = start + 8 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Bold</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<em>${selectedText}</em>${afterText}`;
-                      setNewPage({...newPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 4; // "<em>".length
-                        textarea.selectionEnd = start + 4 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Italic</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<a href="#">${selectedText}</a>${afterText}`;
-                      setNewPage({...newPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 9; // '<a href="#">'.length
-                        textarea.selectionEnd = start + 9 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Link</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<h2>${selectedText}</h2>${afterText}`;
-                      setNewPage({...newPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 4; // "<h2>".length
-                        textarea.selectionEnd = start + 4 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Heading</button>
-                  
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<ul>\n  <li>${selectedText}</li>\n</ul>${afterText}`;
-                      setNewPage({...newPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 9; // "<ul>\n  <li>".length
-                        textarea.selectionEnd = start + 9 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>List</button>
-
-                  <button type="button" onClick={() => {
-                    const textarea = document.getElementById('newContent') as HTMLTextAreaElement;
-                    if (textarea) {
-                      const start = textarea.selectionStart;
-                      const end = textarea.selectionEnd;
-                      const selectedText = textarea.value.substring(start, end);
-                      const beforeText = textarea.value.substring(0, start);
-                      const afterText = textarea.value.substring(end);
-                      
-                      const newContent = `${beforeText}<div class="highlight">${selectedText}</div>${afterText}`;
-                      setNewPage({...newPage, content: newContent});
-                      
-                      // Set cursor position after the selection
-                      setTimeout(() => {
-                        textarea.focus();
-                        textarea.selectionStart = start + 21; // '<div class="highlight">'.length
-                        textarea.selectionEnd = start + 21 + selectedText.length;
-                      }, 0);
-                    }
-                  }}>Highlight</button>
+                  <button type="button" onClick={() => toggleInlineStyle('BOLD', newPageEditorState, setNewPageEditorState)}>Bold</button>
+                  <button type="button" onClick={() => toggleInlineStyle('ITALIC', newPageEditorState, setNewPageEditorState)}>Italic</button>
+                  <button type="button" onClick={() => toggleInlineStyle('UNDERLINE', newPageEditorState, setNewPageEditorState)}>Underline</button>
+                  <button type="button" onClick={() => toggleBlockType('header-one', newPageEditorState, setNewPageEditorState)}>H1</button>
+                  <button type="button" onClick={() => toggleBlockType('header-two', newPageEditorState, setNewPageEditorState)}>H2</button>
+                  <button type="button" onClick={() => toggleBlockType('unordered-list-item', newPageEditorState, setNewPageEditorState)}>UL</button>
+                  <button type="button" onClick={() => toggleBlockType('ordered-list-item', newPageEditorState, setNewPageEditorState)}>OL</button>
+                  <button type="button" onClick={() => promptForLink(newPageEditorState, setNewPageEditorState)}>Link</button>
+                  <button type="button" onClick={openGalleryModal}>Image</button>
                 </div>
-                <textarea
-                  id="newContent"
-                  value={newPage.content}
-                  onChange={(e) => setNewPage({...newPage, content: e.target.value})}
-                  rows={12}
-                />
+                <div className="editor-box" style={{border: '1px solid #ccc', minHeight: 120, padding: 8}}>
+                  <Editor
+                    editorState={newPageEditorState}
+                    onChange={setNewPageEditorState}
+                    handleKeyCommand={(cmd, state) => handleKeyCommand(cmd, state, setNewPageEditorState)}
+                    onTab={e => { e.preventDefault(); onTab(e, newPageEditorState, setNewPageEditorState); }}
+                    placeholder="Write your page..."
+                    spellCheck={true}
+                  />
+                </div>
                 <div className="editor-preview">
                   <h4>Preview:</h4>
-                  <div 
-                    className="preview-content"
-                    dangerouslySetInnerHTML={{ __html: newPage.content }}
-                  />
+                  <div className="preview-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(newPageEditorState) }} />
                 </div>
               </div>
             </div>
@@ -799,11 +666,30 @@ const PageManagement: React.FC = () => {
               </label>
             </div>
             <button 
-              onClick={handleCreatePage}
+              onClick={() => {
+                setNewPage({
+                  ...newPage,
+                  content: getRawContent(newPageEditorState)
+                });
+                handleCreatePage();
+              }}
               className="create-button"
             >
               Create Page
             </button>
+            {showGalleryModal && (
+              <div className="modal" style={{zIndex: 1000, position: 'fixed', top:0, left:0, right:0, bottom:0, background: 'rgba(0,0,0,0.5)'}}>
+                <div style={{background: '#fff', margin: '40px auto', padding: 20, maxWidth: 600, borderRadius: 8}}>
+                  <h3>Select an image from the gallery</h3>
+                  <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, maxHeight: 300, overflowY: 'auto'}}>
+                    {galleryImages.map(img => (
+                      <img key={img.id} src={img.thumbnailUrl || img.url} alt={img.fileName} style={{width: 100, height: 100, objectFit: 'cover', cursor: 'pointer', border: '2px solid #eee'}} onClick={() => handleGalleryImageSelect(img)} />
+                    ))}
+                  </div>
+                  <button onClick={closeGalleryModal} style={{marginTop: 20}}>Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

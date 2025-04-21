@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { User } from '../types';
+import { EditorState, convertFromRaw } from 'draft-js';
+import { stateToHTML } from 'draft-js-export-html';
 
 interface HomeProps {
   skipNavbar?: boolean;
@@ -62,6 +64,18 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
         }
     };
 
+    const renderContent = (content: string) => {
+        // Try to parse as draft.js JSON
+        try {
+            const raw = JSON.parse(content);
+            const editorState = EditorState.createWithContent(convertFromRaw(raw));
+            return stateToHTML(editorState.getCurrentContent());
+        } catch {
+            // Fallback: treat as HTML
+            return content;
+        }
+    };
+
     if (loading) {
         return (
             <div className="home">
@@ -73,7 +87,7 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
     return (
         <div className="home">
             {error && <div className="error">{error}</div>}
-            <div dangerouslySetInnerHTML={{ __html: content }} />
+            <div dangerouslySetInnerHTML={{ __html: renderContent(content) }} />
         </div>
     );
 };
