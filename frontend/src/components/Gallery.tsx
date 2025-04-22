@@ -430,124 +430,128 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
     // Media gallery card component to avoid repetition
     const MediaCard = ({ item }: { item: MediaItem }) => (
         <div className="media-item" onClick={() => openModal(item)} data-media-id={item.id}>
-            <img
-                src={
-                    authenticatedThumbnails[item.id] ||
-                    'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlPC90ZXh0Pjwvc3ZnPg=='
-                }
-                alt={item.fileName}
-                className={`media-thumbnail ${
-                    !authenticatedThumbnails[item.id] && item.thumbnailUrl
-                        ? 'media-thumbnail-loading'
-                        : ''
-                }`}
-                onError={(e) => {
-                    logger.error(`Error loading thumbnail for ${item.fileName}`);
-                    logger.error(e);
-                    if (!authenticatedThumbnails[item.id] && item.thumbnailUrl) {
-                        fetchThumbnailWithAuth(item);
+            <div className="media-content">
+                <img
+                    src={
+                        authenticatedThumbnails[item.id] ||
+                        'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlPC90ZXh0Pjwvc3ZnPg=='
                     }
+                    alt={item.fileName}
+                    className={`media-thumbnail ${
+                        !authenticatedThumbnails[item.id] && item.thumbnailUrl
+                            ? 'media-thumbnail-loading'
+                            : ''
+                    }`}
+                    onError={(e) => {
+                        logger.error(`Error loading thumbnail for ${item.fileName}`);
+                        logger.error(e);
+                        if (!authenticatedThumbnails[item.id] && item.thumbnailUrl) {
+                            fetchThumbnailWithAuth([item]);
+                        }
 
-                    (e.target as HTMLImageElement).src =
-                        'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlPC90ZXh0Pjwvc3ZnPg==';
-                }}
-                style={{
-                    opacity: authenticatedThumbnails[item.id] ? 1 : 0.7,
-                }}
-            />
-            <div className="media-info">
-                <p className="media-group">
-                    {isItemPublic(item)
-                        ? 'Public'
-                        : item.groupId
-                        ? `Group: ${
-                              groups.find((g) => g.id === item.groupId)?.name ||
-                              item.groupName ||
-                              'Unknown Group'
-                          }`
-                        : 'Private'}
-                </p>
+                        (e.target as HTMLImageElement).src =
+                            'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2VlZSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM5OTkiPkltYWdlPC90ZXh0Pjwvc3ZnPg==';
+                    }}
+                    style={{
+                        opacity: authenticatedThumbnails[item.id] ? 1 : 0.7,
+                    }}
+                />
+                <div className="media-info-wrapper">
+                    <div className="media-info">
+                        <p className="media-group">
+                            {isItemPublic(item)
+                                ? 'Public'
+                                : item.groupId
+                                ? `Group: ${
+                                      groups.find((g) => g.id === item.groupId)?.name ||
+                                      item.groupName ||
+                                      'Unknown Group'
+                                  }`
+                                : 'Private'}
+                        </p>
 
-                {isAdmin && user && editingMediaId === item.id ? (
-                    <div className="group-edit-form" onClick={(e) => e.stopPropagation()}>
-                        <div className="form-group">
-                            <label>
-                                <input
-                                    type="checkbox"
-                                    checked={isPublic}
-                                    onChange={(e) => setIsPublic(e.target.checked)}
-                                />
-                                Public
-                            </label>
-                        </div>
+                        {isAdmin && user && editingMediaId === item.id ? (
+                            <div className="group-edit-form" onClick={(e) => e.stopPropagation()}>
+                                <div className="form-group">
+                                    <label>
+                                        <input
+                                            type="checkbox"
+                                            checked={isPublic}
+                                            onChange={(e) => setIsPublic(e.target.checked)}
+                                        />
+                                        Public
+                                    </label>
+                                </div>
 
-                        {!isPublic && (
-                            <div className="form-group">
-                                <select
-                                    value={selectedGroupId}
-                                    onChange={(e) => setSelectedGroupId(e.target.value)}
-                                    disabled={isPublic}
-                                >
-                                    <option value="">Select a group</option>
-                                    {groups.map((group) => (
-                                        <option key={group.id} value={group.id}>
-                                            {group.name}
-                                        </option>
-                                    ))}
-                                </select>
+                                {!isPublic && (
+                                    <div className="form-group">
+                                        <select
+                                            value={selectedGroupId}
+                                            onChange={(e) => setSelectedGroupId(e.target.value)}
+                                            disabled={isPublic}
+                                        >
+                                            <option value="">Select a group</option>
+                                            {groups.map((group) => (
+                                                <option key={group.id} value={group.id}>
+                                                    {group.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+
+                                <div className="edit-buttons">
+                                    <button
+                                        className="save-button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            updateMediaGroup(
+                                                item.id,
+                                                isPublic,
+                                                isPublic ? undefined : selectedGroupId
+                                            );
+                                        }}
+                                    >
+                                        Save
+                                    </button>
+                                    <button
+                                        className="cancel-button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            cancelEditing();
+                                        }}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="media-actions">
+                                {isAdmin && user && (
+                                    <>
+                                        <button
+                                            className="edit-button"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                startEditing(item);
+                                            }}
+                                        >
+                                            Edit Group
+                                        </button>
+                                        {(isAdmin || (user && item.uploadedBy === user.email)) && (
+                                            <button
+                                                className="delete-button"
+                                                onClick={(e) => handleDeleteClick(item, e)}
+                                            >
+                                                Delete
+                                            </button>
+                                        )}
+                                    </>
+                                )}
                             </div>
                         )}
-
-                        <div className="edit-buttons">
-                            <button
-                                className="save-button"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    updateMediaGroup(
-                                        item.id,
-                                        isPublic,
-                                        isPublic ? undefined : selectedGroupId
-                                    );
-                                }}
-                            >
-                                Save
-                            </button>
-                            <button
-                                className="cancel-button"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    cancelEditing();
-                                }}
-                            >
-                                Cancel
-                            </button>
-                        </div>
                     </div>
-                ) : (
-                    <div className="media-actions">
-                        {isAdmin && user && (
-                            <>
-                                <button
-                                    className="edit-button"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        startEditing(item);
-                                    }}
-                                >
-                                    Edit Group
-                                </button>
-                                {(isAdmin || (user && item.uploadedBy === user.email)) && (
-                                    <button
-                                        className="delete-button"
-                                        onClick={(e) => handleDeleteClick(item, e)}
-                                    >
-                                        Delete
-                                    </button>
-                                )}
-                            </>
-                        )}
-                    </div>
-                )}
+                </div>
             </div>
         </div>
     );
@@ -575,30 +579,44 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         }
     }, []);
 
-    const fetchThumbnailWithAuth = useCallback(async (item: MediaItem) => {
-        if (!item.thumbnailUrl) return;
-
-        try {
-            const response = await fetch(item.thumbnailUrl, {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to fetch thumbnail: ${response.status}`);
+    // Batch thumbnail updates to prevent excessive re-renders
+    const fetchThumbnailWithAuth = useCallback(async (items: MediaItem[]) => {
+        if (!items.length) return;
+        
+        // Process thumbnails in batch and update state once
+        const thumbnailUpdates: Record<string, string> = {};
+        
+        await Promise.all(items.map(async (item) => {
+            if (!item.thumbnailUrl) return;
+            
+            try {
+                const response = await fetch(item.thumbnailUrl, {
+                    method: 'GET',
+                    headers: {
+                        Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                    },
+                });
+    
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch thumbnail: ${response.status}`);
+                }
+    
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                
+                // Collect URL but don't update state yet
+                thumbnailUpdates[item.id] = objectUrl;
+            } catch (error) {
+                logger.error(`Error fetching thumbnail for ${item.fileName}:`, error);
             }
-
-            const blob = await response.blob();
-            const objectUrl = URL.createObjectURL(blob);
-
-            setAuthenticatedThumbnails((prev) => ({
+        }));
+        
+        // Update state once with all fetched thumbnails
+        if (Object.keys(thumbnailUpdates).length > 0) {
+            setAuthenticatedThumbnails(prev => ({
                 ...prev,
-                [item.id]: objectUrl,
+                ...thumbnailUpdates
             }));
-        } catch (error) {
-            logger.error(`Error fetching thumbnail for ${item.fileName}:`, error);
         }
     }, []);
 
@@ -801,18 +819,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                 const endIndex = Math.min(startIndex + batchSize, queue.length);
                 const batch = queue.slice(startIndex, endIndex);
 
-                await Promise.all(
-                    batch.map((item) => {
-                        const promises = [];
-                        if (item.thumbnailUrl) {
-                            promises.push(fetchThumbnailWithAuth(item));
-                        }
-                        if (item.mediumUrl) {
-                            promises.push(fetchMediumWithAuth(item));
-                        }
-                        return Promise.all(promises);
-                    })
-                );
+                await fetchThumbnailWithAuth(batch);
 
                 if (endIndex < queue.length) {
                     setTimeout(() => {
@@ -825,7 +832,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                 processBatch(0, 5);
             }
         },
-        [fetchThumbnailWithAuth, fetchMediumWithAuth, isItemPublic]
+        [fetchThumbnailWithAuth, isItemPublic]
     );
 
     useEffect(() => {
