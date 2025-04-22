@@ -216,15 +216,15 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
         <>
           <div className="draftjs-editor-container">
             <div className="editor-toolbar">
-              <button type="button" onClick={() => toggleInlineStyle('BOLD')}>Bold</button>
-              <button type="button" onClick={() => toggleInlineStyle('ITALIC')}>Italic</button>
-              <button type="button" onClick={() => toggleInlineStyle('UNDERLINE')}>Underline</button>
-              <button type="button" onClick={() => toggleBlockType('header-one')}>H1</button>
-              <button type="button" onClick={() => toggleBlockType('header-two')}>H2</button>
-              <button type="button" onClick={() => toggleBlockType('unordered-list-item')}>UL</button>
-              <button type="button" onClick={() => toggleBlockType('ordered-list-item')}>OL</button>
-              <button type="button" onClick={promptForLink}>Link</button>
-              <button type="button" onClick={openGalleryModal}>Image</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleInlineStyle('BOLD')}>Bold</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleInlineStyle('ITALIC')}>Italic</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleInlineStyle('UNDERLINE')}>Underline</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('header-one')}>H1</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('header-two')}>H2</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('unordered-list-item')}>UL</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('ordered-list-item')}>OL</button>
+              <button type="button" className="btn btn-sm btn-neutral" onClick={promptForLink}>Link</button>
+              <button type="button" className="btn btn-sm btn-tertiary" onClick={openGalleryModal}>Image</button>
             </div>
             <div className="editor-box" style={{border: '1px solid #ccc', minHeight: 120, padding: 8}}>
               <Editor
@@ -241,7 +241,7 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
               <div className="preview-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(editorState) }} />
             </div>
           </div>
-          <div className="editor-actions" style={{ marginTop: '20px' }}>
+          <div className="btn-group mt-2">
             <button 
               onClick={async () => {
                 setLoading(true);
@@ -268,44 +268,34 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
                   setLoading(false);
                 }
               }}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#4caf50',
-                color: 'white',
-                borderRadius: '4px',
-                fontSize: '14px',
-                border: 'none',
-                cursor: 'pointer',
-                marginRight: '10px'
-              }}
+              className="btn btn-tertiary"
             >
               Save
             </button>
             <button 
               onClick={() => setIsEditing(false)}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#f44336',
-                color: 'white',
-                borderRadius: '4px',
-                fontSize: '14px',
-                border: 'none',
-                cursor: 'pointer'
-              }}
+              className="btn btn-danger"
             >
               Cancel
             </button>
           </div>
           {showGalleryModal && (
-            <div className="modal" style={{zIndex: 1000, position: 'fixed', top:0, left:0, right:0, bottom:0, background: 'rgba(0,0,0,0.5)'}}>
-              <div style={{background: '#fff', margin: '40px auto', padding: 20, maxWidth: 600, borderRadius: 8}}>
-                <h3>Select an image from the gallery</h3>
-                <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, maxHeight: 300, overflowY: 'auto'}}>
-                  {galleryImages.map(img => (
-                    <img key={img.id} src={img.thumbnailUrl || img.url} alt={img.fileName} style={{width: 100, height: 100, objectFit: 'cover', cursor: 'pointer', border: '2px solid #eee'}} onClick={() => handleGalleryImageSelect(img)} />
-                  ))}
+            <div className="modal-overlay">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h3>Select an image from the gallery</h3>
+                  <button onClick={closeGalleryModal} className="modal-close">×</button>
                 </div>
-                <button onClick={closeGalleryModal} style={{marginTop: 20}}>Cancel</button>
+                <div className="modal-body">
+                  <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, maxHeight: 300, overflowY: 'auto'}}>
+                    {galleryImages.map(img => (
+                      <img key={img.id} src={img.thumbnailUrl || img.url} alt={img.fileName} style={{width: 100, height: 100, objectFit: 'cover', cursor: 'pointer', border: '2px solid #eee'}} onClick={() => handleGalleryImageSelect(img)} />
+                    ))}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button onClick={closeGalleryModal} className="btn btn-neutral">Cancel</button>
+                </div>
               </div>
             </div>
           )}
@@ -316,16 +306,7 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
           {canEdit && (
             <button 
               onClick={() => setIsEditing(true)}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#4a90e2',
-                color: 'white',
-                borderRadius: '4px',
-                fontSize: '14px',
-                border: 'none',
-                cursor: 'pointer',
-                margin: '20px 0'
-              }}
+              className="btn btn-primary mt-2"
             >
               Edit Page
             </button>
@@ -335,20 +316,23 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
       
       {fullSizeImageUrl && (
         <div 
-          className="image-modal" 
+          className="modal-overlay" 
           onClick={() => setFullSizeImageUrl(null)}
         >
-          <img 
-            src={fullSizeImageUrl} 
-            className="image-modal-content" 
-            alt="Full size" 
-          />
-          <span 
-            className="image-modal-close" 
-            onClick={() => setFullSizeImageUrl(null)}
-          >
-            ×
-          </span>
+          <div className="modal-content">
+            <img 
+              src={fullSizeImageUrl} 
+              className="image-modal-content" 
+              alt="Full size" 
+              style={{maxWidth: '100%'}}
+            />
+            <button 
+              className="modal-close" 
+              onClick={() => setFullSizeImageUrl(null)}
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
     </div>

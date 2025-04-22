@@ -160,46 +160,50 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
       <div className="user-settings-container">
         <div className="user-settings-header">
           <h1 className="user-settings-title">User Settings</h1>
-          <Link to="/" className="cancel-button">Back to Home</Link>
         </div>
 
         {error && <div className="error-message">{error}</div>}
         {successMessage && <div className="success-message">{successMessage}</div>}
 
-        <div className="settings-card">
-          <h2>Notification Preferences</h2>
-          <p>Manage how you receive email notifications from the platform.</p>
-          
-          <div className="settings-form-group">
-            <div className="settings-checkbox-group">
-              <input
-                type="checkbox"
-                id="notifyOnReplies"
-                checked={notifyOnReplies}
-                onChange={(e) => setNotifyOnReplies(e.target.checked)}
-              />
-              <label htmlFor="notifyOnReplies">Notify me when someone replies to my content</label>
-            </div>
-            <p className="settings-description">
-              Receive email notifications when someone replies to your posts, comments, or gallery items.
-            </p>
-            
-            <div className="settings-checkbox-group">
-              <input
-                type="checkbox"
-                id="notifyOnGroupContent"
-                checked={notifyOnGroupContent}
-                onChange={(e) => setNotifyOnGroupContent(e.target.checked)}
-              />
-              <label htmlFor="notifyOnGroupContent">Notify me about new content in my groups</label>
-            </div>
-            <p className="settings-description">
-              Receive email notifications when new content is posted in groups you belong to.
-            </p>
+        <div className="card">
+          <div className="card-header">
+            <h2>Notification Preferences</h2>
           </div>
-
-          <div className="settings-actions">
-            <button className="save-settings-button" onClick={saveSettings}>
+          <div className="card-body">
+            <p>Manage how you receive email notifications from the platform.</p>
+            
+            <div className="form-group">
+              <div className="custom-checkbox">
+                <input
+                  type="checkbox"
+                  id="notifyOnReplies"
+                  checked={notifyOnReplies}
+                  onChange={(e) => setNotifyOnReplies(e.target.checked)}
+                />
+                <span className="checkbox-icon"></span>
+                <label htmlFor="notifyOnReplies">Notify me when someone replies to my content</label>
+              </div>
+              <p className="mb-2 text-medium">
+                Receive email notifications when someone replies to your posts, comments, or gallery items.
+              </p>
+              
+              <div className="custom-checkbox">
+                <input
+                  type="checkbox"
+                  id="notifyOnGroupContent"
+                  checked={notifyOnGroupContent}
+                  onChange={(e) => setNotifyOnGroupContent(e.target.checked)}
+                />
+                <span className="checkbox-icon"></span>
+                <label htmlFor="notifyOnGroupContent">Notify me about new content in my groups</label>
+              </div>
+              <p className="text-medium">
+                Receive email notifications when new content is posted in groups you belong to.
+              </p>
+            </div>
+          </div>
+          <div className="card-footer">
+            <button className="btn btn-secondary" onClick={saveSettings}>
               Save Settings
             </button>
           </div>

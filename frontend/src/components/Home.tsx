@@ -99,14 +99,15 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
                     style={{
                         display: 'inline-block',
                         padding: '8px 16px',
-                        backgroundColor: '#4a90e2',
-                        color: 'white',
+                        backgroundColor: '#722f37', // Using our accent-wine color
+                        color: '#f5f0eb', // Using our text-light color
                         borderRadius: '4px',
                         fontSize: '14px',
                         border: 'none',
                         cursor: 'pointer',
                         margin: '20px 0',
-                        textDecoration: 'none'
+                        textDecoration: 'none',
+                        transition: 'background-color 0.3s'
                     }}
                 >
                     Edit Page

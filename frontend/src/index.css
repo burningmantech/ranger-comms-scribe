@@ -1,11 +1,35 @@
 /* Import Google Font */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;700&display=swap');
 
+/* Classy Lounge Color Palette */
+:root {
+  /* Primary colors */
+  --primary-dark: #2c1e1e;      /* Deep burgundy-brown for navbar */
+  --primary-light: #f5f0eb;     /* Soft cream for backgrounds */
+  
+  /* Accent colors */
+  --accent-wine: #722f37;       /* Rich burgundy for primary buttons */
+  --accent-wine-hover: #8c3a44; /* Lighter burgundy for hover states */
+  --accent-gold: #b59d69;       /* Gold for secondary buttons */
+  --accent-gold-hover: #c7af7b; /* Lighter gold for hover states */
+  --accent-teal: #3d6869;       /* Deep teal for tertiary buttons */
+  --accent-teal-hover: #4a797a; /* Lighter teal for hover states */
+  
+  /* Danger/Warning colors - more subdued */
+  --danger: #9e4a4a;            /* Subdued red for delete/warning */
+  --danger-hover: #b05c5c;      /* Lighter subdued red for hover */
+  
+  /* Text colors */
+  --text-dark: #362c28;         /* Dark brown for text */
+  --text-medium: #5c4f4b;       /* Medium brown for subheadings */
+  --text-light: #f5f0eb;        /* Light cream for text on dark backgrounds */
+}
+
 body {
     margin: 0;
     padding: 20px;            /* Add padding to keep content away from edges */
     font-family: 'Poppins', sans-serif; /* Use Poppins font for the body */
-    color: #333;               /* Dark grey text color for readability */
+    color: var(--text-dark);  /* Use dark brown text color for readability */
     min-height: 100vh;        /* Full viewport height */
     width: 100%;              /* Full width */
     position: relative;       /* Ensure the pseudo-element is positioned correctly */
@@ -97,17 +121,19 @@ p {
     gap: 10px;
 }
 
+/* Standard Button Styles */
 .gallery-nav button {
     padding: 8px 16px;
-    background-color: #007bff;
-    color: white;
+    background-color: var(--accent-wine);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
 .gallery-nav button:hover {
-    background-color: #0056b3;
+    background-color: var(--accent-wine-hover);
 }
 
 .gallery-grid {
@@ -197,18 +223,20 @@ p {
     margin-top: 5px;
 }
 
+/* Edit buttons - using teal instead of bright green */
 .edit-button {
     padding: 5px 10px;
-    background-color: #28a745;
-    color: white;
+    background-color: var(--accent-teal);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.8rem;
+    transition: background-color 0.3s;
 }
 
 .edit-button:hover {
-    background-color: #218838;
+    background-color: var(--accent-teal-hover);
 }
 
 .group-edit-form {
@@ -236,18 +264,20 @@ p {
     margin-top: 8px;
 }
 
+/* Save buttons - using teal instead of bright green */
 .save-button {
     padding: 5px 10px;
-    background-color: #28a745;
-    color: white;
+    background-color: var(--accent-teal);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.8rem;
+    transition: background-color 0.3s;
 }
 
 .save-button:hover {
-    background-color: #218838;
+    background-color: var(--accent-teal-hover);
 }
 
 .modal {
@@ -330,17 +360,20 @@ p {
     margin-bottom: 5px;
 }
 
+/* Submit buttons - using gold for a premium feel */
 .submit-button {
     padding: 10px 20px;
-    background-color: #28a745;
-    color: white;
+    background-color: var(--accent-gold);
+    color: var(--text-dark);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.3s;
 }
 
 .submit-button:hover {
-    background-color: #218838;
+    background-color: var(--accent-gold-hover);
 }
 
 .error-message {
@@ -358,14 +391,14 @@ p {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: #333;
-    color: white;
+    background-color: var(--primary-dark);
+    color: var(--text-light);
     padding: 0 20px;
-    height: 60px; /* Fixed height to prevent jumping */
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    position: sticky; /* Keep navbar at the top */
+    height: 60px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    position: sticky;
     top: 0;
-    z-index: 1000; /* Ensure navbar stays on top */
+    z-index: 1000;
     width: 100%;
     box-sizing: border-box;
 }
@@ -376,27 +409,27 @@ p {
 }
 
 .navbar-brand a {
-    color: white;
+    color: var(--text-light);
     text-decoration: none;
 }
 
 .navbar-menu {
     display: flex;
     gap: 20px;
-    height: 100%; /* Match navbar height */
+    height: 100%;
     align-items: center;
 }
 
 .navbar-item {
-    color: white;
+    color: var(--text-light);
     text-decoration: none;
     padding: 5px 10px;
     border-radius: 4px;
-    transition: background-color 0.3s;
+    transition: background-color 0.3s, color 0.3s;
 }
 
 .navbar-item:hover {
-    background-color: #555;
+    background-color: rgba(255,255,255,0.1);
 }
 
 .logout-button {
@@ -404,7 +437,12 @@ p {
     border: none;
     cursor: pointer;
     font-size: 1rem;
-    color: white;
+    color: var(--accent-gold);
+    transition: color 0.3s;
+}
+
+.logout-button:hover {
+    color: var(--accent-gold-hover);
 }
 
 /* Mobile navbar styles */
@@ -419,13 +457,13 @@ p {
         right: 0;
         left: 0;
         flex-direction: column;
-        background-color: #333;
+        background-color: var(--primary-dark);
         width: 100%;
-        height: 0; /* Use height instead of max-height */
+        height: 0;
         overflow: hidden;
         transition: height 0.3s ease-out;
         z-index: 999;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
     }
     
     .navbar-menu.active {
@@ -438,13 +476,13 @@ p {
         padding: 15px;
         box-sizing: border-box;
         text-align: center;
-        border-bottom: 1px solid #444;
-        background-color: #333; /* Ensure consistent background */
-        color: white; /* Ensure text is visible */
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+        background-color: var(--primary-dark);
+        color: var(--text-light);
     }
     
     .navbar-item:hover {
-        background-color: #555; /* Highlight on hover */
+        background-color: rgba(255,255,255,0.05);
     }
     
     .navbar-item:last-child {
@@ -498,37 +536,51 @@ p {
     margin-top: 20px;
 }
 
+/* Cancel buttons */
 .cancel-button {
     padding: 8px 16px;
-    background-color: #6c757d;
-    color: white;
+    background-color: var(--text-medium);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
+.cancel-button:hover {
+    opacity: 0.9;
+}
+
+/* Confirmation buttons in modals */
 .confirm-button {
     padding: 8px 16px;
-    background-color: #dc3545;
-    color: white;
+    background-color: var(--danger);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
+.confirm-button:hover {
+    background-color: var(--danger-hover);
+}
+
+/* Danger/Delete buttons - more subdued red */
 .delete-button {
     padding: 5px 10px;
-    background-color: #dc3545;
-    color: white;
+    background-color: var(--danger);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     margin-top: 5px;
     font-size: 0.8rem;
+    transition: background-color 0.3s;
 }
 
 .delete-button:hover {
-    background-color: #c82333;
+    background-color: var(--danger-hover);
 }
 
 /* Blog Component Styles */
@@ -573,17 +625,19 @@ p {
     margin: 0;
 }
 
+/* New post button - using the wine color */
 .new-post-button {
     padding: 8px 16px;
-    background-color: #28a745;
-    color: white;
+    background-color: var(--accent-wine);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
 .new-post-button:hover {
-    background-color: #218838;
+    background-color: var(--accent-wine-hover);
 }
 
 .blog-content {
@@ -633,8 +687,8 @@ p {
 }
 
 .post-item.selected {
-    background-color: #e9f5ff;
-    border-color: #007bff;
+    background-color: var(--primary-light);
+    border-color: var(--accent-wine);
 }
 
 .post-item h3 {
@@ -657,15 +711,16 @@ p {
 .post-admin-controls button {
     padding: 3px 8px;
     font-size: 12px;
-    background-color: #6c757d;
-    color: white;
+    background-color: var(--accent-teal);
+    color: var(--text-light);
     border: none;
     border-radius: 3px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
 .post-admin-controls button:hover {
-    background-color: #5a6268;
+    background-color: var(--accent-teal-hover);
 }
 
 .post-detail {
@@ -770,15 +825,16 @@ p {
 .comment-form button {
     margin-top: 10px;
     padding: 8px 16px;
-    background-color: #007bff;
-    color: white;
+    background-color: var(--accent-wine);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
 .comment-form button:hover {
-    background-color: #0069d9;
+    background-color: var(--accent-wine-hover);
 }
 
 .login-prompt {
@@ -818,15 +874,16 @@ p {
 .comment-admin-controls button {
     padding: 3px 8px;
     font-size: 12px;
-    background-color: #dc3545;
-    color: white;
+    background-color: var(--danger);
+    color: var(--text-light);
     border: none;
     border-radius: 3px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
 .comment-admin-controls button:hover {
-    background-color: #c82333;
+    background-color: var(--danger-hover);
 }
 
 .post-form {
@@ -870,15 +927,17 @@ p {
 
 .post-form .submit-button {
     padding: 10px 20px;
-    background-color: #28a745;
-    color: white;
+    background-color: var(--accent-gold);
+    color: var(--text-dark);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    font-weight: 500;
+    transition: background-color 0.3s;
 }
 
 .post-form .submit-button:hover {
-    background-color: #218838;
+    background-color: var(--accent-gold-hover);
 }
 
 /* HTML Editor Component Styles */
@@ -894,7 +953,7 @@ p {
 .editor-toolbar {
     display: flex;
     padding: 8px;
-    background-color: #f5f5f5;
+    background-color: var(--primary-light);
     border-bottom: 1px solid #ddd;
     flex-wrap: wrap;
     gap: 5px;
@@ -902,16 +961,18 @@ p {
 
 .editor-toolbar button {
     padding: 6px 12px;
-    background-color: #fff;
+    background-color: var(--primary-light);
     border: 1px solid #ccc;
     border-radius: 4px;
     cursor: pointer;
     font-size: 14px;
-    color: #333;
+    color: var(--text-dark);
+    transition: background-color 0.3s, border-color 0.3s;
 }
 
 .editor-toolbar button:hover {
-    background-color: #e9e9e9;
+    background-color: var(--accent-gold-hover);
+    border-color: var(--accent-gold);
 }
 
 .html-editor-container textarea {

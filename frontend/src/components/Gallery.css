@@ -1,3 +1,27 @@
+/* Add our color variables at the top */
+:root {
+  /* Primary colors */
+  --primary-dark: #2c1e1e;      /* Deep burgundy-brown for navbar */
+  --primary-light: #f5f0eb;     /* Soft cream for backgrounds */
+  
+  /* Accent colors */
+  --accent-wine: #722f37;       /* Rich burgundy for primary buttons */
+  --accent-wine-hover: #8c3a44; /* Lighter burgundy for hover states */
+  --accent-gold: #b59d69;       /* Gold for secondary buttons */
+  --accent-gold-hover: #c7af7b; /* Lighter gold for hover states */
+  --accent-teal: #3d6869;       /* Deep teal for tertiary buttons */
+  --accent-teal-hover: #4a797a; /* Lighter teal for hover states */
+  
+  /* Danger/Warning colors - more subdued */
+  --danger: #9e4a4a;            /* Subdued red for delete/warning */
+  --danger-hover: #b05c5c;      /* Lighter subdued red for hover */
+  
+  /* Text colors */
+  --text-dark: #362c28;         /* Dark brown for text */
+  --text-medium: #5c4f4b;       /* Medium brown for subheadings */
+  --text-light: #f5f0eb;        /* Light cream for text on dark backgrounds */
+}
+
 /* Gallery container */
 .gallery-container {
     max-width: 1200px;
@@ -15,20 +39,27 @@
 .gallery-title {
     font-size: 2rem;
     margin: 0;
+    color: var(--text-dark);
+}
+
+.gallery-nav {
+    display: flex;
+    gap: 10px;
 }
 
 .gallery-nav button {
     padding: 8px 16px;
-    background-color: #4a90e2;
-    color: white;
+    background-color: var(--accent-wine);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 1rem;
+    transition: background-color 0.3s;
 }
 
 .gallery-nav button:hover {
-    background-color: #3a7bc8;
+    background-color: var(--accent-wine-hover);
 }
 
 /* Upload form */
@@ -51,25 +82,44 @@
 
 .form-group input[type="file"] {
     width: 100%;
-    padding: 8px;
+    padding: 12px;
     border: 1px solid #ddd;
     border-radius: 4px;
     background-color: white;
+    cursor: pointer;
+}
+
+/* Custom file input styling */
+.form-group input[type="file"]::file-selector-button {
+    padding: 8px 16px;
+    background-color: var(--accent-wine);
+    color: var(--text-light);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-right: 15px;
+    transition: background-color 0.3s;
+}
+
+.form-group input[type="file"]::file-selector-button:hover {
+    background-color: var(--accent-wine-hover);
 }
 
 .submit-button {
     padding: 10px 20px;
-    background-color: #4caf50;
-    color: white;
+    background-color: var(--accent-gold);
+    color: var(--text-dark);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 1rem;
     margin-top: 10px;
+    font-weight: 500;
+    transition: background-color 0.3s;
 }
 
 .submit-button:hover {
-    background-color: #45a049;
+    background-color: var(--accent-gold-hover);
 }
 
 .submit-button:disabled {
@@ -95,8 +145,46 @@
     font-weight: normal;
 }
 
+.visibility-option .custom-checkbox {
+    position: relative;
+    display: flex;
+    align-items: center;
+    user-select: none;
+    cursor: pointer;
+}
+
 .visibility-option input[type="checkbox"] {
-    margin-right: 8px;
+    opacity: 0;
+    position: absolute;
+    cursor: pointer;
+    width: 20px;
+    height: 20px;
+    z-index: 1;
+    left: 0;
+}
+
+.visibility-option .checkbox-icon {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--accent-teal);
+    border-radius: 3px;
+    margin-right: 10px;
+    position: relative;
+    display: inline-block;
+    background-color: white;
+    flex-shrink: 0;
+}
+
+.visibility-option input[type="checkbox"]:checked + .checkbox-icon::after {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 2px;
+    width: 5px;
+    height: 10px;
+    border: solid var(--accent-teal);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
 }
 
 .group-selection {
@@ -219,25 +307,20 @@
 
 /* Media card with absolutely no transformations, transitions or animations whatsoever */
 .media-item {
-    background-color: white;
-    border-radius: 8px;
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 4px;
     overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     cursor: pointer;
     position: relative;
-    height: 250px;
-    transform: none !important;
-    transition: none !important;
-    animation: none !important;
-    will-change: auto !important;
+    aspect-ratio: 1/1;
+    transition: transform 0.2s, box-shadow 0.2s;
 }
 
-/* Force no transformations whatsoever on hover */
 .media-item:hover {
-    transform: none !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
-    transition: none !important;
-    animation: none !important;
+    transform: none;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
 }
 
 /* Show overlay on hover with no animation */
@@ -272,32 +355,59 @@
     color: white;
     padding: 15px;
     width: 100%;
-}
-
-/* Make buttons clickable */
-.media-actions button {
-    padding: 5px 10px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.8rem;
-    margin: 0 5px;
+    box-sizing: border-box; /* Ensure padding is included in width calculation */
 }
 
 .media-actions {
     display: flex;
-    justify-content: center;
-    margin-top: 8px;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 5px;
+    width: 100%; /* Ensure buttons don't overflow */
+}
+
+/* Make buttons clickable */
+.media-actions .edit-button,
+.media-actions .delete-button {
+    padding: 5px 10px;
+    font-size: 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    min-height: 28px;
+    margin: 0;
 }
 
 .edit-button {
-    background-color: #4a90e2;
-    color: white;
+    padding: 5px 10px;
+    background-color: var(--accent-teal);
+    color: var(--text-light);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background-color 0.3s;
+}
+
+.edit-button:hover {
+    background-color: var(--accent-teal-hover);
 }
 
 .delete-button {
-    background-color: #e74c3c;
-    color: white;
+    padding: 5px 10px;
+    background-color: var(--danger);
+    color: var(--text-light);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 5px;
+    font-size: 0.8rem;
+    transition: background-color 0.3s;
+}
+
+.delete-button:hover {
+    background-color: var(--danger-hover);
 }
 
 /* Group editing form */
@@ -324,13 +434,23 @@
 }
 
 .save-button {
-    background-color: #4caf50;
-    color: white;
+    background-color: var(--accent-teal);
+    color: var(--text-light);
+    transition: background-color 0.3s;
+}
+
+.save-button:hover {
+    background-color: var(--accent-teal-hover);
 }
 
 .cancel-button {
-    background-color: #f44336;
-    color: white;
+    background-color: var(--text-medium);
+    color: var(--text-light);
+    transition: opacity 0.3s;
+}
+
+.cancel-button:hover {
+    opacity: 0.9;
 }
 
 /* Modal */
@@ -439,17 +559,21 @@
 }
 
 .view-toggle-button {
-    margin-top: 10px;
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
     padding: 8px 16px;
-    background-color: #444;
-    color: white;
+    background-color: rgba(44, 30, 30, 0.6); /* Using primary-dark with transparency */
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s;
+    z-index: 2;
 }
 
 .view-toggle-button:hover {
-    background-color: #666;
+    background-color: rgba(114, 47, 55, 0.8); /* Using accent-wine with transparency */
 }
 
 /* Medium image loading indicator */
@@ -589,6 +713,13 @@
     background-color: #e0e0e0;
 }
 
+.media-taken-by .edit-button {
+    margin-left: 10px;
+    padding: 4px 10px;
+    font-size: 12px;
+    min-height: 26px;
+}
+
 /* Comments section styles */
 .comments-section {
     margin-top: 20px;
@@ -618,15 +749,16 @@
 .comment-form button {
     margin-top: 10px;
     padding: 8px 16px;
-    background-color: #4a90e2;
-    color: white;
+    background-color: var(--accent-wine);
+    color: var(--text-light);
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s;
 }
 
 .comment-form button:hover {
-    background-color: #3a7bc8;
+    background-color: var(--accent-wine-hover);
 }
 
 .reply-form {
@@ -940,23 +1072,23 @@
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    background-color: rgba(0, 0, 0, 0.5);
-    color: white;
+    background-color: rgba(44, 30, 30, 0.6); /* Using primary-dark with transparency */
+    color: var(--text-light);
     border: none;
-    border-radius: 50%;
     width: 40px;
     height: 40px;
+    border-radius: 50%;
     font-size: 20px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    z-index: 10;
-    transition: background-color 0.3s ease;
+    z-index: 2;
+    transition: background-color 0.3s;
 }
 
 .nav-button:hover {
-    background-color: rgba(0, 0, 0, 0.8);
+    background-color: rgba(114, 47, 55, 0.8); /* Using accent-wine with transparency */
 }
 
 .prev-button {
@@ -982,6 +1114,75 @@
     .next-button {
         right: 10px;
     }
+}
+
+/* Re-add skeleton loader styles */
+.skeleton-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 20px;
+  width: 100%;
+}
+
+.skeleton-item {
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  position: relative;
+  aspect-ratio: 1/1;
+  background-color: #f0f0f0;
+}
+
+.skeleton-image {
+  width: 100%;
+  height: 100%;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0.2) 20%,
+    rgba(255, 255, 255, 0.5) 60%,
+    rgba(255, 255, 255, 0)
+  );
+  background-size: 200% 100%;
+  background-position: -100% 0;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-info {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 10px;
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.skeleton-text {
+  height: 16px;
+  width: 80%;
+  margin-bottom: 8px;
+  background-color: #ddd;
+  border-radius: 4px;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0.2) 20%,
+    rgba(255, 255, 255, 0.5) 60%,
+    rgba(255, 255, 255, 0)
+  );
+  background-size: 200% 100%;
+  background-position: -100% 0;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-text.short {
+  width: 50%;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: 200% 0;
+  }
 }
 
 /* Responsive adjustments */

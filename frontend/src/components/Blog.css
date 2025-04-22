@@ -1,0 +1,88 @@
+/* Add our color variables at the top */
+:root {
+  /* Primary colors */
+  --primary-dark: #2c1e1e;      /* Deep burgundy-brown for navbar */
+  --primary-light: #f5f0eb;     /* Soft cream for backgrounds */
+  
+  /* Accent colors */
+  --accent-wine: #722f37;       /* Rich burgundy for primary buttons */
+  --accent-wine-hover: #8c3a44; /* Lighter burgundy for hover states */
+  --accent-gold: #b59d69;       /* Gold for secondary buttons */
+  --accent-gold-hover: #c7af7b; /* Lighter gold for hover states */
+  --accent-teal: #3d6869;       /* Deep teal for tertiary buttons */
+  --accent-teal-hover: #4a797a; /* Lighter teal for hover states */
+  
+  /* Danger/Warning colors - more subdued */
+  --danger: #9e4a4a;            /* Subdued red for delete/warning */
+  --danger-hover: #b05c5c;      /* Lighter subdued red for hover */
+  
+  /* Text colors */
+  --text-dark: #362c28;         /* Dark brown for text */
+  --text-medium: #5c4f4b;       /* Medium brown for subheadings */
+  --text-light: #f5f0eb;        /* Light cream for text on dark backgrounds */
+}
+
+/* Override comment form button styling */
+.comment-form button {
+  margin-top: 10px;
+  padding: 8px 16px;
+  background-color: var(--accent-wine);
+  color: var(--text-light);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.comment-form button:hover {
+  background-color: var(--accent-wine-hover);
+}
+
+/* Style reply buttons */
+.reply-button {
+  background-color: var(--accent-teal) !important;
+  color: var(--text-light) !important;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+  font-size: 0.8rem;
+  min-height: 28px;
+}
+
+.reply-button:hover {
+  background-color: var(--accent-teal-hover) !important;
+}
+
+/* Style the post controls */
+.post-admin-controls button {
+  background-color: var(--accent-teal);
+  color: var(--text-light);
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  margin-right: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.post-admin-controls button:hover {
+  background-color: var(--accent-teal-hover);
+}
+
+/* Style comment admin controls */
+.comment-admin-controls button {
+  background-color: var(--danger);
+  color: var(--text-light);
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  margin-right: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.comment-admin-controls button:hover {
+  background-color: var(--danger-hover);
+}

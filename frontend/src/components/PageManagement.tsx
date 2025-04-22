@@ -315,201 +315,216 @@ const PageManagement: React.FC = () => {
     <div className="page-management">
       <h2>Page Management</h2>
       
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
       
       <div className="page-management-sections">
-        <div className="existing-pages">
-          <h3>Existing Pages</h3>
-          {pages.length === 0 ? (
-            <p>No pages found. Create your first page using the form.</p>
-          ) : (
-            <div className="pages-list">
-              {pages.map(page => (
-                <div 
-                  key={page.id} 
-                  className={`page-item ${page.isHome ? 'home-page-item' : ''}`}
-                >
-                  <div className="page-info">
-                    <h4>
-                      {page.title}
-                      {page.isHome && <span className="home-indicator">Home</span>}
-                    </h4>
-                    <p>Slug: /{page.slug}</p>
-                    <p>Created: {new Date(page.createdAt).toLocaleDateString()}</p>
-                  </div>
-                  <div className="page-actions">
-                    {!page.isHome && (
+        <div className="existing-pages card">
+          <div className="card-header">
+            <h3>Existing Pages</h3>
+          </div>
+          <div className="card-body">
+            {pages.length === 0 ? (
+              <p>No pages found. Create your first page using the form.</p>
+            ) : (
+              <div className="pages-list">
+                {pages.map(page => (
+                  <div 
+                    key={page.id} 
+                    className={`page-item ${page.isHome ? 'home-page-item' : ''}`}
+                  >
+                    <div className="page-info">
+                      <h4>
+                        {page.title}
+                        {page.isHome && <span className="home-indicator">Home</span>}
+                      </h4>
+                      <p>Slug: /{page.slug}</p>
+                      <p>Created: {new Date(page.createdAt).toLocaleDateString()}</p>
+                    </div>
+                    <div className="btn-group">
+                      {!page.isHome && (
+                        <button 
+                          onClick={() => handleMakeHomePage(page.id)}
+                          className="btn btn-tertiary btn-sm"
+                          title="Set as home page"
+                        >
+                          Set Home
+                        </button>
+                      )}
                       <button 
-                        onClick={() => handleMakeHomePage(page.id)}
-                        className="create-home-button"
-                        title="Set as home page"
+                        onClick={() => navigate(`/admin/pages/edit/${page.id}`)}
+                        className="btn btn-secondary btn-sm"
                       >
-                        Set Home
+                        Edit
                       </button>
-                    )}
-                    <button 
-                      onClick={() => navigate(`/admin/pages/edit/${page.id}`)}
-                      className="edit-button"
-                    >
-                      Edit
-                    </button>
-                    <button 
-                      onClick={() => handleDeletePage(page.id)}
-                      className="delete-button"
-                    >
-                      Delete
-                    </button>
+                      <button 
+                        onClick={() => handleDeletePage(page.id)}
+                        className="btn btn-danger btn-sm"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         
-        <div className="create-page-form">
-          <h3>Create New Page</h3>
-          <div className="form-group">
-            <label htmlFor="title">Title:</label>
-            <input 
-              type="text" 
-              id="title" 
-              value={title}
-              onChange={(e) => {
-                setTitle(e.target.value);
-                // Optionally auto-generate slug if user wants
-                // generateSlugFromTitle();
-              }}
-              placeholder="Enter page title"
-            />
+        <div className="create-page-form card">
+          <div className="card-header">
+            <h3>Create New Page</h3>
           </div>
-          
-          <div className="form-group">
-            <label htmlFor="slug">Slug:</label>
-            <input 
-              type="text" 
-              id="slug" 
-              value={slug}
-              onChange={(e) => handleSlugChange(e.target.value)}
-              placeholder="enter-page-slug"
-            />
-            <small>The slug will be used in the URL: /page/your-slug</small>
-            <button 
-              onClick={generateSlugFromTitle} 
-              className="generate-slug-button"
-              type="button"
-            >
-              Generate from Title
-            </button>
-          </div>
-          
-          <div className="form-group">
-            <label>Page Content:</label>
-            <div className="rich-editor-container">
-              <div className="editor-toolbar">
+          <div className="card-body">
+            <div className="form-group">
+              <label htmlFor="title">Title:</label>
+              <input 
+                type="text" 
+                id="title" 
+                className="form-control"
+                value={title}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  // Optionally auto-generate slug if user wants
+                  // generateSlugFromTitle();
+                }}
+                placeholder="Enter page title"
+              />
+            </div>
+            
+            <div className="form-group">
+              <label htmlFor="slug">Slug:</label>
+              <div className="d-flex gap-1 align-items-center">
+                <input 
+                  type="text" 
+                  id="slug" 
+                  className="form-control"
+                  value={slug}
+                  onChange={(e) => handleSlugChange(e.target.value)}
+                  placeholder="enter-page-slug"
+                />
                 <button 
-                  className={`editor-button ${editorState.getCurrentInlineStyle().has('BOLD') ? 'active' : ''}`}
-                  onClick={() => toggleInlineStyle('BOLD')}
-                  title="Bold"
+                  onClick={generateSlugFromTitle} 
+                  className="btn btn-tertiary"
+                  type="button"
                 >
-                  B
-                </button>
-                <button 
-                  className={`editor-button ${editorState.getCurrentInlineStyle().has('ITALIC') ? 'active' : ''}`}
-                  onClick={() => toggleInlineStyle('ITALIC')}
-                  title="Italic"
-                >
-                  I
-                </button>
-                <button 
-                  className={`editor-button ${editorState.getCurrentInlineStyle().has('UNDERLINE') ? 'active' : ''}`}
-                  onClick={() => toggleInlineStyle('UNDERLINE')}
-                  title="Underline"
-                >
-                  U
-                </button>
-                <button 
-                  className="editor-button"
-                  onClick={() => toggleBlockType('header-one')}
-                  title="Heading 1"
-                >
-                  H1
-                </button>
-                <button 
-                  className="editor-button"
-                  onClick={() => toggleBlockType('header-two')}
-                  title="Heading 2"
-                >
-                  H2
-                </button>
-                <button 
-                  className="editor-button"
-                  onClick={() => toggleBlockType('header-three')}
-                  title="Heading 3"
-                >
-                  H3
-                </button>
-                <button 
-                  className="editor-button"
-                  onClick={() => toggleBlockType('unordered-list-item')}
-                  title="Bullet List"
-                >
-                  • List
-                </button>
-                <button 
-                  className="editor-button"
-                  onClick={() => toggleBlockType('ordered-list-item')}
-                  title="Numbered List"
-                >
-                  1. List
-                </button>
-                <button 
-                  className="editor-button"
-                  onClick={() => setShowImageGallery(true)}
-                  title="Insert Image"
-                >
-                  🖼️ Image
+                  Generate from Title
                 </button>
               </div>
-              <div className="editor-content">
-                <Editor 
-                  editorState={editorState}
-                  onChange={handleEditorChange}
-                  handleKeyCommand={handleKeyCommand}
-                  placeholder="Write your page content here..."
-                />
+              <small>The slug will be used in the URL: /page/your-slug</small>
+            </div>
+            
+            <div className="form-group">
+              <label>Page Content:</label>
+              <div className="rich-editor-container">
+                <div className="editor-toolbar">
+                  <button 
+                    className={`btn btn-sm ${editorState.getCurrentInlineStyle().has('BOLD') ? 'btn-tertiary' : 'btn-neutral'}`}
+                    onClick={() => toggleInlineStyle('BOLD')}
+                    title="Bold"
+                  >
+                    B
+                  </button>
+                  <button 
+                    className={`btn btn-sm ${editorState.getCurrentInlineStyle().has('ITALIC') ? 'btn-tertiary' : 'btn-neutral'}`}
+                    onClick={() => toggleInlineStyle('ITALIC')}
+                    title="Italic"
+                  >
+                    I
+                  </button>
+                  <button 
+                    className={`btn btn-sm ${editorState.getCurrentInlineStyle().has('UNDERLINE') ? 'btn-tertiary' : 'btn-neutral'}`}
+                    onClick={() => toggleInlineStyle('UNDERLINE')}
+                    title="Underline"
+                  >
+                    U
+                  </button>
+                  <button 
+                    className="btn btn-sm btn-neutral"
+                    onClick={() => toggleBlockType('header-one')}
+                    title="Heading 1"
+                  >
+                    H1
+                  </button>
+                  <button 
+                    className="btn btn-sm btn-neutral"
+                    onClick={() => toggleBlockType('header-two')}
+                    title="Heading 2"
+                  >
+                    H2
+                  </button>
+                  <button 
+                    className="btn btn-sm btn-neutral"
+                    onClick={() => toggleBlockType('header-three')}
+                    title="Heading 3"
+                  >
+                    H3
+                  </button>
+                  <button 
+                    className="btn btn-sm btn-neutral"
+                    onClick={() => toggleBlockType('unordered-list-item')}
+                    title="Bullet List"
+                  >
+                    • List
+                  </button>
+                  <button 
+                    className="btn btn-sm btn-neutral"
+                    onClick={() => toggleBlockType('ordered-list-item')}
+                    title="Numbered List"
+                  >
+                    1. List
+                  </button>
+                  <button 
+                    className="btn btn-sm btn-tertiary"
+                    onClick={() => setShowImageGallery(true)}
+                    title="Insert Image"
+                  >
+                    🖼️ Image
+                  </button>
+                </div>
+                <div className="editor-content">
+                  <Editor 
+                    editorState={editorState}
+                    onChange={handleEditorChange}
+                    handleKeyCommand={handleKeyCommand}
+                    placeholder="Write your page content here..."
+                  />
+                </div>
               </div>
             </div>
-          </div>
-          
-          <div className="checkbox-group">
-            <label>
-              <input 
-                type="checkbox" 
-                checked={isPublic}
-                onChange={(e) => setIsPublic(e.target.checked)}
-              />
-              Make this page public (visible to non-logged in users)
-            </label>
-          </div>
-          
-          {!pages.some(page => page.isHome) && (
-            <div className="checkbox-group">
-              <label>
+            
+            <div className="form-group">
+              <div className="custom-checkbox">
                 <input 
                   type="checkbox" 
-                  checked={isHome}
-                  onChange={(e) => setIsHome(e.target.checked)}
+                  id="isPublic"
+                  checked={isPublic}
+                  onChange={(e) => setIsPublic(e.target.checked)}
                 />
-                Set as home page
-              </label>
+                <span className="checkbox-icon"></span>
+                <label htmlFor="isPublic">Make this page public (visible to non-logged in users)</label>
+              </div>
             </div>
-          )}
-          
-          <div className="form-actions">
+            
+            {!pages.some(page => page.isHome) && (
+              <div className="form-group">
+                <div className="custom-checkbox">
+                  <input 
+                    type="checkbox"
+                    id="isHome" 
+                    checked={isHome}
+                    onChange={(e) => setIsHome(e.target.checked)}
+                  />
+                  <span className="checkbox-icon"></span>
+                  <label htmlFor="isHome">Set as home page</label>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="card-footer">
             <button 
               onClick={handleCreatePage}
-              className="create-button"
+              className="btn btn-primary"
             >
               Create Page
             </button>
@@ -519,26 +534,31 @@ const PageManagement: React.FC = () => {
 
       {/* Image Gallery Modal */}
       {showImageGallery && (
-        <div className="gallery-modal-overlay" onClick={() => setShowImageGallery(false)}>
-          <div className="gallery-modal" onClick={e => e.stopPropagation()}>
-            <div className="gallery-modal-header">
+        <div className="modal-overlay" onClick={() => setShowImageGallery(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
               <h3>Select an Image</h3>
-              <button className="close-button" onClick={() => setShowImageGallery(false)}>×</button>
+              <button className="modal-close" onClick={() => setShowImageGallery(false)}>×</button>
             </div>
-            <div className="gallery-modal-grid">
-              {galleryImages.length === 0 ? (
-                <p>No images available. Upload images in the Gallery section first.</p>
-              ) : (
-                galleryImages.map((imageUrl, index) => (
-                  <div 
-                    key={index} 
-                    className="gallery-image-item"
-                    onClick={() => insertImage(imageUrl)}
-                  >
-                    <img src={imageUrl} alt={`Gallery image ${index}`} />
-                  </div>
-                ))
-              )}
+            <div className="modal-body">
+              <div className="gallery-modal-grid">
+                {galleryImages.length === 0 ? (
+                  <p>No images available. Upload images in the Gallery section first.</p>
+                ) : (
+                  galleryImages.map((imageUrl, index) => (
+                    <div 
+                      key={index} 
+                      className="gallery-image-item clickable"
+                      onClick={() => insertImage(imageUrl)}
+                    >
+                      <img src={imageUrl} alt={`Gallery image ${index}`} />
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-neutral" onClick={() => setShowImageGallery(false)}>Cancel</button>
             </div>
           </div>
         </div>

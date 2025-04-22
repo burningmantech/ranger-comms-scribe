@@ -1,0 +1,492 @@
+/* Common Button and Control Styles for Classy Lounge Theme */
+
+/* Base button styles that will be consistent across all buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Poppins', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  transition: background-color 0.3s, opacity 0.3s;
+  margin: 0.5rem 0.25rem;
+  min-height: 36px;
+  white-space: nowrap;
+  vertical-align: middle;
+  line-height: 1.5;
+}
+
+/* Primary button - wine color */
+.btn-primary {
+  background-color: var(--accent-wine);
+  color: var(--text-light);
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-wine-hover);
+}
+
+/* Secondary button - gold color */
+.btn-secondary {
+  background-color: var(--accent-gold);
+  color: var(--text-dark);
+}
+
+.btn-secondary:hover {
+  background-color: var(--accent-gold-hover);
+}
+
+/* Tertiary button - teal color */
+.btn-tertiary {
+  background-color: var(--accent-teal);
+  color: var(--text-light);
+}
+
+.btn-tertiary:hover {
+  background-color: var(--accent-teal-hover);
+}
+
+/* Neutral button - medium text color */
+.btn-neutral {
+  background-color: var(--text-medium);
+  color: var(--text-light);
+}
+
+.btn-neutral:hover {
+  opacity: 0.9;
+}
+
+/* Danger/Delete button - subdued red */
+.btn-danger {
+  background-color: var(--danger);
+  color: var(--text-light);
+}
+
+.btn-danger:hover {
+  background-color: var(--danger-hover);
+}
+
+/* Button sizes */
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+  min-height: 28px;
+}
+
+.btn-lg {
+  padding: 12px 20px;
+  font-size: 16px;
+  min-height: 44px;
+}
+
+/* Button with icon */
+.btn-with-icon {
+  gap: 6px;
+}
+
+/* Button groups for alignment */
+.btn-group {
+  display: flex;
+  gap: 8px;
+  margin: 1rem 0;
+  align-items: center;
+}
+
+.btn-group-right {
+  justify-content: flex-end;
+}
+
+.btn-group-center {
+  justify-content: center;
+}
+
+.btn-group-space-between {
+  justify-content: space-between;
+}
+
+/* Responsive button groups */
+@media (max-width: 768px) {
+  .btn-group-responsive {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .btn-group-responsive .btn {
+    width: 100%;
+    margin: 0.25rem 0;
+  }
+}
+
+/* Form controls */
+.form-control {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dark);
+  background-color: #fff;
+  background-clip: padding-box;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  transition: border-color 0.15s ease-in-out;
+  margin: 0.5rem 0;
+}
+
+.form-control:focus {
+  border-color: var(--accent-gold);
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgba(181, 157, 105, 0.25);
+}
+
+/* Form group with consistent spacing */
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: var(--text-dark);
+}
+
+/* Checkbox styling */
+.form-check {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.form-check input[type="checkbox"] {
+  margin-right: 8px;
+  min-width: 16px;
+  height: 16px;
+}
+
+.form-check-label {
+  margin-bottom: 0;
+  cursor: pointer;
+  padding-left: 0.5rem;
+}
+
+/* Custom checkbox styling */
+.custom-checkbox {
+  display: flex;
+  align-items: center;
+  position: relative;
+  padding-left: 26px;
+  margin: 0.5rem 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.custom-checkbox input {
+  position: absolute;
+  opacity: 0;
+  height: 0;
+  width: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.checkbox-icon {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 18px;
+  width: 18px;
+  background-color: #fff;
+  border: 2px solid var(--text-medium);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.custom-checkbox input:checked ~ .checkbox-icon {
+  background-color: var(--accent-gold);
+  border-color: var(--accent-gold);
+}
+
+.custom-checkbox input:focus ~ .checkbox-icon {
+  box-shadow: 0 0 0 2px rgba(181, 157, 105, 0.25);
+}
+
+.checkbox-icon:after {
+  content: "";
+  display: none;
+  width: 5px;
+  height: 10px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  position: absolute;
+}
+
+.custom-checkbox input:checked ~ .checkbox-icon:after {
+  display: block;
+}
+
+/* Radio buttons */
+.custom-radio {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  margin: 0.5rem 0;
+  user-select: none;
+}
+
+.custom-radio input {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+  height: 0;
+  width: 0;
+}
+
+.radio-icon {
+  height: 18px;
+  width: 18px;
+  background-color: #fff;
+  border: 2px solid var(--text-medium);
+  border-radius: 50%;
+  margin-right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.custom-radio input:checked ~ .radio-icon {
+  border-color: var(--accent-gold);
+}
+
+.radio-icon:after {
+  content: "";
+  display: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-gold);
+}
+
+.custom-radio input:checked ~ .radio-icon:after {
+  display: block;
+}
+
+/* Select styling */
+.form-select {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-dark);
+  background-color: #fff;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 16px 12px;
+  transition: border-color 0.15s ease-in-out;
+  margin: 0.5rem 0;
+}
+
+.form-select:focus {
+  border-color: var(--accent-gold);
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem rgba(181, 157, 105, 0.25);
+}
+
+/* Card styling */
+.card {
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  margin: 1rem 0;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 16px;
+}
+
+.card-body {
+  padding: 8px 0;
+}
+
+.card-footer {
+  padding-top: 12px;
+  border-top: 1px solid #eee;
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Utility classes */
+.text-center {
+  text-align: center;
+}
+
+.text-right {
+  text-align: right;
+}
+
+.mt-1 {
+  margin-top: 0.5rem;
+}
+
+.mt-2 {
+  margin-top: 1rem;
+}
+
+.mb-1 {
+  margin-bottom: 0.5rem;
+}
+
+.mb-2 {
+  margin-bottom: 1rem;
+}
+
+.mr-1 {
+  margin-right: 0.5rem;
+}
+
+.ml-1 {
+  margin-left: 0.5rem;
+}
+
+/* Alignment for buttons and controls */
+.align-middle {
+  vertical-align: middle;
+}
+
+.d-flex {
+  display: flex;
+}
+
+.align-items-center {
+  align-items: center;
+}
+
+.justify-content-end {
+  justify-content: flex-end;
+}
+
+.justify-content-between {
+  justify-content: space-between;
+}
+
+.justify-content-center {
+  justify-content: center;
+}
+
+.gap-1 {
+  gap: 0.5rem;
+}
+
+.gap-2 {
+  gap: 1rem;
+}
+
+/* Makes divs behave like buttons */
+.clickable {
+  cursor: pointer;
+}
+
+.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Message feedback */
+.success-message {
+  background-color: #e3faed;
+  color: #28a745;
+  padding: 12px;
+  border-radius: 4px;
+  margin: 1rem 0;
+  border-left: 4px solid #28a745;
+}
+
+.error-message {
+  background-color: #fae3e3;
+  color: var(--danger);
+  padding: 12px;
+  border-radius: 4px;
+  margin: 1rem 0;
+  border-left: 4px solid var(--danger);
+}
+
+/* Modal styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: #fff;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 20px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: var(--text-dark);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #666;
+}
+
+.modal-body {
+  padding: 15px 0;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 15px;
+  border-top: 1px solid #eee;
+}

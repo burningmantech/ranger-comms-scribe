@@ -822,8 +822,16 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                                 required
                             />
                             <div className="reply-form-actions">
-                                <button type="submit">Post Reply</button>
-                                <button type="button" onClick={() => setReplyingTo(null)}>Cancel</button>
+                                <button type="submit" style={{
+                                    backgroundColor: '#722f37', // accent-wine color
+                                    color: '#f5f0eb',  // text-light color
+                                    transition: 'background-color 0.3s'
+                                }}>Post Reply</button>
+                                <button type="button" onClick={() => setReplyingTo(null)} style={{
+                                    backgroundColor: '#5c4f4b', // text-medium color
+                                    color: '#f5f0eb', // text-light color
+                                    transition: 'opacity 0.3s'
+                                }}>Cancel</button>
                             </div>
                         </form>
                     </div>
@@ -988,25 +996,29 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
                                 </div>
                             </div>
                         </div>
-                        <div className="form-group checkbox-group">
-                            <label>
+                        <div className="form-group">
+                            <div className="custom-checkbox">
                                 <input
                                     type="checkbox"
+                                    id="commentsEnabled"
                                     checked={newPost.commentsEnabled}
                                     onChange={(e) => setNewPost({...newPost, commentsEnabled: e.target.checked})}
                                 />
-                                Enable comments
-                            </label>
+                                <span className="checkbox-icon"></span>
+                                <label htmlFor="commentsEnabled">Enable comments</label>
+                            </div>
                         </div>
-                        <div className="form-group checkbox-group">
-                            <label>
+                        <div className="form-group">
+                            <div className="custom-checkbox">
                                 <input
                                     type="checkbox"
+                                    id="isPublic"
                                     checked={newPost.isPublic}
                                     onChange={(e) => setNewPost({...newPost, isPublic: e.target.checked})}
                                 />
-                                Public (visible to everyone)
-                            </label>
+                                <span className="checkbox-icon"></span>
+                                <label htmlFor="isPublic">Public (visible to everyone)</label>
+                            </div>
                         </div>
                         
                         {!newPost.isPublic && (

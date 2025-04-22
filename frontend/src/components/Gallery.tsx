@@ -1671,14 +1671,16 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
 
                         <div className="form-group bulk-upload-options">
                             <div className="visibility-option">
-                                <label>
+                                <div className="custom-checkbox">
                                     <input
                                         type="checkbox"
+                                        id="bulkUploadIsPublic"
                                         checked={bulkUploadIsPublic}
                                         onChange={(e) => setBulkUploadIsPublic(e.target.checked)}
                                     />
-                                    Make files public
-                                </label>
+                                    <span className="checkbox-icon"></span>
+                                    <label htmlFor="bulkUploadIsPublic">Make files public</label>
+                                </div>
                             </div>
 
                             <div className="form-group">

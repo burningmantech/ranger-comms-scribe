@@ -1,360 +1,331 @@
+/* Add our color variables at the top */
+:root {
+  /* Primary colors */
+  --primary-dark: #2c1e1e;      /* Deep burgundy-brown for navbar */
+  --primary-light: #f5f0eb;     /* Soft cream for backgrounds */
+  
+  /* Accent colors */
+  --accent-wine: #722f37;       /* Rich burgundy for primary buttons */
+  --accent-wine-hover: #8c3a44; /* Lighter burgundy for hover states */
+  --accent-gold: #b59d69;       /* Gold for secondary buttons */
+  --accent-gold-hover: #c7af7b; /* Lighter gold for hover states */
+  --accent-teal: #3d6869;       /* Deep teal for tertiary buttons */
+  --accent-teal-hover: #4a797a; /* Lighter teal for hover states */
+  
+  /* Danger/Warning colors - more subdued */
+  --danger: #9e4a4a;            /* Subdued red for delete/warning */
+  --danger-hover: #b05c5c;      /* Lighter subdued red for hover */
+  
+  /* Text colors */
+  --text-dark: #362c28;         /* Dark brown for text */
+  --text-medium: #5c4f4b;       /* Medium brown for subheadings */
+  --text-light: #f5f0eb;        /* Light cream for text on dark backgrounds */
+}
+
 .page-management {
-  padding: 20px;
   max-width: 1200px;
   margin: 0 auto;
-}
-
-.page-management h2 {
-  margin-bottom: 20px;
-  color: #333;
-  border-bottom: 2px solid #2196f3;
-  padding-bottom: 10px;
-}
-
-.page-management-sections {
-  display: flex;
-  gap: 30px;
-}
-
-.existing-pages,
-.create-page-form {
-  flex: 1;
-  background-color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   padding: 20px;
 }
 
-.existing-pages h3,
-.create-page-form h3 {
-  margin-top: 0;
-  margin-bottom: 20px;
-  color: #333;
-  font-size: 1.3rem;
-}
-
-.pages-list {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  max-height: 600px;
-  overflow-y: auto;
-}
-
-.page-item {
+.page-management-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 15px;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  transition: box-shadow 0.3s ease;
+  margin-bottom: 20px;
 }
 
-.page-item:hover {
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
-}
-
-.home-page-item {
-  background-color: #f3f9ff;
-  border-color: #2196f3;
-}
-
-.page-info h4 {
-  margin: 0 0 8px;
-  font-size: 1.1rem;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.home-indicator {
-  background-color: #2196f3;
-  color: white;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.7rem;
-  font-weight: normal;
-}
-
-.page-info p {
+.page-management-header h2 {
   margin: 0;
-  font-size: 0.9rem;
-  color: #666;
+  color: var(--text-dark);
+}
+
+.create-page-button {
+  padding: 10px 15px;
+  background-color: var(--accent-gold);
+  color: var(--text-dark);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.3s;
+}
+
+.create-page-button:hover {
+  background-color: var(--accent-gold-hover);
+}
+
+.pages-list {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.page-item {
+  padding: 15px;
+  border-bottom: 1px solid #eee;
+}
+
+.page-item:last-child {
+  border-bottom: none;
+}
+
+.page-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.page-title {
+  font-size: 1.2em;
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-dark);
 }
 
 .page-actions {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  gap: 10px;
 }
 
-/* Common admin button styles for consistency across admin pages */
-.edit-button,
-.delete-button,
-.create-button,
-.create-home-button,
-.generate-slug-button,
-.editor-button {
-  min-width: 80px;
-  height: 36px;
-  padding: 0 15px;
+.action-button {
+  padding: 8px 12px;
   border: none;
   border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.2s, transform 0.1s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  transition: background-color 0.3s;
 }
 
 .edit-button {
-  background-color: #2196f3;
-  color: white;
+  background-color: var(--accent-teal);
+  color: var(--text-light);
 }
 
 .edit-button:hover {
-  background-color: #0d8bf2;
+  background-color: var(--accent-teal-hover);
 }
 
 .delete-button {
-  background-color: #f44336;
-  color: white;
+  background-color: var(--danger);
+  color: var(--text-light);
 }
 
 .delete-button:hover {
-  background-color: #d32f2f;
+  background-color: var(--danger-hover);
 }
 
-.create-home-button {
-  background-color: #4caf50;
-  color: white;
+.view-button {
+  background-color: var(--accent-wine);
+  color: var(--text-light);
 }
 
-.create-home-button:hover {
-  background-color: #3d8b40;
+.view-button:hover {
+  background-color: var(--accent-wine-hover);
 }
 
-.create-button {
-  background-color: #2196f3;
-  color: white;
-  padding: 0 20px;
-  height: 40px;
-  font-size: 16px;
-}
-
-.create-button:hover {
-  background-color: #0d8bf2;
-}
-
-.generate-slug-button {
-  background-color: #9e9e9e;
-  color: white;
+.page-meta {
   margin-top: 5px;
+  color: var(--text-medium);
+  font-size: 0.9em;
 }
 
-.generate-slug-button:hover {
-  background-color: #757575;
+.page-form {
+  background-color: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  margin-bottom: 30px;
 }
 
 .form-group {
-  margin-bottom: 20px;
+  margin-bottom: 15px;
 }
 
 .form-group label {
   display: block;
-  margin-bottom: 8px;
-  font-weight: 500;
+  margin-bottom: 5px;
+  font-weight: 600;
+  color: var(--text-dark);
 }
 
-.form-group input,
+.form-group input[type="text"],
 .form-group textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: 10px;
   border: 1px solid #ddd;
   border-radius: 4px;
-  font-size: 0.9rem;
+  font-size: 16px;
 }
 
-.form-group small {
-  display: block;
-  margin-top: 5px;
-  color: #666;
+.form-group textarea {
+  min-height: 150px;
+  resize: vertical;
 }
 
 .checkbox-group {
-  margin-bottom: 15px;
-}
-
-.checkbox-group label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
+  margin-bottom: 10px;
 }
 
-.form-actions {
+.checkbox-group input[type="checkbox"] {
+  margin-right: 10px;
+}
+
+.form-buttons {
   display: flex;
+  gap: 10px;
   justify-content: flex-end;
   margin-top: 20px;
 }
 
-.error {
-  background-color: #ffebee;
-  color: #c62828;
-  padding: 10px 15px;
+.save-button {
+  padding: 10px 20px;
+  background-color: var(--accent-gold);
+  color: var(--text-dark);
+  border: none;
   border-radius: 4px;
-  margin-bottom: 20px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.3s;
 }
 
-.success-message {
-  background-color: #e8f5e9;
-  color: #2e7d32;
-  padding: 10px 15px;
-  border-radius: 4px;
-  margin-bottom: 20px;
+.save-button:hover {
+  background-color: var(--accent-gold-hover);
 }
 
-/* Rich text editor styles */
-.rich-editor-container {
+.cancel-button {
+  padding: 10px 20px;
+  background-color: var(--text-medium);
+  color: var(--text-light);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.3s;
+}
+
+.cancel-button:hover {
+  opacity: 0.9;
+}
+
+.editor-container {
   border: 1px solid #ddd;
   border-radius: 4px;
-  overflow: hidden;
+  margin-bottom: 20px;
 }
 
 .editor-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding: 8px;
+  padding: 10px;
   background-color: #f5f5f5;
   border-bottom: 1px solid #ddd;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
-.editor-button {
-  min-width: 36px;
-  height: 36px;
-  padding: 0;
-  background-color: #fff;
+.editor-toolbar button {
+  padding: 6px 10px;
+  background-color: white;
   border: 1px solid #ddd;
   border-radius: 4px;
-  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-dark);
+  transition: all 0.2s;
 }
 
-.editor-button:hover {
-  background-color: #e0e0e0;
-}
-
-.editor-button.active {
-  background-color: #e3f2fd;
-  border-color: #90caf9;
+.editor-toolbar button:hover {
+  background-color: var(--accent-gold-hover);
+  border-color: var(--accent-gold);
 }
 
 .editor-content {
   padding: 15px;
-  min-height: 200px;
-  max-height: 400px;
-  overflow-y: auto;
-  background-color: #fff;
+  min-height: 300px;
+  border-radius: 0 0 4px 4px;
 }
 
-/* Image Gallery Modal */
-.gallery-modal-overlay {
+.success-message {
+  padding: 10px 15px;
+  background-color: #d4edda;
+  color: #155724;
+  border-radius: 4px;
+  margin-bottom: 15px;
+}
+
+.error-message {
+  padding: 10px 15px;
+  background-color: #f8d7da;
+  color: var(--danger);
+  border-radius: 4px;
+  margin-bottom: 15px;
+}
+
+/* Modal */
+.delete-modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
 }
 
-.gallery-modal {
-  background-color: #fff;
+.delete-modal {
+  background-color: white;
+  padding: 20px;
   border-radius: 8px;
-  width: 80%;
-  max-width: 900px;
-  max-height: 80vh;
+  max-width: 500px;
+  width: 90%;
+}
+
+.delete-modal h3 {
+  margin-top: 0;
+  color: var(--text-dark);
+}
+
+.delete-modal p {
+  margin-bottom: 20px;
+}
+
+.delete-modal-buttons {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
-.gallery-modal-header {
-  padding: 15px;
-  border-bottom: 1px solid #ddd;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.gallery-modal-header h3 {
-  margin: 0;
-}
-
-.close-button {
-  background: none;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  color: #666;
-}
-
-.gallery-modal-grid {
-  padding: 15px;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 15px;
-}
-
-.gallery-image-item {
-  border: 2px solid transparent;
-  border-radius: 4px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.gallery-image-item:hover {
-  border-color: #2196f3;
-}
-
-.gallery-image-item img {
-  width: 100%;
-  height: 150px;
-  object-fit: cover;
-}
-
-/* Responsive styles */
+/* Responsive */
 @media (max-width: 768px) {
-  .page-management-sections {
-    flex-direction: column;
-  }
-  
-  .page-item {
+  .page-management-header {
     flex-direction: column;
     align-items: flex-start;
   }
-  
-  .page-actions {
-    margin-top: 15px;
+
+  .create-page-button {
+    margin-top: 10px;
     width: 100%;
-    justify-content: flex-end;
   }
-  
-  .editor-toolbar {
-    gap: 3px;
+
+  .page-item-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
-  
-  .editor-button {
-    min-width: 32px;
-    height: 32px;
-    font-size: 12px;
+
+  .page-actions {
+    margin-top: 10px;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .form-buttons {
+    flex-direction: column;
+  }
+
+  .save-button,
+  .cancel-button {
+    width: 100%;
   }
 }
