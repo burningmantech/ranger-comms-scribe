@@ -987,7 +987,12 @@
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .gallery-grid {
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 15px;
+    }
+    
+    .media-item {
+        height: 200px;
     }
     
     .preview-grid {
@@ -999,6 +1004,11 @@
         max-width: 100vw;
         max-height: 100vh;
         border-radius: 0;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        margin: 0;
+        position: relative;
     }
     
     .modal-content img,
@@ -1009,42 +1019,6 @@
     
     .media-view-container {
         width: 100%;
-    }
-    
-    .media-view {
-        width: 100% !important;
-        height: auto !important;
-    }
-}
-
-@media (max-width: 480px) {
-    .gallery-grid {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    }
-    
-    .gallery-header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    
-    .gallery-nav {
-        margin-top: 10px;
-    }
-}
-
-/* Modal layout improvements for mobile */
-@media (max-width: 768px) {
-    .modal-content {
-        display: flex;
-        flex-direction: column;
-        max-height: 100vh;
-        overflow-y: auto;
-        padding: 10px;
-        margin: 0;
-        position: relative;
-    }
-
-    .media-view-container {
         /* Take at least the full viewport height minus some space for modal padding */
         min-height: 70vh;
         display: flex;
@@ -1055,14 +1029,16 @@
         position: relative;
         margin-top: 20px;
     }
-
+    
     .media-view {
+        width: 100% !important;
+        height: auto !important;
         /* Ensure image is vertically centered */
         object-fit: contain;
         max-height: 70vh;
         margin: auto;
     }
-
+    
     .media-info-section {
         margin-top: 20px;
         padding-top: 15px;
@@ -1095,89 +1071,43 @@
     }
 }
 
-/* Photographer input field */
-.photographer-input {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background-color: white;
-    margin-top: 5px;
-}
-
-/* Gallery section styling */
-.gallery-section {
-    margin-bottom: 40px;
-}
-
-.gallery-section-header {
-    border-bottom: 2px solid #e0e0e0;
-    padding-bottom: 10px;
-    margin-bottom: 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.gallery-section-header h2 {
-    font-size: 1.5rem;
-    margin: 0;
-    color: #333;
-}
-
-.gallery-section-header .item-count {
-    color: #666;
-    font-size: 0.9rem;
-}
-
-/* Loading skeleton animations */
-@keyframes shimmer {
-    0% {
-        background-position: -468px 0;
+@media (max-width: 480px) {
+    .gallery-grid {
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+        gap: 10px;
     }
-    100% {
-        background-position: 468px 0;
+    
+    .media-item {
+        height: 180px;
+    }
+    
+    .gallery-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .gallery-nav {
+        margin-top: 10px;
+    }
+    
+    .media-info {
+        padding: 10px;
+    }
+    
+    .media-actions button {
+        padding: 3px 8px;
+        font-size: 0.7rem;
+        margin: 0 3px;
     }
 }
 
-.skeleton-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 20px;
-    margin-bottom: 40px;
-}
-
-.skeleton-item {
-    background-color: white;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    height: 250px;
-    position: relative;
-}
-
-.skeleton-image {
-    width: 100%;
-    height: 200px;
-    background: linear-gradient(to right, #f0f0f0 8%, #e0e0e0 18%, #f0f0f0 33%);
-    background-size: 800px 104px;
-    animation: shimmer 1.5s linear infinite forwards;
-}
-
-.skeleton-info {
-    padding: 15px;
-}
-
-.skeleton-text {
-    height: 12px;
-    width: 80%;
-    background: linear-gradient(to right, #f0f0f0 8%, #e0e0e0 18%, #f0f0f0 33%);
-    background-size: 800px 104px;
-    animation: shimmer 1.5s linear infinite forwards;
-    margin-bottom: 8px;
-    border-radius: 2px;
-}
-
-.skeleton-text.short {
-    width: 40%;
+@media (max-width: 360px) {
+    .gallery-grid {
+        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+        gap: 8px;
+    }
+    
+    .media-item {
+        height: 160px;
+    }
 }
