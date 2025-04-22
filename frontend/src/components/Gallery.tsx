@@ -823,8 +823,15 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
             fileInputRef.current.value = '';
         }
 
+        // If we uploaded at least one file successfully
         if (uploadedItems.length > 0) {
+            // First add the new items to the current state
             setMedia([...uploadedItems, ...media]);
+            
+            // Then set a timeout to reload the page for proper thumbnail display
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500); // Give user a chance to see the success message before reload
         }
 
         if (failedUploads === 0) {
@@ -869,7 +876,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         }
     };
 
-    const openModal = (item: MediaItem) => {
+    const openModal = (item: MediaItem, forceViewMode: 'thumbnail' | 'medium' | 'full' = 'medium') => {
         // First, clean up any existing selected media resources
         if (selectedMedia) {
             // Don't revoke blob URLs for medium images while they might still be in use
@@ -897,9 +904,9 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         setEditingTakenBy(false);
         setTakenByValue(item.takenBy || '');
 
-        // CRITICAL FIX: Always default to 'medium' view mode first
-        setViewMode('medium');
-        setLoadingMediumImage(true);
+        // Use forceViewMode parameter to enforce a specific view mode (always 'medium' for navigation)
+        setViewMode(forceViewMode);
+        setLoadingMediumImage(forceViewMode === 'medium');
         
         // Then check if we need to adjust based on available resources
         if (item.mediumUrl) {
@@ -1244,14 +1251,28 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
     const navigateToPreviousImage = () => {
         const prevImage = findPreviousImage();
         if (prevImage) {
-            openModal(prevImage);
+            // Reset fetchedImageData to ensure we start with medium view
+            if (fetchedImageData) {
+                URL.revokeObjectURL(fetchedImageData);
+                setFetchedImageData(null);
+            }
+            // Always force medium view mode and disable fetching full image
+            setViewMode('medium');
+            openModal(prevImage, 'medium');
         }
     };
 
     const navigateToNextImage = () => {
         const nextImage = findNextImage();
         if (nextImage) {
-            openModal(nextImage);
+            // Reset fetchedImageData to ensure we start with medium view
+            if (fetchedImageData) {
+                URL.revokeObjectURL(fetchedImageData);
+                setFetchedImageData(null);
+            }
+            // Always force medium view mode and disable fetching full image
+            setViewMode('medium');
+            openModal(nextImage, 'medium');
         }
     };
 
@@ -1284,6 +1305,73 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
             findAndOpenMedia();
         }
     }, [highlightedCommentId, media, selectedMedia, findMediaForComment]);
+
+    // For keyboard navigation and touch events
+    const modalContentRef = useRef<HTMLDivElement>(null);
+    const touchStartX = useRef<number | null>(null);
+    const touchEndX = useRef<number | null>(null);
+    const minSwipeDistance = 50; // Minimum distance in pixels for a swipe to register
+
+    useEffect(() => {
+        // Add keyboard event listener when modal is open
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (selectedMedia) {
+                if (e.key === 'ArrowLeft' || e.key === 'Left') {
+                    navigateToPreviousImage();
+                } else if (e.key === 'ArrowRight' || e.key === 'Right') {
+                    navigateToNextImage();
+                } else if (e.key === 'Escape') {
+                    closeModal();
+                }
+            }
+        };
+
+        // Add touch event handlers
+        const handleTouchStart = (e: TouchEvent) => {
+            touchStartX.current = e.changedTouches[0].screenX;
+        };
+
+        const handleTouchEnd = (e: TouchEvent) => {
+            touchEndX.current = e.changedTouches[0].screenX;
+            handleSwipe();
+        };
+
+        const handleSwipe = () => {
+            if (!touchStartX.current || !touchEndX.current) return;
+            
+            const distance = touchEndX.current - touchStartX.current;
+            const isLeftSwipe = distance < -minSwipeDistance;
+            const isRightSwipe = distance > minSwipeDistance;
+            
+            if (isLeftSwipe) {
+                // Left swipe - next image
+                navigateToNextImage();
+            } else if (isRightSwipe) {
+                // Right swipe - previous image
+                navigateToPreviousImage();
+            }
+            
+            // Reset values
+            touchStartX.current = null;
+            touchEndX.current = null;
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        
+        const modalContent = modalContentRef.current;
+        if (modalContent) {
+            modalContent.addEventListener('touchstart', handleTouchStart);
+            modalContent.addEventListener('touchend', handleTouchEnd);
+        }
+        
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            if (modalContent) {
+                modalContent.removeEventListener('touchstart', handleTouchStart);
+                modalContent.removeEventListener('touchend', handleTouchEnd);
+            }
+        };
+    }, [selectedMedia, navigateToPreviousImage, navigateToNextImage]);
 
     if (loading) {
         return <div>Loading...</div>;
@@ -1657,7 +1745,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                 {selectedMedia && (
                     <div className="modal" onClick={closeModal}>
                         <div className="modal-close">×</div>
-                        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-content" ref={modalContentRef} onClick={(e) => e.stopPropagation()}>
                             {fetchingImage && viewMode === 'full' ? (
                                 <div className="loading-indicator">Loading...</div>
                             ) : fetchError && viewMode === 'full' ? (
