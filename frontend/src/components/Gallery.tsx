@@ -86,6 +86,85 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         return URL.createObjectURL(blob);
     }, [imageCache]);
 
+    // Add this function to resolve user display names from email addresses
+    const resolveUserNames = async (mediaItems: MediaItem[]): Promise<MediaItem[]> => {
+        // Create a map to cache user info requests
+        const userCache: Record<string, string> = {};
+        
+        // Return early if there are no items
+        if (!mediaItems.length) return mediaItems;
+        
+        // Process media items in batches to avoid too many simultaneous requests
+        const enhancedMedia: MediaItem[] = [];
+        
+        for (const item of mediaItems) {
+            // Skip if already has a proper uploaderName
+            if (item.uploaderName && item.uploaderName !== 'unknown') {
+                enhancedMedia.push(item);
+                continue;
+            }
+            
+            // Use email as uploader name if available (but not "unknown")
+            if (item.uploadedBy && item.uploadedBy !== 'unknown') {
+                // Check if we've already looked up this user
+                if (userCache[item.uploadedBy]) {
+                    enhancedMedia.push({
+                        ...item,
+                        uploaderName: userCache[item.uploadedBy]
+                    });
+                    continue;
+                }
+                
+                try {
+                    // Try to fetch user info if we have a sessionId
+                    if (localStorage.getItem('sessionId')) {
+                        const response = await fetch(`${API_URL}/user/info/${encodeURIComponent(item.uploadedBy)}`, {
+                            method: 'GET',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                            }
+                        });
+                        
+                        if (response.ok) {
+                            const userData = await response.json();
+                            if (userData.name) {
+                                // Cache the result for future use
+                                userCache[item.uploadedBy] = userData.name;
+                                
+                                // Update the item with the user's name
+                                enhancedMedia.push({
+                                    ...item,
+                                    uploaderName: userData.name
+                                });
+                                continue;
+                            }
+                        }
+                    }
+                    
+                    // If we couldn't get the name or there was an error, just use the email
+                    userCache[item.uploadedBy] = item.uploadedBy;
+                    enhancedMedia.push({
+                        ...item,
+                        uploaderName: item.uploadedBy
+                    });
+                } catch (error) {
+                    logger.error(`Error fetching user info for ${item.uploadedBy}:`, error);
+                    // Use email address as fallback
+                    enhancedMedia.push({
+                        ...item,
+                        uploaderName: item.uploadedBy
+                    });
+                }
+            } else {
+                // No valid uploadedBy field, keep as is with "Unknown"
+                enhancedMedia.push(item);
+            }
+        }
+        
+        return enhancedMedia;
+    };
+
     // Parse URL query parameters for comment ID
     useEffect(() => {
         const searchParams = new URLSearchParams(location.search);
@@ -232,7 +311,10 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                 }
 
                 const mediaData = await mediaResponse.json();
-                setMedia(mediaData);
+                
+                // Resolve user names where possible
+                const enhancedMedia = await resolveUserNames(mediaData);
+                setMedia(enhancedMedia);
 
                 if (isAdmin) {
                     const groupsResponse = await fetch(`${API_URL}/admin/groups`, {
@@ -252,7 +334,7 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                 setLoading(false);
 
                 setTimeout(() => {
-                    loadThumbnailsAsync(mediaData);
+                    loadThumbnailsAsync(enhancedMedia);
                 }, 100);
             } catch (error) {
                 logger.error('Error fetching data:', error);
@@ -800,10 +882,10 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         
         logger.debug(`[DEBUG] Opening modal for ${item.fileName}, medium URL: ${item.mediumUrl || 'none'}`);
         
-        // Make sure we have a valid uploader name by checking all possible properties
+        // Make sure we have a valid uploader name by checking all properties
+        // The backend stores it as uploadedBy with the email address
         const uploaderName = item.uploaderName || 
-                             item.uploadedBy || 
-                             'Unknown';
+                             (item.uploadedBy && item.uploadedBy !== 'unknown' ? item.uploadedBy : 'Unknown');
         
         // Set the new selected media - ensure all fields, including uploadedBy, are copied over
         setSelectedMedia({

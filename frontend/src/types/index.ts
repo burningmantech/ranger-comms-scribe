@@ -47,20 +47,20 @@ export interface Group {
 }
 
 export interface MediaItem {
-    id: string;
-    fileName: string;
-    fileType: string;
-    url: string;
-    thumbnailUrl: string;
-    mediumUrl?: string; // URL for medium-sized version (max 1024px)
-    uploadedBy: string;
-    uploaderName?: string; // Name of the user who uploaded the item
-    uploadedAt: string;
-    takenBy?: string; // Photographer or content creator name
-    size: number;
-    isPublic: boolean;
-    groupId?: string; // Optional group ID if not public
-    groupName?: string; // Optional group name for display
+    id: string;              // Unique identifier for the media item
+    fileName: string;        // Name of the file
+    fileType: string;        // MIME type of the file
+    url: string;             // URL to access the full-sized media
+    thumbnailUrl: string;    // URL to access the thumbnail version
+    mediumUrl?: string;      // URL for medium-sized version (max 1024px)
+    uploadedBy: string;      // Email/ID of the user who uploaded the item
+    uploaderName?: string;   // Display name of the user who uploaded the item
+    uploadedAt: string;      // ISO timestamp of when the item was uploaded
+    takenBy?: string;        // Photographer or content creator name
+    size: number;            // Size of the file in bytes
+    isPublic: boolean;       // Whether the media is publicly accessible
+    groupId?: string;        // ID of the group the media belongs to if not public
+    groupName?: string;      // Name of the group for display purposes
 }
 
 export interface BlogPost {
