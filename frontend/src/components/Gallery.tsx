@@ -800,10 +800,15 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         
         logger.debug(`[DEBUG] Opening modal for ${item.fileName}, medium URL: ${item.mediumUrl || 'none'}`);
         
+        // Make sure we have a valid uploader name by checking all possible properties
+        const uploaderName = item.uploaderName || 
+                             item.uploadedBy || 
+                             'Unknown';
+        
         // Set the new selected media - ensure all fields, including uploadedBy, are copied over
         setSelectedMedia({
             ...item,
-            uploadedBy: item.uploadedBy || item.uploaderName || 'Unknown'
+            uploadedBy: uploaderName
         });
         setCurrentItemDeleted(false);
         setDeleteStatus(null);
@@ -901,6 +906,8 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
 
     const handleDeleteClick = (item: MediaItem, e: React.MouseEvent) => {
         e.stopPropagation();
+        // Clear any previous delete status when opening delete confirmation for a new image
+        setDeleteStatus(null);
         setDeleteConfirmation(item);
     };
 
