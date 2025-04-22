@@ -16,7 +16,18 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             }
             
             // Get the object's metadata
-            const metadata = object.customMetadata;
+            // R2 list operation doesn't return full metadata, we need to get it separately
+            let metadata = object.customMetadata || {};
+            
+            // Fetch the complete object to get full metadata
+            try {
+                const fullObject = await env.R2.head(object.key);
+                if (fullObject && fullObject.customMetadata) {
+                    metadata = fullObject.customMetadata;
+                }
+            } catch (error) {
+                console.warn(`Could not get full metadata for ${object.key}:`, error);
+            }
             
             // Check if a thumbnail exists for this file
             const thumbnailKey = object.key.replace('gallery/', 'gallery/thumbnails/');
