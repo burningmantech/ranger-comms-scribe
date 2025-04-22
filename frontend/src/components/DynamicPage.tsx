@@ -18,6 +18,7 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [galleryImages, setGalleryImages] = useState<any[]>([]);
   const [user, setUser] = useState<User | null>(null);
+  const [fullSizeImageUrl, setFullSizeImageUrl] = useState<string | null>(null);
 
   const getRawContent = (state: EditorState) => JSON.stringify(convertToRaw(state.getCurrentContent()));
   const getEditorStateFromRaw = (raw: string) => {
@@ -27,7 +28,49 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
       return EditorState.createEmpty();
     }
   };
-  const getHTMLFromEditorState = (state: EditorState) => stateToHTML(state.getCurrentContent());
+
+  const getHTMLFromEditorState = (state: EditorState) => {
+    const options = {
+      entityStyleFn: (entity: any) => {
+        const entityType = entity.get('type').toLowerCase();
+        if (entityType === 'image') {
+          const data = entity.getData();
+          const fullSizeSrc = data.fullSizeSrc || data.src;
+          return {
+            element: 'img',
+            attributes: {
+              src: data.src,
+              class: 'clickable-image',
+              'data-full-src': fullSizeSrc,
+              style: {
+                maxWidth: '100%',
+                cursor: 'pointer',
+              },
+              onClick: `(function(){
+                const modal = document.createElement('div');
+                modal.className = 'image-modal';
+                modal.onclick = function() { document.body.removeChild(modal); };
+                
+                const img = document.createElement('img');
+                img.src = '${fullSizeSrc}';
+                img.className = 'image-modal-content';
+                
+                const closeBtn = document.createElement('span');
+                closeBtn.className = 'image-modal-close';
+                closeBtn.innerHTML = '×';
+                
+                modal.appendChild(img);
+                modal.appendChild(closeBtn);
+                document.body.appendChild(modal);
+              })()`
+            }
+          };
+        }
+        return undefined; // Return undefined instead of null to match expected RenderConfig | undefined
+      }
+    };
+    return stateToHTML(state.getCurrentContent(), options);
+  };
 
   const handleKeyCommand = (command: string, state: EditorState): DraftHandleValue => {
     const newState = RichUtils.handleKeyCommand(state, command);
@@ -57,19 +100,28 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
     newState = RichUtils.toggleLink(newState, selection, entityKey);
     setEditorState(newState);
   };
-  const insertImage = (src: string) => {
+
+  const insertImage = (src: string, mediumSrc: string) => {
     const contentState = editorState.getCurrentContent();
-    const contentStateWithEntity = contentState.createEntity('IMAGE', 'IMMUTABLE', { src });
+    const contentStateWithEntity = contentState.createEntity('IMAGE', 'IMMUTABLE', { 
+      src: mediumSrc || src,
+      fullSizeSrc: src,
+      width: '100%',
+      style: { maxWidth: '100%' },
+      className: 'clickable-image'
+    });
+    
     const entityKey = contentStateWithEntity.getLastCreatedEntityKey();
     let newContentState = Modifier.insertText(
       contentStateWithEntity,
       editorState.getSelection(),
-      ' ',
+      '🖼️ ',
       undefined,
       entityKey
     );
     setEditorState(EditorState.push(editorState, newContentState, 'insert-characters'));
   };
+
   const openGalleryModal = async () => {
     setShowGalleryModal(true);
     try {
@@ -83,8 +135,10 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
     } catch {}
   };
   const closeGalleryModal = () => setShowGalleryModal(false);
+
   const handleGalleryImageSelect = (img: any) => {
-    insertImage(img.url);
+    const mediumUrl = img.mediumUrl || img.url;
+    insertImage(img.url, mediumUrl);
     setShowGalleryModal(false);
   };
 
@@ -96,6 +150,20 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
         setUser(JSON.parse(userJson));
       } catch {}
     }
+
+    const handleImageClick = (event: any) => {
+      const target = event.target;
+      if (target.tagName === 'IMG' && target.dataset.fullSrc) {
+        event.preventDefault();
+        setFullSizeImageUrl(target.dataset.fullSrc);
+      }
+    };
+
+    document.addEventListener('click', handleImageClick);
+
+    return () => {
+      document.removeEventListener('click', handleImageClick);
+    };
   }, [slug]);
 
   useEffect(() => {
@@ -173,31 +241,61 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
               <div className="preview-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(editorState) }} />
             </div>
           </div>
-          <button onClick={async () => {
-            setLoading(true);
-            setError(null);
-            try {
-              const response = await fetch(`${API_URL}/page/${slug}`, {
-                method: 'PUT',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-                },
-                body: JSON.stringify({
-                  title: page.title,
-                  content: getRawContent(editorState),
-                }),
-              });
-              if (!response.ok) throw new Error('Failed to save page');
-              setIsEditing(false);
-              fetchPage();
-            } catch (err) {
-              setError('Failed to save page');
-            } finally {
-              setLoading(false);
-            }
-          }}>Save</button>
-          <button onClick={() => setIsEditing(false)}>Cancel</button>
+          <div className="editor-actions" style={{ marginTop: '20px' }}>
+            <button 
+              onClick={async () => {
+                setLoading(true);
+                setError(null);
+                try {
+                  const response = await fetch(`${API_URL}/page/${page.id}`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+                    },
+                    body: JSON.stringify({
+                      title: page.title,
+                      slug: page.slug,
+                      content: getRawContent(editorState),
+                    }),
+                  });
+                  if (!response.ok) throw new Error('Failed to save page');
+                  setIsEditing(false);
+                  fetchPage();
+                } catch (err) {
+                  setError('Failed to save page');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#4caf50',
+                color: 'white',
+                borderRadius: '4px',
+                fontSize: '14px',
+                border: 'none',
+                cursor: 'pointer',
+                marginRight: '10px'
+              }}
+            >
+              Save
+            </button>
+            <button 
+              onClick={() => setIsEditing(false)}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#f44336',
+                color: 'white',
+                borderRadius: '4px',
+                fontSize: '14px',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
           {showGalleryModal && (
             <div className="modal" style={{zIndex: 1000, position: 'fixed', top:0, left:0, right:0, bottom:0, background: 'rgba(0,0,0,0.5)'}}>
               <div style={{background: '#fff', margin: '40px auto', padding: 20, maxWidth: 600, borderRadius: 8}}>
@@ -214,9 +312,44 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
         </>
       ) : (
         <>
-          <div dangerouslySetInnerHTML={{ __html: stateToHTML(getEditorStateFromRaw(page.content).getCurrentContent()) }} />
-          {canEdit && <button onClick={() => setIsEditing(true)}>Edit</button>}
+          <div dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(getEditorStateFromRaw(page.content)) }} />
+          {canEdit && (
+            <button 
+              onClick={() => setIsEditing(true)}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#4a90e2',
+                color: 'white',
+                borderRadius: '4px',
+                fontSize: '14px',
+                border: 'none',
+                cursor: 'pointer',
+                margin: '20px 0'
+              }}
+            >
+              Edit Page
+            </button>
+          )}
         </>
+      )}
+      
+      {fullSizeImageUrl && (
+        <div 
+          className="image-modal" 
+          onClick={() => setFullSizeImageUrl(null)}
+        >
+          <img 
+            src={fullSizeImageUrl} 
+            className="image-modal-content" 
+            alt="Full size" 
+          />
+          <span 
+            className="image-modal-close" 
+            onClick={() => setFullSizeImageUrl(null)}
+          >
+            ×
+          </span>
+        </div>
       )}
     </div>
   );

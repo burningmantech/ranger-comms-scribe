@@ -61,8 +61,69 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
             return EditorState.createEmpty();
         }
     };
-    // Helper: convert editorState to HTML for preview/render
-    const getHTMLFromEditorState = (state: EditorState) => stateToHTML(state.getCurrentContent());
+    // Helper: convert editorState to HTML for preview/render with clickable images
+    const getHTMLFromEditorState = (state: EditorState) => {
+        const options = {
+            entityStyleFn: (entity: any) => {
+                const entityType = entity.get('type').toLowerCase();
+                if (entityType === 'image') {
+                    const data = entity.getData();
+                    const fullSizeSrc = data.fullSizeSrc || data.src;
+                    return {
+                        element: 'img',
+                        attributes: {
+                            src: data.src,
+                            class: 'clickable-image',
+                            'data-full-src': fullSizeSrc,
+                            style: {
+                                maxWidth: '100%',
+                                cursor: 'pointer',
+                            },
+                            onClick: `(function(){
+                                const modal = document.createElement('div');
+                                modal.className = 'image-modal';
+                                modal.style.position = 'fixed';
+                                modal.style.top = '0';
+                                modal.style.left = '0';
+                                modal.style.width = '100%';
+                                modal.style.height = '100%';
+                                modal.style.background = 'rgba(0,0,0,0.85)';
+                                modal.style.display = 'flex';
+                                modal.style.alignItems = 'center';
+                                modal.style.justifyContent = 'center';
+                                modal.style.zIndex = '1000';
+                                modal.onclick = function() { document.body.removeChild(modal); };
+                                
+                                const img = document.createElement('img');
+                                img.src = '${fullSizeSrc}';
+                                img.className = 'image-modal-content';
+                                img.style.maxWidth = '95%';
+                                img.style.maxHeight = '95%';
+                                img.style.boxShadow = '0 0 20px rgba(0,0,0,0.7)';
+                                
+                                const closeBtn = document.createElement('span');
+                                closeBtn.className = 'image-modal-close';
+                                closeBtn.innerHTML = '×';
+                                closeBtn.style.position = 'absolute';
+                                closeBtn.style.top = '20px';
+                                closeBtn.style.right = '30px';
+                                closeBtn.style.color = 'white';
+                                closeBtn.style.fontSize = '40px';
+                                closeBtn.style.fontWeight = 'bold';
+                                closeBtn.style.cursor = 'pointer';
+                                
+                                modal.appendChild(img);
+                                modal.appendChild(closeBtn);
+                                document.body.appendChild(modal);
+                            })()`
+                        }
+                    };
+                }
+                return undefined; // Return undefined instead of null to match RenderConfig | undefined
+            }
+        };
+        return stateToHTML(state.getCurrentContent(), options);
+    };
 
     // Formatting handlers
     const handleKeyCommand = (command: string, state: EditorState): DraftHandleValue => {
@@ -94,15 +155,23 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
         newState = RichUtils.toggleLink(newState, selection, entityKey);
         setEditorState(newState);
     };
-    // Insert image (placeholder for gallery integration)
-    const insertImage = (src: string) => {
+    // Insert image with size controls
+    const insertImage = (src: string, mediumSrc: string) => {
+        // Create entity with size information and full-size link
         const contentState = editorState.getCurrentContent();
-        const contentStateWithEntity = contentState.createEntity('IMAGE', 'IMMUTABLE', { src });
+        const contentStateWithEntity = contentState.createEntity('IMAGE', 'IMMUTABLE', { 
+            src: mediumSrc, // Use medium image by default
+            fullSizeSrc: src, // Store full-size URL
+            width: '100%', // Use responsive width
+            style: { maxWidth: '100%' },
+            className: 'clickable-image' // Add class for styling
+        });
+        
         const entityKey = contentStateWithEntity.getLastCreatedEntityKey();
         let newContentState = Modifier.insertText(
             contentStateWithEntity,
             editorState.getSelection(),
-            ' ',
+            '🖼️ ', // Image placeholder icon
             undefined,
             entityKey
         );
@@ -129,7 +198,9 @@ const Blog: React.FC<BlogProps> = ({ isAdmin = false, skipNavbar }) => {
 
     // Handle gallery image selection
     const handleGalleryImageSelect = (img: any) => {
-        insertImage(img.url);
+        // Use medium URL if available, otherwise fall back to full image
+        const mediumUrl = img.mediumUrl || img.url;
+        insertImage(img.url, mediumUrl);
         setShowGalleryModal(false);
     };
 

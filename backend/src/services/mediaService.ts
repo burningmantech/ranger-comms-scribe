@@ -10,8 +10,8 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
         
         // Create a list of promises to get each object's metadata
         const mediaPromises = objects.objects.map(async (object) => {
-            // Skip thumbnail files and comment files when listing
-            if (object.key.includes('thumbnails') || object.key.includes('comments')) {
+            // Skip thumbnail, medium, and comment files when listing
+            if (object.key.includes('thumbnails') || object.key.includes('medium') || object.key.includes('comments')) {
                 return null;
             }
             
@@ -31,6 +31,21 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             } catch (error) {
                 // Thumbnail doesn't exist, use a default or empty string
                 thumbnailUrl = '';
+            }
+            
+            // Check if a medium version exists for this file
+            const mediumKey = object.key.replace('gallery/', 'gallery/medium/');
+            let mediumUrl = '';
+            
+            try {
+                const mediumExists = await env.R2.head(mediumKey);
+                if (mediumExists) {
+                    // Create a URL for the medium version
+                    mediumUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/medium`;
+                }
+            } catch (error) {
+                // Medium version doesn't exist, use a default or empty string
+                mediumUrl = '';
             }
             
             // Get the file name and extension
@@ -59,6 +74,19 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 fileType = extensionToMimeType[fileExtension] || 'application/octet-stream';
             }
             
+            // Try to get uploader name
+            let uploaderName = '';
+            if (metadata?.userId) {
+                try {
+                    const user = await getUser(metadata.userId, env);
+                    if (user) {
+                        uploaderName = user.name;
+                    }
+                } catch (error) {
+                    console.warn(`Could not get uploader name for ${metadata.userId}:`, error);
+                }
+            }
+            
             // Create a MediaItem object
             return {
                 id: object.key,
@@ -66,8 +94,11 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 fileType: fileType,
                 url: `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}`,
                 thumbnailUrl: thumbnailUrl,
+                mediumUrl: mediumUrl,
                 uploadedBy: metadata?.userId || 'unknown',
+                uploaderName: uploaderName,
                 uploadedAt: metadata?.createdAt || new Date().toISOString(),
+                takenBy: metadata?.takenBy || '',
                 size: object.size,
             } as MediaItem;
         });
@@ -93,7 +124,8 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                     return {
                         ...item,
                         isPublic,
-                        groupId: objectMetadata.customMetadata.groupId
+                        groupId: objectMetadata.customMetadata.groupId,
+                        takenBy: objectMetadata.customMetadata.takenBy || ''
                     };
                 }
             } catch (error) {
@@ -147,14 +179,16 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
     }
 };
 
-// Upload media file and its thumbnail to R2
+// Upload media file, its thumbnail, and medium-sized version to R2
 export const uploadMedia = async (
     mediaFile: File, 
     thumbnailFile: File, 
     userId: string,
     env: Env,
     isPublic: boolean = true,
-    groupId?: string
+    groupId?: string,
+    takenBy?: string,
+    mediumFile?: File
 ): Promise<{ success: boolean; message: string; mediaItem?: MediaItem }> => {
     try {
         // Generate a unique ID for the file
@@ -164,6 +198,18 @@ export const uploadMedia = async (
         // Define object keys
         const mediaKey = `gallery/${fileName}`;
         const thumbnailKey = `gallery/thumbnails/${fileName}`;
+        const mediumKey = `gallery/medium/${fileName}`;
+        
+        // Get the user name for metadata
+        let userName = '';
+        try {
+            const user = await getUser(userId, env);
+            if (user) {
+                userName = user.name;
+            }
+        } catch (error) {
+            console.warn(`Could not get user name for ${userId}:`, error);
+        }
         
         // Get the file data as ArrayBuffer which is compatible with R2
         const mediaBuffer = await mediaFile.arrayBuffer();
@@ -175,6 +221,7 @@ export const uploadMedia = async (
                 originalName: mediaFile.name,
                 fileSize: mediaFile.size.toString(),
                 isPublic: isPublic ? 'true' : 'false',
+                takenBy: takenBy || '',
                 ...(groupId ? { groupId } : {})
             },
         });
@@ -201,6 +248,46 @@ export const uploadMedia = async (
             throw new Error('Failed to upload thumbnail');
         }
         
+        // Upload medium version if provided by the frontend
+        let mediumUrl = '';
+        
+        if (mediumFile) {
+            console.log(`Using client-provided medium file: ${mediumFile.name}`);
+            // Upload the provided medium file
+            const mediumBuffer = await mediumFile.arrayBuffer();
+            const mediumObject = await env.R2.put(mediumKey, mediumBuffer, {
+                httpMetadata: { contentType: mediumFile.type },
+                customMetadata: { 
+                    userId: userId, 
+                    createdAt: new Date().toISOString(),
+                    isMedium: 'true',
+                    originalMediaKey: mediaKey,
+                    isResized: 'true' // Mark that this is a properly resized medium image
+                },
+            });
+            
+            if (mediumObject) {
+                mediumUrl = `${env.PUBLIC_URL}/gallery/${fileName}/medium`;
+            }
+        } else {
+            console.log(`No medium file provided for ${fileName}, using original`);
+            // If no medium file is provided, use the original file
+            const mediumObject = await env.R2.put(mediumKey, mediaBuffer, {
+                httpMetadata: { contentType: mediaFile.type },
+                customMetadata: { 
+                    userId: userId, 
+                    createdAt: new Date().toISOString(),
+                    isMedium: 'true',
+                    originalMediaKey: mediaKey,
+                    isResized: 'false' // Mark that this is not a resized medium image
+                },
+            });
+            
+            if (mediumObject) {
+                mediumUrl = `${env.PUBLIC_URL}/gallery/${fileName}/medium`;
+            }
+        }
+        
         // Create and return a MediaItem object
         const mediaItem: MediaItem = {
             id: mediaKey,
@@ -208,8 +295,11 @@ export const uploadMedia = async (
             fileType: mediaFile.type,
             url: `${env.PUBLIC_URL}/gallery/${fileName}`,
             thumbnailUrl: `${env.PUBLIC_URL}/gallery/${fileName}/thumbnail`,
+            mediumUrl: mediumUrl,
             uploadedBy: userId,
+            uploaderName: userName,
             uploadedAt: new Date().toISOString(),
+            takenBy: takenBy || '',
             size: mediaFile.size,
             isPublic,
             groupId
@@ -259,6 +349,18 @@ export const deleteMedia = async (
         } catch (error) {
             // Thumbnail doesn't exist or couldn't be deleted
             console.warn('Could not delete thumbnail:', error);
+        }
+        
+        // Check if a medium version exists and delete it too
+        const mediumKey = mediaKey.replace('gallery/', 'gallery/medium/');
+        try {
+            const mediumExists = await env.R2.head(mediumKey);
+            if (mediumExists) {
+                await env.R2.delete(mediumKey);
+            }
+        } catch (error) {
+            // Medium version doesn't exist or couldn't be deleted
+            console.warn('Could not delete medium version:', error);
         }
         
         return { 

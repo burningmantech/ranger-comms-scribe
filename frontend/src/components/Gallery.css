@@ -364,9 +364,9 @@
 }
 
 .modal-content {
-    max-width: 90%;
-    max-height: 90%;
-    overflow: auto;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
     background-color: white;
     padding: 20px;
     border-radius: 8px;
@@ -379,6 +379,193 @@
     max-width: 100%;
     max-height: 70vh;
     margin-bottom: 20px;
+}
+
+/* Media view container and controls */
+.media-view-container {
+    position: relative;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.media-view {
+    display: block;
+    max-width: 100%;
+    max-height: 80vh;
+    object-fit: contain;
+    transition: all 0.3s ease;
+}
+
+.media-view.medium {
+    max-width: 100%;
+    max-height: calc(100vh - 200px);
+    object-fit: contain;
+}
+
+.media-view.medium.loading {
+    opacity: 0.5;
+}
+
+.media-view.thumbnail {
+    max-height: 200px;
+}
+
+.media-view.loading {
+    visibility: hidden;
+}
+
+.view-toggle-button {
+    margin-top: 10px;
+    padding: 8px 16px;
+    background-color: #444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.view-toggle-button:hover {
+    background-color: #666;
+}
+
+/* Medium image loading indicator */
+.medium-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 5px;
+    z-index: 5;
+}
+
+/* Fallback placeholder for failed medium images */
+.medium-image-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #f0f0f0;
+    color: #666;
+    height: 400px;
+    width: 100%;
+    max-width: 1024px;
+    margin: 0 auto;
+    text-align: center;
+    font-size: 16px;
+    border-radius: 4px;
+}
+
+/* Medium image container */
+.media-view-container {
+    position: relative;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* Medium image loading indicator */
+.medium-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    z-index: 5;
+}
+
+/* Fade-in animation for images */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.media-view-container img {
+    animation: fadeIn 0.3s ease-in;
+}
+
+/* Media information section */
+.media-info-section {
+    background-color: #f9f9f9;
+    border-radius: 5px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+.media-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.media-uploader, .media-date {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+/* Taken By section */
+.taken-by-section {
+    margin-top: 10px;
+    border-top: 1px solid #eee;
+    padding-top: 10px;
+}
+
+.taken-by-display {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.taken-by-display p {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.taken-by-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.taken-by-edit label {
+    font-weight: 500;
+}
+
+.taken-by-edit input {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    width: 100%;
+}
+
+.taken-by-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.edit-button.small {
+    padding: 2px 8px;
+    font-size: 0.8rem;
+    margin-left: 10px;
+    background-color: #f0f0f0;
+    color: #333;
+    border: 1px solid #ddd;
+}
+
+.edit-button.small:hover {
+    background-color: #e0e0e0;
 }
 
 /* Comments section styles */
@@ -545,9 +732,9 @@
 }
 
 .modal-content {
-    max-width: 90%;
-    max-height: 90%;
-    overflow: auto;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
     background-color: white;
     padding: 20px;
     border-radius: 8px;
@@ -736,4 +923,14 @@
     .gallery-nav {
         margin-top: 10px;
     }
+}
+
+/* Photographer input field */
+.photographer-input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: white;
+    margin-top: 5px;
 }

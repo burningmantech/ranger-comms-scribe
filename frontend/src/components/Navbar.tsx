@@ -65,9 +65,11 @@ const Navbar: React.FC = () => {
             
             const data = await response.json();
             
-            // Filter pages that should be shown in navigation
+            // Filter pages that should be shown in navigation, excluding the "home" page
             const navPages = data.filter((page: Page) => 
-                page.published && page.showInNavigation
+                page.published && 
+                page.showInNavigation && 
+                page.slug !== 'home' // Exclude the home page from navigation
             );
             
             setPages(navPages);

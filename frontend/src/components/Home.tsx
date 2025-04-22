@@ -3,6 +3,7 @@ import { API_URL } from '../config';
 import { User } from '../types';
 import { EditorState, convertFromRaw } from 'draft-js';
 import { stateToHTML } from 'draft-js-export-html';
+import { Link } from 'react-router-dom';
 
 interface HomeProps {
   skipNavbar?: boolean;
@@ -10,6 +11,7 @@ interface HomeProps {
 
 const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
     const [user, setUser] = useState<User | null>(null);
+    const [isAdmin, setIsAdmin] = useState<boolean>(false);
     const [content, setContent] = useState<string>('');
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -21,6 +23,7 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
             try {
                 const userData = JSON.parse(userJson) as User;
                 setUser(userData);
+                setIsAdmin(userData.isAdmin === true || userData.userType === 'Admin' || userData.userType === 'Lead');
             } catch (err) {
                 console.error('Error parsing user data:', err);
             }
@@ -88,6 +91,27 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
         <div className="home">
             {error && <div className="error">{error}</div>}
             <div dangerouslySetInnerHTML={{ __html: renderContent(content) }} />
+            
+            {/* Add edit button for admin users */}
+            {isAdmin && (
+                <Link 
+                    to="/home" 
+                    style={{
+                        display: 'inline-block',
+                        padding: '8px 16px',
+                        backgroundColor: '#4a90e2',
+                        color: 'white',
+                        borderRadius: '4px',
+                        fontSize: '14px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        margin: '20px 0',
+                        textDecoration: 'none'
+                    }}
+                >
+                    Edit Page
+                </Link>
+            )}
         </div>
     );
 };

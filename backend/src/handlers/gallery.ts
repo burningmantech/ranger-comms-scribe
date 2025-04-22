@@ -39,6 +39,7 @@ router.post('/upload', withAdminCheck, async (request: ExtendedRequest, env: Env
         const formData = await request.formData();
         const mediaFile = formData.get('file');
         const thumbnailFile = formData.get('thumbnail');
+        const mediumFile = formData.get('medium');
 
         if (!(mediaFile instanceof File)) {
             console.error('Invalid media file uploaded');
@@ -55,12 +56,25 @@ router.post('/upload', withAdminCheck, async (request: ExtendedRequest, env: Env
             return json({ error: 'User is not authenticated' }, { status: 401 });
         }
         
-        // Get group information from form data
+        // Get form data parameters
         const isPublicValue = formData.get('isPublic');
         const isPublic = isPublicValue === 'true' || isPublicValue !== 'false'; // Default to true
         const groupId = formData.get('groupId') as string | null;
+        const takenBy = formData.get('takenBy') as string | null;
         
-        const result = await uploadMedia(mediaFile, thumbnailFile, request.user, env, isPublic, groupId || undefined);
+        console.log(`Upload with takenBy: ${takenBy || 'none'}`);
+        
+        // Pass all parameters to uploadMedia function
+        const result = await uploadMedia(
+            mediaFile, 
+            thumbnailFile, 
+            request.user, 
+            env, 
+            isPublic, 
+            groupId || undefined,
+            takenBy || undefined,
+            mediumFile instanceof File ? mediumFile : undefined
+        );
         
         // If this is a group media item, notify group members
         if (groupId && isPublic && result.success && result.mediaItem) {
@@ -224,6 +238,83 @@ router.get('/:id/thumbnail', async (request: ExtendedRequest, env: Env) => {
     }
 });
 
+// Handler to get a medium-sized version of a specific media item
+router.get('/:id/medium', async (request: ExtendedRequest, env: Env) => {
+    try {
+        const id = request.params.id;
+        const mediaKey = `gallery/${id}`;
+        const mediumKey = `gallery/medium/${id}`;
+        const userId = request.userId;
+        
+        // First check if the media exists
+        const mediaObject = await env.R2.head(mediaKey);
+        if (!mediaObject) {
+            return json({ error: 'Media not found' }, { status: 404 });
+        }
+        
+        // Check access permissions
+        const metadata = mediaObject.customMetadata;
+        const isPublic = metadata?.isPublic !== 'false'; // Default to true for backward compatibility
+        const groupId = metadata?.groupId;
+        
+        // If not public, check permissions
+        if (!isPublic) {
+            // If no user is authenticated, deny access
+            if (!userId) {
+                return json({ error: 'Access denied' }, { status: 403 });
+            }
+            
+            // If media belongs to a group, check if user has access to that group
+            if (groupId) {
+                const hasAccess = await canAccessGroup(userId, groupId, env);
+                if (!hasAccess) {
+                    return json({ error: 'Access denied' }, { status: 403 });
+                }
+            }
+        }
+        
+        // If we get here, the user has access to the medium version
+        const mediumObject = await env.R2.get(mediumKey);
+        if (!mediumObject) {
+            // If medium doesn't exist, fall back to the original
+            const originalObject = await env.R2.get(mediaKey);
+            if (!originalObject) {
+                return json({ error: 'Media content not found' }, { status: 404 });
+            }
+            
+            // Create a new headers object that's compatible with Cloudflare Workers
+            const headers = new Headers();
+            
+            // Manually copy the headers
+            if (originalObject.httpMetadata?.contentType) {
+                headers.set('Content-Type', originalObject.httpMetadata.contentType);
+            }
+            headers.set('etag', originalObject.httpEtag);
+            
+            return new Response(originalObject.body as unknown as BodyInit, {
+                headers
+            });
+        }
+        
+        // Create a new headers object that's compatible with Cloudflare Workers
+        const headers = new Headers();
+        
+        // Manually copy the headers
+        if (mediumObject.httpMetadata?.contentType) {
+            headers.set('Content-Type', mediumObject.httpMetadata.contentType);
+        }
+        headers.set('etag', mediumObject.httpEtag);
+        
+        // Convert the R2 body to a type that Response can accept
+        return new Response(mediumObject.body as unknown as BodyInit, {
+            headers
+        });
+    } catch (error) {
+        console.error('Error fetching medium image:', error);
+        return json({ error: 'Error fetching medium image' }, { status: 500 });
+    }
+});
+
 // Handler to delete a media item
 router.delete('/:id', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
     try {
@@ -310,7 +401,6 @@ router.put('/:id/group', withAdminCheck, async (request: ExtendedRequest, env: E
             uploadedAt: updatedMetadata.createdAt || new Date().toISOString(),
             size: mediaObject.size,
             isPublic: isPublic,
-            // isPublic: updatedMetadata.isPublic === 'true', // Ensure consistent conversion to boolean
             groupId: groupId
         };
         
@@ -323,6 +413,126 @@ router.put('/:id/group', withAdminCheck, async (request: ExtendedRequest, env: E
         console.error('Error updating media group:', error);
         return json({ 
             error: 'Error updating media group',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 });
+    }
+});
+
+// Update a media item's metadata (takenBy field)
+router.put('/:id/metadata', withAuthCheck, async (request: ExtendedRequest, env: Env) => {
+    try {
+        const id = request.params.id;
+        const mediaKey = `gallery/${id}`;
+        const userId = request.user;
+        
+        if (!userId) {
+            return json({ error: 'User not authenticated' }, { status: 401 });
+        }
+        
+        // Get the media item
+        const mediaObject = await env.R2.head(mediaKey);
+        if (!mediaObject) {
+            return json({ error: 'Media not found' }, { status: 404 });
+        }
+        
+        // Check if user is admin or the owner
+        const isAdmin = await isUserAdmin(userId, env);
+        const isOwner = mediaObject.customMetadata?.userId === userId;
+        
+        if (!isAdmin && !isOwner) {
+            return json({ error: 'Access denied. You must be the owner or an admin to update metadata' }, { status: 403 });
+        }
+        
+        // Get the request body
+        const body = await request.json() as { takenBy?: string };
+        const { takenBy } = body;
+        
+        // Update the custom metadata
+        const updatedMetadata = { ...mediaObject.customMetadata };
+        if (takenBy !== undefined) {
+            updatedMetadata.takenBy = takenBy;
+        }
+        
+        // Get the existing content
+        const existingContent = await env.R2.get(mediaKey);
+        if (!existingContent) {
+            return json({ error: 'Media content not found' }, { status: 404 });
+        }
+        
+        // Save the updated media item with the same content but updated metadata
+        await env.R2.put(mediaKey, existingContent.body, {
+            httpMetadata: mediaObject.httpMetadata,
+            customMetadata: updatedMetadata
+        });
+        
+        // Get user name
+        let uploaderName = '';
+        try {
+            if (updatedMetadata.userId) {
+                const user = await getUser(updatedMetadata.userId, env);
+                if (user) {
+                    uploaderName = user.name;
+                }
+            }
+        } catch (error) {
+            console.warn(`Could not get user name:`, error);
+        }
+        
+        // Create a MediaItem object to return
+        const fileName = mediaKey.split('/').pop() || '';
+        const fileType = mediaObject.httpMetadata?.contentType || '';
+        
+        // Check if a thumbnail exists
+        const thumbnailKey = mediaKey.replace('gallery/', 'gallery/thumbnails/');
+        let thumbnailUrl = '';
+        try {
+            const thumbnailExists = await env.R2.head(thumbnailKey);
+            if (thumbnailExists) {
+                thumbnailUrl = `${env.PUBLIC_URL}/gallery/${fileName}/thumbnail`;
+            }
+        } catch (error) {
+            // Thumbnail doesn't exist
+        }
+        
+        // Check if a medium version exists
+        const mediumKey = mediaKey.replace('gallery/', 'gallery/medium/');
+        let mediumUrl = '';
+        try {
+            const mediumExists = await env.R2.head(mediumKey);
+            if (mediumExists) {
+                mediumUrl = `${env.PUBLIC_URL}/gallery/${fileName}/medium`;
+            }
+        } catch (error) {
+            // Medium version doesn't exist
+        }
+        
+        const isPublic = updatedMetadata.isPublic !== 'false'; // Default to true for backward compatibility
+        
+        const mediaItem: MediaItem = {
+            id: mediaKey,
+            fileName: fileName,
+            fileType: fileType,
+            url: `${env.PUBLIC_URL}/gallery/${fileName}`,
+            thumbnailUrl: thumbnailUrl,
+            mediumUrl: mediumUrl,
+            uploadedBy: updatedMetadata.userId || 'unknown',
+            uploaderName: uploaderName,
+            uploadedAt: updatedMetadata.createdAt || new Date().toISOString(),
+            takenBy: updatedMetadata.takenBy || '',
+            size: mediaObject.size,
+            isPublic: isPublic,
+            groupId: updatedMetadata.groupId
+        };
+        
+        return json({ 
+            success: true, 
+            message: 'Media metadata updated successfully',
+            mediaItem
+        });
+    } catch (error) {
+        console.error('Error updating media metadata:', error);
+        return json({ 
+            error: 'Error updating media metadata',
             message: error instanceof Error ? error.message : 'Unknown error'
         }, { status: 500 });
     }

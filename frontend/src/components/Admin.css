@@ -116,23 +116,124 @@
   align-items: center;
 }
 
-/* Standardize all buttons */
+/* Common admin button styles - ensuring consistency across all admin pages */
+.admin-button,
+.approve-button,
+.create-button,
+.edit-button,
+.delete-button,
+.email-button,
+.send-button,
+.cancel-button,
+.remove-button,
+.save-button,
+.add-row-button,
+.submit-button,
+.home-button,
+.logout-button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  margin-right: 5px;
+  height: 36px;
+  min-width: 90px;
+  line-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+  white-space: nowrap;
+}
+
+/* Button colors */
+.approve-button,
+.create-button,
+.edit-button,
+.save-button,
+.submit-button {
+  background-color: #4caf50;
+  color: white;
+}
+
+.approve-button:hover,
+.create-button:hover,
+.edit-button:hover,
+.save-button:hover,
+.submit-button:hover {
+  background-color: #388e3c;
+}
+
+.delete-button,
+.remove-button {
+  background-color: #f44336;
+  color: white;
+}
+
+.delete-button:hover,
+.remove-button:hover {
+  background-color: #d32f2f;
+}
+
+.email-button,
+.admin-button {
+  background-color: #2196f3;
+  color: white;
+}
+
+.email-button:hover,
+.admin-button:hover {
+  background-color: #1976d2;
+}
+
+.cancel-button {
+  background-color: #f5f5f5;
+  color: #333;
+  border: 1px solid #ddd;
+}
+
+.cancel-button:hover {
+  background-color: #e9e9e9;
+}
+
+/* Admin action button alignment */
+.action-buttons {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+/* Page actions alignment */
+.page-actions {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+/* Group actions alignment */
+.group-actions {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+/* Button disabled state */
+button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Remove redundant button styling */
 .approve-button,
 .admin-button,
 .create-button,
 .remove-button,
 .edit-button {
-  padding: 8px 12px;
-  margin-right: 8px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  height: 36px;
-  line-height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  margin-right: 5px;
 }
 
 .user-type-select {
@@ -140,33 +241,6 @@
   border-radius: 4px;
   border: 1px solid #ddd;
   font-size: 14px;
-}
-
-.approve-button {
-  background-color: #4caf50;
-  color: white;
-}
-
-.approve-button:hover {
-  background-color: #388e3c;
-}
-
-.admin-button {
-  background-color: #2196f3;
-  color: white;
-}
-
-.admin-button:hover {
-  background-color: #1976d2;
-}
-
-.edit-button {
-  background-color: #4caf50;
-  color: white;
-}
-
-.edit-button:hover {
-  background-color: #388e3c;
 }
 
 .create-group-form {
@@ -206,15 +280,6 @@
   resize: vertical;
 }
 
-.create-button {
-  background-color: #4caf50;
-  color: white;
-}
-
-.create-button:hover {
-  background-color: #388e3c;
-}
-
 .groups-container {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -248,25 +313,6 @@
   font-size: 18px;
 }
 
-.delete-button {
-  background-color: #f44336;
-  color: white;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  height: 36px;
-  line-height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.delete-button:hover {
-  background-color: #d32f2f;
-}
-
 .group-details {
   margin: 15px 0;
   font-size: 14px;
@@ -295,17 +341,6 @@
   align-items: center;
 }
 
-.remove-button {
-  background-color: #f44336;
-  color: white;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.remove-button:hover {
-  background-color: #d32f2f;
-}
-
 .add-member-form {
   margin-top: 20px;
 }
@@ -330,32 +365,6 @@
   background-color: #ffebee;
   border-radius: 4px;
   text-align: center;
-}
-
-/* Group actions */
-.group-actions {
-  display: flex;
-  gap: 8px;
-}
-
-/* Email button */
-.email-button {
-  background-color: #2196f3;
-  color: white;
-  border: none;
-  padding: 8px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  height: 36px;
-  line-height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.email-button:hover {
-  background-color: #1976d2;
 }
 
 /* Email dialog */
@@ -422,33 +431,6 @@
   gap: 10px;
 }
 
-.cancel-button {
-  background-color: #f5f5f5;
-  color: #333;
-  border: 1px solid #ddd;
-  padding: 8px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.cancel-button:hover {
-  background-color: #e9e9e9;
-}
-
-.send-button {
-  background-color: #4caf50;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.send-button:hover {
-  background-color: #388e3c;
-}
-
-/* Success message */
 .success-message {
   color: #4caf50;
   padding: 15px;
@@ -555,6 +537,88 @@
 .submit-button:disabled {
   background-color: #cccccc;
   cursor: not-allowed;
+}
+
+/* User name editing styles */
+.editable-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.editable-name input {
+  flex: 1;
+  margin-right: 8px;
+  padding: 6px 8px;
+  border: 1px solid #2196f3;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.editable-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.editable-actions button {
+  width: 28px;
+  height: 28px;
+  min-width: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  padding: 0;
+}
+
+.user-name {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.user-name:hover {
+  background-color: #f0f0f0;
+}
+
+.user-name span {
+  margin-right: 8px;
+}
+
+.edit-name-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #666;
+  padding: 2px 4px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.user-name:hover .edit-name-button {
+  opacity: 1;
+}
+
+/* Mobile styling for editable user names */
+@media (max-width: 768px) {
+  .editable-name {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .editable-name input {
+    margin-right: 0;
+    margin-bottom: 8px;
+  }
+  
+  .editable-actions {
+    justify-content: flex-end;
+  }
 }
 
 /* Mobile responsiveness for admin dashboard */

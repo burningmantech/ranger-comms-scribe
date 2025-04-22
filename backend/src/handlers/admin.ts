@@ -13,7 +13,8 @@ import {
   removeUserFromGroup,
   deleteGroup,
   createUser,
-  deleteUser
+  deleteUser,
+  updateUserName
 } from '../services/userService';
 import { sendEmail } from '../utils/email';
 import { UserType } from '../types';
@@ -26,6 +27,30 @@ export const router = AutoRouter({ base: '/admin' });
 router.get('/users', withAdminCheck, async (request: Request, env: Env) => {
   const users = await getAllUsers(env);
   return json({ users });
+});
+
+// Update a user's name - Endpoint for frontend compatibility
+router.post('/update-user-name', withAdminCheck, async (request: Request, env: Env) => {
+  const body = await request.json() as { userId: string; name: string };
+  const { userId, name } = body;
+  
+  if (!userId) {
+    return json({ error: 'User ID is required' }, { status: 400 });
+  }
+
+  if (!name || name.trim() === '') {
+    return json({ error: 'A valid name is required' }, { status: 400 });
+  }
+
+  const updatedUser = await updateUserName(userId, name, env);
+  if (!updatedUser) {
+    return json({ error: 'User not found or update failed' }, { status: 404 });
+  }
+
+  return json({ 
+    message: 'User name updated successfully', 
+    user: updatedUser 
+  });
 });
 
 // Approve a user
@@ -199,6 +224,31 @@ router.delete('/users/:id', withAdminCheck, async (request: Request, env: Env) =
   }
 
   return json({ message: 'User deleted successfully' });
+});
+
+// Update a user's name
+router.put('/users/:id/update-name', withAdminCheck, async (request: Request, env: Env) => {
+  const id = (request as any).params.id;
+  const body = await request.json() as { name: string };
+  const { name } = body;
+  
+  if (!id) {
+    return json({ error: 'User ID is required' }, { status: 400 });
+  }
+
+  if (!name || name.trim() === '') {
+    return json({ error: 'A valid name is required' }, { status: 400 });
+  }
+
+  const updatedUser = await updateUserName(id, name, env);
+  if (!updatedUser) {
+    return json({ error: 'User not found or update failed' }, { status: 404 });
+  }
+
+  return json({ 
+    message: 'User name updated successfully', 
+    user: updatedUser 
+  });
 });
 
 // Send email to all users in a group

@@ -15,6 +15,8 @@ interface AdminUser extends User {
   isAdmin: boolean;
   userType: UserType;
   groups: string[];
+  isEditingName?: boolean;
+  tempName?: string;
 }
 
 // Interface for bulk user entry
@@ -122,6 +124,7 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
     approved: false 
   })));
   const [bulkAddStatus, setBulkAddStatus] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -501,35 +504,9 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
     }
   };
 
-  // Handle bulk user entry updates
-  const updateBulkUserEntry = (index: number, field: keyof BulkUserEntry, value: string | boolean) => {
-    const updatedEntries = [...bulkUsers];
-    updatedEntries[index] = { 
-      ...updatedEntries[index], 
-      [field]: value 
-    };
-    setBulkUsers(updatedEntries);
-  };
-
-  // Add a new row to the bulk user entries
-  const addBulkUserRow = () => {
-    setBulkUsers([...bulkUsers, { name: '', email: '', approved: false }]);
-  };
-
-  // Remove a row from the bulk user entries
-  const removeBulkUserRow = (index: number) => {
-    const updatedEntries = [...bulkUsers];
-    updatedEntries.splice(index, 1);
-    setBulkUsers(updatedEntries);
-  };
-
-  // Submit bulk user creation
-  const submitBulkUsers = async () => {
-    // Validate entries
-    const validEntries = bulkUsers.filter(entry => entry.name.trim() && entry.email.trim());
-    
-    if (validEntries.length === 0) {
-      setBulkAddStatus('Error: No valid entries to submit');
+  const updateUserName = async (userId: string, newName: string) => {
+    if (!newName.trim()) {
+      setError('User name cannot be empty');
       return;
     }
 
@@ -540,39 +517,127 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
     }
 
     try {
-      setBulkAddStatus('Creating users...');
-      const response = await fetch(`${API_URL}/admin/bulk-create-users`, {
+      setError(null);
+      const response = await fetch(`${API_URL}/admin/update-user-name`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionId}`,
         },
-        body: JSON.stringify({ users: validEntries }),
+        body: JSON.stringify({ userId, name: newName }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create users');
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to update user name');
       }
 
+      // Update the local state
+      setUsers(users.map(user =>
+        user.id === userId
+          ? { ...user, name: newName, isEditingName: false, tempName: undefined }
+          : user
+      ));
+      
+      setSuccessMessage('User name updated successfully');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      setError(`Error updating user name: ${(err as Error).message}`);
+    }
+  };
+
+  const startEditingUserName = (user: AdminUser) => {
+    // Cancel any other editing first
+    setUsers(users.map(u => ({ ...u, isEditingName: false, tempName: undefined })));
+    
+    // Then enable editing for this user
+    setUsers(users.map(u =>
+      u.id === user.id
+        ? { ...u, isEditingName: true, tempName: user.name }
+        : u
+    ));
+  };
+
+  const cancelEditingUserName = (userId: string) => {
+    setUsers(users.map(u =>
+      u.id === userId
+        ? { ...u, isEditingName: false, tempName: undefined }
+        : u
+    ));
+  };
+
+  const handleUserNameKeyDown = (e: React.KeyboardEvent, user: AdminUser) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (user.tempName && user.tempName.trim() !== user.name) {
+        updateUserName(user.id, user.tempName.trim());
+      } else {
+        cancelEditingUserName(user.id);
+      }
+    } else if (e.key === 'Escape') {
+      cancelEditingUserName(user.id);
+    }
+  };
+
+  const updateBulkUserEntry = (index: number, field: keyof BulkUserEntry, value: string | boolean) => {
+    const updatedBulkUsers = [...bulkUsers];
+    updatedBulkUsers[index] = {
+      ...updatedBulkUsers[index],
+      [field]: value
+    };
+    setBulkUsers(updatedBulkUsers);
+  };
+
+  const removeBulkUserRow = (index: number) => {
+    if (bulkUsers.length <= 1) return;
+    
+    const updatedBulkUsers = bulkUsers.filter((_, i) => i !== index);
+    setBulkUsers(updatedBulkUsers);
+  };
+
+  const addBulkUserRow = () => {
+    setBulkUsers([...bulkUsers, { name: '', email: '', approved: false }]);
+  };
+
+  const submitBulkUsers = async () => {
+    const validUsers = bulkUsers.filter(user => user.name.trim() && user.email.trim());
+    
+    if (validUsers.length === 0) {
+      setBulkAddStatus('Error: No valid users to add');
+      return;
+    }
+    
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+      navigate('/');
+      return;
+    }
+    
+    try {
+      setBulkAddStatus('Adding users...');
+      
+      const response = await fetch(`${API_URL}/admin/bulk-add-users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({ users: validUsers }),
+      });
+      
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to add users');
+      }
+      
       const data = await response.json();
       
-      // Update the users list with the newly created users
-      setUsers([...users, ...data.users]);
+      // Reset form and show success message
+      setBulkUsers(Array(5).fill(null).map(() => ({ name: '', email: '', approved: false })));
+      setBulkAddStatus(`Success: ${data.message || 'Users added successfully'}`);
       
-      // Reset the form
-      setBulkUsers(Array(5).fill(null).map(() => ({ 
-        name: '', 
-        email: '', 
-        approved: false 
-      })));
-      
-      setBulkAddStatus(`Success: Created ${data.users.length} users`);
-      
-      // Clear success message after a few seconds
-      setTimeout(() => {
-        setBulkAddStatus(null);
-      }, 5000);
+      // Refresh the user list
+      fetchUsers();
     } catch (err) {
       setBulkAddStatus(`Error: ${(err as Error).message}`);
     }
@@ -626,10 +691,12 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
           </button>
         </div>
         <div className="admin-actions">
-          <Link to="/" className="home-button">Home</Link>
-          <button onClick={handleLogout} className="logout-button">Logout</button>
+          {/* Home and Logout buttons removed as they're already in the navbar */}
         </div>
       </div>
+      
+      {successMessage && <div className="success-message">{successMessage}</div>}
+      {error && <div className="error">{error}</div>}
       
       {activeTab === AdminTab.Users && (
         <div className="admin-section">
@@ -650,7 +717,57 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
               <tbody>
                 {users.map(user => (
                   <tr key={user.id}>
-                    <td>{user.name}</td>
+                    <td>
+                      {user.isEditingName ? (
+                        <div className="editable-name">
+                          <input
+                            type="text"
+                            value={user.tempName || ''}
+                            onChange={(e) =>
+                              setUsers(users.map(u =>
+                                u.id === user.id
+                                  ? { ...u, tempName: e.target.value }
+                                  : u
+                              ))
+                            }
+                            onBlur={() => {
+                              if (user.tempName && user.tempName.trim() !== user.name) {
+                                updateUserName(user.id, user.tempName.trim());
+                              } else {
+                                cancelEditingUserName(user.id);
+                              }
+                            }}
+                            onKeyDown={(e) => handleUserNameKeyDown(e, user)}
+                            autoFocus
+                          />
+                          <div className="editable-actions">
+                            <button 
+                              className="save-button"
+                              onClick={() => {
+                                if (user.tempName && user.tempName.trim() !== user.name) {
+                                  updateUserName(user.id, user.tempName.trim());
+                                }
+                              }}
+                              title="Save"
+                            >
+                              ✓
+                            </button>
+                            <button 
+                              className="cancel-button"
+                              onClick={() => cancelEditingUserName(user.id)}
+                              title="Cancel"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="user-name" onClick={() => startEditingUserName(user)}>
+                          <span>{user.name}</span>
+                          <button className="edit-name-button" title="Edit Name">✎</button>
+                        </div>
+                      )}
+                    </td>
                     <td>{user.email}</td>
                     <td>{user.approved ? 'Approved' : 'Pending'}</td>
                     <td>{user.userType}</td>

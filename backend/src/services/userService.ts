@@ -552,3 +552,25 @@ export async function markUserAsVerified(userId: string, env: Env): Promise<User
   
   return user;
 }
+
+// Update a user's name
+export async function updateUserName(userId: string, newName: string, env: Env): Promise<User | null> {
+  try {
+    const user = await getUser(userId, env);
+    if (!user) return null;
+    
+    // Update the name
+    user.name = newName;
+    
+    // Update in R2
+    await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { userId: user.id }
+    });
+    
+    return user;
+  } catch (error) {
+    console.error(`Error updating name for user ${userId}:`, error);
+    return null;
+  }
+}

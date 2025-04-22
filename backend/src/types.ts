@@ -54,8 +54,11 @@ export interface MediaItem {
   fileType: string;
   url: string;
   thumbnailUrl: string;
+  mediumUrl?: string; // URL for medium-sized version (max 1024px)
   uploadedBy: string;
+  uploaderName?: string; // Name of the user who uploaded the item
   uploadedAt: string;
+  takenBy?: string; // Photographer or content creator name
   size: number;
   isPublic: boolean;
   groupId?: string; // Optional group ID if not public
