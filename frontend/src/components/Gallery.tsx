@@ -1219,6 +1219,42 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
         [media]
     );
 
+    const findPreviousImage = useCallback(() => {
+        if (!selectedMedia || media.length <= 1) return null;
+        
+        const currentIndex = media.findIndex(item => item.id === selectedMedia.id);
+        if (currentIndex <= 0) {
+            // Wrap around to the end of the array
+            return media[media.length - 1];
+        }
+        return media[currentIndex - 1];
+    }, [selectedMedia, media]);
+    
+    const findNextImage = useCallback(() => {
+        if (!selectedMedia || media.length <= 1) return null;
+        
+        const currentIndex = media.findIndex(item => item.id === selectedMedia.id);
+        if (currentIndex === -1 || currentIndex === media.length - 1) {
+            // Wrap around to the beginning of the array
+            return media[0];
+        }
+        return media[currentIndex + 1];
+    }, [selectedMedia, media]);
+
+    const navigateToPreviousImage = () => {
+        const prevImage = findPreviousImage();
+        if (prevImage) {
+            openModal(prevImage);
+        }
+    };
+
+    const navigateToNextImage = () => {
+        const nextImage = findNextImage();
+        if (nextImage) {
+            openModal(nextImage);
+        }
+    };
+
     useEffect(() => {
         if (highlightedCommentId && comments.length > 0) {
             setTimeout(() => {
@@ -1633,6 +1669,16 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                                     {loadingMediumImage && viewMode === 'medium' && (
                                         <div className="loading-indicator medium-loading">Loading medium image...</div>
                                     )}
+                                    <button 
+                                        className="nav-button prev-button" 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            navigateToPreviousImage();
+                                        }}
+                                        aria-label="Previous image"
+                                    >
+                                        &lt;
+                                    </button>
                                     <img
                                         ref={viewMode === 'medium' ? mediumImageRef : null}
                                         src={getMediaSource()}
@@ -1652,6 +1698,16 @@ const Gallery: React.FC<GalleryProps> = ({ isAdmin = false, skipNavbar = false }
                                                 : undefined
                                         }
                                     />
+                                    <button 
+                                        className="nav-button next-button" 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            navigateToNextImage();
+                                        }}
+                                        aria-label="Next image"
+                                    >
+                                        &gt;
+                                    </button>
                                     {(selectedMedia.mediumUrl || selectedMedia.thumbnailUrl) && (
                                         <button className="view-toggle-button" onClick={toggleView}>
                                             {getViewToggleLabel()}

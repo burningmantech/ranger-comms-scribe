@@ -941,6 +941,55 @@
     }
 }
 
+/* Navigation buttons for photo modal */
+.nav-button {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background-color: rgba(0, 0, 0, 0.5);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    transition: background-color 0.3s ease;
+}
+
+.nav-button:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+.prev-button {
+    left: 15px;
+}
+
+.next-button {
+    right: 15px;
+}
+
+/* Make navigation buttons more visible on smaller screens */
+@media (max-width: 768px) {
+    .nav-button {
+        width: 36px;
+        height: 36px;
+        font-size: 18px;
+    }
+    
+    .prev-button {
+        left: 10px;
+    }
+    
+    .next-button {
+        right: 10px;
+    }
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .gallery-grid {
