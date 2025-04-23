@@ -208,7 +208,18 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
       setLoading(true);
       setError(null); // Clear previous errors
       
-      const response = await fetch(`${API_URL}/page/${pageSlug}`);
+      // Get the session ID from localStorage if available
+      const sessionId = localStorage.getItem('sessionId');
+      const headers: HeadersInit = {};
+      
+      // Add authorization header if session ID exists
+      if (sessionId) {
+        headers['Authorization'] = `Bearer ${sessionId}`;
+      }
+      
+      const response = await fetch(`${API_URL}/page/${pageSlug}`, {
+        headers
+      });
       
       if (!response.ok) {
         if (response.status === 404) {

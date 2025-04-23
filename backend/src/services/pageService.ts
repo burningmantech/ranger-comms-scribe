@@ -193,6 +193,7 @@ export async function updatePage(
     groupId?: string;
     order?: number;
     showInNavigation?: boolean;
+    isHome?: boolean;
   },
   env: Env
 ): Promise<{ success: boolean; page?: Page; error?: string }> {
@@ -239,6 +240,7 @@ export async function updatePage(
       groupId: updates.groupId !== undefined ? updates.groupId : existingPage.groupId,
       order: updates.order !== undefined ? updates.order : existingPage.order,
       showInNavigation: updates.showInNavigation !== undefined ? updates.showInNavigation : existingPage.showInNavigation,
+      isHome: updates.isHome !== undefined ? updates.isHome : existingPage.isHome,
       updatedAt: new Date().toISOString()
     };
     

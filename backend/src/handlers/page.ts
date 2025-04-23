@@ -266,3 +266,33 @@ router.get('/home/content', async (request: Request, env: Env) => {
     return json({ error: 'Error fetching home page content' }, { status: 500 });
   }
 });
+
+// Set a page as the home page (admin only)
+router.post('/:id/make-home', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
+  try {
+    const { id } = request.params;
+    console.log(`POST /page/${id}/make-home called`);
+    
+    // First, update all pages to not be home
+    const allPages = await getAllPages(env);
+    
+    // Update each page's isHome property
+    for (const page of allPages) {
+      if (page.isHome && page.id !== id) {
+        await updatePage(page.id, { isHome: false }, env);
+      }
+    }
+    
+    // Set the selected page as home
+    const result = await updatePage(id, { isHome: true }, env);
+    
+    if (result.success) {
+      return json({ success: true, message: 'Home page updated successfully' });
+    } else {
+      return json(result, { status: 404 });
+    }
+  } catch (error) {
+    console.error('Error setting home page:', error);
+    return json({ error: 'Error setting home page' }, { status: 500 });
+  }
+});

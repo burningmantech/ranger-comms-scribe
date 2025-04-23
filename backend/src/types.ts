@@ -20,6 +20,7 @@ export interface Page {
   groupId?: string; // Optional group ID if not public
   order: number; // For ordering in navigation
   showInNavigation: boolean; // Whether to show in main navigation
+  isHome?: boolean; // Whether this is the home page
 }
 
 export interface User {

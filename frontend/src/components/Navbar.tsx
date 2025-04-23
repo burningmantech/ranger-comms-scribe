@@ -66,7 +66,18 @@ const Navbar: React.FC<NavbarProps> = ({ navigationPages = [] }) => {
     
     const fetchPages = async () => {
         try {
-            const response = await fetch(`${API_URL}/page`);
+            // Get the session ID from localStorage if available
+            const sessionId = localStorage.getItem('sessionId');
+            const headers: HeadersInit = {};
+            
+            // Add authorization header if session ID exists
+            if (sessionId) {
+                headers['Authorization'] = `Bearer ${sessionId}`;
+            }
+            
+            const response = await fetch(`${API_URL}/page`, {
+                headers
+            });
             
             if (!response.ok) {
                 throw new Error('Failed to fetch pages');
@@ -145,9 +156,7 @@ const Navbar: React.FC<NavbarProps> = ({ navigationPages = [] }) => {
                 
                 {isAdmin && (
                     <>
-                        <Link to="/admin" className="navbar-item" onClick={handleMenuItemClick}>Admin</Link>
-                        <Link to="/page-management" className="navbar-item" onClick={handleMenuItemClick}>Pages</Link>
-                    </>
+                        <Link to="/admin" className="navbar-item" onClick={handleMenuItemClick}>Admin</Link>                    </>
                 )}
                 {isLoggedIn ? (
                     <>

@@ -14,6 +14,8 @@ interface Page {
   createdAt: string;
   updatedAt: string;
   isHome?: boolean;
+  isPublic?: boolean;
+  published?: boolean;
 }
 
 const PageManagement: React.FC = () => {
@@ -28,6 +30,8 @@ const PageManagement: React.FC = () => {
   const [editorState, setEditorState] = useState(EditorState.createEmpty());
   const [showImageGallery, setShowImageGallery] = useState<boolean>(false);
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
+  const [showInNavigation, setShowInNavigation] = useState<boolean>(true);
+  const [published, setPublished] = useState<boolean>(true);
   
   const navigate = useNavigate();
 
@@ -142,6 +146,8 @@ const PageManagement: React.FC = () => {
           content,
           isPublic,
           isHome,
+          showInNavigation,
+          published
         }),
       });
 
@@ -240,6 +246,63 @@ const PageManagement: React.FC = () => {
     }
   };
 
+  const handleTogglePageSetting = async (pageId: string, setting: keyof Page, value: boolean) => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+      navigate('/');
+      return;
+    }
+
+    try {
+      // Find the current page to get all its current properties
+      const currentPage = pages.find(page => page.id === pageId);
+      if (!currentPage) {
+        setError(`Could not find page with ID ${pageId}`);
+        return;
+      }
+
+      setLoading(true);
+      
+      // Use PUT request which is supported by the backend
+      const response = await fetch(`${API_URL}/page/${pageId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({ [setting]: value })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to update page ${setting}`);
+      }
+
+      // Show success message
+      setSuccess(`Successfully updated page ${setting}`);
+      
+      // Update the page setting in the state
+      setPages(pages.map(page => 
+        page.id === pageId ? { ...page, [setting]: value } : page
+      ));
+
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        setSuccess(null);
+      }, 3000);
+    } catch (err) {
+      console.error(`Error updating page ${setting}:`, err);
+      setError(`Error updating page: ${(err as Error).message}`);
+      
+      // Clear error message after 5 seconds
+      setTimeout(() => {
+        setError(null);
+      }, 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSlugChange = (value: string) => {
     // Convert to lowercase and replace spaces with hyphens
     const formattedSlug = value
@@ -328,41 +391,68 @@ const PageManagement: React.FC = () => {
               <p>No pages found. Create your first page using the form.</p>
             ) : (
               <div className="pages-list">
+                <div className="page-item header">
+                  <div className="page-info">
+                    Page Title
+                  </div>
+                  <div className="page-controls">
+                    <div className="control-cell">Home</div>
+                    <div className="control-cell">Public</div>
+                    <div className="control-cell">Published</div>
+                    <div className="control-cell actions">Actions</div>
+                  </div>
+                </div>
                 {pages.map(page => (
                   <div 
                     key={page.id} 
                     className={`page-item ${page.isHome ? 'home-page-item' : ''}`}
                   >
                     <div className="page-info">
-                      <h4>
-                        {page.title}
-                        {page.isHome && <span className="home-indicator">Home</span>}
-                      </h4>
-                      <p>Slug: /{page.slug}</p>
-                      <p>Created: {new Date(page.createdAt).toLocaleDateString()}</p>
+                      <h4>{page.title}</h4>
+                      <p>/{page.slug}</p>
                     </div>
-                    <div className="btn-group">
-                      {!page.isHome && (
-                        <button 
-                          onClick={() => handleMakeHomePage(page.id)}
-                          className="btn btn-tertiary btn-sm"
+                    <div className="page-controls">
+                      <div className="control-cell">
+                        <input 
+                          type="radio" 
+                          name="homePage" 
+                          checked={page.isHome === true}
+                          onChange={() => handleMakeHomePage(page.id)}
                           title="Set as home page"
+                        />
+                      </div>
+                      <div className="control-cell">
+                        <input 
+                          type="checkbox" 
+                          checked={page.isPublic === true}
+                          onChange={() => handleTogglePageSetting(page.id, 'isPublic', !page.isPublic)}
+                          title={page.isPublic ? "Page is public" : "Page is private (logged-in only)"}
+                        />
+                      </div>
+                      <div className="control-cell">
+                        <input 
+                          type="checkbox"
+                          checked={page.published === true}
+                          onChange={() => handleTogglePageSetting(page.id, 'published', !page.published)}
+                          title={page.published ? "Page is published" : "Page is unpublished"}
+                        />
+                      </div>
+                      <div className="control-cell actions">
+                        <button 
+                          onClick={() => navigate(`/${page.slug}`)}
+                          className="btn btn-secondary btn-sm"
+                          title="Edit page"
                         >
-                          Set Home
+                          Edit
                         </button>
-                      )}
-                      <button 
-                        onClick={() => navigate(`/admin/pages/edit/${page.id}`)}
-                        className="btn btn-secondary btn-sm"
-                      >
-                        Edit
-                      </button>
-                      <button 
-                        onClick={() => handleDeletePage(page.id)}
-                        className="btn btn-danger btn-sm"
-                      >
-                        Delete
-                      </button>
+                        <button 
+                          onClick={() => handleDeletePage(page.id)}
+                          className="btn btn-danger btn-sm"
+                          title="Delete page"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -493,33 +583,77 @@ const PageManagement: React.FC = () => {
               </div>
             </div>
             
-            <div className="form-group">
-              <div className="custom-checkbox">
-                <input 
-                  type="checkbox" 
-                  id="isPublic"
-                  checked={isPublic}
-                  onChange={(e) => setIsPublic(e.target.checked)}
-                />
-                <span className="checkbox-icon"></span>
-                <label htmlFor="isPublic">Make this page public (visible to non-logged in users)</label>
-              </div>
-            </div>
-            
-            {!pages.some(page => page.isHome) && (
+            <div className="page-settings-section">
+              <h4>Page Visibility Settings</h4>
               <div className="form-group">
                 <div className="custom-checkbox">
                   <input 
-                    type="checkbox"
-                    id="isHome" 
-                    checked={isHome}
-                    onChange={(e) => setIsHome(e.target.checked)}
+                    type="checkbox" 
+                    id="published"
+                    checked={published}
+                    onChange={(e) => setPublished(e.target.checked)}
                   />
                   <span className="checkbox-icon"></span>
-                  <label htmlFor="isHome">Set as home page</label>
+                  <label htmlFor="published">Publish page (when enabled, the page will be accessible to users)</label>
                 </div>
               </div>
-            )}
+
+              <div className="form-group">
+                <div className="custom-checkbox">
+                  <input 
+                    type="checkbox" 
+                    id="isPublic"
+                    checked={isPublic}
+                    onChange={(e) => setIsPublic(e.target.checked)}
+                  />
+                  <span className="checkbox-icon"></span>
+                  <label htmlFor="isPublic">Public access (when enabled, non-logged in visitors can view the page)</label>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <div className="custom-checkbox">
+                  <input 
+                    type="checkbox" 
+                    id="showInNavigation"
+                    checked={showInNavigation}
+                    onChange={(e) => setShowInNavigation(e.target.checked)}
+                  />
+                  <span className="checkbox-icon"></span>
+                  <label htmlFor="showInNavigation">Show in navigation menu</label>
+                </div>
+              </div>
+            </div>
+
+            <div className="page-settings-section">
+              <h4>Home Page Setting</h4>
+              <div className="form-group">
+                <div className="custom-radio">
+                  <input 
+                    type="radio" 
+                    id="makeHomePageYes" 
+                    name="isHomePage"
+                    checked={isHome}
+                    onChange={() => setIsHome(true)}
+                    disabled={pages.some(page => page.isHome) && !isHome}
+                  />
+                  <label htmlFor="makeHomePageYes">Make this the home page</label>
+                </div>
+                <div className="custom-radio">
+                  <input 
+                    type="radio" 
+                    id="makeHomePageNo" 
+                    name="isHomePage"
+                    checked={!isHome}
+                    onChange={() => setIsHome(false)}
+                  />
+                  <label htmlFor="makeHomePageNo">Do not use as home page</label>
+                </div>
+                {pages.some(page => page.isHome) && !isHome && (
+                  <p className="note">Note: Another page is currently set as the home page. To change the home page, edit that page first.</p>
+                )}
+              </div>
+            </div>
           </div>
           <div className="card-footer">
             <button 
