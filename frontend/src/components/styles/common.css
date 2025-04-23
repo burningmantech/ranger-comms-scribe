@@ -205,62 +205,62 @@
   padding-left: 0.5rem;
 }
 
-/* Custom checkbox styling */
 .custom-checkbox {
-  display: flex;
-  align-items: center;
-  position: relative;
-  margin: 0.5rem 0;
-  cursor: pointer;
-  user-select: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    user-select: none;
+    cursor: pointer;
 }
 
-.custom-checkbox input {
-  position: absolute;
-  opacity: 0;
-  height: 0;
-  width: 0;
-  cursor: pointer;
-  z-index: 1;
+.custom-checkbox input[type="checkbox"] {
+    opacity: 0;
+    position: absolute;
+    left: 0;
+    top: 0;
+    cursor: pointer;
+    width: 20px;
+    height: 20px;
+    z-index: 1;
 }
 
-.checkbox-icon {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  height: 18px;
-  width: 18px;
-  background-color: #fff;
-  border: 2px solid var(--text-medium);
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
+.custom-checkbox .checkbox-icon {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--accent-teal);
+    border-radius: 3px;
+    margin-right: 10px;
+    position: relative;
+    display: inline-block;
+    background-color: white;
+    flex-shrink: 0;
+}
+
+.custom-checkbox input[type="checkbox"]:checked + .checkbox-icon::after {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 2px;
+    width: 5px;
+    height: 10px;
+    border: solid var(--accent-teal);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+.custom-checkbox input[type="checkbox"]:focus + .checkbox-icon {
+    box-shadow: 0 0 0 3px rgba(61, 104, 105, 0.25);
+}
+
+.custom-checkbox label {
+    margin-left: 5px;
+    cursor: pointer;
 }
 
 .custom-checkbox input:checked ~ .checkbox-icon {
-  background-color: var(--accent-gold);
-  border-color: var(--accent-gold);
-}
-
-.custom-checkbox input:focus ~ .checkbox-icon {
-  box-shadow: 0 0 0 2px rgba(181, 157, 105, 0.25);
-}
-
-.checkbox-icon:after {
-  content: "";
-  display: none;
-  width: 5px;
-  height: 10px;
-  border: solid white;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-  position: absolute;
-}
-
-.custom-checkbox input:checked ~ .checkbox-icon:after {
-  display: block;
+    background-color: var(--accent-gold);
+    border-color: var(--accent-gold);
 }
 
 /* Radio buttons */
