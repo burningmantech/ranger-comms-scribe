@@ -36,12 +36,6 @@ body {
     overflow-x: hidden;       /* Prevent horizontal scrolling */
 }
 
-@media (max-width: 768px) {
-    body {
-        padding: 10px;        /* Reduce padding on mobile */
-    }
-}
-
 body::before {
     content: '';
     position: absolute;
