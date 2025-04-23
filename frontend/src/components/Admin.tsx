@@ -865,8 +865,6 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                     className="group-card"
                     style={{ cursor: 'default' }}
                   >
-                    <div className="group-header">
-                      <h4>{group.name}</h4>
                       <div className="group-actions">
                         <button 
                           onClick={() => setEditingGroup(group)}
@@ -893,6 +891,9 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                           <span className="btn-text">Delete</span>
                         </button>
                       </div>
+                    <div className="group-header">
+                      <h4>{group.name}</h4>
+
                     </div>
                     <p>{group.description}</p>
                     <div className="group-details">
@@ -915,7 +916,6 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                                 className="btn btn-danger btn-with-icon btn-sm"
                               >
                                 <i className="fas fa-times"></i>
-                                <span className="btn-text">Remove</span>
                               </button>
                             </li>
                           ) : null;
