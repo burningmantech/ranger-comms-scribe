@@ -4,6 +4,7 @@ import { Page, User } from '../types';
 import { Editor, EditorState, RichUtils, convertToRaw, convertFromRaw, DraftHandleValue, Modifier } from 'draft-js';
 import { stateToHTML } from 'draft-js-export-html';
 import { useParams, useNavigate } from 'react-router-dom';
+import './DynamicPage.css';
 
 interface DynamicPageProps {
   slug?: string;
@@ -27,6 +28,14 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
   const [galleryImages, setGalleryImages] = useState<any[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [fullSizeImageUrl, setFullSizeImageUrl] = useState<string | null>(null);
+  
+  // Page settings states
+  const [isPublished, setIsPublished] = useState<boolean>(true);
+  const [isPublic, setIsPublic] = useState<boolean>(true);
+  const [showInNavigation, setShowInNavigation] = useState<boolean>(true);
+  const [isHomePage, setIsHomePage] = useState<boolean>(false);
+  const [parentPageId, setParentPageId] = useState<string>('');
+  const [availablePages, setAvailablePages] = useState<Page[]>([]);
 
   const getRawContent = (state: EditorState) => JSON.stringify(convertToRaw(state.getCurrentContent()));
   const getEditorStateFromRaw = (raw: string) => {
@@ -203,6 +212,50 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
     }
   }, [page, isEditing]);
 
+  // Fetch all pages for parent page selection
+  const fetchAllPages = async () => {
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) return;
+      
+      const response = await fetch(`${API_URL}/page/all`, {
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch pages');
+      }
+      
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        setAvailablePages(data);
+      } else {
+        console.error('Expected array of pages but got:', data);
+        setAvailablePages([]);
+      }
+    } catch (err) {
+      console.error('Error fetching all pages:', err);
+      setAvailablePages([]);
+    }
+  };
+
+  // Initialize page settings when entering edit mode
+  useEffect(() => {
+    if (isEditing && page) {
+      // Initialize the page settings from the page object
+      setIsPublished(page.published ?? true);
+      setIsPublic(page.isPublic ?? true);
+      setShowInNavigation(page.showInNavigation ?? true);
+      setIsHomePage(page.isHome ?? false);
+      setParentPageId(page.parentPageId || '');
+      
+      // Fetch all pages for parent selection
+      fetchAllPages();
+    }
+  }, [isEditing, page]);
+
   const fetchPage = async (pageSlug: string) => {
     try {
       setLoading(true);
@@ -305,6 +358,132 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
               <h4>Preview:</h4>
               <div className="preview-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(editorState) }} />
             </div>
+            
+            {/* Page Settings Section */}
+            {canEdit && (
+              <div className="page-settings-section mt-4">
+                <h3>Page Settings</h3>
+                <div className="card">
+                  <div className="card-body">
+                    <div className="row">
+                      <div className="col-md-6">
+                        <div className="page-settings-group">
+                          <h4>Visibility Settings</h4>
+                          <div className="form-group">
+                            <div className="custom-checkbox">
+                              <input 
+                                type="checkbox" 
+                                id="published"
+                                checked={isPublished}
+                                onChange={(e) => setIsPublished(e.target.checked)}
+                              />
+                              <span className="checkbox-icon"></span>
+                              <label htmlFor="published">
+                                Publish page (when enabled, the page will be accessible to users)
+                              </label>
+                            </div>
+                          </div>
+
+                          <div className="form-group">
+                            <div className="custom-checkbox">
+                              <input 
+                                type="checkbox" 
+                                id="isPublic"
+                                checked={isPublic}
+                                onChange={(e) => setIsPublic(e.target.checked)}
+                              />
+                              <span className="checkbox-icon"></span>
+                              <label htmlFor="isPublic">
+                                Public access (when enabled, non-logged in visitors can view the page)
+                              </label>
+                            </div>
+                          </div>
+
+                          <div className="form-group">
+                            <div className="custom-checkbox">
+                              <input 
+                                type="checkbox" 
+                                id="showInNavigation"
+                                checked={showInNavigation}
+                                onChange={(e) => setShowInNavigation(e.target.checked)}
+                              />
+                              <span className="checkbox-icon"></span>
+                              <label htmlFor="showInNavigation">
+                                Show in navigation menu
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="col-md-6">
+                        <div className="page-settings-group">
+                          <h4>Page Hierarchy</h4>
+                          <div className="form-group">
+                            <label htmlFor="parentPage">Parent Page:</label>
+                            <select 
+                              id="parentPage" 
+                              className="form-control"
+                              value={parentPageId}
+                              onChange={(e) => setParentPageId(e.target.value)}
+                            >
+                              <option value="">No parent page (top level)</option>
+                              {availablePages
+                                .filter(p => p.id !== page?.id && !p.isHome && 
+                                            // Prevent circular references
+                                            !(p.parentPageId === page?.id))
+                                .map(p => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.title}
+                                  </option>
+                                ))
+                              }
+                            </select>
+                            <small>Select a parent page to create a hierarchical structure</small>
+                          </div>
+                        </div>
+
+                        <div className="page-settings-group mt-3">
+                          <h4>Home Page Setting</h4>
+                          <div className="form-group">
+                            <div className="custom-radio">
+                              <input 
+                                type="radio" 
+                                id="makeHomePageYes" 
+                                name="isHomePage"
+                                checked={isHomePage}
+                                onChange={() => setIsHomePage(true)}
+                                disabled={availablePages.some(p => p.isHome === true && p.id !== page?.id)}
+                              />
+                              <label htmlFor="makeHomePageYes">
+                                Make this the home page
+                              </label>
+                            </div>
+                            <div className="custom-radio">
+                              <input 
+                                type="radio" 
+                                id="makeHomePageNo" 
+                                name="isHomePage"
+                                checked={!isHomePage}
+                                onChange={() => setIsHomePage(false)}
+                              />
+                              <label htmlFor="makeHomePageNo">
+                                Do not use as home page
+                              </label>
+                            </div>
+                            {availablePages.some(p => p.isHome === true && p.id !== page?.id) && (
+                              <p className="note text-warning">
+                                Note: Another page is currently set as the home page. Setting this as the home page will replace the current home page.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="btn-group mt-2">
             <button 
@@ -322,11 +501,20 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
                       title: page.title,
                       slug: page.slug,
                       content: getRawContent(editorState),
-                      published: page.published,
-                      showInNavigation: page.showInNavigation
+                      published: isPublished,
+                      isPublic: isPublic,
+                      showInNavigation: showInNavigation,
+                      parentPageId: parentPageId || undefined,
+                      isHome: isHomePage
                     }),
                   });
                   if (!response.ok) throw new Error('Failed to save page');
+                  
+                  // If this page is set as home page, we need to reload all pages
+                  if (isHomePage) {
+                    await fetchAllPages();
+                  }
+                  
                   setIsEditing(false);
                   fetchPage(page.slug);
                 } catch (err) {

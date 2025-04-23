@@ -21,6 +21,7 @@ export interface Page {
   order: number; // For ordering in navigation
   showInNavigation: boolean; // Whether to show in main navigation
   isHome?: boolean; // Whether this is the home page
+  parentPageId?: string; // Optional parent page ID for hierarchical navigation
 }
 
 export interface User {

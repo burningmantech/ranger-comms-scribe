@@ -17,6 +17,7 @@ interface Page {
   isPublic?: boolean;
   published?: boolean;
   showInNavigation?: boolean;
+  parentPageId?: string;
 }
 
 const PageManagement: React.FC = () => {
@@ -33,6 +34,7 @@ const PageManagement: React.FC = () => {
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
   const [showInNavigation, setShowInNavigation] = useState<boolean>(true);
   const [published, setPublished] = useState<boolean>(true);
+  const [parentPageId, setParentPageId] = useState<string>('');
   
   const navigate = useNavigate();
 
@@ -148,7 +150,8 @@ const PageManagement: React.FC = () => {
           isPublic,
           isHome,
           showInNavigation,
-          published
+          published,
+          parentPageId: parentPageId || undefined
         }),
       });
 
@@ -162,6 +165,7 @@ const PageManagement: React.FC = () => {
       setSlug('');
       setIsPublic(false);
       setIsHome(false);
+      setParentPageId('');
       setEditorState(EditorState.createEmpty());
       setSuccess('Page created successfully');
       
@@ -304,6 +308,56 @@ const PageManagement: React.FC = () => {
     }
   };
 
+  const handleUpdateParentPage = async (pageId: string, parentPageId: string | null) => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+      navigate('/');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      
+      // Use PUT request to update the parentPageId
+      const response = await fetch(`${API_URL}/page/${pageId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({ parentPageId })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update parent page');
+      }
+
+      // Show success message
+      setSuccess('Successfully updated parent page');
+      
+      // Update the page parentPageId in the state
+      setPages(pages.map(page => 
+        page.id === pageId ? { ...page, parentPageId: parentPageId || undefined } : page
+      ));
+
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        setSuccess(null);
+      }, 3000);
+    } catch (err) {
+      console.error('Error updating parent page:', err);
+      setError(`Error updating parent page: ${(err as Error).message}`);
+      
+      // Clear error message after 5 seconds
+      setTimeout(() => {
+        setError(null);
+      }, 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSlugChange = (value: string) => {
     // Convert to lowercase and replace spaces with hyphens
     const formattedSlug = value
@@ -371,6 +425,14 @@ const PageManagement: React.FC = () => {
     setShowImageGallery(false);
   };
 
+  // Helper function to check if a page is an ancestor of another page
+  const pageHasAncestor = (pages: Page[], page: Page, ancestorId: string): boolean => {
+    if (!page.parentPageId) return false;
+    if (page.parentPageId === ancestorId) return true;
+    const parentPage = pages.find(p => p.id === page.parentPageId);
+    return parentPage ? pageHasAncestor(pages, parentPage, ancestorId) : false;
+  };
+
   if (loading) {
     return <div>Loading pages...</div>;
   }
@@ -397,11 +459,12 @@ const PageManagement: React.FC = () => {
                     Page Title
                   </div>
                   <div className="page-controls">
-                    <div className="control-cell">Home</div>
-                    <div className="control-cell">Public</div>
-                    <div className="control-cell">Published</div>
-                    <div className="control-cell">Navbar</div>
-                    <div className="control-cell actions">Actions</div>
+                    <div className="control-cell" style={{ width: "80px" }}>Home</div>
+                    <div className="control-cell" style={{ width: "80px" }}>Public</div>
+                    <div className="control-cell" style={{ width: "80px" }}>Published</div>
+                    <div className="control-cell" style={{ width: "80px" }}>Navbar</div>
+                    <div className="control-cell parent-page-cell" style={{ width: "150px" }}>Parent</div>
+                    <div className="control-cell actions" style={{ width: "150px" }}>Actions</div>
                   </div>
                 </div>
                 {pages.map(page => (
@@ -446,6 +509,24 @@ const PageManagement: React.FC = () => {
                           onChange={() => handleTogglePageSetting(page.id, 'showInNavigation', !page.showInNavigation)}
                           title={page.showInNavigation ? "Page is shown in navigation" : "Page is hidden from navigation"}
                         />
+                      </div>
+                      <div className="control-cell parent-page-cell">
+                        <select
+                          value={page.parentPageId || ''}
+                          onChange={(e) => handleUpdateParentPage(page.id, e.target.value || null)}
+                          className="parent-page-select"
+                          title="Select parent page"
+                        >
+                          <option value="">No parent</option>
+                          {pages
+                            .filter(p => p.id !== page.id && !p.isHome && !pageHasAncestor(pages, p, page.id))
+                            .map(p => (
+                              <option key={p.id} value={p.id}>
+                                {p.title}
+                              </option>
+                            ))
+                          }
+                        </select>
                       </div>
                       <div className="control-cell actions">
                         <button 
@@ -593,6 +674,27 @@ const PageManagement: React.FC = () => {
               </div>
             </div>
             
+            <div className="form-group">
+              <label htmlFor="parentPage">Parent Page:</label>
+              <select 
+                id="parentPage" 
+                className="form-control"
+                value={parentPageId}
+                onChange={(e) => setParentPageId(e.target.value)}
+              >
+                <option value="">No parent page (top level)</option>
+                {pages
+                  .filter(page => !page.isHome && page.id !== pages.find(p => p.isHome)?.id)
+                  .map(page => (
+                    <option key={page.id} value={page.id}>
+                      {page.title}
+                    </option>
+                  ))
+                }
+              </select>
+              <small>Select a parent page to create a hierarchical structure</small>
+            </div>
+
             <div className="page-settings-section">
               <h4>Page Visibility Settings</h4>
               <div className="form-group">

@@ -119,7 +119,9 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
       isPublic, 
       groupId, 
       order,
-      showInNavigation
+      showInNavigation,
+      parentPageId,
+      isHome
     } = await request.json() as {
       title: string;
       slug: string;
@@ -129,6 +131,8 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
       groupId?: string;
       order?: number;
       showInNavigation?: boolean;
+      parentPageId?: string;
+      isHome?: boolean;
     };
     
     if (!title || !slug || !content) {
@@ -156,7 +160,9 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
         isPublic, 
         groupId, 
         order,
-        showInNavigation
+        showInNavigation,
+        parentPageId,
+        isHome
       },
       request.user,
       userName,
@@ -189,6 +195,8 @@ router.put('/:id', withAdminCheck, async (request: ExtendedRequest, env: Env) =>
       groupId?: string;
       order?: number;
       showInNavigation?: boolean;
+      parentPageId?: string;
+      isHome?: boolean;
     };
     
     const result = await updatePage(id, updates, env);

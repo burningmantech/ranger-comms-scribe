@@ -118,6 +118,8 @@ export async function createPage(
     groupId?: string;
     order?: number;
     showInNavigation?: boolean;
+    parentPageId?: string;
+    isHome?: boolean;
   },
   userId: string,
   userName: string,
@@ -149,6 +151,15 @@ export async function createPage(
       highestOrder = Math.max(...allPages.map(p => p.order));
     }
     
+    // If this page is marked as home, update all other pages to not be home
+    if (pageData.isHome) {
+      for (const page of allPages) {
+        if (page.isHome) {
+          await updatePage(page.id, { isHome: false }, env);
+        }
+      }
+    }
+    
     const now = new Date().toISOString();
     const pageId = uuidv4();
     
@@ -164,7 +175,9 @@ export async function createPage(
       isPublic: pageData.isPublic ?? true,
       groupId: pageData.groupId,
       order: pageData.order ?? highestOrder + 10, // Default to end of list with spacing for manual reordering
-      showInNavigation: pageData.showInNavigation ?? true
+      showInNavigation: pageData.showInNavigation ?? true,
+      parentPageId: pageData.parentPageId,
+      isHome: pageData.isHome ?? false
     };
     
     // Save the page
@@ -194,6 +207,7 @@ export async function updatePage(
     order?: number;
     showInNavigation?: boolean;
     isHome?: boolean;
+    parentPageId?: string;
   },
   env: Env
 ): Promise<{ success: boolean; page?: Page; error?: string }> {
@@ -241,6 +255,7 @@ export async function updatePage(
       order: updates.order !== undefined ? updates.order : existingPage.order,
       showInNavigation: updates.showInNavigation !== undefined ? updates.showInNavigation : existingPage.showInNavigation,
       isHome: updates.isHome !== undefined ? updates.isHome : existingPage.isHome,
+      parentPageId: updates.parentPageId !== undefined ? updates.parentPageId : existingPage.parentPageId,
       updatedAt: new Date().toISOString()
     };
     
