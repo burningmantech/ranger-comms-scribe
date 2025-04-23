@@ -27,7 +27,6 @@
 
 body {
     margin: 0;
-    padding: 20px;            /* Add padding to keep content away from edges */
     font-family: 'Poppins', sans-serif; /* Use Poppins font for the body */
     color: var(--text-dark);  /* Use dark brown text color for readability */
     min-height: 100vh;        /* Full viewport height */
