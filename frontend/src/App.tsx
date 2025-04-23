@@ -13,6 +13,7 @@ import { API_URL } from './config';
 import DynamicPage from './components/DynamicPage';
 import Navbar from './components/Navbar';
 import { USER_LOGIN_EVENT } from './utils/userActions';
+import PageManagement from './components/PageManagement';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -27,7 +28,7 @@ const App: React.FC = () => {
       try {
         const userData = JSON.parse(userJson) as User;
         setUser(userData);
-        setIsAdmin(userData.isAdmin === true);
+        setIsAdmin(userData.isAdmin === true || userData.userType === 'Admin');
       } catch (err) {
         console.error('Error parsing user data:', err);
       }
@@ -37,7 +38,7 @@ const App: React.FC = () => {
     const handleLoginStateChange = (event: CustomEvent<User | null>) => {
       const userData = event.detail;
       setUser(userData);
-      setIsAdmin(userData?.isAdmin === true);
+      setIsAdmin(userData?.isAdmin === true || userData?.userType === 'Admin');
     };
 
     window.addEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
@@ -60,12 +61,8 @@ const App: React.FC = () => {
       
       const data = await response.json();
       
-      // Filter pages that should be shown in navigation
-      const navPages = data.filter((page: Page) => 
-        page.published && page.showInNavigation
-      );
-      
-      setPages(navPages);
+      // Store all pages but mark which ones should be shown in navigation
+      setPages(data);
       setLoading(false);
     } catch (err) {
       console.error('Error fetching pages:', err);
@@ -73,14 +70,17 @@ const App: React.FC = () => {
     }
   };
 
+  // Get pages to share with Navbar
+  const getNavigationPages = () => {
+    return pages.filter(page => page.published && page.showInNavigation && page.slug !== 'home');
+  };
+
   return (
     <Router>
-      {/* Fixed position for navbar to prevent layout jumps */}
       <div className="app-container">
-        {/* Navbar is included once for all routes */}
-        <Navbar />
+        {/* Pass navigation pages to Navbar to avoid duplicate fetching */}
+        <Navbar navigationPages={getNavigationPages()} />
         
-        {/* Add a placeholder with the same height as the navbar during loading */}
         <div className="content-container">
           {loading ? (
             <div className="loading-container">Loading...</div>
@@ -94,8 +94,9 @@ const App: React.FC = () => {
               <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
+              <Route path="/page-management" element={<PageManagement />} />
               
-              {/* Dynamic page routes */}
+              {/* Dynamic page routes - include all pages, not just navigation ones */}
               {pages.map(page => (
                 <Route 
                   key={page.id} 
@@ -104,7 +105,13 @@ const App: React.FC = () => {
                 />
               ))}
               
-              {/* Catch-all route for unknown pages */}
+              {/* Create a catch-all dynamic page route that tries to load the page */}
+              <Route 
+                path="/:slug" 
+                element={<DynamicPage slug="" skipNavbar={true} />} 
+              />
+              
+              {/* Final catch-all if nothing else matches */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           )}

@@ -93,8 +93,14 @@ const EmailDialog: React.FC<EmailDialogProps> = ({ groupId, groupName, onClose, 
           </div>
         </div>
         <div className="email-dialog-footer">
-          <button className="cancel-button" onClick={onClose}>Cancel</button>
-          <button className="send-button" onClick={handleSend}>Send Email</button>
+          <button className="btn btn-secondary btn-with-icon" onClick={onClose}>
+            <i className="fas fa-times"></i>
+            <span className="btn-text">Cancel</span>
+          </button>
+          <button className="btn btn-primary btn-with-icon" onClick={handleSend}>
+            <i className="fas fa-paper-plane"></i>
+            <span className="btn-text">Send Email</span>
+          </button>
         </div>
       </div>
     </div>
@@ -776,15 +782,16 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                         {!user.approved && (
                           <button 
                             onClick={() => approveUser(user.id)}
-                            className="approve-button"
+                            className="btn btn-tertiary"
                           >
-                            Approve
+                            <i className="fas fa-check"></i>
+                            <span className="btn-text">Approve</span>
                           </button>
                         )}
                         <select 
                           value={user.userType}
                           onChange={(e) => changeUserType(user.id, e.target.value as UserType)}
-                          className="user-type-select"
+                          className="form-select"
                         >
                           <option value={UserType.Public}>Public</option>
                           <option value={UserType.Member}>Member</option>
@@ -797,9 +804,10 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                               deleteUser(user.id);
                             }
                           }}
-                          className="delete-button"
+                          className="btn btn-danger btn-with-icon"
                         >
-                          Delete
+                          <i className="fas fa-trash"></i>
+                          <span className="btn-text">Delete</span>
                         </button>
                       </div>
                     </td>
@@ -838,9 +846,10 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
             </div>
             <button 
               onClick={createGroup}
-              className="create-button"
+              className="btn btn-primary btn-with-icon"
             >
-              Create Group
+              <i className="fas fa-plus"></i>
+              <span className="btn-text">Create Group</span>
             </button>
           </div>
           
@@ -861,24 +870,27 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                       <div className="group-actions">
                         <button 
                           onClick={() => setEditingGroup(group)}
-                          className="edit-button"
+                          className="btn btn-tertiary btn-with-icon"
                         >
-                          Edit
+                          <i className="fas fa-edit"></i>
+                          <span className="btn-text">Edit</span>
                         </button>
                         <button 
                           onClick={() => {
                             setSelectedGroup({ id: group.id, name: group.name });
                             setShowEmailDialog(true);
                           }}
-                          className="email-button"
+                          className="btn btn-secondary btn-with-icon"
                         >
-                          Send Email
+                          <i className="fas fa-envelope"></i>
+                          <span className="btn-text">Email</span>
                         </button>
                         <button 
                           onClick={() => deleteGroup(group.id)}
-                          className="delete-button"
+                          className="btn btn-danger btn-with-icon"
                         >
-                          Delete Group
+                          <i className="fas fa-trash"></i>
+                          <span className="btn-text">Delete</span>
                         </button>
                       </div>
                     </div>
@@ -900,9 +912,10 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                                   e.stopPropagation(); // Prevent event bubbling
                                   removeUserFromGroup(memberId, group.id);
                                 }}
-                                className="remove-button"
+                                className="btn btn-danger btn-with-icon btn-sm"
                               >
-                                Remove
+                                <i className="fas fa-times"></i>
+                                <span className="btn-text">Remove</span>
                               </button>
                             </li>
                           ) : null;
@@ -993,10 +1006,11 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                       <td>
                         <button 
                           onClick={() => removeBulkUserRow(index)}
-                          className="remove-button"
+                          className="btn btn-danger btn-with-icon btn-sm"
                           disabled={bulkUsers.length <= 1}
                         >
-                          Remove
+                          <i className="fas fa-times"></i>
+                          <span className="btn-text">Remove</span>
                         </button>
                       </td>
                     </tr>
@@ -1008,17 +1022,19 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
             <div className="bulk-add-actions">
               <button 
                 onClick={addBulkUserRow}
-                className="add-row-button"
+                className="btn btn-secondary btn-with-icon"
               >
-                + Add Row
+                <i className="fas fa-plus"></i>
+                <span className="btn-text">Add Row</span>
               </button>
               
               <button 
                 onClick={submitBulkUsers}
-                className="submit-button"
+                className="btn btn-primary btn-with-icon"
                 disabled={bulkUsers.every(user => !user.name.trim() || !user.email.trim())}
               >
-                Submit
+                <i className="fas fa-upload"></i>
+                <span className="btn-text">Submit</span>
               </button>
             </div>
           </div>
@@ -1068,9 +1084,10 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                             e.stopPropagation(); // Prevent event bubbling
                             removeUserFromGroup(memberId, editingGroup.id);
                           }}
-                          className="remove-button"
+                          className="btn btn-danger btn-with-icon btn-sm"
                         >
-                          Remove
+                          <i className="fas fa-times"></i>
+                          <span className="btn-text">Remove</span>
                         </button>
                       </li>
                     ) : null;
@@ -1103,9 +1120,12 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
               </div>
             </div>
             <div className="email-dialog-footer">
-              <button className="cancel-button" onClick={() => setEditingGroup(null)}>Cancel</button>
+              <button className="btn btn-secondary btn-with-icon" onClick={() => setEditingGroup(null)}>
+                <i className="fas fa-times"></i>
+                <span className="btn-text">Cancel</span>
+              </button>
               <button 
-                className="save-button" 
+                className="btn btn-primary btn-with-icon" 
                 onClick={async () => {
                   if (!editingGroup) return;
                   
@@ -1144,7 +1164,8 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                   }
                 }}
               >
-                Save Changes
+                <i className="fas fa-save"></i>
+                <span className="btn-text">Save Changes</span>
               </button>
             </div>
           </div>

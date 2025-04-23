@@ -4,7 +4,11 @@ import { API_URL } from '../config';
 import { LogoutUserReact, USER_LOGIN_EVENT } from '../utils/userActions';
 import { Page, User } from '../types';
 
-const Navbar: React.FC = () => {
+interface NavbarProps {
+    navigationPages?: Page[];
+}
+
+const Navbar: React.FC<NavbarProps> = ({ navigationPages = [] }) => {
     const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
     const [isAdmin, setIsAdmin] = useState<boolean>(false);
     const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
@@ -27,8 +31,13 @@ const Navbar: React.FC = () => {
         // Check if user is logged in
         checkLoginStatus();
         
-        // Fetch published pages for navigation
-        fetchPages();
+        // Use navigation pages from props if available
+        if (navigationPages && navigationPages.length > 0) {
+            setPages(navigationPages);
+        } else {
+            // Fallback to fetching pages
+            fetchPages();
+        }
 
         // Add event listeners for both storage and custom login events
         window.addEventListener('storage', handleStorageChange);
@@ -39,7 +48,7 @@ const Navbar: React.FC = () => {
             window.removeEventListener('storage', handleStorageChange);
             window.removeEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
         };
-    }, []);
+    }, [navigationPages]);
 
     // Handle localStorage changes
     const handleStorageChange = (event: StorageEvent) => {
@@ -52,7 +61,7 @@ const Navbar: React.FC = () => {
     const handleLoginStateChange = (event: CustomEvent<User | null>) => {
         const userData = event.detail;
         setIsLoggedIn(!!userData);
-        setIsAdmin(userData?.isAdmin === true);
+        setIsAdmin(userData?.isAdmin === true || userData?.userType === 'Admin');
     };
     
     const fetchPages = async () => {
@@ -128,21 +137,17 @@ const Navbar: React.FC = () => {
                         key={page.id} 
                         to={`/${page.slug || ''}`} 
                         className="navbar-item"
-                        onClick={(e) => {
-                            if (!page.slug) {
-                                e.preventDefault();
-                                console.error('Invalid slug for page:', page);
-                            } else {
-                                handleMenuItemClick();
-                            }
-                        }}
+                        onClick={handleMenuItemClick}
                     >
                         {page.title}
                     </Link>
                 ))}
                 
                 {isAdmin && (
-                    <Link to="/admin" className="navbar-item" onClick={handleMenuItemClick}>Admin</Link>
+                    <>
+                        <Link to="/admin" className="navbar-item" onClick={handleMenuItemClick}>Admin</Link>
+                        <Link to="/page-management" className="navbar-item" onClick={handleMenuItemClick}>Pages</Link>
+                    </>
                 )}
                 {isLoggedIn ? (
                     <>

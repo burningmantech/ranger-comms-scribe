@@ -22,6 +22,8 @@
   --text-light: #f5f0eb;        /* Light cream for text on dark backgrounds */
 }
 
+/* Page Management specific styles */
+
 .page-management {
   max-width: 1200px;
   margin: 0 auto;
@@ -40,7 +42,12 @@
   color: var(--text-dark);
 }
 
+/* Update create page button to use common styles */
 .create-page-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 10px 15px;
   background-color: var(--accent-gold);
   color: var(--text-dark);
@@ -88,7 +95,12 @@
   gap: 10px;
 }
 
-.action-button {
+/* Update action buttons to support icons */
+.page-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 8px 12px;
   border: none;
   border-radius: 4px;
@@ -179,10 +191,13 @@
   margin-top: 20px;
 }
 
-.save-button {
+/* Update form buttons to support icons */
+.form-buttons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 10px 20px;
-  background-color: var(--accent-gold);
-  color: var(--text-dark);
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -190,17 +205,18 @@
   transition: background-color 0.3s;
 }
 
+.save-button {
+  background-color: var(--accent-gold);
+  color: var(--text-dark);
+}
+
 .save-button:hover {
   background-color: var(--accent-gold-hover);
 }
 
 .cancel-button {
-  padding: 10px 20px;
   background-color: var(--text-medium);
   color: var(--text-light);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
   transition: opacity 0.3s;
 }
 
@@ -260,7 +276,7 @@
   margin-bottom: 15px;
 }
 
-/* Modal */
+/* Delete confirmation modal */
 .delete-modal-overlay {
   position: fixed;
   top: 0;
@@ -297,6 +313,14 @@
   gap: 10px;
 }
 
+/* Update modal buttons to support icons */
+.delete-modal-buttons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .page-management-header {
@@ -319,13 +343,24 @@
     width: 100%;
     justify-content: space-between;
   }
+  
+  /* Show icon-only buttons on mobile */
+  .page-actions .btn-text {
+    display: none;
+  }
+  
+  .page-actions button {
+    padding: 8px;
+    width: 32px;
+    height: 32px;
+    min-width: 0;
+  }
 
   .form-buttons {
     flex-direction: column;
   }
 
-  .save-button,
-  .cancel-button {
+  .form-buttons button {
     width: 100%;
   }
 }

@@ -87,7 +87,16 @@
 .settings-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
   margin-top: 20px;
+}
+
+/* Update buttons with icon support */
+.settings-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .save-settings-button {
@@ -198,12 +207,15 @@
     padding: 15px;
   }
   
+  .settings-card {
+    padding: 20px;
+  }
+  
   .settings-actions {
     flex-direction: column;
   }
   
-  .save-settings-button,
-  .cancel-button {
+  .settings-actions button {
     width: 100%;
   }
 }

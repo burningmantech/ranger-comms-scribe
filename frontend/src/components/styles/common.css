@@ -1,5 +1,8 @@
 /* Common Button and Control Styles for Classy Lounge Theme */
 
+/* Import icon font for buttons */
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css');
+
 /* Base button styles that will be consistent across all buttons */
 .btn {
   display: inline-flex;
@@ -87,6 +90,33 @@
 /* Button with icon */
 .btn-with-icon {
   gap: 6px;
+}
+
+/* Icon buttons for delete/remove/edit operations */
+.btn-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.25rem;
+  min-height: 32px;
+}
+
+.btn-icon-sm {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.btn-icon-lg {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  font-size: 18px;
 }
 
 /* Button groups for alignment */
@@ -487,4 +517,91 @@
   gap: 10px;
   padding-top: 15px;
   border-top: 1px solid #eee;
+}
+
+/* Unified buttons for gallery and other components */
+.edit-button {
+  padding: 5px 10px;
+  background-color: var(--accent-teal);
+  color: var(--text-light);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background-color 0.3s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.edit-button:hover {
+  background-color: var(--accent-teal-hover);
+}
+
+.delete-button {
+  padding: 5px 10px;
+  background-color: var(--danger);
+  color: var(--text-light);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background-color 0.3s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.delete-button:hover {
+  background-color: var(--danger-hover);
+}
+
+/* Icon-only versions of edit and delete buttons */
+.edit-button.icon-only, 
+.delete-button.icon-only {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  padding: 0;
+  min-height: 32px;
+}
+
+.edit-button.icon-only.sm, 
+.delete-button.icon-only.sm {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  font-size: 12px;
+}
+
+/* Confirmation dialog styles for delete operations */
+.confirmation-dialog {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1100;
+}
+
+.confirmation-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+}
+
+.confirmation-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
 }

@@ -22,11 +22,12 @@
   --text-light: #f5f0eb;        /* Light cream for text on dark backgrounds */
 }
 
+/* Admin specific styles */
+
 .admin-dashboard {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
-  font-family: Arial, sans-serif;
 }
 
 .admin-dashboard h1 {
@@ -82,36 +83,6 @@
   gap: 10px;
 }
 
-.admin-actions .home-button {
-  background-color: var(--accent-gold);
-  color: var(--text-dark);
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-block;
-  transition: background-color 0.3s;
-}
-
-.admin-actions .home-button:hover {
-  background-color: var(--accent-gold-hover);
-}
-
-.admin-actions .logout-button {
-  background-color: var(--danger);
-  color: var(--text-light);
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-
-.admin-actions .logout-button:hover {
-  background-color: var(--danger-hover);
-}
-
 .admin-section {
   background-color: white;
   border-radius: 8px;
@@ -144,6 +115,7 @@
   background-color: #f9f9f9;
 }
 
+/* Button groups and actions */
 .action-buttons {
   display: flex;
   gap: 8px;
@@ -151,149 +123,13 @@
   flex-wrap: wrap;
 }
 
-/* Common admin button styles - ensuring consistency across all admin pages */
-.admin-button,
-.approve-button,
-.create-button,
-.edit-button,
-.delete-button,
-.email-button,
-.send-button,
-.cancel-button,
+/* Admin button styles with icons */
 .remove-button,
-.save-button,
-.add-row-button,
-.submit-button {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  margin-right: 5px;
-  height: 36px;
-  min-width: 90px;
-  line-height: 20px;
+.admin-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.3s;
-  white-space: nowrap;
-}
-
-/* Button colors */
-.approve-button {
-  background-color: var(--accent-teal);
-  color: var(--text-light);
-}
-
-.approve-button:hover {
-  background-color: var(--accent-teal-hover);
-}
-
-.create-button {
-  background-color: var(--accent-gold);
-  color: var(--text-dark);
-  font-weight: 500;
-}
-
-.create-button:hover {
-  background-color: var(--accent-gold-hover);
-}
-
-.edit-button {
-  background-color: var(--accent-teal);
-  color: var(--text-light);
-}
-
-.edit-button:hover {
-  background-color: var(--accent-teal-hover);
-}
-
-.delete-button,
-.remove-button {
-  background-color: var(--danger);
-  color: var(--text-light);
-}
-
-.delete-button:hover,
-.remove-button:hover {
-  background-color: var(--danger-hover);
-}
-
-.remove-button {
-  background-color: var(--danger);
-  color: var(--text-light);
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  min-height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 0.3s;
-}
-
-.email-button {
-  background-color: var(--accent-wine);
-  color: var(--text-light);
-}
-
-.email-button:hover {
-  background-color: var(--accent-wine-hover);
-}
-
-.cancel-button {
-  background-color: var(--text-medium);
-  color: var(--text-light);
-}
-
-.cancel-button:hover {
-  opacity: 0.9;
-}
-
-/* Admin action button alignment */
-.action-buttons {
-  display: flex;
   gap: 5px;
-  align-items: center;
-  flex-wrap: nowrap;
-}
-
-/* Page actions alignment */
-.page-actions {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  flex-wrap: nowrap;
-}
-
-/* Group actions alignment */
-.group-actions {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  flex-wrap: wrap;
-  width: 100%;
-  justify-content: flex-end;
-  margin-top: 5px;
-}
-
-/* Button disabled state */
-button:disabled {
-  background-color: #cccccc;
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
-/* Remove redundant button styling */
-.approve-button,
-.admin-button,
-.create-button,
-.remove-button,
-.edit-button {
-  margin-right: 5px;
 }
 
 .user-type-select {
@@ -309,36 +145,6 @@ button:disabled {
   border-radius: 8px;
   margin-bottom: 30px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.create-group-form h3 {
-  margin-top: 0;
-  color: var(--text-dark);
-}
-
-.form-group {
-  margin-bottom: 15px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 5px;
-  font-weight: bold;
-  color: var(--text-dark);
-}
-
-.form-group input,
-.form-group textarea {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
-}
-
-.form-group textarea {
-  min-height: 100px;
-  resize: vertical;
 }
 
 .groups-container {
@@ -404,33 +210,6 @@ button:disabled {
   align-items: center;
 }
 
-.add-member-form {
-  margin-top: 20px;
-}
-
-.add-member-form h5 {
-  margin-bottom: 10px;
-  color: var(--text-medium);
-}
-
-.add-member-form select {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
-}
-
-.error {
-  color: var(--danger);
-  padding: 15px;
-  margin-bottom: 20px;
-  background-color: #fae3e3;
-  border-radius: 4px;
-  text-align: center;
-  border-left: 4px solid var(--danger);
-}
-
 /* Email dialog */
 .email-dialog-overlay {
   position: fixed;
@@ -464,23 +243,6 @@ button:disabled {
   border-bottom: 1px solid #eee;
 }
 
-.email-dialog-header h3 {
-  margin: 0;
-  color: var(--text-dark);
-}
-
-.close-button {
-  background: none;
-  border: none;
-  font-size: 24px;
-  cursor: pointer;
-  color: #666;
-}
-
-.close-button:hover {
-  color: var(--text-dark);
-}
-
 .email-dialog-content {
   padding: 20px;
   overflow-y: auto;
@@ -495,16 +257,6 @@ button:disabled {
   gap: 10px;
 }
 
-.success-message {
-  color: #28a745;
-  padding: 15px;
-  margin-bottom: 20px;
-  background-color: #e3faed;
-  border-radius: 4px;
-  text-align: center;
-  border-left: 4px solid #28a745;
-}
-
 /* Bulk Add Users styles */
 .bulk-add-form {
   background-color: white;
@@ -512,11 +264,6 @@ button:disabled {
   padding: 20px;
   margin-bottom: 30px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.bulk-add-form p {
-  margin-bottom: 20px;
-  color: var(--text-medium);
 }
 
 .bulk-users-table {
@@ -541,70 +288,6 @@ button:disabled {
   background-color: var(--primary-light);
   font-weight: bold;
   color: var(--text-dark);
-}
-
-.bulk-users-table input[type="text"],
-.bulk-users-table input[type="email"] {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
-}
-
-/* Standardize checkbox alignment */
-.approve-checkbox {
-  text-align: center;
-  vertical-align: middle;
-}
-
-.approve-checkbox input[type="checkbox"] {
-  margin: 0 auto;
-  display: block;
-  width: 18px;
-  height: 18px;
-}
-
-.bulk-add-actions {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 20px;
-}
-
-.add-row-button {
-  background-color: var(--accent-teal);
-  color: var(--text-light);
-  border: none;
-  padding: 10px 15px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: background-color 0.3s;
-}
-
-.add-row-button:hover {
-  background-color: var(--accent-teal-hover);
-}
-
-.submit-button {
-  background-color: var(--accent-gold);
-  color: var(--text-dark);
-  border: none;
-  padding: 10px 20px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition: background-color 0.3s;
-}
-
-.submit-button:hover {
-  background-color: var(--accent-gold-hover);
-}
-
-.submit-button:disabled {
-  background-color: #cccccc;
-  cursor: not-allowed;
 }
 
 /* User name editing styles */
@@ -638,55 +321,6 @@ button:disabled {
   justify-content: center;
   font-size: 16px;
   padding: 0;
-}
-
-.user-name {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
-  transition: background-color 0.2s;
-}
-
-.user-name:hover {
-  background-color: #f0f0f0;
-}
-
-.user-name span {
-  margin-right: 8px;
-}
-
-.edit-name-button {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--accent-teal);
-  padding: 2px 4px;
-  opacity: 0.5;
-  transition: opacity 0.2s;
-}
-
-.user-name:hover .edit-name-button {
-  opacity: 1;
-}
-
-/* Mobile styling for editable user names */
-@media (max-width: 768px) {
-  .editable-name {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .editable-name input {
-    margin-right: 0;
-    margin-bottom: 8px;
-  }
-  
-  .editable-actions {
-    justify-content: flex-end;
-  }
 }
 
 /* Mobile responsiveness for admin dashboard */
@@ -738,64 +372,16 @@ button:disabled {
     gap: 5px;
   }
 
-  .action-buttons select,
+  /* Button text on mobile */
+  .action-buttons .btn-text {
+    display: none;
+  }
+  
+  /* Always use icon buttons on mobile */
   .action-buttons button {
-    width: 100%;
-    margin-right: 0;
-  }
-
-  /* Group cards responsive styles */
-  .groups-container {
-    grid-template-columns: 1fr;
-  }
-
-  .group-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .group-actions {
-    margin-top: 10px;
-    width: 100%;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-
-  .group-actions button {
-    width: 100%;
-  }
-
-  /* Email dialog responsive styles */
-  .email-dialog {
-    width: 95%;
-    max-height: 80vh;
-  }
-
-  /* Bulk add users responsive styles */
-  .bulk-users-table {
-    overflow-x: auto;
-  }
-
-  .bulk-users-table table {
-    min-width: 500px;
-  }
-
-  .bulk-add-actions {
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .bulk-add-actions button {
-    width: 100%;
-  }
-
-  /* Email dialog footer responsive */
-  .email-dialog-footer {
-    flex-direction: column;
-  }
-
-  .email-dialog-footer button {
-    width: 100%;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    padding: 0;
   }
 }

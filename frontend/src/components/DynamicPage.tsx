@@ -3,13 +3,21 @@ import { API_URL } from '../config';
 import { Page, User } from '../types';
 import { Editor, EditorState, RichUtils, convertToRaw, convertFromRaw, DraftHandleValue, Modifier } from 'draft-js';
 import { stateToHTML } from 'draft-js-export-html';
+import { useParams, useNavigate } from 'react-router-dom';
 
 interface DynamicPageProps {
-  slug: string;
+  slug?: string;
   skipNavbar?: boolean;
 }
 
-const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
+const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar }) => {
+  // Get slug from URL params if not provided as prop
+  const { slug: urlSlug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
+  
+  // Use the prop slug if provided, otherwise use the URL slug
+  const slug = propSlug || urlSlug;
+  
   const [page, setPage] = useState<Page | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +80,7 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
     return stateToHTML(state.getCurrentContent(), options);
   };
 
+  // Editor functions
   const handleKeyCommand = (command: string, state: EditorState): DraftHandleValue => {
     const newState = RichUtils.handleKeyCommand(state, command);
     if (newState) {
@@ -80,15 +89,19 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
     }
     return 'not-handled';
   };
+  
   const onTab = (e: React.KeyboardEvent) => {
     setEditorState(RichUtils.onTab(e, editorState, 4));
   };
+  
   const toggleBlockType = (blockType: string) => {
     setEditorState(RichUtils.toggleBlockType(editorState, blockType));
   };
+  
   const toggleInlineStyle = (inlineStyle: string) => {
     setEditorState(RichUtils.toggleInlineStyle(editorState, inlineStyle));
   };
+  
   const promptForLink = () => {
     const selection = editorState.getSelection();
     const url = window.prompt('Enter a URL');
@@ -132,8 +145,11 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
         const data = await res.json();
         setGalleryImages(data.filter((img: any) => img.fileType && img.fileType.startsWith('image/')));
       }
-    } catch {}
+    } catch(err) {
+      console.error('Error fetching gallery images:', err);
+    }
   };
+  
   const closeGalleryModal = () => setShowGalleryModal(false);
 
   const handleGalleryImageSelect = (img: any) => {
@@ -142,15 +158,8 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
     setShowGalleryModal(false);
   };
 
+  // Handle image click for full-size view
   useEffect(() => {
-    fetchPage();
-    const userJson = localStorage.getItem('user');
-    if (userJson) {
-      try {
-        setUser(JSON.parse(userJson));
-      } catch {}
-    }
-
     const handleImageClick = (event: any) => {
       const target = event.target;
       if (target.tagName === 'IMG' && target.dataset.fullSrc) {
@@ -164,31 +173,66 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
     return () => {
       document.removeEventListener('click', handleImageClick);
     };
-  }, [slug]);
+  }, []);
 
+  // Load user data and check permissions
+  useEffect(() => {
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      try {
+        setUser(JSON.parse(userJson));
+      } catch(err) {
+        console.error('Error parsing user data:', err);
+      }
+    }
+  }, []);
+
+  // Fetch page based on slug
+  useEffect(() => {
+    if (slug) {
+      fetchPage(slug);
+    } else if (urlSlug) {
+      fetchPage(urlSlug);
+    }
+  }, [slug, urlSlug]);
+
+  // Set up editor when page data changes
   useEffect(() => {
     if (page && page.content && !isEditing) {
       setEditorState(getEditorStateFromRaw(page.content));
     }
   }, [page, isEditing]);
 
-  const fetchPage = async () => {
+  const fetchPage = async (pageSlug: string) => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/page/${slug}`);
+      setError(null); // Clear previous errors
+      
+      const response = await fetch(`${API_URL}/page/${pageSlug}`);
       
       if (!response.ok) {
-        throw new Error('Failed to fetch page');
+        if (response.status === 404) {
+          setError(`Page "${pageSlug}" not found`);
+        } else {
+          setError('Failed to fetch page');
+        }
+        setLoading(false);
+        return;
       }
       
       const data = await response.json();
       setPage(data);
-      setLoading(false);
     } catch (err) {
-      console.error(`Error fetching page ${slug}:`, err);
+      console.error(`Error fetching page ${pageSlug}:`, err);
       setError('Error loading page');
+    } finally {
       setLoading(false);
     }
+  };
+
+  const handleEnterEditMode = (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent default navigation
+    setIsEditing(true);
   };
 
   const canEdit = user && (user.isAdmin || user.userType === 'Admin' || user.userType === 'Lead');
@@ -205,6 +249,16 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
     return (
       <div className="dynamic-page">
         <div className="error">{error || 'Page not found'}</div>
+        {canEdit && (
+          <div className="mt-2">
+            <button 
+              onClick={() => navigate('/page-management')}
+              className="btn btn-primary"
+            >
+              Go to Page Management
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -257,12 +311,15 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
                       title: page.title,
                       slug: page.slug,
                       content: getRawContent(editorState),
+                      published: page.published,
+                      showInNavigation: page.showInNavigation
                     }),
                   });
                   if (!response.ok) throw new Error('Failed to save page');
                   setIsEditing(false);
-                  fetchPage();
+                  fetchPage(page.slug);
                 } catch (err) {
+                  console.error('Error saving page:', err);
                   setError('Failed to save page');
                 } finally {
                   setLoading(false);
@@ -270,13 +327,13 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
               }}
               className="btn btn-tertiary"
             >
-              Save
+              <i className="fas fa-save"></i> Save
             </button>
             <button 
               onClick={() => setIsEditing(false)}
               className="btn btn-danger"
             >
-              Cancel
+              <i className="fas fa-times"></i> Cancel
             </button>
           </div>
           {showGalleryModal && (
@@ -288,9 +345,13 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
                 </div>
                 <div className="modal-body">
                   <div style={{display: 'flex', flexWrap: 'wrap', gap: 10, maxHeight: 300, overflowY: 'auto'}}>
-                    {galleryImages.map(img => (
-                      <img key={img.id} src={img.thumbnailUrl || img.url} alt={img.fileName} style={{width: 100, height: 100, objectFit: 'cover', cursor: 'pointer', border: '2px solid #eee'}} onClick={() => handleGalleryImageSelect(img)} />
-                    ))}
+                    {galleryImages.length > 0 ? (
+                      galleryImages.map(img => (
+                        <img key={img.id} src={img.thumbnailUrl || img.url} alt={img.fileName} style={{width: 100, height: 100, objectFit: 'cover', cursor: 'pointer', border: '2px solid #eee'}} onClick={() => handleGalleryImageSelect(img)} />
+                      ))
+                    ) : (
+                      <p>No images found in gallery.</p>
+                    )}
                   </div>
                 </div>
                 <div className="modal-footer">
@@ -305,10 +366,10 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug, skipNavbar }) => {
           <div dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(getEditorStateFromRaw(page.content)) }} />
           {canEdit && (
             <button 
-              onClick={() => setIsEditing(true)}
+              onClick={handleEnterEditMode}
               className="btn btn-primary mt-2"
             >
-              Edit Page
+              <i className="fas fa-edit"></i> Edit Page
             </button>
           )}
         </>
