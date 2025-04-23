@@ -16,6 +16,7 @@ interface Page {
   isHome?: boolean;
   isPublic?: boolean;
   published?: boolean;
+  showInNavigation?: boolean;
 }
 
 const PageManagement: React.FC = () => {
@@ -399,6 +400,7 @@ const PageManagement: React.FC = () => {
                     <div className="control-cell">Home</div>
                     <div className="control-cell">Public</div>
                     <div className="control-cell">Published</div>
+                    <div className="control-cell">Navbar</div>
                     <div className="control-cell actions">Actions</div>
                   </div>
                 </div>
@@ -435,6 +437,14 @@ const PageManagement: React.FC = () => {
                           checked={page.published === true}
                           onChange={() => handleTogglePageSetting(page.id, 'published', !page.published)}
                           title={page.published ? "Page is published" : "Page is unpublished"}
+                        />
+                      </div>
+                      <div className="control-cell">
+                        <input 
+                          type="checkbox"
+                          checked={page.showInNavigation === true}
+                          onChange={() => handleTogglePageSetting(page.id, 'showInNavigation', !page.showInNavigation)}
+                          title={page.showInNavigation ? "Page is shown in navigation" : "Page is hidden from navigation"}
                         />
                       </div>
                       <div className="control-cell actions">
