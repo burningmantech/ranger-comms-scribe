@@ -622,7 +622,7 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
     try {
       setBulkAddStatus('Adding users...');
       
-      const response = await fetch(`${API_URL}/admin/bulk-add-users`, {
+      const response = await fetch(`${API_URL}/admin/bulk-create-users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
