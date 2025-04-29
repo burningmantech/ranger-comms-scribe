@@ -1,0 +1,59 @@
+.table-controls-plugin {
+  position: absolute;
+  z-index: 10;
+}
+
+.table-controls-menu {
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.table-controls-section {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+
+.table-controls-section:not(:last-child) {
+  border-bottom: 1px solid #eee;
+}
+
+.table-control-button {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.table-control-button:hover {
+  background: #e0e0e0;
+}
+
+.table-control-button.delete-table {
+  background-color: #fff0f0;
+  border-color: #ffcccc;
+}
+
+.table-control-button.delete-table:hover {
+  background-color: #ffebeb;
+}
+
+.table-controls-section.delete-table {
+  margin-top: 4px;
+  border-top: 1px solid #eee;
+  padding-top: 4px;
+  border-bottom: none;
+}

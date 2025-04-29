@@ -1,0 +1,34 @@
+/* Indentation styles for Lexical Editor */
+
+/* Base indentation classes */
+.indent-level-1 {
+  margin-left: 20px !important;
+}
+
+.indent-level-2 {
+  margin-left: 40px !important;
+}
+
+.indent-level-3 {
+  margin-left: 60px !important;
+}
+
+.indent-level-4 {
+  margin-left: 80px !important;
+}
+
+.indent-level-5 {
+  margin-left: 100px !important;
+}
+
+.indent-level-6 {
+  margin-left: 120px !important;
+}
+
+.indent-level-7 {
+  margin-left: 140px !important;
+}
+
+.indent-level-8 {
+  margin-left: 160px !important;
+}

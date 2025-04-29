@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { API_URL } from '../config';
 import './PageManagement.css';
 
-// Rich text editor imports
-import { Editor, EditorState, RichUtils, convertToRaw, convertFromRaw, Modifier } from 'draft-js';
-import 'draft-js/dist/Draft.css';
+// Import Lexical Editor
+import LexicalEditorComponent from './editor/LexicalEditor';
+import { EditorState, LexicalEditor } from 'lexical';
+import { INSERT_IMAGE_COMMAND } from './editor/plugins/ImagePlugin';
+import { INDENT_COMMAND, OUTDENT_COMMAND } from './editor/plugins/IndentationPlugin';
 
 interface Page {
   id: string;
@@ -29,19 +31,46 @@ const PageManagement: React.FC = () => {
   const [slug, setSlug] = useState<string>('');
   const [isPublic, setIsPublic] = useState<boolean>(false);
   const [isHome, setIsHome] = useState<boolean>(false);
-  const [editorState, setEditorState] = useState(EditorState.createEmpty());
+
+  const [editorState, setEditorState] = useState<EditorState | null>(null);
+  const [editorInstance, setEditorInstance] = useState<LexicalEditor | null>(null);
+  const [contentAsJson, setContentAsJson] = useState('');
+
   const [showImageGallery, setShowImageGallery] = useState<boolean>(false);
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
   const [showInNavigation, setShowInNavigation] = useState<boolean>(true);
   const [published, setPublished] = useState<boolean>(true);
   const [parentPageId, setParentPageId] = useState<string>('');
-  
+
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchPages();
     fetchGalleryImages();
   }, []);
+
+  // Add key handler for indentation shortcuts
+  useEffect(() => {
+    // Add keyboard shortcuts for Cmd+[ and Cmd+] to control indentation
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!editorInstance) return;
+
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key === ']') {
+          e.preventDefault();
+          editorInstance.dispatchCommand(INDENT_COMMAND, undefined);
+        } else if (e.key === '[') {
+          e.preventDefault();
+          editorInstance.dispatchCommand(OUTDENT_COMMAND, undefined);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [editorInstance]);
 
   const fetchPages = async () => {
     const sessionId = localStorage.getItem('sessionId');
@@ -63,20 +92,15 @@ const PageManagement: React.FC = () => {
       }
 
       const data = await response.json();
-      // Check if the response is an array directly or has a pages property
       if (Array.isArray(data)) {
-        console.log('Received pages array directly:', data);
         setPages(data);
       } else if (data && Array.isArray(data.pages)) {
-        console.log('Received pages in data.pages:', data.pages);
         setPages(data.pages);
       } else {
-        console.error('Expected array of pages but got:', data);
         setPages([]);
       }
       setLoading(false);
     } catch (err) {
-      console.error('Error fetching pages:', err);
       setError('Error fetching pages');
       setPages([]);
       setLoading(false);
@@ -103,16 +127,20 @@ const PageManagement: React.FC = () => {
       }
 
       const data = await response.json();
-      // Add proper checks to ensure data is an array before mapping
       if (Array.isArray(data)) {
         setGalleryImages(data.map((img: any) => img.url || '').filter(Boolean));
       } else {
-        console.error('Expected array of media items but got:', data);
         setGalleryImages([]);
       }
     } catch (err) {
-      console.error('Error fetching gallery images:', err);
       setGalleryImages([]);
+    }
+  };
+
+  const handleEditorChange = (editor: LexicalEditor, json: string) => {
+    if (editor && json) {
+      setEditorInstance(editor);
+      setContentAsJson(json);
     }
   };
 
@@ -134,8 +162,7 @@ const PageManagement: React.FC = () => {
     }
 
     try {
-      // Convert the editor state to raw content
-      const content = JSON.stringify(convertToRaw(editorState.getCurrentContent()));
+      const content = contentAsJson;
 
       const response = await fetch(`${API_URL}/page`, {
         method: 'POST',
@@ -151,7 +178,7 @@ const PageManagement: React.FC = () => {
           isHome,
           showInNavigation,
           published,
-          parentPageId: parentPageId || undefined
+          parentPageId: parentPageId || undefined,
         }),
       });
 
@@ -160,19 +187,16 @@ const PageManagement: React.FC = () => {
         throw new Error(errorData.error || 'Failed to create page');
       }
 
-      // Clear form and show success message
       setTitle('');
       setSlug('');
       setIsPublic(false);
       setIsHome(false);
       setParentPageId('');
-      setEditorState(EditorState.createEmpty());
+      setEditorState(null);
       setSuccess('Page created successfully');
-      
-      // Refresh pages list
+
       fetchPages();
-      
-      // Clear success message after 3 seconds
+
       setTimeout(() => {
         setSuccess(null);
       }, 3000);
@@ -204,10 +228,9 @@ const PageManagement: React.FC = () => {
         throw new Error('Failed to delete page');
       }
 
-      // Remove deleted page from state
       setPages(pages.filter(page => page.id !== pageId));
       setSuccess('Page deleted successfully');
-      
+
       setTimeout(() => {
         setSuccess(null);
       }, 3000);
@@ -235,14 +258,13 @@ const PageManagement: React.FC = () => {
         throw new Error('Failed to set home page');
       }
 
-      // Update pages list to reflect the new home page
       setPages(pages.map(page => ({
         ...page,
         isHome: page.id === pageId,
       })));
-      
+
       setSuccess('Home page updated successfully');
-      
+
       setTimeout(() => {
         setSuccess(null);
       }, 3000);
@@ -259,7 +281,6 @@ const PageManagement: React.FC = () => {
     }
 
     try {
-      // Find the current page to get all its current properties
       const currentPage = pages.find(page => page.id === pageId);
       if (!currentPage) {
         setError(`Could not find page with ID ${pageId}`);
@@ -267,15 +288,14 @@ const PageManagement: React.FC = () => {
       }
 
       setLoading(true);
-      
-      // Use PUT request which is supported by the backend
+
       const response = await fetch(`${API_URL}/page/${pageId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionId}`,
         },
-        body: JSON.stringify({ [setting]: value })
+        body: JSON.stringify({ [setting]: value }),
       });
 
       if (!response.ok) {
@@ -283,23 +303,18 @@ const PageManagement: React.FC = () => {
         throw new Error(errorData.error || `Failed to update page ${setting}`);
       }
 
-      // Show success message
       setSuccess(`Successfully updated page ${setting}`);
-      
-      // Update the page setting in the state
-      setPages(pages.map(page => 
+
+      setPages(pages.map(page =>
         page.id === pageId ? { ...page, [setting]: value } : page
       ));
 
-      // Clear success message after 3 seconds
       setTimeout(() => {
         setSuccess(null);
       }, 3000);
     } catch (err) {
-      console.error(`Error updating page ${setting}:`, err);
       setError(`Error updating page: ${(err as Error).message}`);
-      
-      // Clear error message after 5 seconds
+
       setTimeout(() => {
         setError(null);
       }, 5000);
@@ -317,15 +332,14 @@ const PageManagement: React.FC = () => {
 
     try {
       setLoading(true);
-      
-      // Use PUT request to update the parentPageId
+
       const response = await fetch(`${API_URL}/page/${pageId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionId}`,
         },
-        body: JSON.stringify({ parentPageId })
+        body: JSON.stringify({ parentPageId }),
       });
 
       if (!response.ok) {
@@ -333,23 +347,18 @@ const PageManagement: React.FC = () => {
         throw new Error(errorData.error || 'Failed to update parent page');
       }
 
-      // Show success message
       setSuccess('Successfully updated parent page');
-      
-      // Update the page parentPageId in the state
-      setPages(pages.map(page => 
+
+      setPages(pages.map(page =>
         page.id === pageId ? { ...page, parentPageId: parentPageId || undefined } : page
       ));
 
-      // Clear success message after 3 seconds
       setTimeout(() => {
         setSuccess(null);
       }, 3000);
     } catch (err) {
-      console.error('Error updating parent page:', err);
       setError(`Error updating parent page: ${(err as Error).message}`);
-      
-      // Clear error message after 5 seconds
+
       setTimeout(() => {
         setError(null);
       }, 5000);
@@ -359,12 +368,11 @@ const PageManagement: React.FC = () => {
   };
 
   const handleSlugChange = (value: string) => {
-    // Convert to lowercase and replace spaces with hyphens
     const formattedSlug = value
       .toLowerCase()
-      .replace(/\s+/g, '-') // Replace spaces with hyphens
-      .replace(/[^a-z0-9-]/g, ''); // Remove special characters
-    
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
+
     setSlug(formattedSlug);
   };
 
@@ -372,60 +380,17 @@ const PageManagement: React.FC = () => {
     handleSlugChange(title);
   };
 
-  // Rich text editor functions
-  const handleEditorChange = (state: EditorState) => {
-    setEditorState(state);
-  };
-
-  const handleKeyCommand = (command: string, editorState: EditorState) => {
-    const newState = RichUtils.handleKeyCommand(editorState, command);
-    if (newState) {
-      handleEditorChange(newState);
-      return 'handled';
+  const handleImageSelect = (imageUrl: string) => {
+    if (editorInstance) {
+      editorInstance.dispatchCommand(INSERT_IMAGE_COMMAND, {
+        src: imageUrl,
+        altText: 'Gallery image',
+        fullSizeSrc: imageUrl,
+      });
+      setShowImageGallery(false);
     }
-    return 'not-handled';
   };
 
-  const toggleInlineStyle = (style: string) => {
-    handleEditorChange(
-      RichUtils.toggleInlineStyle(editorState, style)
-    );
-  };
-
-  const toggleBlockType = (blockType: string) => {
-    handleEditorChange(
-      RichUtils.toggleBlockType(editorState, blockType)
-    );
-  };
-
-  const insertImage = (imageUrl: string) => {
-    // For this simplified version, we'll just add the URL as text
-    // In a real implementation, you'd use an entity or custom block
-    const currentContent = editorState.getCurrentContent();
-    const selection = editorState.getSelection();
-    const contentWithEntity = currentContent.createEntity(
-      'IMAGE',
-      'IMMUTABLE',
-      { src: imageUrl }
-    );
-    const entityKey = contentWithEntity.getLastCreatedEntityKey();
-    const textWithEntity = Modifier.insertText(
-      contentWithEntity,
-      selection,
-      `![Image](${imageUrl})`,
-      undefined,
-      entityKey
-    );
-    const newEditorState = EditorState.push(
-      editorState,
-      textWithEntity,
-      'insert-characters'
-    );
-    setEditorState(newEditorState);
-    setShowImageGallery(false);
-  };
-
-  // Helper function to check if a page is an ancestor of another page
   const pageHasAncestor = (pages: Page[], page: Page, ancestorId: string): boolean => {
     if (!page.parentPageId) return false;
     if (page.parentPageId === ancestorId) return true;
@@ -440,10 +405,10 @@ const PageManagement: React.FC = () => {
   return (
     <div className="page-management">
       <h2>Page Management</h2>
-      
+
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
-      
+
       <div className="page-management-sections">
         <div className="existing-pages card">
           <div className="card-header">
@@ -468,8 +433,8 @@ const PageManagement: React.FC = () => {
                   </div>
                 </div>
                 {pages.map(page => (
-                  <div 
-                    key={page.id} 
+                  <div
+                    key={page.id}
                     className={`page-item ${page.isHome ? 'home-page-item' : ''}`}
                   >
                     <div className="page-info">
@@ -478,24 +443,24 @@ const PageManagement: React.FC = () => {
                     </div>
                     <div className="page-controls">
                       <div className="control-cell">
-                        <input 
-                          type="radio" 
-                          name="homePage" 
+                        <input
+                          type="radio"
+                          name="homePage"
                           checked={page.isHome === true}
                           onChange={() => handleMakeHomePage(page.id)}
                           title="Set as home page"
                         />
                       </div>
                       <div className="control-cell">
-                        <input 
-                          type="checkbox" 
+                        <input
+                          type="checkbox"
                           checked={page.isPublic === true}
                           onChange={() => handleTogglePageSetting(page.id, 'isPublic', !page.isPublic)}
                           title={page.isPublic ? "Page is public" : "Page is private (logged-in only)"}
                         />
                       </div>
                       <div className="control-cell">
-                        <input 
+                        <input
                           type="checkbox"
                           checked={page.published === true}
                           onChange={() => handleTogglePageSetting(page.id, 'published', !page.published)}
@@ -503,7 +468,7 @@ const PageManagement: React.FC = () => {
                         />
                       </div>
                       <div className="control-cell">
-                        <input 
+                        <input
                           type="checkbox"
                           checked={page.showInNavigation === true}
                           onChange={() => handleTogglePageSetting(page.id, 'showInNavigation', !page.showInNavigation)}
@@ -529,14 +494,14 @@ const PageManagement: React.FC = () => {
                         </select>
                       </div>
                       <div className="control-cell actions">
-                        <button 
+                        <button
                           onClick={() => navigate(`/${page.slug}`)}
                           className="btn btn-secondary btn-sm"
                           title="Edit page"
                         >
                           Edit
                         </button>
-                        <button 
+                        <button
                           onClick={() => handleDeletePage(page.id)}
                           className="btn btn-danger btn-sm"
                           title="Delete page"
@@ -551,7 +516,7 @@ const PageManagement: React.FC = () => {
             )}
           </div>
         </div>
-        
+
         <div className="create-page-form card">
           <div className="card-header">
             <h3>Create New Page</h3>
@@ -559,33 +524,31 @@ const PageManagement: React.FC = () => {
           <div className="card-body">
             <div className="form-group">
               <label htmlFor="title">Title:</label>
-              <input 
-                type="text" 
-                id="title" 
+              <input
+                type="text"
+                id="title"
                 className="form-control"
                 value={title}
                 onChange={(e) => {
                   setTitle(e.target.value);
-                  // Optionally auto-generate slug if user wants
-                  // generateSlugFromTitle();
                 }}
                 placeholder="Enter page title"
               />
             </div>
-            
+
             <div className="form-group">
               <label htmlFor="slug">Slug:</label>
               <div className="d-flex gap-1 align-items-center">
-                <input 
-                  type="text" 
-                  id="slug" 
+                <input
+                  type="text"
+                  id="slug"
                   className="form-control"
                   value={slug}
                   onChange={(e) => handleSlugChange(e.target.value)}
                   placeholder="enter-page-slug"
                 />
-                <button 
-                  onClick={generateSlugFromTitle} 
+                <button
+                  onClick={generateSlugFromTitle}
                   className="btn btn-tertiary"
                   type="button"
                 >
@@ -594,90 +557,25 @@ const PageManagement: React.FC = () => {
               </div>
               <small>The slug will be used in the URL: /page/your-slug</small>
             </div>
-            
+
             <div className="form-group">
               <label>Page Content:</label>
               <div className="rich-editor-container">
-                <div className="editor-toolbar">
-                  <button 
-                    className={`btn btn-sm ${editorState.getCurrentInlineStyle().has('BOLD') ? 'btn-tertiary' : 'btn-neutral'}`}
-                    onClick={() => toggleInlineStyle('BOLD')}
-                    title="Bold"
-                  >
-                    B
-                  </button>
-                  <button 
-                    className={`btn btn-sm ${editorState.getCurrentInlineStyle().has('ITALIC') ? 'btn-tertiary' : 'btn-neutral'}`}
-                    onClick={() => toggleInlineStyle('ITALIC')}
-                    title="Italic"
-                  >
-                    I
-                  </button>
-                  <button 
-                    className={`btn btn-sm ${editorState.getCurrentInlineStyle().has('UNDERLINE') ? 'btn-tertiary' : 'btn-neutral'}`}
-                    onClick={() => toggleInlineStyle('UNDERLINE')}
-                    title="Underline"
-                  >
-                    U
-                  </button>
-                  <button 
-                    className="btn btn-sm btn-neutral"
-                    onClick={() => toggleBlockType('header-one')}
-                    title="Heading 1"
-                  >
-                    H1
-                  </button>
-                  <button 
-                    className="btn btn-sm btn-neutral"
-                    onClick={() => toggleBlockType('header-two')}
-                    title="Heading 2"
-                  >
-                    H2
-                  </button>
-                  <button 
-                    className="btn btn-sm btn-neutral"
-                    onClick={() => toggleBlockType('header-three')}
-                    title="Heading 3"
-                  >
-                    H3
-                  </button>
-                  <button 
-                    className="btn btn-sm btn-neutral"
-                    onClick={() => toggleBlockType('unordered-list-item')}
-                    title="Bullet List"
-                  >
-                    • List
-                  </button>
-                  <button 
-                    className="btn btn-sm btn-neutral"
-                    onClick={() => toggleBlockType('ordered-list-item')}
-                    title="Numbered List"
-                  >
-                    1. List
-                  </button>
-                  <button 
-                    className="btn btn-sm btn-tertiary"
-                    onClick={() => setShowImageGallery(true)}
-                    title="Insert Image"
-                  >
-                    🖼️ Image
-                  </button>
-                </div>
-                <div className="editor-content">
-                  <Editor 
-                    editorState={editorState}
-                    onChange={handleEditorChange}
-                    handleKeyCommand={handleKeyCommand}
-                    placeholder="Write your page content here..."
-                  />
-                </div>
+                <LexicalEditorComponent
+                  initialContent=""
+                  onChange={handleEditorChange}
+                  showToolbar={true}
+                  placeholder="Write your page content here..."
+                  onImageSelect={() => setShowImageGallery(true)}
+                  galleryImages={galleryImages}
+                />
               </div>
             </div>
-            
+
             <div className="form-group">
               <label htmlFor="parentPage">Parent Page:</label>
-              <select 
-                id="parentPage" 
+              <select
+                id="parentPage"
                 className="form-control"
                 value={parentPageId}
                 onChange={(e) => setParentPageId(e.target.value)}
@@ -699,8 +597,8 @@ const PageManagement: React.FC = () => {
               <h4>Page Visibility Settings</h4>
               <div className="form-group">
                 <div className="custom-checkbox">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     id="published"
                     checked={published}
                     onChange={(e) => setPublished(e.target.checked)}
@@ -712,8 +610,8 @@ const PageManagement: React.FC = () => {
 
               <div className="form-group">
                 <div className="custom-checkbox">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     id="isPublic"
                     checked={isPublic}
                     onChange={(e) => setIsPublic(e.target.checked)}
@@ -725,8 +623,8 @@ const PageManagement: React.FC = () => {
 
               <div className="form-group">
                 <div className="custom-checkbox">
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     id="showInNavigation"
                     checked={showInNavigation}
                     onChange={(e) => setShowInNavigation(e.target.checked)}
@@ -741,9 +639,9 @@ const PageManagement: React.FC = () => {
               <h4>Home Page Setting</h4>
               <div className="form-group">
                 <div className="custom-radio">
-                  <input 
-                    type="radio" 
-                    id="makeHomePageYes" 
+                  <input
+                    type="radio"
+                    id="makeHomePageYes"
                     name="isHomePage"
                     checked={isHome}
                     onChange={() => setIsHome(true)}
@@ -752,9 +650,9 @@ const PageManagement: React.FC = () => {
                   <label htmlFor="makeHomePageYes">Make this the home page</label>
                 </div>
                 <div className="custom-radio">
-                  <input 
-                    type="radio" 
-                    id="makeHomePageNo" 
+                  <input
+                    type="radio"
+                    id="makeHomePageNo"
                     name="isHomePage"
                     checked={!isHome}
                     onChange={() => setIsHome(false)}
@@ -768,7 +666,7 @@ const PageManagement: React.FC = () => {
             </div>
           </div>
           <div className="card-footer">
-            <button 
+            <button
               onClick={handleCreatePage}
               className="btn btn-primary"
             >
@@ -778,7 +676,6 @@ const PageManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Image Gallery Modal */}
       {showImageGallery && (
         <div className="modal-overlay" onClick={() => setShowImageGallery(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
@@ -792,10 +689,10 @@ const PageManagement: React.FC = () => {
                   <p>No images available. Upload images in the Gallery section first.</p>
                 ) : (
                   galleryImages.map((imageUrl, index) => (
-                    <div 
-                      key={index} 
+                    <div
+                      key={index}
                       className="gallery-image-item clickable"
-                      onClick={() => insertImage(imageUrl)}
+                      onClick={() => handleImageSelect(imageUrl)}
                     >
                       <img src={imageUrl} alt={`Gallery image ${index}`} />
                     </div>

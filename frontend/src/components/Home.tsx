@@ -1,39 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
-import { User } from '../types';
-import { EditorState, convertFromRaw } from 'draft-js';
-import { stateToHTML } from 'draft-js-export-html';
 import { Link } from 'react-router-dom';
+import { EditorState } from 'draft-js';
+import { convertFromRaw } from 'draft-js';
+import { stateToHTML } from 'draft-js-export-html';
+import { isValidDraftJs } from './editor/utils/serialization';
+import LexicalEditorComponent from './editor/LexicalEditor';
 
 interface HomeProps {
   skipNavbar?: boolean;
 }
 
 const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
-    const [user, setUser] = useState<User | null>(null);
-    const [isAdmin, setIsAdmin] = useState<boolean>(false);
     const [content, setContent] = useState<string>('');
+    const [isAdmin, setIsAdmin] = useState<boolean>(false);
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        // Check if user is logged in
+        // Check if the user is an admin
         const userJson = localStorage.getItem('user');
         if (userJson) {
             try {
-                const userData = JSON.parse(userJson) as User;
-                setUser(userData);
-                setIsAdmin(userData.isAdmin === true || userData.userType === 'Admin' || userData.userType === 'Lead');
+                const userData = JSON.parse(userJson);
+                setIsAdmin(userData.isAdmin === true || userData.userType === 'Admin');
             } catch (err) {
                 console.error('Error parsing user data:', err);
             }
         }
 
         // Fetch home page content
-        fetchHomeContent();
+        fetchHomePageContent();
     }, []);
 
-    const fetchHomeContent = async () => {
+    const fetchHomePageContent = async () => {
         try {
             const response = await fetch(`${API_URL}/page/home/content`);
             
@@ -42,21 +42,17 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
             }
             
             const data = await response.json();
-            
             if (data.content) {
                 setContent(data.content);
             } else {
-                // Use default content if no custom content is available
                 setContent(`
                     <h1>Welcome to Dancing Cat Wine Bar</h1>
                     <p>Check out our <a href="/gallery">Gallery</a> and <a href="/blog">Blog</a>.</p>
                 `);
             }
-            
             setLoading(false);
         } catch (err) {
             console.error('Error fetching home page content:', err);
-            setError('Error loading content');
             setLoading(false);
             
             // Use default content on error
@@ -68,15 +64,40 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
     };
 
     const renderContent = (content: string) => {
-        // Try to parse as draft.js JSON
+        // Check if content is in Lexical format
         try {
-            const raw = JSON.parse(content);
-            const editorState = EditorState.createWithContent(convertFromRaw(raw));
-            return stateToHTML(editorState.getCurrentContent());
+            const isLexical = content.includes('"root"') && 
+                             content.includes('"children"') && 
+                             content.includes('"type"');
+            
+            if (isLexical) {
+                // Return a read-only Lexical editor component
+                return (
+                    <LexicalEditorComponent 
+                        initialContent={content}
+                        showToolbar={false}
+                        readOnly={true}
+                        className="read-only-content"
+                    />
+                );
+            }
+            
+            // Try to parse as draft.js JSON
+            if (isValidDraftJs(content)) {
+                try {
+                    const raw = JSON.parse(content);
+                    const contentState = convertFromRaw(raw);
+                    return <div dangerouslySetInnerHTML={{ __html: stateToHTML(contentState) }} />;
+                } catch (e) {
+                    console.error("Error parsing Draft.js content:", e);
+                }
+            }
         } catch {
-            // Fallback: treat as HTML
-            return content;
+            // Fallback: treat as HTML if parsing fails
         }
+        
+        // Simple HTML content
+        return <div dangerouslySetInnerHTML={{ __html: content }} />;
     };
 
     if (loading) {
@@ -91,7 +112,7 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
         <div className="dynamic-page">
             <div className="home">
                 {error && <div className="error">{error}</div>}
-                <div dangerouslySetInnerHTML={{ __html: renderContent(content) }} />
+                {renderContent(content)}
                 
                 {/* Add edit button for admin users */}
                 {isAdmin && (

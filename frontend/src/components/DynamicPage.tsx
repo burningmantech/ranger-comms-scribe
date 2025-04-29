@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { API_URL } from '../config';
 import { Page, User } from '../types';
-import { Editor, EditorState, RichUtils, convertToRaw, convertFromRaw, DraftHandleValue, Modifier } from 'draft-js';
-import { stateToHTML } from 'draft-js-export-html';
 import { useParams, useNavigate } from 'react-router-dom';
 import './DynamicPage.css';
+
+// Import Lexical editor and related utilities
+import LexicalEditorComponent from './editor/LexicalEditor';
+import { isValidDraftJs } from './editor/utils/serialization';
+import { LexicalEditor } from 'lexical';
+import { INSERT_IMAGE_COMMAND } from './editor/plugins/ImagePlugin';
+// Import the IndentationPlugin commands
+import { INDENT_COMMAND, OUTDENT_COMMAND } from './editor/plugins/IndentationPlugin';
 
 interface DynamicPageProps {
   slug?: string;
@@ -22,7 +28,11 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
   const [page, setPage] = useState<Page | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [editorState, setEditorState] = useState<EditorState>(() => EditorState.createEmpty());
+  
+  // Update editor state management for Lexical
+  const [editorInstance, setEditorInstance] = useState<LexicalEditor | null>(null);
+  const [contentAsJson, setContentAsJson] = useState('');
+
   const [isEditing, setIsEditing] = useState(false);
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [galleryImages, setGalleryImages] = useState<any[]>([]);
@@ -37,135 +47,36 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
   const [parentPageId, setParentPageId] = useState<string>('');
   const [availablePages, setAvailablePages] = useState<Page[]>([]);
 
-  const getRawContent = (state: EditorState) => JSON.stringify(convertToRaw(state.getCurrentContent()));
-  const getEditorStateFromRaw = (raw: string) => {
-    try {
-      return EditorState.createWithContent(convertFromRaw(JSON.parse(raw)));
-    } catch {
-      return EditorState.createEmpty();
-    }
+  const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+
+  // Handlers for Lexical editor
+  const handleEditorChange = (editor: LexicalEditor, json: string) => {
+    setEditorInstance(editor);
+    setContentAsJson(json);
   };
 
-  const getHTMLFromEditorState = (state: EditorState) => {
-    const options = {
-      entityStyleFn: (entity: any) => {
-        const entityType = entity.get('type').toLowerCase();
-        if (entityType === 'image') {
-          const data = entity.getData();
-          const fullSizeSrc = data.fullSizeSrc || data.src;
-          return {
-            element: 'img',
-            attributes: {
-              src: data.src,
-              class: 'clickable-image',
-              'data-full-src': fullSizeSrc,
-              style: {
-                maxWidth: '100%',
-                cursor: 'pointer',
-              },
-              onClick: `(function(){
-                const modal = document.createElement('div');
-                modal.className = 'image-modal';
-                modal.onclick = function() { document.body.removeChild(modal); };
-                
-                const img = document.createElement('img');
-                img.src = '${fullSizeSrc}';
-                img.className = 'image-modal-content';
-                
-                const closeBtn = document.createElement('span');
-                closeBtn.className = 'image-modal-close';
-                closeBtn.innerHTML = '×';
-                
-                modal.appendChild(img);
-                modal.appendChild(closeBtn);
-                document.body.appendChild(modal);
-              })()`
-            }
-          };
+  // Add key handler for indentation shortcuts
+  useEffect(() => {
+    // Add keyboard shortcuts for Cmd+[ and Cmd+] to control indentation
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!editorInstance || !isEditing) return;
+      
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key === ']') {
+          e.preventDefault();
+          editorInstance.dispatchCommand(INDENT_COMMAND, undefined);
+        } else if (e.key === '[') {
+          e.preventDefault();
+          editorInstance.dispatchCommand(OUTDENT_COMMAND, undefined);
         }
-        return undefined; // Return undefined instead of null to match expected RenderConfig | undefined
       }
     };
-    return stateToHTML(state.getCurrentContent(), options);
-  };
 
-  // Editor functions
-  const handleKeyCommand = (command: string, state: EditorState): DraftHandleValue => {
-    const newState = RichUtils.handleKeyCommand(state, command);
-    if (newState) {
-      setEditorState(newState);
-      return 'handled';
-    }
-    return 'not-handled';
-  };
-  
-  const onTab = (e: React.KeyboardEvent) => {
-    setEditorState(RichUtils.onTab(e, editorState, 4));
-  };
-  
-  const toggleBlockType = (blockType: string) => {
-    setEditorState(RichUtils.toggleBlockType(editorState, blockType));
-  };
-  
-  const toggleInlineStyle = (inlineStyle: string) => {
-    setEditorState(RichUtils.toggleInlineStyle(editorState, inlineStyle));
-  };
-  
-  const promptForLink = () => {
-    const selection = editorState.getSelection();
-    const url = window.prompt('Enter a URL');
-    if (!url) return;
-    const content = editorState.getCurrentContent();
-    const contentWithEntity = content.createEntity('LINK', 'MUTABLE', { url });
-    const entityKey = contentWithEntity.getLastCreatedEntityKey();
-    let newState = EditorState.set(editorState, { currentContent: contentWithEntity });
-    newState = RichUtils.toggleLink(newState, selection, entityKey);
-    setEditorState(newState);
-  };
-
-  const insertImage = (src: string, mediumSrc: string) => {
-    const contentState = editorState.getCurrentContent();
-    const contentStateWithEntity = contentState.createEntity('IMAGE', 'IMMUTABLE', { 
-      src: mediumSrc || src,
-      fullSizeSrc: src,
-      width: '100%',
-      style: { maxWidth: '100%' },
-      className: 'clickable-image'
-    });
-    
-    const entityKey = contentStateWithEntity.getLastCreatedEntityKey();
-    let newContentState = Modifier.insertText(
-      contentStateWithEntity,
-      editorState.getSelection(),
-      '🖼️ ',
-      undefined,
-      entityKey
-    );
-    setEditorState(EditorState.push(editorState, newContentState, 'insert-characters'));
-  };
-
-  const openGalleryModal = async () => {
-    setShowGalleryModal(true);
-    try {
-      const res = await fetch(`${API_URL}/gallery`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('sessionId')}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setGalleryImages(data.filter((img: any) => img.fileType && img.fileType.startsWith('image/')));
-      }
-    } catch(err) {
-      console.error('Error fetching gallery images:', err);
-    }
-  };
-  
-  const closeGalleryModal = () => setShowGalleryModal(false);
-
-  const handleGalleryImageSelect = (img: any) => {
-    const mediumUrl = img.mediumUrl || img.url;
-    insertImage(img.url, mediumUrl);
-    setShowGalleryModal(false);
-  };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [editorInstance, isEditing]);
 
   // Handle image click for full-size view
   useEffect(() => {
@@ -205,12 +116,43 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
     }
   }, [slug, urlSlug]);
 
-  // Set up editor when page data changes
+  // Initialize page settings when entering edit mode
   useEffect(() => {
-    if (page && page.content && !isEditing) {
-      setEditorState(getEditorStateFromRaw(page.content));
+    if (isEditing && page) {
+      // Initialize the page settings from the page object
+      setIsPublished(page.published ?? true);
+      setIsPublic(page.isPublic ?? true);
+      setShowInNavigation(page.showInNavigation ?? true);
+      setIsHomePage(page.isHome ?? false);
+      setParentPageId(page.parentPageId || '');
+      
+      // Fetch all pages for parent selection
+      fetchAllPages();
+
+      // Fetch gallery images
+      fetchGalleryImages();
     }
-  }, [page, isEditing]);
+  }, [isEditing, page]);
+
+  const fetchGalleryImages = async () => {
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) return;
+      
+      const response = await fetch(`${API_URL}/gallery`, {
+        headers: {
+          Authorization: `Bearer ${sessionId}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setGalleryImages(data.filter((img: any) => img.fileType && img.fileType.startsWith('image/')));
+      }
+    } catch (err) {
+      console.error('Error fetching gallery images:', err);
+    }
+  };
 
   // Fetch all pages for parent page selection
   const fetchAllPages = async () => {
@@ -240,21 +182,6 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
       setAvailablePages([]);
     }
   };
-
-  // Initialize page settings when entering edit mode
-  useEffect(() => {
-    if (isEditing && page) {
-      // Initialize the page settings from the page object
-      setIsPublished(page.published ?? true);
-      setIsPublic(page.isPublic ?? true);
-      setShowInNavigation(page.showInNavigation ?? true);
-      setIsHomePage(page.isHome ?? false);
-      setParentPageId(page.parentPageId || '');
-      
-      // Fetch all pages for parent selection
-      fetchAllPages();
-    }
-  }, [isEditing, page]);
 
   const fetchPage = async (pageSlug: string) => {
     try {
@@ -299,6 +226,84 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
     setIsEditing(true);
   };
 
+  const openGalleryModal = () => {
+    setShowGalleryModal(true);
+  };
+
+  const closeGalleryModal = () => setShowGalleryModal(false);
+
+  const handleGalleryImageSelect = (img: any) => {
+    const mediumUrl = img.mediumUrl || img.url;
+    
+    // Insert the image into Lexical editor
+    if (editorInstance) {
+      editorInstance.dispatchCommand(INSERT_IMAGE_COMMAND, {
+        src: mediumUrl,
+        altText: img.fileName || 'Gallery image',
+        fullSizeSrc: img.url,
+      });
+      setShowGalleryModal(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setLoading(true);
+    setError(null);
+    setSaveSuccess(false);
+    
+    // Add null check for page before using it
+    if (!page) {
+      setError('No page data available to save');
+      setLoading(false);
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${API_URL}/page/${page.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({
+          title: page.title,
+          slug: page.slug,
+          content: contentAsJson,
+          published: isPublished,
+          isPublic: isPublic,
+          showInNavigation: showInNavigation,
+          parentPageId: parentPageId || undefined,
+          isHome: isHomePage
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to save page');
+      
+      // If this page is set as home page, we need to reload all pages
+      if (isHomePage) {
+        await fetchAllPages();
+      }
+      
+      setSaveSuccess(true);
+      
+      // Add null check for page before using page.slug
+      // Store the slug in a variable to use even after state changes
+      const currentSlug = page.slug;
+      
+      // Show success message briefly before refreshing
+      setTimeout(() => {
+        setIsEditing(false);
+        // Force a full page refresh to ensure content is updated
+        window.location.href = `/${currentSlug}`;
+      }, 1000);
+    } catch (err) {
+      console.error('Error saving page:', err);
+      setError('Failed to save page');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const canEdit = user && (user.isAdmin || user.userType === 'Admin' || user.userType === 'Lead');
 
   if (loading) {
@@ -327,210 +332,171 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
     );
   }
 
+  // Determine if the content is in DraftJS format
+  const isDraftContent = isValidDraftJs(page.content);
+
   return (
     <div className="dynamic-page">
       <h1>{page.title}</h1>
       {isEditing ? (
         <>
-          <div className="draftjs-editor-container">
-            <div className="editor-toolbar">
-              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleInlineStyle('BOLD')}>Bold</button>
-              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleInlineStyle('ITALIC')}>Italic</button>
-              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleInlineStyle('UNDERLINE')}>Underline</button>
-              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('header-one')}>H1</button>
-              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('header-two')}>H2</button>
-              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('unordered-list-item')}>UL</button>
-              <button type="button" className="btn btn-sm btn-neutral" onClick={() => toggleBlockType('ordered-list-item')}>OL</button>
-              <button type="button" className="btn btn-sm btn-neutral" onClick={promptForLink}>Link</button>
-              <button type="button" className="btn btn-sm btn-tertiary" onClick={openGalleryModal}>Image</button>
-            </div>
-            <div className="editor-box" style={{border: '1px solid #ccc', minHeight: 120, padding: 8}}>
-              <Editor
-                editorState={editorState}
-                onChange={setEditorState}
-                handleKeyCommand={handleKeyCommand}
-                onTab={onTab}
-                placeholder="Write your page..."
-                spellCheck={true}
-              />
-            </div>
-            <div className="editor-preview">
-              <h4>Preview:</h4>
-              <div className="preview-content" dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(editorState) }} />
-            </div>
+          <div className="lexical-editor-wrapper">
+            <LexicalEditorComponent
+              initialContent={page.content}
+              onChange={handleEditorChange}
+              showToolbar={true}
+              placeholder="Edit page content..."
+              onImageSelect={openGalleryModal}
+              galleryImages={galleryImages}
+            />
+          </div>
             
-            {/* Page Settings Section */}
-            {canEdit && (
-              <div className="page-settings-section mt-4">
-                <h3>Page Settings</h3>
-                <div className="card">
-                  <div className="card-body">
-                    <div className="row">
-                      <div className="col-md-6">
-                        <div className="page-settings-group">
-                          <h4>Visibility Settings</h4>
-                          <div className="form-group">
-                            <div className="custom-checkbox">
-                              <input 
-                                type="checkbox" 
-                                id="published"
-                                checked={isPublished}
-                                onChange={(e) => setIsPublished(e.target.checked)}
-                              />
-                              <span className="checkbox-icon"></span>
-                              <label htmlFor="published">
-                                Publish page (when enabled, the page will be accessible to users)
-                              </label>
-                            </div>
+          {/* Page Settings Section */}
+          {canEdit && (
+            <div className="page-settings-section mt-4">
+              <h3>Page Settings</h3>
+              <div className="card">
+                <div className="card-body">
+                  <div className="row">
+                    <div className="col-md-6">
+                      <div className="page-settings-group">
+                        <h4>Visibility Settings</h4>
+                        <div className="form-group">
+                          <div className="custom-checkbox">
+                            <input 
+                              type="checkbox" 
+                              id="published"
+                              checked={isPublished}
+                              onChange={(e) => setIsPublished(e.target.checked)}
+                            />
+                            <span className="checkbox-icon"></span>
+                            <label htmlFor="published">
+                              Publish page (when enabled, the page will be accessible to users)
+                            </label>
                           </div>
+                        </div>
 
-                          <div className="form-group">
-                            <div className="custom-checkbox">
-                              <input 
-                                type="checkbox" 
-                                id="isPublic"
-                                checked={isPublic}
-                                onChange={(e) => setIsPublic(e.target.checked)}
-                              />
-                              <span className="checkbox-icon"></span>
-                              <label htmlFor="isPublic">
-                                Public access (when enabled, non-logged in visitors can view the page)
-                              </label>
-                            </div>
+                        <div className="form-group">
+                          <div className="custom-checkbox">
+                            <input 
+                              type="checkbox" 
+                              id="isPublic"
+                              checked={isPublic}
+                              onChange={(e) => setIsPublic(e.target.checked)}
+                            />
+                            <span className="checkbox-icon"></span>
+                            <label htmlFor="isPublic">
+                              Public access (when enabled, non-logged in visitors can view the page)
+                            </label>
                           </div>
+                        </div>
 
-                          <div className="form-group">
-                            <div className="custom-checkbox">
-                              <input 
-                                type="checkbox" 
-                                id="showInNavigation"
-                                checked={showInNavigation}
-                                onChange={(e) => setShowInNavigation(e.target.checked)}
-                              />
-                              <span className="checkbox-icon"></span>
-                              <label htmlFor="showInNavigation">
-                                Show in navigation menu
-                              </label>
-                            </div>
+                        <div className="form-group">
+                          <div className="custom-checkbox">
+                            <input 
+                              type="checkbox" 
+                              id="showInNavigation"
+                              checked={showInNavigation}
+                              onChange={(e) => setShowInNavigation(e.target.checked)}
+                            />
+                            <span className="checkbox-icon"></span>
+                            <label htmlFor="showInNavigation">
+                              Show in navigation menu
+                            </label>
                           </div>
                         </div>
                       </div>
-                      
-                      <div className="col-md-6">
-                        <div className="page-settings-group">
-                          <h4>Page Hierarchy</h4>
-                          <div className="form-group">
-                            <label htmlFor="parentPage">Parent Page:</label>
-                            <select 
-                              id="parentPage" 
-                              className="form-control"
-                              value={parentPageId}
-                              onChange={(e) => setParentPageId(e.target.value)}
-                            >
-                              <option value="">No parent page (top level)</option>
-                              {availablePages
-                                .filter(p => p.id !== page?.id && !p.isHome && 
-                                            // Prevent circular references
-                                            !(p.parentPageId === page?.id))
-                                .map(p => (
-                                  <option key={p.id} value={p.id}>
-                                    {p.title}
-                                  </option>
-                                ))
-                              }
-                            </select>
-                            <small>Select a parent page to create a hierarchical structure</small>
-                          </div>
+                    </div>
+                    
+                    <div className="col-md-6">
+                      <div className="page-settings-group">
+                        <h4>Page Hierarchy</h4>
+                        <div className="form-group">
+                          <label htmlFor="parentPage">Parent Page:</label>
+                          <select 
+                            id="parentPage" 
+                            className="form-control"
+                            value={parentPageId}
+                            onChange={(e) => setParentPageId(e.target.value)}
+                          >
+                            <option value="">No parent page (top level)</option>
+                            {availablePages
+                              .filter(p => p.id !== page?.id && !p.isHome && 
+                                          // Prevent circular references
+                                          !(p.parentPageId === page?.id))
+                              .map(p => (
+                                <option key={p.id} value={p.id}>
+                                  {p.title}
+                                </option>
+                              ))
+                            }
+                          </select>
+                          <small>Select a parent page to create a hierarchical structure</small>
                         </div>
-
-                        <div className="page-settings-group mt-3">
-                          <h4>Home Page Setting</h4>
-                          <div className="form-group">
-                            <div className="custom-radio">
-                              <input 
-                                type="radio" 
-                                id="makeHomePageYes" 
-                                name="isHomePage"
-                                checked={isHomePage}
-                                onChange={() => setIsHomePage(true)}
-                                disabled={availablePages.some(p => p.isHome === true && p.id !== page?.id)}
-                              />
-                              <label htmlFor="makeHomePageYes">
-                                Make this the home page
-                              </label>
-                            </div>
-                            <div className="custom-radio">
-                              <input 
-                                type="radio" 
-                                id="makeHomePageNo" 
-                                name="isHomePage"
-                                checked={!isHomePage}
-                                onChange={() => setIsHomePage(false)}
-                              />
-                              <label htmlFor="makeHomePageNo">
-                                Do not use as home page
-                              </label>
-                            </div>
-                            {availablePages.some(p => p.isHome === true && p.id !== page?.id) && (
-                              <p className="note text-warning">
-                                Note: Another page is currently set as the home page. Setting this as the home page will replace the current home page.
-                              </p>
-                            )}
+                      </div>
+                      
+                      <div className="page-settings-group mt-3">
+                        <h4>Home Page Setting</h4>
+                        <div className="form-group">
+                          <div className="custom-radio">
+                            <input 
+                              type="radio" 
+                              id="makeHomePageYes" 
+                              name="isHomePage"
+                              checked={isHomePage}
+                              onChange={() => setIsHomePage(true)}
+                              disabled={availablePages.some(p => p.isHome === true && p.id !== page?.id)}
+                            />
+                            <label htmlFor="makeHomePageYes">
+                              Make this the home page
+                            </label>
                           </div>
+                          <div className="custom-radio">
+                            <input 
+                              type="radio" 
+                              id="makeHomePageNo" 
+                              name="isHomePage"
+                              checked={!isHomePage}
+                              onChange={() => setIsHomePage(false)}
+                            />
+                            <label htmlFor="makeHomePageNo">
+                              Do not use as home page
+                            </label>
+                          </div>
+                          {availablePages.some(p => p.isHome === true && p.id !== page?.id) && (
+                            <p className="note text-warning">
+                              Note: Another page is currently set as the home page. Setting this as the home page will replace the current home page.
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
+          {saveSuccess && (
+            <div className="success-message mt-2">
+              <i className="fas fa-check-circle"></i> Page saved successfully! Redirecting...
+            </div>
+          )}
           <div className="btn-group mt-2">
             <button 
-              onClick={async () => {
-                setLoading(true);
-                setError(null);
-                try {
-                  const response = await fetch(`${API_URL}/page/${page.id}`, {
-                    method: 'PUT',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-                    },
-                    body: JSON.stringify({
-                      title: page.title,
-                      slug: page.slug,
-                      content: getRawContent(editorState),
-                      published: isPublished,
-                      isPublic: isPublic,
-                      showInNavigation: showInNavigation,
-                      parentPageId: parentPageId || undefined,
-                      isHome: isHomePage
-                    }),
-                  });
-                  if (!response.ok) throw new Error('Failed to save page');
-                  
-                  // If this page is set as home page, we need to reload all pages
-                  if (isHomePage) {
-                    await fetchAllPages();
-                  }
-                  
-                  setIsEditing(false);
-                  fetchPage(page.slug);
-                } catch (err) {
-                  console.error('Error saving page:', err);
-                  setError('Failed to save page');
-                } finally {
-                  setLoading(false);
-                }
-              }}
+              onClick={handleSave}
               className="btn btn-tertiary"
+              disabled={loading}
             >
-              <i className="fas fa-save"></i> Save
+              {loading ? (
+                <><i className="fas fa-spinner fa-spin"></i> Saving...</>
+              ) : (
+                <><i className="fas fa-save"></i> Save</>
+              )}
             </button>
             <button 
               onClick={() => setIsEditing(false)}
               className="btn btn-danger"
+              disabled={loading}
             >
               <i className="fas fa-times"></i> Cancel
             </button>
@@ -562,7 +528,14 @@ const DynamicPage: React.FC<DynamicPageProps> = ({ slug: propSlug, skipNavbar })
         </>
       ) : (
         <>
-          <div dangerouslySetInnerHTML={{ __html: getHTMLFromEditorState(getEditorStateFromRaw(page.content)) }} />
+          {/* For rendering the page content, we need a read-only Lexical editor instance */}
+          <LexicalEditorComponent
+            initialContent={page.content}
+            showToolbar={false}
+            readOnly={true}
+            className="read-only-content"
+          />
+          
           {canEdit && (
             <button 
               onClick={handleEnterEditMode}

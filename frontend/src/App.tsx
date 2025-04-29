@@ -14,6 +14,7 @@ import DynamicPage from './components/DynamicPage';
 import Navbar from './components/Navbar';
 import { USER_LOGIN_EVENT } from './utils/userActions';
 import PageManagement from './components/PageManagement';
+import IndentationTest from './components/editor/tests/IndentationTest';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -95,6 +96,7 @@ const App: React.FC = () => {
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/page-management" element={<PageManagement />} />
+              <Route path="/test-indentation" element={<IndentationTest />} />
               
               {/* Dynamic page routes - include all pages, not just navigation ones */}
               {pages.map(page => (

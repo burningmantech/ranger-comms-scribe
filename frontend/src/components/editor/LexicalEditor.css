@@ -1,0 +1,372 @@
+.lexical-editor-container {
+  position: relative;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 15px;
+  display: flex;
+  flex-direction: column;
+}
+
+.lexical-editor-container.read-only {
+  border: none;
+  margin-bottom: 0;
+}
+
+.lexical-editor {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.lexical-editor.read-only {
+  border: none;
+}
+
+.editor-content-wrapper {
+  flex-grow: 1;
+  overflow-y: auto;
+  max-height: calc(100vh - 150px); /* Limit height but allow scrolling */
+}
+
+.lexical-editor-content-editable {
+  min-height: 150px;
+  padding: 15px;
+  outline: none;
+  overflow-y: auto;
+}
+
+.lexical-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid #ddd;
+  background-color: #f9f9f9;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lexical-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.lexical-toolbar-button:hover {
+  background-color: #f1f1f1;
+}
+
+.lexical-toolbar-button.active {
+  background-color: #e1e1e1;
+  border-color: #ccc;
+}
+
+/* Headings */
+.editor-heading-h1 {
+  font-size: 24px;
+  font-weight: bold;
+  margin-top: 20px;
+  margin-bottom: 12px;
+}
+
+.editor-heading-h2 {
+  font-size: 22px;
+  font-weight: bold;
+  margin-top: 18px;
+  margin-bottom: 10px;
+}
+
+.editor-heading-h3 {
+  font-size: 20px;
+  font-weight: bold;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+/* Placeholder text */
+.editor-placeholder {
+  color: #999;
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Lists */
+.editor-list-ul {
+  list-style-type: disc;
+  padding-left: 20px;
+  margin: 10px 0;
+}
+
+.editor-list-ol {
+  list-style-type: decimal;
+  padding-left: 20px;
+  margin: 10px 0;
+}
+
+.editor-listitem {
+  margin: 6px 0;
+}
+
+/* Indentation - For both editor and view mode */
+[data-indent="1"] {
+  padding-left: 40px !important;
+}
+
+[data-indent="2"] {
+  padding-left: 80px !important;
+}
+
+[data-indent="3"] {
+  padding-left: 120px !important;
+}
+
+[data-indent="4"] {
+  padding-left: 160px !important;
+}
+
+[data-indent="5"] {
+  padding-left: 200px !important;
+}
+
+/* Make sure indentation is preserved in read-only mode by applying the same styles */
+.read-only-content [data-indent="1"],
+.read-only-content [data-indent="2"],
+.read-only-content [data-indent="3"],
+.read-only-content [data-indent="4"],
+.read-only-content [data-indent="5"] {
+  display: block;
+}
+
+/* Remove previous class-based indent rules that don't match the implementation */
+.indent-1, .indent-2, .indent-3, .indent-4, .indent-5, .indent-6,
+.read-only-content .indent-1, 
+.read-only-content .indent-2,
+.read-only-content .indent-3,
+.read-only-content .indent-4,
+.read-only-content .indent-5,
+.read-only-content .indent-6 {
+  /* Reset any previous styling */
+  padding-left: initial;
+}
+
+/* Tables */
+.editor-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0;
+  border: 2px solid #a0a0a0;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+  display: table !important; /* Enforce table display */
+  table-layout: fixed;
+  background-color: white;
+  clear: both;
+}
+
+.editor-tableCell {
+  border: 1px solid #ccc;
+  padding: 8px 12px;
+  min-width: 60px;
+  vertical-align: top;
+  position: relative;
+  display: table-cell !important; /* Enforce table-cell display */
+}
+
+.editor-tableRow {
+  display: table-row !important; /* Enforce table-row display */
+}
+
+.editor-tableRow:first-child {
+  background-color: #f0f0f0;
+  font-weight: 600;
+}
+
+.editor-tableRow:nth-child(odd) {
+  background-color: #f9f9f9;
+}
+
+.editor-tableRow:nth-child(even) {
+  background-color: #fafafa;
+}
+
+/* Make sure the table cells handle content correctly */
+.editor-tableCell > p {
+  margin: 0;
+}
+
+/* Add visible table selection state */
+.editor-tableCell.selected {
+  box-shadow: inset 0 0 0 2px #4285f4;
+}
+
+/* Table selection handling */
+.tableSelection {
+  background-color: rgba(24, 119, 232, 0.2);
+}
+
+/* Text styles */
+.editor-text-bold {
+  font-weight: bold;
+}
+
+.editor-text-italic {
+  font-style: italic;
+}
+
+.editor-text-underline {
+  text-decoration: underline;
+}
+
+.editor-text-code {
+  font-family: monospace;
+  background-color: #f0f0f0;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.editor-text-strikethrough {
+  text-decoration: line-through;
+}
+
+/* Checkbox */
+.editor-checkbox {
+  display: flex;
+  align-items: center;
+  margin: 6px 0;
+  padding: 2px 0;
+}
+
+.editor-checkbox input[type="checkbox"] {
+  margin-right: 8px;
+  width: 16px;
+  height: 16px;
+}
+
+.editor-checkbox span {
+  position: relative;
+  top: 1px;
+}
+
+/* Image node */
+.editor-image {
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  cursor: pointer;
+}
+
+/* Table editor controls */
+.table-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.table-size-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.table-size-controls input {
+  width: 60px;
+  padding: 4px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+/* Table modal */
+.table-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 20px;
+  border-radius: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+}
+
+.table-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+}
+
+.read-only-content .editor-input {
+  border: none;
+  padding: 0;
+  min-height: auto;
+}
+
+.editor-input {
+  min-height: 300px;
+  padding: 15px;
+  outline: none;
+}
+
+/* Success message styles */
+.success-message {
+  background-color: #d4edda;
+  color: #155724;
+  padding: 10px 15px;
+  border-radius: 4px;
+  font-weight: 500;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.success-message i {
+  font-size: 18px;
+}
+
+/* Error styles */
+.error-message {
+  background-color: #f8d7da;
+  color: #721c24;
+  padding: 10px 15px;
+  border-radius: 4px;
+  font-weight: 500;
+  margin-top: 10px;
+}
+
+/* Fix mobile layout issues */
+@media (max-width: 768px) {
+  .lexical-editor-toolbar {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  
+  .lexical-toolbar-button {
+    padding: 6px;
+    font-size: 12px;
+    margin: 2px;
+  }
+  
+  .editor-content-wrapper {
+    max-height: calc(100vh - 200px);
+  }
+}
