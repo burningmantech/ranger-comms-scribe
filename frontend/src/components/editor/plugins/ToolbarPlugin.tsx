@@ -109,75 +109,76 @@ export const ToolbarPlugin: React.FC = () => {
   }, [editor]);
 
   const insertCheckbox = useCallback(() => {
+    if (!editor) return;
+    
     editor.update(() => {
       const selection = $getSelection();
       
       if ($isRangeSelection(selection)) {
-        // Get the selected text content
+        // Get the selected text or the text from the current line if no selection
         const selectedText = selection.getTextContent();
         
-        // If there's no selection, just insert an empty checkbox
-        if (!selectedText.trim()) {
-          const checkboxNode = $createCheckboxNode(false);
-          selection.insertNodes([checkboxNode]);
-          return;
-        }
+        // Get the top-level elements containing the selection
+        const topLevelElements = selection.getNodes().map(node => {
+          // Find the top-level element for this node
+          let current = node;
+          let parent = current.getParent();
+          while (parent && parent !== $getRoot()) {
+            current = parent;
+            parent = current.getParent();
+          }
+          return current;
+        });
         
-        // Get the original nodes so we can preserve formatting
-        const selectionNodes = selection.getNodes();
+        // Deduplicate the elements
+        const uniqueElements = Array.from(new Set(topLevelElements));
         
-        // Store text content for each line
-        const textLines = selectedText.split(/\r?\n/);
-        
-        // Store the current anchor and focus points
-        const anchor = selection.anchor;
-        const focus = selection.focus;
-        const anchorOffset = anchor.offset;
-        const focusOffset = focus.offset;
-        
-        // Create a map of text to be assigned to checkboxes
-        const checkboxTextMap = new Map();
-        for (let i = 0; i < textLines.length; i++) {
-          checkboxTextMap.set(`checkbox-${i}`, textLines[i].trim());
-        }
-        
-        // Remove the selected text - we'll replace it with checkboxes
-        selection.removeText();
-        
-        // Insert checkbox nodes, one for each line
-        for (let i = 0; i < textLines.length; i++) {
-          // Create a checkbox node
-          const checkboxNode = $createCheckboxNode(false);
-          
-          // Insert the checkbox
-          selection.insertNodes([checkboxNode]);
-          
-          // If this isn't the last line, we need a paragraph break
-          if (i < textLines.length - 1) {
-            const paragraphNode = $createParagraphNode();
-            selection.insertNodes([paragraphNode]);
+        // If no selection was made, get the current paragraph
+        if (uniqueElements.length === 0 || (selectedText.trim() === '' && uniqueElements.length === 1)) {
+          const anchorNode = selection.anchor.getNode();
+          const topLevelElement = anchorNode.getTopLevelElement();
+          if (topLevelElement) {
+            uniqueElements.push(topLevelElement);
           }
         }
         
-        // Now find all the checkboxes we just inserted and set their text content
-        setTimeout(() => {
-          const checkboxElements = document.querySelectorAll('.editor-checkbox');
-          let index = 0;
-          
-          // Set text for each checkbox
-          checkboxElements.forEach((element) => {
-            // Find the text field in the checkbox
-            const textSpan = element.querySelector('.checkbox-text');
-            if (textSpan) {
-              // Get corresponding text for this checkbox
-              const text = checkboxTextMap.get(`checkbox-${index}`);
-              if (text) {
-                textSpan.textContent = text;
-                index++;
+        // Process each element
+        uniqueElements.forEach(element => {
+          if ($isElementNode(element)) {
+            // Check if this element already has a checkbox as a direct child
+            let hasCheckbox = false;
+            const children = element.getChildren();
+            
+            for (let i = 0; i < children.length; i++) {
+              const child = children[i];
+              if ($isCheckboxNode(child)) {
+                // Remove the checkbox if it already exists
+                hasCheckbox = true;
+                child.remove();
+                break;
               }
             }
-          });
-        }, 0);
+            
+            // If there was no checkbox, add one
+            if (!hasCheckbox) {
+              // Get the text content of the element
+              const text = element.getTextContent();
+              
+              // Clear the element and create a checkbox
+              element.clear();
+              const checkboxNode = $createCheckboxNode(false);
+              
+              // Add the text to the checkbox
+              if (text.trim()) {
+                const textNode = $createTextNode(text.trim());
+                checkboxNode.append(textNode);
+              }
+              
+              // Add the checkbox to the element
+              element.append(checkboxNode);
+            }
+          }
+        });
       }
     });
   }, [editor]);

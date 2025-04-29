@@ -20,7 +20,7 @@ import { ImageNode } from './nodes/ImageNode';
 import { CheckboxNode } from './nodes/CheckboxNode';
 import { DraftJsImportPlugin } from './plugins/DraftJsImportPlugin';
 import { isValidDraftJs, htmlToLexical } from '../editor/utils/serialization';
-import { CheckboxPlugin } from './plugins/CheckboxPlugin';
+import CheckboxPlugin from './plugins/CheckboxPlugin';
 import { TablePlugin } from './plugins/TablePlugin';
 import { TableControlsPlugin } from './plugins/TableControlsPlugin';
 import { IndentationPlugin, INDENT_COMMAND, OUTDENT_COMMAND } from './plugins/IndentationPlugin';

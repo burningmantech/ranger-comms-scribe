@@ -1,8 +1,10 @@
-import { EditorConfig, NodeKey, SerializedLexicalNode, Spread, ElementNode, SerializedElementNode, LexicalNode } from 'lexical';
+import React from 'react';
+import { EditorConfig, NodeKey, SerializedLexicalNode, Spread, ElementNode, SerializedElementNode, LexicalNode, $createTextNode, $isTextNode, TextNode } from 'lexical';
 
 export type SerializedCheckboxNode = Spread<
   {
     checked: boolean;
+    text?: string;
     type: 'checkbox';
   },
   SerializedElementNode
@@ -10,18 +12,20 @@ export type SerializedCheckboxNode = Spread<
 
 export class CheckboxNode extends ElementNode {
   __checked: boolean;
+  __text: string;
 
   static getType(): string {
     return 'checkbox';
   }
 
   static clone(node: CheckboxNode): CheckboxNode {
-    return new CheckboxNode(node.__checked, node.__key);
+    return new CheckboxNode(node.__checked, node.__text, node.__key);
   }
 
-  constructor(checked: boolean = false, key?: NodeKey) {
+  constructor(checked: boolean = false, text: string = '', key?: NodeKey) {
     super(key);
     this.__checked = checked;
+    this.__text = text;
   }
 
   createDOM(config: EditorConfig): HTMLElement {
@@ -55,40 +59,95 @@ export class CheckboxNode extends ElementNode {
   }
 
   updateDOM(prevNode: CheckboxNode, dom: HTMLElement): boolean {
-    const checkbox = dom.querySelector('input');
-    if (checkbox && checkbox.checked !== this.__checked) {
+    const checkbox = dom.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    if (checkbox && this.__checked !== prevNode.__checked) {
       checkbox.checked = this.__checked;
     }
     return false;
   }
 
   setChecked(checked: boolean): void {
-    const writable = this.getWritable();
-    writable.__checked = checked;
+    const self = this.getWritable();
+    self.__checked = checked;
   }
 
   getChecked(): boolean {
     return this.__checked;
   }
 
-  static importJSON(serializedNode: SerializedCheckboxNode): CheckboxNode {
-    const node = new CheckboxNode(serializedNode.checked);
-    // Import any additional properties if needed
-    return node;
+  setText(text: string): void {
+    const self = this.getWritable();
+    self.__text = text;
+  }
+
+  getText(): string {
+    return this.__text;
+  }
+
+  decorate(): React.ReactElement {
+    return (
+      <CheckboxComponent
+        checked={this.__checked}
+        text={this.__text}
+        nodeKey={this.__key}
+      />
+    );
   }
 
   exportJSON(): SerializedCheckboxNode {
     return {
       ...super.exportJSON(),
       checked: this.__checked,
+      text: this.__text,
       type: 'checkbox',
     };
   }
+
+  static importJSON(serializedNode: SerializedCheckboxNode): CheckboxNode {
+    const node = $createCheckboxNode(serializedNode.checked, serializedNode.text);
+    return node;
+  }
+
+  insertNewAfter(selection: any): ElementNode {
+    const newElement = $createCheckboxNode(false);
+    this.insertAfter(newElement);
+    return newElement;
+  }
 }
 
-// Utility functions for creating and checking CheckboxNodes
-export function $createCheckboxNode(checked: boolean = false): CheckboxNode {
-  return new CheckboxNode(checked);
+function CheckboxComponent({
+  checked,
+  text,
+  nodeKey,
+}: {
+  checked: boolean;
+  text: string;
+  nodeKey: NodeKey;
+}): React.ReactElement {
+  return (
+    <div className="checkbox-component">
+      <input 
+        type="checkbox" 
+        checked={checked} 
+        onChange={e => {
+          const checkboxElement = document.querySelector(`[data-lexical-node-key="${nodeKey}"]`);
+          if (checkboxElement) {
+            const event = new CustomEvent('checkboxChange', {
+              detail: { nodeKey, checked: e.target.checked },
+              bubbles: true,
+              cancelable: true,
+            });
+            checkboxElement.dispatchEvent(event);
+          }
+        }}
+      />
+      <span className="checkbox-text">{text}</span>
+    </div>
+  );
+}
+
+export function $createCheckboxNode(checked: boolean = false, text: string = ''): CheckboxNode {
+  return new CheckboxNode(checked, text);
 }
 
 export function $isCheckboxNode(node: LexicalNode | null | undefined): node is CheckboxNode {

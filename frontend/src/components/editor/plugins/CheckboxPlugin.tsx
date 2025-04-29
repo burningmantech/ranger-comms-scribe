@@ -3,109 +3,117 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import {
   $getSelection,
   $isRangeSelection,
-  $createParagraphNode,
-  COMMAND_PRIORITY_CRITICAL,
-  KEY_ENTER_COMMAND,
-  NodeKey,
-  $getNodeByKey,
-  $isElementNode
+  COMMAND_PRIORITY_EDITOR,
+  createCommand,
+  LexicalCommand,
+  TextNode,
+  $getNodeByKey
 } from 'lexical';
-import { CheckboxNode, $isCheckboxNode } from '../nodes/CheckboxNode';
-import { $isAtNodeEnd } from '@lexical/selection';
+import { $createCheckboxNode, $isCheckboxNode, CheckboxNode } from '../nodes/CheckboxNode';
 
-type CheckboxEventDetail = {
-  nodeKey: NodeKey;
-  checked: boolean;
-};
+export const INSERT_CHECKBOX_COMMAND: LexicalCommand<void> = createCommand();
 
-export const CheckboxPlugin: React.FC = () => {
+export default function CheckboxPlugin(): null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    // Event handler for checkbox changes
+    // Handle checkbox state changes
     const handleCheckboxChange = (event: Event) => {
-      const customEvent = event as CustomEvent<CheckboxEventDetail>;
+      const customEvent = event as CustomEvent;
       const { nodeKey, checked } = customEvent.detail;
-      
+
       editor.update(() => {
-        const checkboxNode = $getNodeByKey(nodeKey);
-        if (checkboxNode instanceof CheckboxNode) {
-          checkboxNode.setChecked(checked);
+        const node = $getNodeByKey(nodeKey);
+        if (node && $isCheckboxNode(node)) {
+          node.setChecked(checked);
         }
       });
     };
 
-    // Add listener for custom checkbox events
-    const rootElement = editor.getRootElement();
-    if (rootElement) {
-      rootElement.addEventListener('checkboxChange', handleCheckboxChange);
-    }
+    const removeListener = editor.registerRootListener((rootElement, prevRootElement) => {
+      if (rootElement) {
+        rootElement.addEventListener('checkboxChange', handleCheckboxChange);
+      }
+      if (prevRootElement) {
+        prevRootElement.removeEventListener('checkboxChange', handleCheckboxChange);
+      }
+    });
 
-    // Handle Enter key for checkboxes
-    const removeEnterListener = editor.registerCommand(
-      KEY_ENTER_COMMAND,
-      (event) => {
-        const selection = $getSelection();
-        
-        if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
-          return false;
-        }
-
-        const node = selection.anchor.getNode();
-        const parent = node.getParent();
-        
-        // Check if we're in a checkbox or a paragraph containing a checkbox
-        if ($isCheckboxNode(parent) || $isCheckboxNode(node)) {
-          const checkboxNode = $isCheckboxNode(node) ? node : parent;
-          
-          // If at the end of the checkbox node, check if it's empty
-          if ($isAtNodeEnd(selection.anchor) && checkboxNode) {
-            // Check if the checkbox is empty or contains only whitespace
-            const content = checkboxNode.getTextContent().trim();
-            
-            if (!content) {
-              // If empty, replace with a regular paragraph
-              const newParagraph = $createParagraphNode();
-              
-              if ($isElementNode(checkboxNode)) {
-                checkboxNode.replace(newParagraph);
-                newParagraph.select();
-                return true;
-              }
-            } else {
-              // Not empty, create a new checkbox below
-              const newParagraph = $createParagraphNode();
-              const newCheckbox = new CheckboxNode(false);
-              
-              newParagraph.append(newCheckbox);
-              
-              // Insert the new paragraph after the current one
-              if ($isElementNode(parent)) {
-                parent.insertAfter(newParagraph);
-              } else if ($isElementNode(node)) {
-                node.insertAfter(newParagraph);
-              }
-              
-              // Select the new checkbox
-              newCheckbox.selectEnd();
-            }
-            
-            return true;
-          }
-        }
-        
-        return false;
+    // Register command for inserting checkbox
+    const removeListenerCommand = editor.registerCommand(
+      INSERT_CHECKBOX_COMMAND,
+      () => {
+        convertToCheckboxes();
+        return true;
       },
-      COMMAND_PRIORITY_CRITICAL,
+      COMMAND_PRIORITY_EDITOR,
     );
 
     return () => {
-      if (rootElement) {
-        rootElement.removeEventListener('checkboxChange', handleCheckboxChange);
-      }
-      removeEnterListener();
+      removeListener();
+      removeListenerCommand();
     };
   }, [editor]);
 
+  function convertToCheckboxes() {
+    editor.update(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) {
+        return;
+      }
+
+      // Get text content from the current selection
+      const nodes = selection.getNodes();
+      const textContent = nodes
+        .filter(node => node instanceof TextNode)
+        .map(node => (node as TextNode).getTextContent())
+        .join('');
+
+      // Replace the selected text with a checkbox node
+      if (textContent.trim()) {
+        // Create checkbox with the extracted text
+        const checkboxNode = $createCheckboxNode(false, textContent.trim());
+        
+        // Replace the selected nodes with the checkbox node
+        const anchorNode = selection.anchor.getNode();
+        const focusNode = selection.focus.getNode();
+        const topLevelNode = anchorNode.getTopLevelElementOrThrow();
+        
+        topLevelNode.insertBefore(checkboxNode);
+        
+        // Remove the original text nodes that were selected
+        selection.getNodes().forEach(node => {
+          if (node.isAttached()) {
+            node.remove();
+          }
+        });
+        
+        // Select the newly created checkbox
+        checkboxNode.selectStart();
+      } else {
+        // If no text is selected, just insert an empty checkbox
+        const checkboxNode = $createCheckboxNode(false);
+        selection.insertNodes([checkboxNode]);
+        checkboxNode.selectStart();
+      }
+    });
+  }
+
   return null;
-};
+}
+
+// Helper function to insert a checkbox
+export function insertCheckbox(): void {
+  const editor = document.querySelector('[contenteditable="true"]');
+  
+  // Create and dispatch the custom command
+  const event = new CustomEvent('lexical-command', {
+    detail: {
+      type: INSERT_CHECKBOX_COMMAND,
+    },
+    bubbles: true,
+    cancelable: true,
+  });
+  
+  editor?.dispatchEvent(event);
+}

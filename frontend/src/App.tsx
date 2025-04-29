@@ -15,6 +15,7 @@ import Navbar from './components/Navbar';
 import { USER_LOGIN_EVENT } from './utils/userActions';
 import PageManagement from './components/PageManagement';
 import IndentationTest from './components/editor/tests/IndentationTest';
+import CheckboxTest from './components/editor/tests/CheckboxTest';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -97,6 +98,7 @@ const App: React.FC = () => {
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/page-management" element={<PageManagement />} />
               <Route path="/test-indentation" element={<IndentationTest />} />
+              <Route path="/checkbox-test" element={<CheckboxTest />} />
               
               {/* Dynamic page routes - include all pages, not just navigation ones */}
               {pages.map(page => (
