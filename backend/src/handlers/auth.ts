@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession } from '../utils/sessionManager';
-import { getUser, createUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified } from '../services/userService';
+import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
@@ -89,7 +89,7 @@ router.post('/register', async (request: Request, env) => {
         }
 
         // Create the user with password
-        const user = await createUser({ name, email, password }, env);
+        const user = await getOrCreateUser({ name, email, password }, env);
 
         // Generate verification token
         const verificationToken = crypto.randomUUID();
@@ -548,7 +548,7 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         const { email, name, sub } = payload; // Extract email, name, and user ID (sub)
 
         // Create or get the user
-        const user = await createUser({ name, email }, env);
+        const user = await getOrCreateUser({ name, email }, env);
 
         // Create a session for the user
         const sessionId = await CreateSession(user.id, { email, name }, env);

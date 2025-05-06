@@ -1,5 +1,5 @@
 import {
-  createUser,
+  getOrCreateUser,
   getUser,
   approveUser,
   getAllUsers,
@@ -106,7 +106,7 @@ describe('User Service', () => {
         email: 'test@example.com'
       };
       
-      const user = await createUser(userData, env);
+      const user = await getOrCreateUser(userData, env);
       
       expect(user).toBeDefined();
       expect(user.id).toBe('test@example.com');
@@ -129,10 +129,10 @@ describe('User Service', () => {
         email: 'existing@example.com'
       };
       
-      const user1 = await createUser(userData, env);
+      const user1 = await getOrCreateUser(userData, env);
       
       // Try to create the same user again
-      const user2 = await createUser(userData, env);
+      const user2 = await getOrCreateUser(userData, env);
       
       expect(user2).toEqual(user1);
       
@@ -146,7 +146,7 @@ describe('User Service', () => {
         email: 'alexander.young@gmail.com'
       };
       
-      const admin = await createUser(adminData, env);
+      const admin = await getOrCreateUser(adminData, env);
       
       expect(admin.isAdmin).toBe(true);
       expect(admin.userType).toBe(UserType.Admin);
@@ -161,7 +161,7 @@ describe('User Service', () => {
         password: 'securePassword123'
       };
       
-      const user = await createUser(userData, env);
+      const user = await getOrCreateUser(userData, env);
       
       expect(user).toBeDefined();
       expect(user.id).toBe('password@example.com');
@@ -183,7 +183,7 @@ describe('User Service', () => {
         email: 'test@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Get the user
       const user = await getUser('test@example.com', env);
@@ -208,7 +208,7 @@ describe('User Service', () => {
         email: 'test@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Approve the user
       const user = await approveUser('test@example.com', env);
@@ -369,7 +369,7 @@ describe('User Service', () => {
         email: 'regular@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Change user type to Lead
       const lead = await changeUserType('regular@example.com', UserType.Lead, env);
@@ -386,7 +386,7 @@ describe('User Service', () => {
         email: 'regular@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Change user type to Admin
       const admin = await changeUserType('regular@example.com', UserType.Admin, env);
@@ -409,7 +409,7 @@ describe('User Service', () => {
         email: 'admin@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       await makeAdmin('admin@example.com', env);
       
       // Verify user is admin
@@ -433,7 +433,7 @@ describe('User Service', () => {
         email: 'password@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Set password for the user
       const success = await setUserPassword('password@example.com', 'newSecurePassword123', env);
@@ -462,7 +462,7 @@ describe('User Service', () => {
         password
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Authenticate the user
       const user = await authenticateUser('auth@example.com', password, env);
@@ -479,7 +479,7 @@ describe('User Service', () => {
         password: 'correctPassword123'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Attempt authentication with wrong password
       const user = await authenticateUser('auth@example.com', 'wrongPassword', env);
@@ -494,7 +494,7 @@ describe('User Service', () => {
         email: 'nopassword@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Attempt authentication
       const user = await authenticateUser('nopassword@example.com', 'anyPassword', env);
@@ -517,7 +517,7 @@ describe('User Service', () => {
         email: 'admin@example.com'
       };
       
-      await createUser(adminData, env);
+      await getOrCreateUser(adminData, env);
       await makeAdmin('admin@example.com', env);
       
       // Create a group
@@ -541,7 +541,7 @@ describe('User Service', () => {
         email: 'lead@example.com'
       };
       
-      await createUser(leadData, env);
+      await getOrCreateUser(leadData, env);
       await changeUserType('lead@example.com', UserType.Lead, env);
       
       // Create a group
@@ -558,7 +558,7 @@ describe('User Service', () => {
         email: 'regular@example.com'
       };
       
-      await createUser(userData, env);
+      await getOrCreateUser(userData, env);
       
       // Try to create a group
       const group = await createGroup('Member Group', 'Should fail', 'regular@example.com', env);
@@ -581,7 +581,7 @@ describe('User Service', () => {
         email: 'admin@example.com'
       };
       
-      await createUser(adminData, env);
+      await getOrCreateUser(adminData, env);
       await makeAdmin('admin@example.com', env);
       
       // Create a group
@@ -676,10 +676,10 @@ describe('User Service', () => {
   describe('addUserToGroup', () => {
     it('should add a user to a group', async () => {
       // Create an admin and a regular user
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      await createUser({ name: 'Regular User', email: 'regular@example.com' }, env);
+      await getOrCreateUser({ name: 'Regular User', email: 'regular@example.com' }, env);
       
       // Create a group
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -700,7 +700,7 @@ describe('User Service', () => {
     
     it('should return false if user does not exist', async () => {
       // Create an admin and a group
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -713,7 +713,7 @@ describe('User Service', () => {
     
     it('should return false if group does not exist', async () => {
       // Create a user
-      await createUser({ name: 'Regular User', email: 'regular@example.com' }, env);
+      await getOrCreateUser({ name: 'Regular User', email: 'regular@example.com' }, env);
       
       // Try to add user to non-existent group
       const result = await addUserToGroup('regular@example.com', 'nonexistent-group-id', env);
@@ -723,7 +723,7 @@ describe('User Service', () => {
     
     it('should return true if user is already in the group', async () => {
       // Create an admin
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
       // Create a group (admin is automatically added)
@@ -743,10 +743,10 @@ describe('User Service', () => {
   describe('removeUserFromGroup', () => {
     it('should remove a user from a group', async () => {
       // Create an admin and a regular user
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      await createUser({ name: 'Regular User', email: 'regular@example.com' }, env);
+      await getOrCreateUser({ name: 'Regular User', email: 'regular@example.com' }, env);
       
       // Create a group
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -770,7 +770,7 @@ describe('User Service', () => {
     
     it('should return false if user does not exist', async () => {
       // Create an admin and a group
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -783,7 +783,7 @@ describe('User Service', () => {
     
     it('should return false if group does not exist', async () => {
       // Create a user
-      await createUser({ name: 'Regular User', email: 'regular@example.com' }, env);
+      await getOrCreateUser({ name: 'Regular User', email: 'regular@example.com' }, env);
       
       // Try to remove user from non-existent group
       const result = await removeUserFromGroup('regular@example.com', 'nonexistent-group-id', env);
@@ -793,10 +793,10 @@ describe('User Service', () => {
     
     it('should return true if user is not in the group', async () => {
       // Create an admin and a regular user
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      await createUser({ name: 'Regular User', email: 'regular@example.com' }, env);
+      await getOrCreateUser({ name: 'Regular User', email: 'regular@example.com' }, env);
       
       // Create a group
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -811,11 +811,11 @@ describe('User Service', () => {
   describe('deleteGroup', () => {
     it('should delete a group and update all members', async () => {
       // Create users
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      await createUser({ name: 'Member 1', email: 'member1@example.com' }, env);
-      await createUser({ name: 'Member 2', email: 'member2@example.com' }, env);
+      await getOrCreateUser({ name: 'Member 1', email: 'member1@example.com' }, env);
+      await getOrCreateUser({ name: 'Member 2', email: 'member2@example.com' }, env);
       
       // Create a group
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -886,10 +886,10 @@ describe('User Service', () => {
   describe('deleteUser', () => {
     it('should delete a user and remove from all groups', async () => {
       // Create admin and user
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      await createUser({ name: 'Test User', email: 'test@example.com' }, env);
+      await getOrCreateUser({ name: 'Test User', email: 'test@example.com' }, env);
       
       // Create two groups and add the user to both
       const group1 = await createGroup('Group 1', 'First group', 'admin@example.com', env);
@@ -925,11 +925,11 @@ describe('User Service', () => {
   describe('canAccessGroup', () => {
     it('should return true for admins regardless of membership', async () => {
       // Create admin and a group
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
       // Create a regular user who will create the group
-      await createUser({ name: 'Lead User', email: 'lead@example.com' }, env);
+      await getOrCreateUser({ name: 'Lead User', email: 'lead@example.com' }, env);
       await changeUserType('lead@example.com', UserType.Lead, env);
       
       // Create a group with the lead user
@@ -943,10 +943,10 @@ describe('User Service', () => {
     
     it('should return true for group members', async () => {
       // Create users
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      await createUser({ name: 'Member User', email: 'member@example.com' }, env);
+      await getOrCreateUser({ name: 'Member User', email: 'member@example.com' }, env);
       
       // Create a group
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -962,10 +962,10 @@ describe('User Service', () => {
     
     it('should return false for non-members', async () => {
       // Create users
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      await createUser({ name: 'Non Member', email: 'nonmember@example.com' }, env);
+      await getOrCreateUser({ name: 'Non Member', email: 'nonmember@example.com' }, env);
       
       // Create a group
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -978,7 +978,7 @@ describe('User Service', () => {
     
     it('should return false if user does not exist', async () => {
       // Create admin and a group
-      await createUser({ name: 'Admin User', email: 'admin@example.com' }, env);
+      await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
       const group = await createGroup('Test Group', 'A test group', 'admin@example.com', env);
@@ -991,7 +991,7 @@ describe('User Service', () => {
     
     it('should return false if group does not exist', async () => {
       // Create a user
-      await createUser({ name: 'Regular User', email: 'regular@example.com' }, env);
+      await getOrCreateUser({ name: 'Regular User', email: 'regular@example.com' }, env);
       
       // Check with non-existent group
       const canAccess = await canAccessGroup('regular@example.com', 'nonexistent-group-id', env);

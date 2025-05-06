@@ -12,7 +12,7 @@ import {
   addUserToGroup,
   removeUserFromGroup,
   deleteGroup,
-  createUser,
+  getOrCreateUser,
   deleteUser,
   updateUserName
 } from '../services/userService';
@@ -331,7 +331,7 @@ router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: 
   for (const userEntry of validUsers) {
     try {
       // Create the user
-      const newUser = await createUser({
+      const newUser = await getOrCreateUser({
         name: userEntry.name,
         email: userEntry.email
       }, env);

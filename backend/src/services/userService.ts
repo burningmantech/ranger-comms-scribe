@@ -3,7 +3,7 @@ import { User, UserType, Group } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
 
 // Store users in R2 with prefix 'user:'
-export async function createUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
+export async function getOrCreateUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
   // Check if user already exists
   const existingUser = await getUser(email, env);
   if (existingUser) {
@@ -11,15 +11,14 @@ export async function createUser({ name, email, password }: { name: string; emai
   }
   
   const id = email
-  const isFirstAdmin = email === 'alexander.young@gmail.com';
   
   const newUser: User = { 
     id, 
     name, 
     email, 
     approved: false, 
-    isAdmin: isFirstAdmin, // First admin
-    userType: isFirstAdmin ? UserType.Admin : UserType.Public,
+    isAdmin: false,
+    userType: UserType.Public,
     groups: []
   };
 
@@ -37,7 +36,39 @@ export async function createUser({ name, email, password }: { name: string; emai
   return newUser;
 }
 
-export async function getUser(id: string, env: Env): Promise<User | null> {
+export async function getUser(email: string, env: Env): Promise<User | null>  {
+  // Check if user already exists
+  const existingUser = await getUserInternal(email, env);
+  if (existingUser) {
+    return existingUser;
+  }
+
+  const isFirstAdmin = email === 'alexander.young@gmail.com';
+
+  if (isFirstAdmin) {
+    const newUser: User = { 
+      id: email, 
+      name: "Alex Young", 
+      email, 
+      approved: true, 
+      isAdmin: true,
+      userType: UserType.Admin,
+      groups: []
+    };
+    
+    // Store in R2
+    await env.R2.put(`user/${email}`, JSON.stringify(newUser), {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { userId: email }
+    });
+    
+    return newUser;
+  }
+
+  return null
+}
+
+export async function getUserInternal(id: string, env: Env): Promise<User | null> {
   try {
     if (!id) return null;
     
@@ -431,7 +462,7 @@ export async function initializeFirstAdmin(env: Env): Promise<void> {
   const admin = await getUser(adminEmail, env);
   
   if (!admin) {
-    await createUser({ 
+    await getOrCreateUser({ 
       name: 'Alexander Young', 
       email: adminEmail 
     }, env);
