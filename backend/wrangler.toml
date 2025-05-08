@@ -16,6 +16,11 @@ binding = "R2"
 bucket_name = "dancing-cats-r2"
 preview_bucket_name = "dancing-cats-r2"
 
+[[d1_databases]]
+binding = "D1"
+database_name = "dancing-cats-d1"
+database_id = "98310f09-41a1-4a70-ad79-736991d62ad9"
+
 [observability]
 enabled = true
 head_sampling_rate = 1

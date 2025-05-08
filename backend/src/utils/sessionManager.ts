@@ -1,6 +1,23 @@
 // Import the R2Bucket type from Cloudflare Workers types
 import { R2Bucket } from '@cloudflare/workers-types';
 
+// Define more specific D1 types
+interface D1PreparedStatement {
+    bind(...values: any[]): D1PreparedStatement;
+    first<T = any>(): Promise<T | null>;
+    run<T = any>(): Promise<T>;
+    all<T = any>(): Promise<T[]>;
+    raw<T = any[]>(): Promise<T[]>;
+}
+
+// Define the D1Database interface for the D1 database
+interface D1Database {
+    prepare: (query: string) => D1PreparedStatement;
+    exec: (query: string) => Promise<any>;
+    batch: (statements: any[]) => Promise<any>;
+    name?: string;
+}
+
 export interface Env {
     TURNSTILESECRET: any;
     R2: R2Bucket;
@@ -8,6 +25,7 @@ export interface Env {
     SESKey?: string;
     SESSecret?: string;
     TURSTILESECRET?: string; // Added Turnstile secret binding
+    D1?: D1Database; // Add D1 database property
 }
 
 export async function CreateSession(
