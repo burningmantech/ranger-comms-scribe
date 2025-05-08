@@ -1,22 +1,21 @@
 import { Page } from '../types';
 import { Env } from '../utils/sessionManager';
 import { v4 as uuidv4 } from 'uuid';
+import { getObject, putObject, deleteObject, listObjects } from './cacheService';
 
 // Get all pages
 export async function getPages(env: Env, userId?: string): Promise<Page[]> {
   const pages: Page[] = [];
   
   try {
-    // List all pages
-    const pagesList = await env.R2.list({ prefix: 'page/' });
+    // List all pages using cacheService
+    const pagesList = await listObjects('page/', env);
     
     // Process each page
     for (const page of pagesList.objects) {
       try {
-        const pageObject = await env.R2.get(page.key);
-        if (pageObject) {
-          const pageData = await pageObject.json() as Page;
-          
+        const pageData = await getObject<Page>(page.key, env);
+        if (pageData) {
           // Filter based on visibility permissions
           if (pageData.published && (pageData.isPublic || userId)) {
             pages.push(pageData);
@@ -41,15 +40,14 @@ export async function getAllPages(env: Env): Promise<Page[]> {
   const pages: Page[] = [];
   
   try {
-    // List all pages
-    const pagesList = await env.R2.list({ prefix: 'page/' });
+    // List all pages using cacheService
+    const pagesList = await listObjects('page/', env);
     
     // Process each page
     for (const page of pagesList.objects) {
       try {
-        const pageObject = await env.R2.get(page.key);
-        if (pageObject) {
-          const pageData = await pageObject.json() as Page;
+        const pageData = await getObject<Page>(page.key, env);
+        if (pageData) {
           pages.push(pageData);
         }
       } catch (error) {
@@ -70,13 +68,7 @@ export async function getAllPages(env: Env): Promise<Page[]> {
 export async function getPage(id: string, env: Env): Promise<Page | null> {
   try {
     const pageKey = `page/${id}`;
-    const pageObject = await env.R2.get(pageKey);
-    
-    if (!pageObject) {
-      return null;
-    }
-    
-    return await pageObject.json() as Page;
+    return await getObject<Page>(pageKey, env);
   } catch (error) {
     console.error(`Error fetching page ${id}:`, error);
     return null;
@@ -86,17 +78,14 @@ export async function getPage(id: string, env: Env): Promise<Page | null> {
 // Get a single page by slug
 export async function getPageBySlug(slug: string, env: Env): Promise<Page | null> {
   try {
-    // List all pages
-    const pagesList = await env.R2.list({ prefix: 'page/' });
+    // List all pages using cacheService
+    const pagesList = await listObjects('page/', env);
     
     // Find the page with the matching slug
     for (const page of pagesList.objects) {
-      const pageObject = await env.R2.get(page.key);
-      if (pageObject) {
-        const pageData = await pageObject.json() as Page;
-        if (pageData.slug === slug) {
-          return pageData;
-        }
+      const pageData = await getObject<Page>(page.key, env);
+      if (pageData && pageData.slug === slug) {
+        return pageData;
       }
     }
     
@@ -180,9 +169,9 @@ export async function createPage(
       isHome: pageData.isHome ?? false
     };
     
-    // Save the page
+    // Save the page using cacheService
     const pageKey = `page/${pageId}`;
-    await env.R2.put(pageKey, JSON.stringify(newPage));
+    await putObject(pageKey, newPage, env);
     
     return { success: true, page: newPage };
   } catch (error) {
@@ -212,15 +201,13 @@ export async function updatePage(
   env: Env
 ): Promise<{ success: boolean; page?: Page; error?: string }> {
   try {
-    // Get the existing page
+    // Get the existing page using cacheService
     const pageKey = `page/${id}`;
-    const pageObject = await env.R2.get(pageKey);
+    const existingPage = await getObject<Page>(pageKey, env);
     
-    if (!pageObject) {
+    if (!existingPage) {
       return { success: false, error: 'Page not found' };
     }
-    
-    const existingPage = await pageObject.json() as Page;
     
     // Check if slug is being updated and validate it
     if (updates.slug && updates.slug !== existingPage.slug) {
@@ -259,8 +246,8 @@ export async function updatePage(
       updatedAt: new Date().toISOString()
     };
     
-    // Save the updated page
-    await env.R2.put(pageKey, JSON.stringify(updatedPage));
+    // Save the updated page using cacheService
+    await putObject(pageKey, updatedPage, env);
     
     return { success: true, page: updatedPage };
   } catch (error) {
@@ -278,16 +265,16 @@ export async function deletePage(
   env: Env
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // Check if page exists
+    // Check if page exists using cacheService
     const pageKey = `page/${id}`;
-    const pageObject = await env.R2.get(pageKey);
+    const existingPage = await getObject<Page>(pageKey, env);
     
-    if (!pageObject) {
+    if (!existingPage) {
       return { success: false, error: 'Page not found' };
     }
     
-    // Delete the page
-    await env.R2.delete(pageKey);
+    // Delete the page using cacheService
+    await deleteObject(pageKey, env);
     
     return { success: true };
   } catch (error) {
@@ -326,7 +313,17 @@ export async function reorderPages(
 // Get the home page content
 export async function getHomePageContent(env: Env): Promise<string | null> {
   try {
-    // Try to get the home page by slug
+    // First try to find a page explicitly marked as home
+    const pagesList = await listObjects('page/', env);
+    
+    for (const page of pagesList.objects) {
+      const pageData = await getObject<Page>(page.key, env);
+      if (pageData && pageData.isHome && pageData.published) {
+        return pageData.content;
+      }
+    }
+    
+    // If no page is marked as home, try to get the page with slug 'home'
     const homePage = await getPageBySlug('home', env);
     
     if (homePage && homePage.published) {

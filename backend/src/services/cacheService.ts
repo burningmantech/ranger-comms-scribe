@@ -19,18 +19,42 @@ export const initCache = async (env: Env): Promise<void> => {
     }
 
     try {
+        console.log('Initializing cache database...');
+        
         // Create the cache table if it doesn't exist
-        await env.D1.exec(`
-            CREATE TABLE IF NOT EXISTS object_cache (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                last_updated INTEGER NOT NULL,
-                ttl INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_last_updated ON object_cache(last_updated);
-        `);
+        // Fix: Put the entire SQL statement on one line without line breaks
+        console.log('Creating object_cache table...');
+        await env.D1.exec(
+            "CREATE TABLE IF NOT EXISTS object_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, last_updated INTEGER NOT NULL, ttl INTEGER NOT NULL)"
+        );
+        console.log('Object cache table created successfully');
+        
+        // Create the index in a separate statement
+        // Fix: Put the entire SQL statement on one line without line breaks
+        console.log('Creating index on last_updated...');
+        await env.D1.exec(
+            "CREATE INDEX IF NOT EXISTS idx_last_updated ON object_cache(last_updated)"
+        );
+        console.log('Index created successfully');
+        
+        // Verify table was created
+        const tableCheck = await env.D1.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='object_cache'"
+        ).first();
+        
+        if (tableCheck) {
+            console.log('Verified object_cache table exists');
+        } else {
+            console.error('Failed to create object_cache table - not found after creation');
+        }
     } catch (error) {
         console.error('Error initializing cache database:', error);
+        // Log more details about the error
+        if (error instanceof Error) {
+            console.error('Error name:', error.name);
+            console.error('Error message:', error.message);
+            console.error('Error stack:', error.stack);
+        }
     }
 };
 
@@ -224,6 +248,25 @@ export const putObject = async (
 
         // Also store in cache
         await setInCache(key, value, env, ttl);
+        
+        // Invalidate any list caches that might contain this object
+        // We extract potential prefixes from the key path
+        const keyParts = key.split('/');
+        if (keyParts.length > 1) {
+            // For each level of the path, invalidate the corresponding list cache
+            let currentPath = '';
+            for (let i = 0; i < keyParts.length - 1; i++) {
+                if (i > 0) currentPath += '/';
+                currentPath += keyParts[i];
+                await removeFromCache(`__list__:${currentPath}`, env);
+                await removeFromCache(`__list__:${currentPath}/`, env);
+            }
+            // Also invalidate the empty prefix list which contains everything
+            await removeFromCache('__list__:', env);
+        } else {
+            // Top-level object, just invalidate the root listing
+            await removeFromCache('__list__:', env);
+        }
     } catch (error) {
         console.error(`Error putting object ${key}:`, error);
         throw error; // Rethrow to maintain the same error behavior as R2
@@ -243,6 +286,22 @@ export const deleteObject = async (key: string, env: Env): Promise<void> => {
 
         // Also remove from cache
         await removeFromCache(key, env);
+        
+        // Invalidate any list caches that might contain this object
+        // Similar logic as in putObject
+        const keyParts = key.split('/');
+        if (keyParts.length > 1) {
+            let currentPath = '';
+            for (let i = 0; i < keyParts.length - 1; i++) {
+                if (i > 0) currentPath += '/';
+                currentPath += keyParts[i];
+                await removeFromCache(`__list__:${currentPath}`, env);
+                await removeFromCache(`__list__:${currentPath}/`, env);
+            }
+            await removeFromCache('__list__:', env);
+        } else {
+            await removeFromCache('__list__:', env);
+        }
     } catch (error) {
         console.error(`Error deleting object ${key}:`, error);
         throw error; // Rethrow to maintain the same error behavior as R2
@@ -250,16 +309,31 @@ export const deleteObject = async (key: string, env: Env): Promise<void> => {
 };
 
 /**
- * List objects from R2 with a given prefix
- * This operation is not cached because listing results may change frequently
+ * List objects from R2 with a given prefix, using cache when available
  * 
  * @param prefix The key prefix to list
  * @param env The environment with R2 access
+ * @param ttl Cache TTL in seconds (default: 5 minutes since listings change often)
  * @returns The list result from R2
  */
-export const listObjects = async (prefix: string, env: Env): Promise<any> => {
+export const listObjects = async (prefix: string, env: Env, ttl: number = 300): Promise<any> => {
     try {
-        return await env.R2.list({ prefix });
+        // Create a cache key specifically for this listing operation
+        const cacheKey = `__list__:${prefix}`;
+        
+        // Try to get the listing from cache first
+        const cachedListing = await getFromCache(cacheKey, env);
+        if (cachedListing !== null) {
+            return cachedListing;
+        }
+
+        // If not in cache, get from R2
+        const listing = await env.R2.list({ prefix });
+        
+        // Store in cache for future requests with a shorter TTL
+        await setInCache(cacheKey, listing, env, ttl);
+        
+        return listing;
     } catch (error) {
         console.error(`Error listing objects with prefix ${prefix}:`, error);
         throw error; // Rethrow to maintain the same error behavior as R2

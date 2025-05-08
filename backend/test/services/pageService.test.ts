@@ -9,6 +9,7 @@ import {
 } from '../../src/services/pageService';
 import { mockEnv, setupMockStorage } from './test-helpers';
 import { Page } from '../../src/types';
+import { initCache } from '../../src/services/cacheService';
 
 describe('Page Service', () => {
   let env: any;
@@ -22,10 +23,12 @@ describe('Page Service', () => {
     isPublic: true
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
     env = mockEnv();
     setupMockStorage(env);
+    // Initialize cache for tests
+    await initCache(env);
   });
 
   afterEach(() => {
@@ -134,8 +137,14 @@ describe('Page Service', () => {
       const createResult = await createPage(samplePage, 'admin@example.com', 'Admin User', env);
       const pageId = createResult.page!.id;
       
-      // Mock R2.get to throw an error
+      // Mock both R2.get and D1.prepare to throw an error
       env.R2.get = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      const mockPrepare = jest.fn().mockReturnValue({
+        bind: jest.fn().mockReturnValue({
+          first: jest.fn().mockRejectedValue(new Error('Mock D1 error'))
+        })
+      });
+      env.D1.prepare = mockPrepare;
       
       const page = await getPage(pageId, env);
       

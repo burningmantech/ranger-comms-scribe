@@ -1,5 +1,6 @@
 import { Env } from '../../src/utils/sessionManager';
 import { BlogPost, BlogComment, BlockedUser, UserType, User } from '../../src/types';
+import { initCache } from '../../src/services/cacheService';
 
 // Mock data and utilities for testing
 export const mockEnv = (): Env => {
@@ -40,6 +41,79 @@ export const mockEnv = (): Env => {
     return { objects };
   });
   
+  // Mock D1 cache database
+  const cacheStore: { [key: string]: any } = {};
+  const mockD1 = {
+    exec: jest.fn(async (query: string): Promise<any> => {
+      // Mock implementation for creating tables
+      return { success: true };
+    }),
+    prepare: jest.fn((query: string) => {
+      // Return object with mock bind and execution methods
+      return {
+        bind: jest.fn((...params: any[]) => {
+          // Create a prepared statement with bound parameters
+          const preparedStatement = {
+            params,
+            
+            // For inserting or replacing cache entries
+            run: jest.fn(async (): Promise<any> => {
+              if (query.includes('INSERT OR REPLACE INTO object_cache')) {
+                const key = params[0];
+                const value = params[1];
+                const lastUpdated = params[2];
+                const ttl = params[3];
+                
+                cacheStore[key] = {
+                  value,
+                  lastUpdated,
+                  ttl
+                };
+              }
+              
+              // For deleting cache entries
+              if (query.includes('DELETE FROM object_cache')) {
+                const searchKey = params[0];
+                
+                if (query.includes('LIKE')) {
+                  // Delete with prefix
+                  const prefix = searchKey.replace('%', '');
+                  Object.keys(cacheStore).forEach(key => {
+                    if (key.startsWith(prefix)) {
+                      delete cacheStore[key];
+                    }
+                  });
+                } else {
+                  // Delete specific key
+                  delete cacheStore[searchKey];
+                }
+              }
+              
+              return { success: true };
+            }),
+            
+            // For retrieving cache entries
+            first: jest.fn(async (): Promise<any> => {
+              if (query.includes('SELECT value, last_updated, ttl FROM object_cache')) {
+                const key = params[0];
+                if (cacheStore[key]) {
+                  return {
+                    value: cacheStore[key].value,
+                    lastUpdated: cacheStore[key].lastUpdated,
+                    ttl: cacheStore[key].ttl
+                  };
+                }
+              }
+              return null;
+            })
+          };
+          
+          return preparedStatement;
+        })
+      };
+    })
+  };
+  
   return {
     R2: {
       put: putMock,
@@ -50,6 +124,7 @@ export const mockEnv = (): Env => {
       delete: deleteMock,
       list: listMock
     },
+    D1: mockD1
     // Add other env properties as needed
   } as unknown as Env;
 };
