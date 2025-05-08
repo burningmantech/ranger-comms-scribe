@@ -1,19 +1,43 @@
 import { Env } from '../utils/sessionManager';
 import { GalleryComment } from '../types';
 import { isUserBlocked } from '../services/blogService';
+import { getObject, putObject, deleteObject, listObjects } from './cacheService';
 
 // Get comments for a media item
 export const getGalleryComments = async (mediaId: string, env: Env): Promise<GalleryComment[]> => {
     try {
-        // List all objects with the gallery/comments/mediaId/ prefix
-        const objects = await env.R2.list({ prefix: `gallery/comments/${mediaId}/` });
+        // Generate cache key for the entire comments collection for this media
+        const cacheKey = `gallery_comments:${mediaId}`;
+        
+        // Try to get cached comments first
+        const cachedComments = await getObject<GalleryComment[]>(cacheKey, env);
+        if (cachedComments) {
+            return cachedComments;
+        }
+        
+        // If not in cache, fetch from R2
+        // List all objects with the gallery/comments/mediaId/ prefix using cacheService
+        const objects = await listObjects(`gallery/comments/${mediaId}/`, env);
         
         // Create a list of promises to get each comment's content
         const commentPromises = objects.objects.map(async (object: { key: string }) => {
+            // Check cache first for individual comment
+            const commentCacheKey = `comment:${object.key}`;
+            const cachedComment = await getObject<GalleryComment>(commentCacheKey, env);
+            
+            if (cachedComment) {
+                return cachedComment;
+            }
+            
+            // If not in cache, get from R2
             const commentObject = await env.R2.get(object.key);
             if (!commentObject) return null;
             
             const comment = await commentObject.json() as GalleryComment;
+            
+            // Cache individual comment for future use
+            await putObject(commentCacheKey, comment, env, undefined, 3600);
+            
             return comment;
         });
         
@@ -45,7 +69,12 @@ export const getGalleryComments = async (mediaId: string, env: Env): Promise<Gal
         });
         
         // Sort root comments by creation date (newest first)
-        return rootComments.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        const sortedComments = rootComments.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        
+        // Cache the fully processed comment tree
+        await putObject(cacheKey, sortedComments, env, undefined, 3600);
+        
+        return sortedComments;
     } catch (error) {
         console.error('Error fetching gallery comments from R2:', error);
         return [];
@@ -92,9 +121,16 @@ export const addGalleryComment = async (
             replies: []
         };
         
-        // Store the comment in R2
+        // Store the comment in R2 and cache
         const commentKey = `gallery/comments/${mediaId}/${commentId}`;
-        await env.R2.put(commentKey, JSON.stringify(newComment));
+        await putObject(commentKey, newComment, env);
+        
+        // Cache individual comment
+        await putObject(`comment:${commentKey}`, newComment, env);
+        
+        // Invalidate the main comments collection cache for this media item
+        // This will force a refresh of the comments list next time it's requested
+        await deleteObject(`gallery_comments:${mediaId}`, env);
         
         return { 
             success: true, 
@@ -119,40 +155,58 @@ export const deleteGalleryComment = async (
     try {
         // Check if the comment exists
         const commentKey = `gallery/comments/${mediaId}/${commentId}`;
-        const commentObject = await env.R2.get(commentKey);
         
-        if (!commentObject) {
-            return { 
-                success: false, 
-                message: 'Comment not found' 
-            };
+        // Check cache first
+        let comment = await getObject<GalleryComment>(`comment:${commentKey}`, env);
+        
+        if (!comment) {
+            // If not in cache, try to get from R2
+            const commentObject = await env.R2.get(commentKey);
+            
+            if (!commentObject) {
+                return { 
+                    success: false, 
+                    message: 'Comment not found' 
+                };
+            }
+            
+            comment = await commentObject.json() as GalleryComment;
         }
         
-        // Get the comment to check if it has replies
-        const comment = await commentObject.json() as GalleryComment;
-        
-        // Delete the comment
-        await env.R2.delete(commentKey);
+        // Delete the comment from R2 and cache
+        await deleteObject(commentKey, env);
+        await deleteObject(`comment:${commentKey}`, env);
         
         // If this is a parent comment, we need to delete all replies too
         if (!comment.parentId) {
-            // List all comments for this media item
-            const objects = await env.R2.list({ prefix: `gallery/comments/${mediaId}/` });
+            // List all comments for this media item using cacheService
+            const objects = await listObjects(`gallery/comments/${mediaId}/`, env);
             
             // Delete all replies to this comment
             const deletionPromises = objects.objects
                 .map(async (object: { key: string }) => {
-                    const replyObject = await env.R2.get(object.key);
-                    if (!replyObject) return;
+                    // Check cache first for the reply
+                    const replyCacheKey = `comment:${object.key}`;
+                    let reply = await getObject<GalleryComment>(replyCacheKey, env);
                     
-                    const reply = await replyObject.json() as GalleryComment;
+                    if (!reply) {
+                        const replyObject = await env.R2.get(object.key);
+                        if (!replyObject) return;
+                        reply = await replyObject.json() as GalleryComment;
+                    }
+                    
                     if (reply.parentId === commentId) {
-                        await env.R2.delete(object.key);
+                        // Delete from R2 and cache
+                        await deleteObject(object.key, env);
+                        await deleteObject(replyCacheKey, env);
                     }
                 });
             
             await Promise.all(deletionPromises);
         }
+        
+        // Invalidate the main comments collection cache for this media item
+        await deleteObject(`gallery_comments:${mediaId}`, env);
         
         return { 
             success: true, 

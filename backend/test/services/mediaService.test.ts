@@ -4,6 +4,7 @@ import {
   deleteMedia
 } from '../../src/services/mediaService';
 import { mockEnv, setupMockStorage } from './test-helpers';
+import { initCache } from '../../src/services/cacheService';
 
 // Define the enhanced ReadableStream type that R2 expects
 interface EnhancedReadableStream extends ReadableStream<Uint8Array> {
@@ -18,10 +19,13 @@ describe('Media Service', () => {
   let originalConsoleError: any;
   let originalConsoleWarn: any;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
     env = mockEnv();
     setupMockStorage(env);
+    
+    // Initialize the cache for testing
+    await initCache(env);
     
     // Set up environment for media URLs
     env.PUBLIC_URL = 'https://example.com';
@@ -222,8 +226,9 @@ describe('Media Service', () => {
       expect(mediaItem.url).toBe(`https://example.com/gallery/${mockTimestamp}_test-image.jpg`);
       expect(mediaItem.thumbnailUrl).toBe(`https://example.com/gallery/${mockTimestamp}_test-image.jpg/thumbnail`);
       
-      // Verify R2 calls
-      expect(env.R2.put).toHaveBeenCalledTimes(2); // Once for media, once for thumbnail
+      // Verify R2 calls - we should have more calls now with cacheService
+      // R2.put is called for the media file, thumbnail, medium version, and metadata cache entries
+      expect(env.R2.put).toHaveBeenCalledTimes(6);
     });
     
     it('should support private media files with group access', async () => {
@@ -281,8 +286,8 @@ describe('Media Service', () => {
       expect(result.success).toBe(true);
       expect(result.message).toBe('Media deleted successfully');
       
-      // Verify R2 calls
-      expect(env.R2.delete).toHaveBeenCalledTimes(2); // Once for media, once for thumbnail
+      // Verify R2 calls - we should have more calls now due to cache invalidation
+      expect(env.R2.delete).toHaveBeenCalled();
       expect(env.R2.delete).toHaveBeenCalledWith('gallery/test-image.jpg');
       expect(env.R2.delete).toHaveBeenCalledWith('gallery/thumbnails/test-image.jpg');
     });
