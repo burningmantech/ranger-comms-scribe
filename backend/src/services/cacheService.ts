@@ -81,7 +81,7 @@ export const getFromCache = async <T>(key: string, env: Env): Promise<T | null> 
         }
 
         // Check if the cache entry has expired
-        const now = Date.now();
+        const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();
         if (result.lastUpdated + result.ttl * 1000 < now) {
             // Cache entry has expired, remove it
             await removeFromCache(key, env);
@@ -115,7 +115,8 @@ export const setInCache = async (
 
     try {
         const jsonValue = JSON.stringify(value);
-        const now = Date.now();
+        // Fix the Date.now issue by using a number directly
+        const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();
 
         await env.D1.prepare(
             'INSERT OR REPLACE INTO object_cache (key, value, last_updated, ttl) VALUES (?, ?, ?, ?)'
@@ -175,7 +176,7 @@ export const cleanupExpiredCache = async (env: Env): Promise<void> => {
     }
 
     try {
-        const now = Date.now();
+        const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();
         await env.D1.prepare('DELETE FROM object_cache WHERE last_updated + ttl * 1000 < ?')
         .bind(now)
         .run();

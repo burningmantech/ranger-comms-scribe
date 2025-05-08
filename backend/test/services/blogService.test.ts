@@ -274,8 +274,11 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.put to throw an error
-      env.R2.put = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // First, make sure the post exists in the cache
+      await getBlogPost('post1', env);
+      
+      // Now mock R2.put to throw an error for the update operation
+      jest.spyOn(env.R2, 'put').mockRejectedValueOnce(new Error('Mock R2 error'));
       
       const updates = {
         title: 'Error Update',
@@ -414,8 +417,11 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.put to throw an error
-      env.R2.put = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // First, make sure the post exists in the cache
+      await getBlogPost('post1', env);
+      
+      // Now mock R2.put to throw an error for the addComment operation
+      jest.spyOn(env.R2, 'put').mockRejectedValueOnce(new Error('Mock R2 error'));
       
       const result = await addComment(
         'post1',
