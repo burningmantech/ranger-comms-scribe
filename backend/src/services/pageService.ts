@@ -30,7 +30,7 @@ export async function getPages(env: Env, userId?: string): Promise<Page[]> {
     // Sort pages by order
     return pages.sort((a, b) => a.order - b.order);
   } catch (error) {
-    console.error('Error listing pages from R2:', error);
+    console.error('Error listing pages:', error);
     return [];
   }
 }
@@ -59,7 +59,7 @@ export async function getAllPages(env: Env): Promise<Page[]> {
     // Sort pages by order
     return pages.sort((a, b) => a.order - b.order);
   } catch (error) {
-    console.error('Error listing all pages from R2:', error);
+    console.error('Error listing all pages:', error);
     return [];
   }
 }
