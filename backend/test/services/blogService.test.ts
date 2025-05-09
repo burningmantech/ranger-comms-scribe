@@ -1,3 +1,10 @@
+// First, import the mock helper
+import { createCacheServiceMock, __getStorage, __clearStorage } from './cache-mock-helpers';
+
+// Set up the mock before any other imports that might use cacheService
+jest.mock('../../src/services/cacheService', () => createCacheServiceMock());
+
+// Now import other modules that depend on the mock
 import { 
   getBlogPosts,
   getBlogPost,
@@ -14,6 +21,14 @@ import {
 } from '../../src/services/blogService';
 import { mockEnv, setupMockStorage, mockPosts, mockComments, mockBlockedUsers } from './test-helpers';
 import { BlogPost, BlogComment, UserType } from '../../src/types';
+
+// Import the mocked cacheService functions for use in tests
+import {
+  getObject,
+  putObject,
+  deleteObject,
+  listObjects
+} from '../../src/services/cacheService';
 
 // Mock userService
 jest.mock('../../src/services/userService', () => ({
@@ -71,7 +86,7 @@ describe('Blog Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     env = mockEnv();
-    setupMockStorage(env);
+    __clearStorage(); // Clear the mock cache storage
     
     // Mock Date.now() for predictable IDs
     const mockDateNow = jest.spyOn(Date, 'now');
@@ -84,6 +99,30 @@ describe('Blog Service', () => {
     const mockDate = new Date('2021-01-01T00:00:00Z');
     jest.spyOn(global, 'Date').mockImplementation(() => mockDate as any);
     mockDate.toISOString = jest.fn(() => '2021-01-01T00:00:00Z');
+    
+    // Setup mock blog posts in cache instead of R2
+    if (mockPosts && mockPosts.length > 0) {
+      mockPosts.forEach((post) => {
+        putObject(`blog/posts/${post.id}`, post, env);
+        putObject(`post:blog/posts/${post.id}`, post, env);
+      });
+    }
+    
+    // Setup mock comments in cache instead of R2
+    if (mockComments && mockComments.length > 0) {
+      mockComments.forEach((comment) => {
+        putObject(`blog/comments/${comment.postId}/${comment.id}`, comment, env);
+        putObject(`comment:blog/comments/${comment.postId}/${comment.id}`, comment, env);
+      });
+    }
+    
+    // Setup mock blocked users in cache instead of R2
+    if (mockBlockedUsers && mockBlockedUsers.length > 0) {
+      mockBlockedUsers.forEach((blockedUser) => {
+        putObject(`blog/blocked-users/${blockedUser.userId}`, blockedUser, env);
+        putObject(`blocked:${blockedUser.userId}`, blockedUser, env);
+      });
+    }
   });
 
   afterEach(() => {
@@ -128,8 +167,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.list to throw an error
-      env.R2.list = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock listObjects to throw an error
+      (listObjects as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const posts = await getBlogPosts(env);
       
@@ -153,8 +194,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.get to throw an error
-      env.R2.get = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock getObject to throw an error
+      (getObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const post = await getBlogPost('post1', env);
       
@@ -216,8 +259,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.put to throw an error
-      env.R2.put = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock putObject to throw an error
+      (putObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const newPostData = {
         title: 'Error Post',
@@ -234,7 +279,7 @@ describe('Blog Service', () => {
       );
       
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Mock R2 error');
+      expect(result.message).toBe('Mock cache error');
     });
   });
 
@@ -274,11 +319,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // First, make sure the post exists in the cache
-      await getBlogPost('post1', env);
-      
-      // Now mock R2.put to throw an error for the update operation
-      jest.spyOn(env.R2, 'put').mockRejectedValueOnce(new Error('Mock R2 error'));
+      // Mock putObject to throw an error
+      (putObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const updates = {
         title: 'Error Update',
@@ -288,7 +332,7 @@ describe('Blog Service', () => {
       const result = await updateBlogPost('post1', updates, env);
       
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Mock R2 error');
+      expect(result.message).toBe('Mock cache error');
     });
   });
 
@@ -319,13 +363,15 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.delete to throw an error
-      env.R2.delete = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock deleteObject to throw an error
+      (deleteObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const result = await deleteBlogPost('post1', env);
       
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Mock R2 error');
+      expect(result.message).toBe('Mock cache error');
     });
   });
 
@@ -345,8 +391,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.list to throw an error
-      env.R2.list = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock listObjects to throw an error
+      (listObjects as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const comments = await getComments('post1', env);
       
@@ -420,8 +468,10 @@ describe('Blog Service', () => {
       // First, make sure the post exists in the cache
       await getBlogPost('post1', env);
       
-      // Now mock R2.put to throw an error for the addComment operation
-      jest.spyOn(env.R2, 'put').mockRejectedValueOnce(new Error('Mock R2 error'));
+      // Mock putObject to throw an error
+      (putObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const result = await addComment(
         'post1',
@@ -432,7 +482,7 @@ describe('Blog Service', () => {
       );
       
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Mock R2 error');
+      expect(result.message).toBe('Mock cache error');
     });
   });
 
@@ -455,13 +505,15 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.delete to throw an error
-      env.R2.delete = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock deleteObject to throw an error
+      (deleteObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const result = await deleteComment('post1', 'comment1', env);
       
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Mock R2 error');
+      expect(result.message).toBe('Mock cache error');
     });
   });
 
@@ -482,8 +534,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.put to throw an error
-      env.R2.put = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock putObject to throw an error
+      (putObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const result = await blockUser(
         'user-to-block',
@@ -493,7 +547,7 @@ describe('Blog Service', () => {
       );
       
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Mock R2 error');
+      expect(result.message).toBe('Mock cache error');
     });
   });
 
@@ -520,13 +574,15 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.delete to throw an error
-      env.R2.delete = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock deleteObject to throw an error
+      (deleteObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const result = await unblockUser('blocked@example.com', env);
       
       expect(result.success).toBe(false);
-      expect(result.message).toBe('Mock R2 error');
+      expect(result.message).toBe('Mock cache error');
     });
   });
 
@@ -544,8 +600,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.head to throw an error
-      env.R2.head = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock getObject to throw an error
+      (getObject as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const isBlocked = await isUserBlocked('blocked@example.com', env);
       
@@ -563,8 +621,10 @@ describe('Blog Service', () => {
     });
 
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.list to throw an error
-      env.R2.list = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock listObjects to throw an error
+      (listObjects as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('Mock cache error');
+      });
       
       const blockedUsers = await getBlockedUsers(env);
       

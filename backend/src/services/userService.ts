@@ -220,8 +220,8 @@ export async function createGroup(
     
     // Store the group in R2 using both key formats with caching
     await putObject(`group/${id}`, group, env);
-    // Keep backward compatibility but without cache to avoid duplication
-    await env.R2.put(`groups/${id}`, JSON.stringify(group));
+    // Keep backward compatibility for tests
+    await putObject(`groups/${id}`, group, env);
     
     // Update the creator's groups
     await addGroupToUser(createdBy, id, env);
@@ -251,10 +251,7 @@ export async function getGroup(id: string, env: Env): Promise<Group | null> {
     
     // If not found, try with plural "groups/" prefix (for compatibility with test environment)
     if (!group) {
-      const object = await env.R2.get(`groups/${id}`);
-      if (object) {
-        group = await object.json() as Group;
-      }
+      group = await getObject<Group>(`groups/${id}`, env);
     }
     
     if (!group) return null;
@@ -399,14 +396,14 @@ export async function deleteGroup(groupId: string, env: Env): Promise<boolean> {
         if (user.groups && user.groups.includes(groupId)) {
           user.groups = user.groups.filter(id => id !== groupId);
           
-          // Direct R2 update for test environment
-          await env.R2.put(`user/${user.email}`, JSON.stringify(user), {
+          // Update using cache service for test environment
+          await putObject(`user/${user.email}`, user, env, {
             httpMetadata: { contentType: 'application/json' },
             customMetadata: { userId: user.id }
           });
           
           // Override any cached version to ensure tests see the updated state
-          await env.R2.put(`user/${user.id}`, JSON.stringify(user), {
+          await putObject(`user/${user.id}`, user, env, {
             httpMetadata: { contentType: 'application/json' },
             customMetadata: { userId: user.id }
           });
@@ -432,18 +429,8 @@ export async function deleteGroup(groupId: string, env: Env): Promise<boolean> {
     }
     
     // Delete the group from storage - use both formats for backward compatibility
-    await env.R2.delete(`group/${groupId}`);
-    await env.R2.delete(`groups/${groupId}`);
-    
-    // Also clear from cache if D1 is available
-    try {
-      if (env.D1) {
-        await env.D1.exec(`DELETE FROM object_cache WHERE key = 'group/${groupId}'`);
-        await env.D1.exec(`DELETE FROM object_cache WHERE key = 'groups/${groupId}'`);
-      }
-    } catch (cacheError) {
-      // Ignore cache errors in test environment
-    }
+    await deleteObject(`group/${groupId}`, env);
+    await deleteObject(`groups/${groupId}`, env);
     
     return true;
   } catch (error) {

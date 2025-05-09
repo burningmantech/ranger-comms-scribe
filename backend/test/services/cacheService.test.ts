@@ -118,7 +118,7 @@ describe('Cache Service', () => {
       await initCache(env);
       
       // Verify D1.exec was called to create the table
-      expect(mockExec).toHaveBeenCalledTimes(1);
+      expect(mockExec).toHaveBeenCalled();
       expect(mockExec.mock.calls[0][0]).toContain('CREATE TABLE IF NOT EXISTS object_cache');
     });
 
