@@ -77,8 +77,13 @@ export const getFromCache = async <T>(key: string, env: Env): Promise<T | null> 
         .first<CachedObject>();
 
         if (!result) {
+            // Cache miss
+            console.log(`Cache miss for key: ${key}`);
             return null;
         }
+
+        // Cache hit
+        console.log(`Cache hit for key: ${key}`);
 
         // Check if the cache entry has expired
         const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();

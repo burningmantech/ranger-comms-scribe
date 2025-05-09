@@ -11,6 +11,7 @@ import { initializeFirstAdmin } from './services/userService';
 import { setExistingContentPublic } from './migrations/setExistingContentPublic';
 import { ensureUserGroups } from './migrations/ensureUserGroups';
 import { initCache } from './services/cacheService';
+import { cachePageSlugs } from './services/pageService';
 
 declare global {
     interface Request {
@@ -78,6 +79,9 @@ const initializeApp = async (env: Env) => {
     // Run migrations
     await setExistingContentPublic(env);
     await ensureUserGroups(env);
+
+    // Cache page slugs
+    await cachePageSlugs(env);
 };
 
 // Immediately initialize the application when the script loads
