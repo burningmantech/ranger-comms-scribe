@@ -105,7 +105,7 @@ router.post('/register', async (request: Request, env) => {
         });
 
         // Create verification URL
-        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://dancingcats.org';
+        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://scrivenly.com';
         const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
 
         // Email content
@@ -239,7 +239,7 @@ router.post('/resend-verification', async (request: Request, env) => {
         });
 
         // Create verification URL
-        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://dancingcats.org';
+        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://scrivenly.com';
         const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
 
         // Email content
@@ -403,7 +403,7 @@ router.post('/forgot-password', async (request: Request, env) => {
         });
 
         // Create reset URL (frontend should handle this route)
-        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://dancingcats.org';
+        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://scrivenly.com';
         const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
         // Email content

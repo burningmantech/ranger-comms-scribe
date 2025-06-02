@@ -1,5 +1,5 @@
 {
-  "name": "dancing-cats-backend",
+  "name": "vox-quietus-cats-backend",
   "version": "1.0.0",
   "main": "src/index.ts",
   "scripts": {

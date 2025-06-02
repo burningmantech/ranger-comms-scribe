@@ -1,6 +1,6 @@
-# Dancing Cats Website
+# Vox Quietus Website
 
-Welcome to the Dancing Cats website project! This project is designed to serve as a blog and media sharing platform for the Burning Man theme camp, Dancing Cat Wine Bar. The website features user-generated content, including blog posts, photos, and videos, and integrates Google One Tap for user authentication.
+Welcome to the Vox Quietus website project! This project is designed to serve as a blog and media sharing platform for the Burning Man theme camp, Vox Quietus. The website features user-generated content, including blog posts, photos, and videos, and integrates Google One Tap for user authentication.
 
 ## Project Structure
 
@@ -59,7 +59,7 @@ backend/
 
 ## Deployment
 
-The website is hosted at [dancingcats.org](https://dancingcats.org) and utilizes Cloudflare Workers for the backend functionality. Ensure that your DNS settings are correctly configured to point to the Cloudflare Worker.
+The website is hosted at [scrivenly.com](https://scrivenly.com) and utilizes Cloudflare Workers for the backend functionality. Ensure that your DNS settings are correctly configured to point to the Cloudflare Worker.
 
 ## Getting Started
 
@@ -68,7 +68,7 @@ To get started with the project, clone the repository and install the necessary 
 1. Clone the repository:
    ```
    git clone <repository-url>
-   cd dancing-cats-website
+   cd vox-quietus-website
    ```
 
 2. Install frontend dependencies:

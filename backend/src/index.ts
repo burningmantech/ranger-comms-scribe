@@ -29,7 +29,7 @@ declare global {
 }
 
 export const { preflight, corsify } = cors({
-    // origin: 'https://dancingcats.org',
+    // origin: 'https://scrivenly.com',
     origin: '*',
     allowMethods: '*',
     maxAge: 84600,

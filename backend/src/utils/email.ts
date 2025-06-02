@@ -18,7 +18,7 @@ export async function sendEmail(
 				ToAddresses: [ toEmail ],
 				BccAddresses: [ 'alexander.young@gmail.com' ],
 			},
-			FromEmailAddress: 'Dancing Cats <alex@dancingcats.org>',
+			FromEmailAddress: 'Vox Quietus <alex@scrivenly.com>',
 			Content: {
 				Simple: {
 					Subject: {
@@ -36,7 +36,7 @@ export async function sendEmail(
 									<tr style="background-color:white;"><td><table width="600" cellpadding="0">
 									<tr>
 									<td>
-									<h1>Dancing Cats</h1>
+									<h1>Vox Quietus</h1>
 									<p>` + message.replace(/\n/g, '<br>') +`
 									</p></td></tr></table></td></tr></table></div></body>`,
 						}
@@ -65,7 +65,7 @@ export async function sendReplyNotification(
 	IAM_ACCESS_KEY: string,
 	IAM_ACCESS_KEY_SECRET: string
 ): Promise<number> {
-	const subject = `New Reply from ${replyAuthor} on Dancing Cats`;
+	const subject = `New Reply from ${replyAuthor} on Vox Quietus`;
 	
 	let contentTypeStr = 'content';
 	switch (contentType) {
@@ -83,7 +83,7 @@ export async function sendReplyNotification(
 	const message = `
 Hello,
 
-${replyAuthor} has replied to your ${contentTypeStr} on Dancing Cats.
+${replyAuthor} has replied to your ${contentTypeStr} on Vox Quietus.
 
 Their reply:
 "${contentSnippet}"
@@ -94,7 +94,7 @@ ${contentUrl}
 If you don't want to receive these notifications in the future, you can update your settings in your account preferences.
 
 Thank you,
-Dancing Cats Team
+Vox Quietus Team
 	`;
 	
 	return await sendEmail(toEmail, subject, message, IAM_ACCESS_KEY, IAM_ACCESS_KEY_SECRET);
@@ -113,12 +113,12 @@ export async function sendGroupContentNotification(
 	IAM_ACCESS_KEY_SECRET: string
 ): Promise<number> {
 	const contentTypeStr = contentType === 'post' ? 'blog post' : 'gallery item';
-	const subject = `New ${contentTypeStr} in ${groupName} on Dancing Cats`;
+	const subject = `New ${contentTypeStr} in ${groupName} on Vox Quietus`;
 	
 	const message = `
 Hello,
 
-${authorName} has posted a new ${contentTypeStr} in the ${groupName} group on Dancing Cats.
+${authorName} has posted a new ${contentTypeStr} in the ${groupName} group on Vox Quietus.
 
 ${contentTitle ? `Title: ${contentTitle}` : ''}
 
@@ -130,7 +130,7 @@ ${contentUrl}
 If you don't want to receive these notifications in the future, you can update your settings in your account preferences.
 
 Thank you,
-Dancing Cats Team
+Vox Quietus Team
 	`;
 	
 	return await sendEmail(toEmail, subject, message, IAM_ACCESS_KEY, IAM_ACCESS_KEY_SECRET);
