@@ -1,7 +1,7 @@
 {
   "name": "vox-quietus-frontend",
   "version": "0.1.0",
-  "description": "Frontend for the Vox Quietus Website",
+  "description": "Frontend for the Comms Scribe Website",
   "main": "index.js",
   "homepage": "https://scrivenly.com",
   "scripts": {

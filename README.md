@@ -1,6 +1,6 @@
-# Vox Quietus Website
+# Comms Scribe Website
 
-Welcome to the Vox Quietus website project! This project is designed to serve as a blog and media sharing platform for the Burning Man theme camp, Vox Quietus. The website features user-generated content, including blog posts, photos, and videos, and integrates Google One Tap for user authentication.
+Welcome to the Comms Scribe website project! This project is designed to serve as a blog and media sharing platform for the Burning Man theme camp, Comms Scribe. The website features user-generated content, including blog posts, photos, and videos, and integrates Google One Tap for user authentication.
 
 ## Project Structure
 
