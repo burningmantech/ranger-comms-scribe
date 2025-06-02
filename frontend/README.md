@@ -1,6 +1,6 @@
-# Dancing Cats Website - Frontend
+# Vox Quietus Website - Frontend
 
-Welcome to the Dancing Cats Website frontend! This project is built with TypeScript and React, providing a platform for the Dancing Cat Wine Bar theme camp to host a blog and gallery for user-generated content.
+Welcome to the Vox Quietus Website frontend! This project is built with TypeScript and React, providing a platform for the Vox Quietus theme camp to host a blog and gallery for user-generated content.
 
 ## Project Structure
 
@@ -21,8 +21,8 @@ To get started with the frontend development, follow these steps:
 
 1. **Clone the repository**:
    ```
-   git clone https://github.com/your-repo/dancing-cats-website.git
-   cd dancing-cats-website/frontend
+   git clone https://github.com/your-repo/vox-quietus-website.git
+   cd vox-quietus-website/frontend
    ```
 
 2. **Install dependencies**:
@@ -39,7 +39,7 @@ To get started with the frontend development, follow these steps:
 
 ## Features
 
-- **Blog**: Users can read and interact with blog posts related to the Dancing Cat Wine Bar.
+- **Blog**: Users can read and interact with blog posts related to the Vox Quietus.
 - **Gallery**: Users can upload and view photos and videos, creating a vibrant community space.
 - **Authentication**: Google One Tap integration for seamless user login.
 

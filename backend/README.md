@@ -1,6 +1,6 @@
-# Dancing Cats Website Backend
+# Vox Quietus Website Backend
 
-This is the backend for the Dancing Cats website, which serves as a blog and media gallery for the Burning Man theme camp, Dancing Cat Wine Bar. The backend is built using Cloudflare Workers and TypeScript.
+This is the backend for the Vox Quietus website, which serves as a blog and media gallery for the Burning Man theme camp, Vox Quietus. The backend is built using Cloudflare Workers and TypeScript.
 
 ## Features
 

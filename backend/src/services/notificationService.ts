@@ -5,7 +5,7 @@ import { sendReplyNotification, sendGroupContentNotification } from '../utils/em
 import { User, Group } from '../types';
 
 // Use the frontend URL for links in emails
-const FRONTEND_URL = 'https://dancingcats.org';
+const FRONTEND_URL = 'https://scrivenly.com';
 
 /**
  * Send notification about a reply to the original content author

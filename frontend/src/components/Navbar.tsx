@@ -204,7 +204,7 @@ const Navbar: React.FC<NavbarProps> = ({ navigationPages = [] }) => {
     return (
         <nav className="navbar">
             <div className="navbar-brand">
-                <Link to="/">DCWB</Link>
+                <Link to="/">Vox Quietus</Link>
             </div>
             <button className="mobile-menu-toggle" onClick={toggleMobileMenu}>
                 ☰

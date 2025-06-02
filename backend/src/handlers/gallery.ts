@@ -659,7 +659,7 @@ router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env
                             
                             // Send email notification if the user has notifications enabled
                             if (parentAuthorSettings.notifyOnReplies && parentAuthor?.email && env.SESKey && env.SESSecret) {
-                                const contentUrl = `https://dancingcats.org/gallery?comment=${result.comment.id}#${result.comment.id}`;
+                                const contentUrl = `https://scrivenly.com/gallery?comment=${result.comment.id}#${result.comment.id}`;
                                 await sendReplyNotification(
                                     parentAuthor.email,
                                     userName,
@@ -705,7 +705,7 @@ router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env
                             
                             // Send email notification if the user has notifications enabled
                             if (uploaderSettings.notifyOnReplies && uploader?.email && env.SESKey && env.SESSecret) {
-                                const contentUrl = `https://dancingcats.org/gallery?comment=${result.comment.id}#${result.comment.id}`;
+                                const contentUrl = `https://scrivenly.com/gallery?comment=${result.comment.id}#${result.comment.id}`;
                                 await sendReplyNotification(
                                     uploader.email,
                                     userName,

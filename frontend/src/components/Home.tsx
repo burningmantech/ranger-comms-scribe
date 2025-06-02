@@ -46,7 +46,7 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
                 setContent(data.content);
             } else {
                 setContent(`
-                    <h1>Welcome to Dancing Cat Wine Bar</h1>
+                    <h1>Welcome to Vox Quietus</h1>
                     <p>Check out our <a href="/gallery">Gallery</a> and <a href="/blog">Blog</a>.</p>
                 `);
             }
@@ -57,7 +57,7 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
             
             // Use default content on error
             setContent(`
-                <h1>Welcome to Dancing Cat Wine Bar</h1>
+                <h1>Welcome to Vox Quietus</h1>
                 <p>Check out our <a href="/gallery">Gallery</a> and <a href="/blog">Blog</a>.</p>
             `);
         }

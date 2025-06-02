@@ -105,8 +105,8 @@ describe('Cache Service', () => {
       batch: jest.fn()
     };
     
-    // Add a name to the D1 database to simulate the "dancing-cats-d1" database
-    env.D1.name = 'dancing-cats-d1';
+    // Add a name to the D1 database to simulate the "vox-quietus-d1" database
+    env.D1.name = 'vox-quietus-d1';
   });
 
   afterEach(() => {

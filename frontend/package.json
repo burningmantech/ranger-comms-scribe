@@ -1,9 +1,9 @@
 {
-  "name": "dancing-cats-frontend",
-  "version": "1.0.0",
-  "description": "Frontend for the Dancing Cats Website",
+  "name": "vox-quietus-frontend",
+  "version": "0.1.0",
+  "description": "Frontend for the Vox Quietus Website",
   "main": "index.js",
-  "homepage": "https://dancingcats.org",
+  "homepage": "https://scrivenly.com",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
