@@ -19,7 +19,7 @@ preview_bucket_name = "vox-quietus-r2"
 [[d1_databases]]
 binding = "D1"
 database_name = "vox-quietus-d1"
-database_id = ""  // TODO: Create one
+database_id = "fbea1cb9-8a22-49c4-9c5f-d0e13c036f11"
 
 [observability]
 enabled = true

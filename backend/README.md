@@ -1,6 +1,6 @@
-# Vox Quietus Website Backend
+# Comms Scribe Website Backend
 
-This is the backend for the Vox Quietus website, which serves as a blog and media gallery for the Burning Man theme camp, Vox Quietus. The backend is built using Cloudflare Workers and TypeScript.
+This is the backend for the Comms Scribe website, which serves as a blog and media gallery for the Burning Man theme camp, Comms Scribe. The backend is built using Cloudflare Workers and TypeScript.
 
 ## Features
 

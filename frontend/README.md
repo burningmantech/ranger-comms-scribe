@@ -1,6 +1,6 @@
-# Vox Quietus Website - Frontend
+# Comms Scribe Website - Frontend
 
-Welcome to the Vox Quietus Website frontend! This project is built with TypeScript and React, providing a platform for the Vox Quietus theme camp to host a blog and gallery for user-generated content.
+Welcome to the Comms Scribe Website frontend! This project is built with TypeScript and React, providing a platform for the Comms Scribe theme camp to host a blog and gallery for user-generated content.
 
 ## Project Structure
 
@@ -21,8 +21,8 @@ To get started with the frontend development, follow these steps:
 
 1. **Clone the repository**:
    ```
-   git clone https://github.com/your-repo/vox-quietus-website.git
-   cd vox-quietus-website/frontend
+   git clone https://github.com/your-repo/comms-scribe-website.git
+   cd comms-scribe-website/frontend
    ```
 
 2. **Install dependencies**:
@@ -39,7 +39,7 @@ To get started with the frontend development, follow these steps:
 
 ## Features
 
-- **Blog**: Users can read and interact with blog posts related to the Vox Quietus.
+- **Blog**: Users can read and interact with blog posts related to the Comms Scribe.
 - **Gallery**: Users can upload and view photos and videos, creating a vibrant community space.
 - **Authentication**: Google One Tap integration for seamless user login.
 
