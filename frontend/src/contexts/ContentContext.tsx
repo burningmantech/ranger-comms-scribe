@@ -218,20 +218,24 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const addComment = async (submission: ContentSubmission, comment: any) => {
     try {
-      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/comments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
-        body: JSON.stringify(comment),
+      console.log('Adding comment to submission in memory:', submission.id, comment);
+      
+      // Update the submission in memory
+      setSubmissions(prev => {
+        const updatedSubmissions = prev.map(s => {
+          if (s.id === submission.id) {
+            const updatedSubmission = {
+              ...s,
+              comments: [...(s.comments || []), comment]
+            };
+            console.log('Updated submission with new comment:', updatedSubmission);
+            return updatedSubmission;
+          }
+          return s;
+        });
+        console.log('Updated submissions array:', updatedSubmissions);
+        return updatedSubmissions;
       });
-      if (response.ok) {
-        const updatedSubmission = await response.json();
-        setSubmissions(prev => 
-          prev.map(s => s.id === submission.id ? updatedSubmission : s)
-        );
-      }
     } catch (err) {
       console.error('Error adding comment:', err);
       throw err;

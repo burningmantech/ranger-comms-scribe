@@ -33,7 +33,7 @@ export const ApprovalReminders: React.FC<ApprovalRemindersProps> = ({
             <div key={submission.id} className="border rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-2">{submission.title}</h3>
               <p className="text-sm text-gray-600">
-                Submitted by {submission.submittedBy} on {submission.submittedAt.toLocaleDateString()}
+                Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
               </p>
               
               <div className="mt-4">

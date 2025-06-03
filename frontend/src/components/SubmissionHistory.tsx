@@ -13,7 +13,7 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
   const renderChange = (change: Change) => (
     <div key={change.id} className="p-2 border-b">
       <p className="text-sm text-gray-600">
-        Changed by {change.changedBy} on {change.timestamp.toLocaleDateString()}
+        Changed by {change.changedBy} on {new Date(change.timestamp).toLocaleDateString()}
       </p>
       <div className="mt-1">
         <p className="text-sm font-medium">Field: {change.field}</p>
@@ -44,24 +44,24 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
             >
               <h3 className="text-lg font-semibold">{submission.title}</h3>
               <p className="text-sm text-gray-600">
-                Submitted by {submission.submittedBy} on {submission.submittedAt.toLocaleDateString()}
+                Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
               </p>
               <p className="text-sm text-gray-600">Status: {submission.status}</p>
               
               <div className="mt-2 flex space-x-2">
                 <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
-                  {submission.comments.length} Comments
+                  {submission.comments?.length || 0} Comments
                 </span>
                 <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
-                  {submission.approvals.length} Approvals
+                  {submission.approvals?.length || 0} Approvals
                 </span>
                 <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
-                  {submission.changes.length} Changes
+                  {submission.changes?.length || 0} Changes
                 </span>
               </div>
             </div>
 
-            {submission.changes.length > 0 && (
+            {submission.changes?.length > 0 && (
               <div className="border-t">
                 <div className="p-4">
                   <h4 className="text-sm font-semibold mb-2">Recent Changes</h4>
