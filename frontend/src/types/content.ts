@@ -31,6 +31,7 @@ export interface ContentSubmission {
   id: string;
   title: string;
   content: string;
+  richTextContent?: string;
   status: SubmissionStatus;
   submittedBy: string;
   submittedAt: Date;

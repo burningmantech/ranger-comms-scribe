@@ -13,26 +13,29 @@ import { CodeHighlightNode, CodeNode } from '@lexical/code';
 import { TableNode, TableCellNode, TableRowNode } from '@lexical/table';
 import { LinkNode } from '@lexical/link';
 import { EditorState, LexicalEditor } from 'lexical';
-import { ListPlugin } from '@lexical/react/LexicalListPlugin'; 
+import { ListPlugin } from '@lexical/react/LexicalListPlugin';
+import { LinkPlugin } from '@lexical/react/LexicalLinkPlugin';
+import { MarkdownShortcutPlugin } from '@lexical/react/LexicalMarkdownShortcutPlugin';
+import { TRANSFORMERS } from '@lexical/markdown';
+import { $getRoot, $createParagraphNode, $createTextNode } from 'lexical';
 import { ToolbarPlugin } from './plugins/ToolbarPlugin';
 import { ImagePlugin } from './plugins/ImagePlugin';
 import { ImageNode } from './nodes/ImageNode';
 import { CheckboxNode } from './nodes/CheckboxNode';
 import { DraftJsImportPlugin } from './plugins/DraftJsImportPlugin';
-import { isValidDraftJs, htmlToLexical } from '../editor/utils/serialization';
+import { isValidDraftJs, htmlToLexical } from './utils/serialization';
 import CheckboxPlugin from './plugins/CheckboxPlugin';
 import { TablePlugin } from './plugins/TablePlugin';
 import { TableControlsPlugin } from './plugins/TableControlsPlugin';
-import { IndentationPlugin, INDENT_COMMAND, OUTDENT_COMMAND } from './plugins/IndentationPlugin';
+import { IndentationPlugin } from './plugins/IndentationPlugin';
+import TextColorPlugin from './plugins/TextColorPlugin';
+import FontSizePlugin from './plugins/FontSizePlugin';
+import FontFamilyPlugin from './plugins/FontFamilyPlugin';
+import AlignmentPlugin from './plugins/AlignmentPlugin';
+import QuotePlugin from './plugins/QuotePlugin';
 import './LexicalEditor.css';
 import './styles/TableControlsPlugin.css';
 import './styles/IndentationStyles.css';
-import { $getRoot, $createParagraphNode, $createTextNode, COMMAND_PRIORITY_CRITICAL, KEY_TAB_COMMAND, KEY_MODIFIER_COMMAND } from 'lexical';
-
-// Define PlaceholderConfig interface for proper typing 
-interface PlaceholderConfig {
-  placeholder: React.ReactNode;
-}
 
 // Define EditorProps interface
 interface EditorProps {
@@ -57,25 +60,33 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   const [isLoaded, setIsLoaded] = useState(false);
   const editorRef = useRef<LexicalEditor | null>(null);
 
+  // Prevent form submission when interacting with editor
+  const handleEditorClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleEditorKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+    }
+  };
+
   // Custom handling of state changes
   const handleChange = (editorState: EditorState, editor: LexicalEditor) => {
-    // Update the editor reference if it's not set
     if (!editorRef.current) {
       editorRef.current = editor;
     }
     
     if (onChange) {
-      // Serialize to JSON for storage
       const json = JSON.stringify(editorState);
       onChange(editor, json);
     }
   };
 
   const initialEditorStateSetup = (editor: LexicalEditor) => {
-    // Store a reference to the editor without triggering a state update
     editorRef.current = editor;
     
-    // If there is no initial content, do nothing
     if (!initialContent || initialContent === '') {
       return;
     }
@@ -114,7 +125,6 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   const initialConfig = {
     namespace: 'DynamicContentEditor',
     theme: {
-      // Add your theme configuration here
       paragraph: 'editor-paragraph',
       heading: {
         h1: 'editor-heading-h1',
@@ -126,24 +136,30 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
         bold: 'editor-text-bold',
         italic: 'editor-text-italic',
         underline: 'editor-text-underline',
+        strikethrough: 'editor-text-strikethrough',
+        underlineStrikethrough: 'editor-text-underlineStrikethrough',
+        code: 'editor-text-code',
       },
       list: {
         ol: 'editor-list-ol',
         ul: 'editor-list-ul',
         listitem: 'editor-listitem',
+        nested: {
+          listitem: 'editor-nested-listitem',
+        },
       },
-      // Add specific theme entries for tables to ensure proper styling
       table: 'editor-table',
       tableCell: 'editor-tableCell',
       tableRow: 'editor-tableRow',
-      // Add theme entry for checkbox
       checkbox: 'editor-checkbox',
-      // Add theme entries for indentation
       indent1: 'editor-indent-1',
       indent2: 'editor-indent-2',
       indent3: 'editor-indent-3',
       indent4: 'editor-indent-4',
       indent5: 'editor-indent-5',
+      quote: 'editor-quote',
+      link: 'editor-link',
+      code: 'editor-code',
     },
     nodes: [
       HeadingNode,
@@ -166,123 +182,27 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
     editable: !readOnly,
   };
 
-  // Handle keyboard shortcuts for indentation within the editor component
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || readOnly) return;
-
-    // Register keyboard shortcuts directly with the editor
-    const unregisterTab = editor.registerCommand(
-      KEY_TAB_COMMAND,
-      (event: KeyboardEvent) => {
-        if (event.shiftKey) {
-          event.preventDefault();
-          editor.dispatchCommand(OUTDENT_COMMAND, undefined);
-          return true;
-        } else {
-          event.preventDefault();
-          editor.dispatchCommand(INDENT_COMMAND, undefined);
-          return true;
-        }
-      },
-      COMMAND_PRIORITY_CRITICAL
-    );
-
-    // Register Cmd/Ctrl + [ and ] shortcuts
-    const unregisterModifier = editor.registerCommand(
-      KEY_MODIFIER_COMMAND,
-      (event: KeyboardEvent) => {
-        if (event.metaKey || event.ctrlKey) {
-          if (event.key === ']') {
-            event.preventDefault();
-            editor.dispatchCommand(INDENT_COMMAND, undefined);
-            return true;
-          } else if (event.key === '[') {
-            event.preventDefault();
-            editor.dispatchCommand(OUTDENT_COMMAND, undefined);
-            return true;
-          }
-        }
-        return false;
-      },
-      COMMAND_PRIORITY_CRITICAL
-    );
-
-    return () => {
-      unregisterTab();
-      unregisterModifier();
-    };
-  }, [readOnly, editorRef.current]);
-
   useEffect(() => {
     setIsLoaded(true);
-
-    // Add CSS styles for indentation
-    const styleElement = document.createElement('style');
-    styleElement.textContent = `
-      /* Enhanced indentation styles */
-      .editor-indent-1 {
-        padding-left: 40px !important;
-      }
-      
-      .editor-indent-2 {
-        padding-left: 80px !important;
-      }
-      
-      .editor-indent-3 {
-        padding-left: 120px !important;
-      }
-      
-      .editor-indent-4 {
-        padding-left: 160px !important;
-      }
-      
-      .editor-indent-5 {
-        padding-left: 200px !important;
-      }
-
-      /* Legacy data-indent support */
-      [data-lexical-editor] p[data-indent="1"],
-      p[data-indent="1"] {
-        padding-left: 40px !important;
-      }
-      
-      [data-lexical-editor] p[data-indent="2"],
-      p[data-indent="2"] {
-        padding-left: 80px !important;
-      }
-      
-      [data-lexical-editor] p[data-indent="3"],
-      p[data-indent="3"] {
-        padding-left: 120px !important;
-      }
-      
-      [data-lexical-editor] p[data-indent="4"],
-      p[data-indent="4"] {
-        padding-left: 160px !important;
-      }
-      
-      [data-lexical-editor] p[data-indent="5"],
-      p[data-indent="5"] {
-        padding-left: 200px !important;
-      }
-    `;
-    document.head.appendChild(styleElement);
-
-    return () => {
-      document.head.removeChild(styleElement);
-    };
   }, []);
 
   return (
-    <div className={`lexical-editor-container ${readOnly ? 'read-only' : ''} ${className}`}>
+    <div 
+      className={`lexical-editor-container ${readOnly ? 'read-only' : ''} ${className}`}
+      onClick={handleEditorClick}
+      onKeyDown={handleEditorKeyDown}
+    >
       <div className="lexical-editor">
         <LexicalComposer initialConfig={initialConfig}>
           {showToolbar && !readOnly && <ToolbarPlugin />}
           <div className="editor-content-wrapper">
             <RichTextPlugin
               contentEditable={
-                <ContentEditable className="editor-input" />
+                <ContentEditable 
+                  className="editor-input"
+                  onClick={handleEditorClick}
+                  onKeyDown={handleEditorKeyDown}
+                />
               }
               placeholder={
                 <div className="editor-placeholder">{placeholder}</div>
@@ -294,19 +214,21 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
           <HistoryPlugin />
           {!readOnly && <AutoFocusPlugin />}
           <OnChangePlugin onChange={handleChange} />
-          {/* Add ListPlugin for proper list continuation */}
           <ListPlugin />
-          {/* Table Plugin for proper table support */}
           <TablePlugin />
-          {/* Add CheckboxPlugin to handle checkbox behavior */}
           <CheckboxPlugin />
-          {/* Add DraftJsImportPlugin to handle Draft.js content */}
+          <LinkPlugin />
+          <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
           {initialContent && isValidDraftJs(initialContent) && (
             <DraftJsImportPlugin initialContent={initialContent} />
           )}
           <ImagePlugin onImageSelect={onImageSelect} />
-          {/* Add IndentationPlugin for indentation support */}
           <IndentationPlugin />
+          <TextColorPlugin />
+          <FontSizePlugin />
+          <FontFamilyPlugin />
+          <AlignmentPlugin />
+          <QuotePlugin />
         </LexicalComposer>
       </div>
     </div>

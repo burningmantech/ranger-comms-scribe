@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { useContent } from '../contexts/ContentContext';
 import { Link, useNavigate } from 'react-router-dom';
 import { ContentSubmission, FormField } from '../types/content';
+import LexicalEditorComponent from './editor/LexicalEditor';
 
 // Define the form schema using Zod
 const commsRequestSchema = z.object({
@@ -29,6 +30,7 @@ type CommsRequestFormData = z.infer<typeof commsRequestSchema>;
 
 const CommsRequest: React.FC = () => {
   const [showSuccess, setShowSuccess] = useState(false);
+  const [editorContent, setEditorContent] = useState('');
   const { saveSubmission } = useContent();
   const navigate = useNavigate();
   
@@ -37,12 +39,18 @@ const CommsRequest: React.FC = () => {
     handleSubmit,
     formState: { errors },
     reset,
+    setValue,
   } = useForm<CommsRequestFormData>({
     resolver: zodResolver(commsRequestSchema),
     defaultValues: {
       email: 'ranger.helpdesk@burningman.org',
     },
   });
+
+  const handleEditorChange = (editor: any, json: string) => {
+    setEditorContent(json);
+    setValue('text', json);
+  };
 
   const onSubmit = async (data: CommsRequestFormData) => {
     try {
@@ -51,6 +59,7 @@ const CommsRequest: React.FC = () => {
         id: crypto.randomUUID(),
         title: data.suggestedSubjectLine,
         content: data.text || '',
+        richTextContent: editorContent,
         status: 'in_review',
         submittedBy: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')!).id : 'anonymous',
         submittedAt: new Date(),
@@ -75,6 +84,7 @@ const CommsRequest: React.FC = () => {
       await saveSubmission(submission as ContentSubmission);
       setShowSuccess(true);
       reset();
+      setEditorContent('');
     } catch (error) {
       console.error('Error submitting form:', error);
     }
@@ -213,11 +223,11 @@ const CommsRequest: React.FC = () => {
 
                 <Form.Group>
                   <Form.Label>Text</Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={5}
-                    {...register('text')}
+                  <LexicalEditorComponent
+                    initialContent={editorContent}
+                    onChange={handleEditorChange}
                     placeholder="Include any text you'd like us to use or paste content and links here"
+                    className="h-64"
                   />
                 </Form.Group>
 

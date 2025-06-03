@@ -11,26 +11,26 @@ import { useEffect } from 'react';
 
 export const TEXT_COLOR_COMMAND: LexicalCommand<string> = createCommand('textColor');
 
-export default function TextColorPlugin() {
+const TextColorPlugin = () => {
   const [editor] = useLexicalComposerContext();
-  
+
   useEffect(() => {
-    return editor.registerCommand<string>(
+    return editor.registerCommand(
       TEXT_COLOR_COMMAND,
-      (color) => {
-        editor.update(() => {
-          const selection = $getSelection();
-          if ($isRangeSelection(selection)) {
-            $patchStyleText(selection, {
-              color,
-            });
-          }
-        });
+      (color: string) => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) {
+          $patchStyleText(selection, {
+            color: color,
+          });
+        }
         return true;
       },
       COMMAND_PRIORITY_CRITICAL
     );
   }, [editor]);
-  
+
   return null;
-}
+};
+
+export default TextColorPlugin;

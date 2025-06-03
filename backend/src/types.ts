@@ -144,6 +144,7 @@ export interface ContentSubmission {
   id: string;
   title: string;
   content: string;
+  richTextContent?: string; // Stores the Lexical editor state as JSON
   submittedBy: string;
   submittedAt: string;
   status: 'draft' | 'submitted' | 'in_review' | 'approved' | 'rejected';

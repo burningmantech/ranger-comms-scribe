@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User } from '../types/content';
+import LexicalEditorComponent from './editor/LexicalEditor';
 
 interface ContentSubmissionComponentProps {
   submission: ContentSubmissionType;
@@ -21,6 +22,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const [newComment, setNewComment] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState(submission.content);
+  const [editedRichTextContent, setEditedRichTextContent] = useState(submission.richTextContent || '');
   const [editedFormFields, setEditedFormFields] = useState(submission.formFields);
 
   const canEdit = currentUser.roles.includes('COMMS_CADRE') || 
@@ -47,6 +49,10 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     ));
   };
 
+  const handleEditorChange = (editor: any, json: string) => {
+    setEditedRichTextContent(json);
+  };
+
   const handleSave = () => {
     const changes: Change[] = [];
     if (editedContent !== submission.content) {
@@ -59,10 +65,21 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         timestamp: new Date()
       });
     }
+    if (editedRichTextContent !== submission.richTextContent) {
+      changes.push({
+        id: crypto.randomUUID(),
+        field: 'richTextContent',
+        oldValue: submission.richTextContent || '',
+        newValue: editedRichTextContent,
+        changedBy: currentUser.id,
+        timestamp: new Date()
+      });
+    }
 
     onSave({
       ...submission,
       content: editedContent,
+      richTextContent: editedRichTextContent,
       formFields: editedFormFields,
       changes: [...submission.changes, ...changes]
     });
@@ -96,52 +113,12 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
 
       {isEditing ? (
         <div className="mb-6">
-          <textarea
-            value={editedContent}
-            onChange={(e) => setEditedContent(e.target.value)}
-            className="w-full p-2 border rounded min-h-[200px]"
+          <LexicalEditorComponent
+            initialContent={editedRichTextContent}
+            onChange={handleEditorChange}
+            placeholder="Edit the content..."
+            className="h-96"
           />
-          
-          <div className="mt-4">
-            <h3 className="text-lg font-semibold mb-2">Form Fields</h3>
-            {editedFormFields.map((field) => (
-              <div key={field.id} className="mb-4 p-3 border rounded">
-                <input
-                  type="text"
-                  value={field.label}
-                  onChange={(e) => handleFormFieldChange(field.id, 'label', e.target.value)}
-                  placeholder="Field Label"
-                  className="w-full p-2 border rounded mb-2"
-                />
-                <select
-                  value={field.type}
-                  onChange={(e) => handleFormFieldChange(field.id, 'type', e.target.value)}
-                  className="w-full p-2 border rounded mb-2"
-                >
-                  <option value="text">Text</option>
-                  <option value="date">Date</option>
-                  <option value="time">Time</option>
-                  <option value="select">Select</option>
-                  <option value="multiselect">Multi-select</option>
-                </select>
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={field.required}
-                    onChange={(e) => handleFormFieldChange(field.id, 'required', e.target.checked)}
-                    className="mr-2"
-                  />
-                  Required
-                </label>
-              </div>
-            ))}
-            <button
-              onClick={handleAddFormField}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Add Form Field
-            </button>
-          </div>
 
           <div className="mt-4 flex space-x-2">
             <button
@@ -161,7 +138,12 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       ) : (
         <div className="mb-6">
           <div className="prose max-w-none">
-            {submission.content}
+            <LexicalEditorComponent
+              initialContent={submission.richTextContent || ''}
+              readOnly={true}
+              showToolbar={false}
+              className="h-96"
+            />
           </div>
           
           <div className="mt-4">
@@ -185,16 +167,15 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         </div>
       )}
 
-      <div className="mb-6">
-        <h3 className="text-lg font-semibold mb-2">Comments</h3>
+      <div className="mt-8">
+        <h3 className="text-lg font-semibold mb-4">Comments</h3>
         <div className="space-y-4">
           {submission.comments.map((comment) => (
-            <div key={comment.id} className="p-3 border rounded">
+            <div key={comment.id} className="p-4 bg-gray-50 rounded">
               <p className="text-sm text-gray-600">
                 {comment.authorId} - {comment.createdAt.toLocaleDateString()}
               </p>
-              <p>{comment.content}</p>
-              <p className="text-sm text-gray-500">Type: {comment.type}</p>
+              <p className="mt-2">{comment.content}</p>
             </div>
           ))}
         </div>
@@ -203,8 +184,9 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
           <textarea
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
-            placeholder="Add a comment..."
             className="w-full p-2 border rounded"
+            rows={3}
+            placeholder="Add a comment..."
           />
           <button
             onClick={handleAddComment}
@@ -215,8 +197,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         </div>
       </div>
 
-      {canApprove && (
-        <div className="flex space-x-2">
+      {canApprove && submission.status === 'in_review' && (
+        <div className="mt-8 flex space-x-4">
           <button
             onClick={() => onApprove(submission)}
             className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
