@@ -1,0 +1,224 @@
+.lexical-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 2px;
+  padding: 0 4px;
+  border-right: 1px solid #e2e8f0;
+}
+
+.toolbar-group:last-child {
+  border-right: none;
+}
+
+.toolbar-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background-color: transparent;
+  color: #4a5568;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 14px;
+  position: relative;
+}
+
+.toolbar-item:hover {
+  background-color: #f7fafc;
+  color: #2d3748;
+}
+
+.toolbar-item:active {
+  background-color: #edf2f7;
+  transform: translateY(0);
+}
+
+.toolbar-item.active {
+  background-color: #edf2f7;
+  color: #2d3748;
+}
+
+.toolbar-item svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Dropdown styles */
+.color-picker-dropdown,
+.font-size-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1000;
+  background-color: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 8px;
+  margin-top: 4px;
+  min-width: 200px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
+  gap: 4px;
+}
+
+.font-family-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1000;
+  background-color: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 8px;
+  margin-top: 4px;
+  min-width: 200px;
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.color-option {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.color-option:hover {
+  transform: scale(1.1);
+  border-color: #cbd5e0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.font-size-option {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  font-size: 14px;
+}
+
+.font-family-option {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1a202c;
+  transition: background-color 0.2s;
+  border-radius: 4px;
+}
+
+.font-size-option:hover,
+.font-family-option:hover {
+  background-color: #f7fafc;
+  color: #2d3748;
+}
+
+.font-family-option:active {
+  background-color: #edf2f7;
+}
+
+/* Ensure each font option uses its own font family */
+.font-family-option[style*="font-family: Arial"] { font-family: Arial, sans-serif; }
+.font-family-option[style*="font-family: 'Times New Roman'"] { font-family: 'Times New Roman', serif; }
+.font-family-option[style*="font-family: 'Courier New'"] { font-family: 'Courier New', monospace; }
+.font-family-option[style*="font-family: Georgia"] { font-family: Georgia, serif; }
+.font-family-option[style*="font-family: Verdana"] { font-family: Verdana, sans-serif; }
+.font-family-option[style*="font-family: Helvetica"] { font-family: Helvetica, sans-serif; }
+.font-family-option[style*="font-family: Tahoma"] { font-family: Tahoma, sans-serif; }
+.font-family-option[style*="font-family: 'Trebuchet MS'"] { font-family: 'Trebuchet MS', sans-serif; }
+.font-family-option[style*="font-family: Impact"] { font-family: Impact, sans-serif; }
+.font-family-option[style*="font-family: 'Comic Sans MS'"] { font-family: 'Comic Sans MS', cursive; }
+
+/* Tooltip styles */
+.toolbar-item::after {
+  content: attr(title);
+  position: absolute;
+  bottom: -24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background-color: #2d3748;
+  color: white;
+  font-size: 12px;
+  border-radius: 4px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.15s ease;
+  pointer-events: none;
+}
+
+.toolbar-item:hover::after {
+  opacity: 1;
+  visibility: visible;
+  bottom: -28px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .lexical-editor-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 4px;
+  }
+
+  .toolbar-group {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 4px 0;
+  }
+
+  .toolbar-group:last-child {
+    border-bottom: none;
+  }
+
+  .toolbar-item {
+    width: 36px;
+    height: 36px;
+  }
+
+  .toolbar-item svg {
+    width: 20px;
+    height: 20px;
+  }
+}
+
+/* Modern button styles */
+.toolbar-item[title="Bold"] i { font-weight: 900; }
+.toolbar-item[title="Italic"] i { font-style: italic; }
+.toolbar-item[title="Underline"] i { text-decoration: underline; }
+.toolbar-item[title="Strikethrough"] i { text-decoration: line-through; } 
