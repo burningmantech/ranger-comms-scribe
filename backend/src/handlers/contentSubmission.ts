@@ -1,8 +1,10 @@
-import { Router } from 'itty-router';
+import { AutoRouter } from 'itty-router';
+import { json } from 'itty-router-extras';
 import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User } from '../types';
+import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 
-const router = Router();
+export const router = AutoRouter({ base: '/content' });
 
 // Create a new content submission
 router.post('/submissions', withAuth, async (request: Request, env: any) => {
@@ -25,45 +27,35 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     announcementSent: false
   };
 
-  await env.DB.prepare(
-    'INSERT INTO content_submissions (id, title, content, submittedBy, submittedAt, status, formFields, comments, approvals, changes, commsCadreApprovals, councilManagerApprovals, announcementSent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(
-    newSubmission.id,
-    newSubmission.title,
-    newSubmission.content,
-    newSubmission.submittedBy,
-    newSubmission.submittedAt,
-    newSubmission.status,
-    JSON.stringify(newSubmission.formFields),
-    JSON.stringify(newSubmission.comments),
-    JSON.stringify(newSubmission.approvals),
-    JSON.stringify(newSubmission.changes),
-    newSubmission.commsCadreApprovals,
-    JSON.stringify(newSubmission.councilManagerApprovals),
-    newSubmission.announcementSent
-  ).run();
+  // Store in cache with appropriate key
+  await putObject(`content_submissions/${newSubmission.id}`, newSubmission, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
 
-  return new Response(JSON.stringify(newSubmission), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+  return json(newSubmission);
 });
 
 // Get all submissions (filtered by user permissions)
 router.get('/submissions', withAuth, async (request: Request, env: any) => {
   const user = (request as any).user as User;
+  
+  // Get all submissions from cache
+  const response = await listObjects('content_submissions/', env);
+  const allSubmissions = response.objects as ContentSubmission[];
+  
+  // Filter based on user type
   let submissions;
-
   if (user.userType === UserType.CommsCadre || user.userType === UserType.CouncilManager) {
-    submissions = await env.DB.prepare('SELECT * FROM content_submissions').all();
+    submissions = allSubmissions;
   } else {
-    submissions = await env.DB.prepare(
-      'SELECT * FROM content_submissions WHERE submittedBy = ? OR id IN (SELECT submissionId FROM content_approvals WHERE approverId = ?)'
-    ).bind(user.id, user.id).all();
+    submissions = allSubmissions.filter((sub: ContentSubmission) => 
+      sub.submittedBy === user.id || 
+      sub.approvals.some((a: ContentApproval) => a.approverId === user.id)
+    );
   }
 
-  return new Response(JSON.stringify(submissions.results), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+  return json(submissions);
 });
 
 // Add a comment to a submission
@@ -86,13 +78,22 @@ router.post('/submissions/:id/comments', withAuth, async (request: Request, env:
     replies: []
   };
 
-  await env.DB.prepare(
-    'UPDATE content_submissions SET comments = json_set(comments, "$[#]", ?) WHERE id = ?'
-  ).bind(JSON.stringify(newComment), id).run();
+  // Get the current submission
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
 
-  return new Response(JSON.stringify(newComment), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+  // Add the comment
+  submission.comments.push(newComment);
+
+  // Update the submission in cache
+  await putObject(`content_submissions/${id}`, submission, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
+
+  return json(newComment);
 });
 
 // Approve or reject a submission
@@ -113,25 +114,27 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     updatedAt: new Date().toISOString()
   };
 
-  await env.DB.prepare(
-    'UPDATE content_submissions SET approvals = json_set(approvals, "$[#]", ?) WHERE id = ?'
-  ).bind(JSON.stringify(approval), id).run();
+  // Get the current submission
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
 
-  // Update submission status based on approvals
-  const submission = await env.DB.prepare('SELECT * FROM content_submissions WHERE id = ?').bind(id).first();
-  const approvals = JSON.parse(submission.approvals);
+  // Add the approval
+  submission.approvals.push(approval);
   
-  const commsCadreApprovals = approvals.filter((a: ContentApproval) => 
+  // Update approval counts
+  const commsCadreApprovals = submission.approvals.filter((a: ContentApproval) => 
     a.approverType === UserType.CommsCadre && a.status === 'approved'
   ).length;
 
-  const councilManagerApprovals = approvals.filter((a: ContentApproval) => 
+  const councilManagerApprovals = submission.approvals.filter((a: ContentApproval) => 
     a.approverType === UserType.CouncilManager && a.status === 'approved'
   );
 
-  let newStatus = submission.status;
+  // Update status if needed
   if (commsCadreApprovals >= 2 && councilManagerApprovals.length > 0) {
-    newStatus = 'approved';
+    submission.status = 'approved';
     // Send announcement email
     await env.EMAIL.send({
       to: 'announce@rangers.burningman.org',
@@ -140,13 +143,13 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     });
   }
 
-  await env.DB.prepare(
-    'UPDATE content_submissions SET status = ?, commsCadreApprovals = ?, councilManagerApprovals = ? WHERE id = ?'
-  ).bind(newStatus, commsCadreApprovals, JSON.stringify(councilManagerApprovals), id).run();
+  // Update the submission in cache
+  await putObject(`content_submissions/${id}`, submission, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
 
-  return new Response(JSON.stringify(approval), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+  return json(approval);
 });
 
 // Track changes to a submission
@@ -166,13 +169,20 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
     reason: change.reason
   };
 
-  await env.DB.prepare(
-    'UPDATE content_submissions SET changes = json_set(changes, "$[#]", ?) WHERE id = ?'
-  ).bind(JSON.stringify(newChange), id).run();
+  // Get the current submission
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
 
-  return new Response(JSON.stringify(newChange), {
-    headers: { 'Content-Type': 'application/json' }
-  });
-});
+  // Add the change
+  submission.changes.push(newChange);
 
-export default router; 
+  // Update the submission in cache
+  await putObject(`content_submissions/${id}`, submission, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
+
+  return json(newChange);
+}); 

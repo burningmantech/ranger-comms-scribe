@@ -811,3 +811,103 @@ p {
     padding: 15px;
     min-height: 100px;
 }
+
+/* Content Management Styles */
+.content-management {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.content-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.content-header h1 {
+  margin: 0;
+  color: var(--text-dark);
+}
+
+.back-button {
+  padding: 8px 16px;
+  background-color: var(--accent-teal);
+  color: var(--text-light);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.back-button:hover {
+  background-color: var(--accent-teal-hover);
+}
+
+.content-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--accent-gold);
+  padding-bottom: 10px;
+}
+
+.tab-button {
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--text-medium);
+  cursor: pointer;
+  font-weight: 500;
+  transition: color 0.3s;
+  position: relative;
+}
+
+.tab-button:hover {
+  color: var(--accent-wine);
+}
+
+.tab-button.active {
+  color: var(--accent-wine);
+}
+
+.tab-button.active::after {
+  content: '';
+  position: absolute;
+  bottom: -11px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background-color: var(--accent-wine);
+}
+
+.content-body {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+}
+
+/* Mobile styles for content management */
+@media (max-width: 768px) {
+  .content-management {
+    padding: 10px;
+  }
+
+  .content-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .content-tabs {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .tab-button {
+    padding: 6px 12px;
+    font-size: 0.9rem;
+  }
+}

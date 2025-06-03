@@ -5,19 +5,18 @@ import { router as galleryRouter } from './handlers/gallery';
 import { router as adminRouter } from './handlers/admin';
 import { router as pageRouter } from './handlers/page';
 import { router as userRouter } from './handlers/user';
-import contentSubmissionRouter from './handlers/contentSubmission';
-import councilMemberRouter from './handlers/councilMembers';
+import { router as contentSubmissionRouter } from './handlers/contentSubmission';
+import { router as councilMemberRouter } from './handlers/councilMembers';
 import reminderRouter from './handlers/reminders';
-import commsCadreRouter from './handlers/commsCadre';
+import { router as commsCadreRouter } from './handlers/commsCadre';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
-import { initializeFirstAdmin } from './services/userService';
+import { initializeFirstAdmin, getUser } from './services/userService';
 import { setExistingContentPublic } from './migrations/setExistingContentPublic';
 import { ensureUserGroups } from './migrations/ensureUserGroups';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
 import { sendReminders } from './handlers/reminders';
-import { initializeContentTables } from './migrations/createContentTables';
 import { identifyCouncilManagers } from './services/councilManagerService';
 
 declare global {
@@ -58,9 +57,14 @@ const withValidSession = async (request: Request, env: Env) => {
         return json({ error: 'Session not found or expired' }, { status: 403 });
     }
 
-    const user = session.data.email;
-    request.user = user
-    request.userId = session.id
+    const userData = session.data as { email: string; name: string };
+    const user = await getUser(userData.email, env);
+    if (!user) {
+        return json({ error: 'User not found' }, { status: 403 });
+    }
+
+    (request as any).user = user;
+    return undefined;
 }
 
 const withOptionalSession = async (request: Request, env: Env) => {
@@ -77,37 +81,38 @@ const withOptionalSession = async (request: Request, env: Env) => {
 
 // Initialize the application
 const initializeApp = async (env: Env) => {
-    // Initialize cache database
-    await initCache(env);
+    console.log('initializeApp called');
+    console.log('ENV KEYS in initializeApp:', Object.keys(env));
     
-    // Initialize the first admin user
-    await initializeFirstAdmin(env);
-    
-    // Run migrations
-    await setExistingContentPublic(env);
-    await ensureUserGroups(env);
-    await initializeContentTables(env);
-
-    // Identify Council managers from org chart
-    await identifyCouncilManagers(env);
-
-    // Cache page slugs
-    await cachePageSlugs(env);
-};
-
-// Immediately initialize the application when the script loads
-(async () => {
-    try {
-        // Get env from wrangler if possible (when running locally)
-        if (typeof globalThis.GLOBAL_ENV !== 'undefined') {
-            console.log('Initializing application on startup...');
-            await initializeApp(globalThis.GLOBAL_ENV);
-            console.log('Application initialized successfully on startup');
-        }
-    } catch (error) {
-        console.error('Error during automatic initialization:', error);
+    if (!env.D1) {
+        throw new Error('Database binding D1 is missing');
     }
-})();
+    
+    try {
+        // Initialize cache database
+        await initCache(env);
+        
+        // Initialize the first admin user
+        await initializeFirstAdmin(env);
+        
+        // Run migrations
+        await setExistingContentPublic(env);
+        await ensureUserGroups(env);
+
+        // Identify Council managers from org chart
+        await identifyCouncilManagers(env);
+
+        // Cache page slugs
+        await cachePageSlugs(env);
+        
+        // Verify tables were created
+        const tables = await env.D1.exec("SELECT name FROM sqlite_master WHERE type='table'");
+        console.log('Final tables after initialization:', JSON.stringify(tables));
+    } catch (e) {
+        console.error('Error in initializeApp:', e);
+        throw e; // Re-throw the error to be handled by the caller
+    }
+};
 
 // Add scheduled reminder sending
 export async function scheduled(env: Env) {
@@ -126,51 +131,6 @@ router
         }
         return new Response('API is running');
     })
-    .get('/debug-d1', async (request: Request, env: Env) => {
-        // Special debug endpoint to test D1 directly
-        try {
-            console.log('D1 DEBUG: Starting D1 debug test');
-            
-            if (!env.D1) {
-                console.error('D1 DEBUG: D1 binding is undefined!');
-                return new Response('D1 binding is missing', { status: 500 });
-            }
-            
-            console.log('D1 DEBUG: D1 binding exists');
-            
-            try {
-                // Check if D1 is accessible
-                const tables = await env.D1.exec("SELECT name FROM sqlite_master WHERE type='table'");
-                console.log('D1 DEBUG: Current tables:', JSON.stringify(tables));
-            } catch (error) {
-                console.error('D1 DEBUG: Error querying existing tables:', error);
-            }
-            
-            try {
-                // Try to create the table directly with fixed SQL syntax
-                console.log('D1 DEBUG: Attempting to create object_cache table...');
-                await env.D1.exec(
-                    "CREATE TABLE IF NOT EXISTS object_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, last_updated INTEGER NOT NULL, ttl INTEGER NOT NULL)"
-                );
-                console.log('D1 DEBUG: Table creation command completed');
-                
-                // Verify table was created
-                const tableCheck = await env.D1.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='object_cache'");
-                console.log('D1 DEBUG: Table check result:', JSON.stringify(tableCheck));
-                
-            } catch (error) {
-                console.error('D1 DEBUG: Error creating table:', error);
-                return new Response(`D1 error: ${error instanceof Error ? error.message : String(error)}`, 
-                    { status: 500 });
-            }
-            
-            return new Response('D1 debug completed, check logs', { status: 200 });
-        } catch (error) {
-            console.error('D1 DEBUG: Unexpected error:', error);
-            return new Response(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`, 
-                { status: 500 });
-        }
-    })
     .all('/auth/*', authRouter.fetch) // Handle all auth routes
     .all('/blog/*', blogRouter.fetch) // Handle all blog routes
     .all('/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
@@ -182,12 +142,19 @@ router
     .all('/user/*', withValidSession) // Middleware to check session for user routes
     .all('/user/*', userRouter.fetch) // Handle all user routes
     .all('/content/*', withValidSession) // Middleware to check session for content routes
-    .all('/content/*', contentSubmissionRouter.fetch) // Handle all content submission routes
+    .all('/content/*', async (request: Request, env: Env) => {
+        console.log('Content route handler called with URL:', request.url);
+        return contentSubmissionRouter.fetch(request, env);
+    }) // Handle all content submission routes
     .all('/council/*', withValidSession) // Middleware to check session for council routes
     .all('/council/*', councilMemberRouter.fetch) // Handle all council member routes
     .all('/reminders/*', withValidSession) // Middleware to check session for reminder routes
     .all('/reminders/*', reminderRouter.fetch) // Handle all reminder routes
     .all('/comms-cadre/*', withValidSession) // Middleware to check session for Comms Cadre routes
     .all('/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
+    .all('*', (request: Request) => {
+        console.log('Unmatched request in main router:', request.url);
+        return new Response('Not Found', { status: 404 });
+    });
 
 export default router

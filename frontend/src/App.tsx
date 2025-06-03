@@ -12,6 +12,28 @@ import Navbar from './components/Navbar';
 import { USER_LOGIN_EVENT } from './utils/userActions';
 import IndentationTest from './components/editor/tests/IndentationTest';
 import CheckboxTest from './components/editor/tests/CheckboxTest';
+import { ContentManagement } from './pages/ContentManagement';
+import { ContentProvider } from './contexts/ContentContext';
+
+// Protected Route component
+const ProtectedRoute: React.FC<{
+  element: React.ReactElement;
+  allowedRoles: string[];
+}> = ({ element, allowedRoles }) => {
+  const userJson = localStorage.getItem('user');
+  if (!userJson) {
+    return <Navigate to="/login" replace />;
+  }
+
+  try {
+    const user = JSON.parse(userJson);
+    const hasAllowedRole = user.roles.some((role: string) => allowedRoles.includes(role));
+    return hasAllowedRole ? element : <Navigate to="/" replace />;
+  } catch (err) {
+    console.error('Error parsing user data:', err);
+    return <Navigate to="/login" replace />;
+  }
+};
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -48,31 +70,42 @@ const App: React.FC = () => {
   }, []);
 
   return (
-    <Router>
-      <div className="app-container">
-        <Navbar />
-        
-        <div className="content-container">
-          {loading ? (
-            <div className="loading-container">Loading...</div>
-          ) : (
-            <Routes>
-              <Route path="/" element={<Home skipNavbar={true} />} />
-              <Route path="/login" element={<Login skipNavbar={true} setParentUser={setUser} />} />
-              <Route path="/admin" element={<Admin skipNavbar={true} />} />
-              <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/verify-email" element={<VerifyEmail />} />
-              <Route path="/test-indentation" element={<IndentationTest />} />
-              <Route path="/checkbox-test" element={<CheckboxTest />} />
-              
-              {/* Final catch-all if nothing else matches */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          )}
+    <ContentProvider>
+      <Router>
+        <div className="app-container">
+          <Navbar />
+          
+          <div className="content-container">
+            {loading ? (
+              <div className="loading-container">Loading...</div>
+            ) : (
+              <Routes>
+                <Route path="/" element={<Home skipNavbar={true} />} />
+                <Route path="/login" element={<Login skipNavbar={true} setParentUser={setUser} />} />
+                <Route path="/admin" element={<Admin skipNavbar={true} />} />
+                <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="/verify-email" element={<VerifyEmail />} />
+                <Route path="/test-indentation" element={<IndentationTest />} />
+                <Route path="/checkbox-test" element={<CheckboxTest />} />
+                <Route 
+                  path="/content" 
+                  element={
+                    <ProtectedRoute 
+                      element={<ContentManagement />} 
+                      allowedRoles={['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER']} 
+                    />
+                  } 
+                />
+                
+                {/* Final catch-all if nothing else matches */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            )}
+          </div>
         </div>
-      </div>
-    </Router>
+      </Router>
+    </ContentProvider>
   );
 };
 

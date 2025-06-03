@@ -11,6 +11,7 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
     const [isAdmin, setIsAdmin] = useState<boolean>(false);
+    const [userRoles, setUserRoles] = useState<string[]>([]);
     const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
     const navigate = useNavigate();
     const location = useLocation();
@@ -18,12 +19,20 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     // Function to check login status
     const checkLoginStatus = () => {
         const sessionId = localStorage.getItem('sessionId');
-        if (sessionId) {
+        const userJson = localStorage.getItem('user');
+        if (sessionId && userJson) {
             setIsLoggedIn(true);
-            checkAdminStatus(sessionId);
+            try {
+                const user = JSON.parse(userJson);
+                setIsAdmin(user.isAdmin === true || user.userType === 'Admin');
+                setUserRoles(user.roles || []);
+            } catch (err) {
+                console.error('Error parsing user data:', err);
+            }
         } else {
             setIsLoggedIn(false);
             setIsAdmin(false);
+            setUserRoles([]);
         }
     };
 
@@ -54,6 +63,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
         const userData = event.detail;
         setIsLoggedIn(!!userData);
         setIsAdmin(userData?.isAdmin === true || userData?.userType === 'Admin');
+        setUserRoles(userData?.roles || []);
     };
 
     const checkAdminStatus = async (sessionId: string) => {
@@ -78,6 +88,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
         LogoutUserReact(navigate);
         setIsLoggedIn(false);
         setIsAdmin(false);
+        setUserRoles([]);
     };
 
     const toggleMobileMenu = () => {
@@ -89,6 +100,10 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     };
 
     const currentPageSlug = location.pathname.split('/')[1] || '';
+
+    const canAccessContent = userRoles.some(role => 
+        ['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER'].includes(role)
+    );
 
     return (
         <nav className="navbar">
@@ -102,6 +117,9 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                 {/* Admin and user account links */}
                 {isAdmin && (
                     <Link to="/admin" className={`navbar-item ${currentPageSlug === 'admin' ? 'active' : ''}`} onClick={handleMenuItemClick}>Admin</Link>
+                )}
+                {canAccessContent && (
+                    <Link to="/content" className={`navbar-item ${currentPageSlug === 'content' ? 'active' : ''}`} onClick={handleMenuItemClick}>Content</Link>
                 )}
                 {isLoggedIn ? (
                     <>
