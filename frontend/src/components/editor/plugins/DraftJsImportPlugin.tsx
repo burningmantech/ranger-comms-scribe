@@ -107,14 +107,18 @@ function convertDraftToLexical(draftContent: RawDraftContentState, editor: any) 
                 break;
               }
             }
-            // Fallthrough if not a handled entity
+            // If not a handled entity, treat it like a checkbox
+            const paragraph = $createParagraphNode();
+            paragraph.append($createTextNode(text));
+            root.append(paragraph);
+            break;
             
           case 'checkbox':
             // Handle checkbox blocks
             const isChecked = !!block.data?.checked;
-            const paragraph = $createParagraphNode();
-            paragraph.append($createTextNode(text));
-            root.append(paragraph);
+            const checkboxParagraph = $createParagraphNode();
+            checkboxParagraph.append($createTextNode(text));
+            root.append(checkboxParagraph);
             break;
             
           case 'unstyled':

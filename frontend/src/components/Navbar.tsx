@@ -121,6 +121,9 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                 {canAccessContent && (
                     <Link to="/content" className={`navbar-item ${currentPageSlug === 'content' ? 'active' : ''}`} onClick={handleMenuItemClick}>Content</Link>
                 )}
+                {isLoggedIn && (
+                    <Link to="/comms-request" className={`navbar-item ${currentPageSlug === 'comms-request' ? 'active' : ''}`} onClick={handleMenuItemClick}>Comms Request</Link>
+                )}
                 {isLoggedIn ? (
                     <>
                         <Link to="/settings" className={`navbar-item ${currentPageSlug === 'settings' ? 'active' : ''}`} onClick={handleMenuItemClick}>Settings</Link>

@@ -14,6 +14,7 @@ import IndentationTest from './components/editor/tests/IndentationTest';
 import CheckboxTest from './components/editor/tests/CheckboxTest';
 import { ContentManagement } from './pages/ContentManagement';
 import { ContentProvider } from './contexts/ContentContext';
+import CommsRequest from './components/CommsRequest';
 
 // Protected Route component
 const ProtectedRoute: React.FC<{
@@ -94,6 +95,15 @@ const App: React.FC = () => {
                     <ProtectedRoute 
                       element={<ContentManagement />} 
                       allowedRoles={['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER']} 
+                    />
+                  } 
+                />
+                <Route 
+                  path="/comms-request" 
+                  element={
+                    <ProtectedRoute 
+                      element={<CommsRequest />} 
+                      allowedRoles={['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER', 'USER']} 
                     />
                   } 
                 />
