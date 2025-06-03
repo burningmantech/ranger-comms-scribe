@@ -47,9 +47,10 @@ export const ApprovalReminders: React.FC<ApprovalRemindersProps> = ({
                       </div>
                       <button
                         onClick={() => onSendReminder(submission, approver)}
-                        className="px-3 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                        className="btn btn-tertiary btn-with-icon"
                       >
-                        Send Reminder
+                        <i className="fas fa-bell"></i>
+                        <span className="btn-text">Send Reminder</span>
                       </button>
                     </div>
                   ))}

@@ -33,13 +33,14 @@ export const CommsCadreManagement: React.FC<CommsCadreManagementProps> = ({
             placeholder="Member's email"
             value={newMemberEmail}
             onChange={(e) => setNewMemberEmail(e.target.value)}
-            className="flex-1 p-2 border rounded"
+            className="form-control"
           />
           <button
             onClick={handleAddMember}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            className="btn btn-primary btn-with-icon"
           >
-            Add Member
+            <i className="fas fa-plus"></i>
+            <span className="btn-text">Add Member</span>
           </button>
         </div>
       </div>
@@ -55,9 +56,10 @@ export const CommsCadreManagement: React.FC<CommsCadreManagementProps> = ({
               </div>
               <button
                 onClick={() => onRemoveMember(member.id)}
-                className="px-3 py-1 text-red-500 hover:text-red-700"
+                className="btn btn-danger btn-with-icon"
               >
-                Remove
+                <i className="fas fa-trash"></i>
+                <span className="btn-text">Remove</span>
               </button>
             </div>
           ))}

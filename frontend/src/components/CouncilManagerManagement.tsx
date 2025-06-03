@@ -57,19 +57,19 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
             placeholder="Name"
             value={newManager.name}
             onChange={(e) => setNewManager({ ...newManager, name: e.target.value })}
-            className="p-2 border rounded"
+            className="form-control"
           />
           <input
             type="email"
             placeholder="Email"
             value={newManager.email}
             onChange={(e) => setNewManager({ ...newManager, email: e.target.value })}
-            className="p-2 border rounded"
+            className="form-control"
           />
           <select
             value={newManager.role}
             onChange={(e) => setNewManager({ ...newManager, role: e.target.value as CouncilRole })}
-            className="p-2 border rounded"
+            className="form-select"
           >
             <option value="COMMUNICATIONS_MANAGER">Communications Manager</option>
             <option value="INTAKE_MANAGER">Intake Manager</option>
@@ -80,12 +80,15 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
             <option value="DEPUTY_DEPARTMENT_MANAGER">Deputy Department Manager</option>
           </select>
         </div>
-        <button
-          onClick={handleAddManager}
-          className="mt-3 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-        >
-          Add Manager
-        </button>
+        <div className="mt-3">
+          <button
+            onClick={handleAddManager}
+            className="btn btn-primary btn-with-icon"
+          >
+            <i className="fas fa-plus"></i>
+            <span className="btn-text">Add Manager</span>
+          </button>
+        </div>
       </div>
 
       <div className="mb-6">
@@ -100,21 +103,25 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
               </div>
               <button
                 onClick={() => handleRemoveManager(manager.id)}
-                className="px-3 py-1 text-red-500 hover:text-red-700"
+                className="btn btn-danger btn-with-icon"
               >
-                Remove
+                <i className="fas fa-trash"></i>
+                <span className="btn-text">Remove</span>
               </button>
             </div>
           ))}
         </div>
       </div>
 
-      <button
-        onClick={handleSave}
-        className="px-6 py-2 bg-green-500 text-white rounded hover:bg-green-600"
-      >
-        Save Changes
-      </button>
+      <div className="btn-group btn-group-right">
+        <button
+          onClick={handleSave}
+          className="btn btn-secondary btn-with-icon"
+        >
+          <i className="fas fa-save"></i>
+          <span className="btn-text">Save Changes</span>
+        </button>
+      </div>
     </div>
   );
 }; 
