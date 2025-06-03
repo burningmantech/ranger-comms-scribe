@@ -3,7 +3,7 @@ import { User } from '../types/content';
 
 interface CommsCadreManagementProps {
   members: User[];
-  onAddMember: (email: string) => void;
+  onAddMember: (email: string, name: string) => void;
   onRemoveMember: (userId: string) => void;
 }
 
@@ -12,12 +12,15 @@ export const CommsCadreManagement: React.FC<CommsCadreManagementProps> = ({
   onAddMember,
   onRemoveMember
 }) => {
-  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [newMember, setNewMember] = useState({
+    email: '',
+    name: ''
+  });
 
   const handleAddMember = () => {
-    if (newMemberEmail.trim()) {
-      onAddMember(newMemberEmail.trim());
-      setNewMemberEmail('');
+    if (newMember.email.trim() && newMember.name.trim()) {
+      onAddMember(newMember.email.trim(), newMember.name.trim());
+      setNewMember({ email: '', name: '' });
     }
   };
 
@@ -27,14 +30,23 @@ export const CommsCadreManagement: React.FC<CommsCadreManagementProps> = ({
       
       <div className="mb-6 p-4 border rounded-lg">
         <h3 className="text-lg font-semibold mb-3">Add New Member</h3>
-        <div className="flex space-x-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <input
-            type="email"
-            placeholder="Member's email"
-            value={newMemberEmail}
-            onChange={(e) => setNewMemberEmail(e.target.value)}
+            type="text"
+            placeholder="Name"
+            value={newMember.name}
+            onChange={(e) => setNewMember({ ...newMember, name: e.target.value })}
             className="form-control"
           />
+          <input
+            type="email"
+            placeholder="Email"
+            value={newMember.email}
+            onChange={(e) => setNewMember({ ...newMember, email: e.target.value })}
+            className="form-control"
+          />
+        </div>
+        <div className="mt-3">
           <button
             onClick={handleAddMember}
             className="btn btn-primary btn-with-icon"

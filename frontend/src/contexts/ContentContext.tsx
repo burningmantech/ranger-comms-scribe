@@ -13,7 +13,7 @@ interface ContentContextType {
   addComment: (submission: ContentSubmission, comment: any) => Promise<void>;
   saveCouncilManagers: (managers: CouncilManager[]) => Promise<void>;
   removeCouncilManager: (managerId: string) => Promise<void>;
-  addCommsCadreMember: (email: string) => Promise<void>;
+  addCommsCadreMember: (email: string, name: string) => Promise<void>;
   removeCommsCadreMember: (userId: string) => Promise<void>;
   sendReminder: (submission: ContentSubmission, manager: CouncilManager) => Promise<void>;
 }
@@ -239,7 +239,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const addCommsCadreMember = async (email: string) => {
+  const addCommsCadreMember = async (email: string, name: string) => {
     try {
       const response = await fetch(`${API_URL}/comms-cadre`, {
         method: 'POST',
@@ -247,7 +247,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, name }),
       });
       if (response.ok) {
         const newMember = await response.json();
