@@ -43,12 +43,11 @@ export interface ContentSubmission {
 }
 
 export type SubmissionStatus =
-  | 'DRAFT'
-  | 'SUBMITTED'
-  | 'UNDER_REVIEW'
-  | 'APPROVED'
-  | 'REJECTED'
-  | 'PUBLISHED';
+  | 'draft'
+  | 'submitted'
+  | 'in_review'
+  | 'approved'
+  | 'rejected';
 
 export interface FormField {
   id: string;

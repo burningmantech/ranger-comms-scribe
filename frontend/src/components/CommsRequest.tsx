@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import { Form, Button, Alert } from 'react-bootstrap';
+import { Form, Button, Alert, Modal } from 'react-bootstrap';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useContent } from '../contexts/ContentContext';
+import { Link, useNavigate } from 'react-router-dom';
+import { ContentSubmission, FormField } from '../types/content';
 
 // Define the form schema using Zod
 const commsRequestSchema = z.object({
@@ -26,6 +29,8 @@ type CommsRequestFormData = z.infer<typeof commsRequestSchema>;
 
 const CommsRequest: React.FC = () => {
   const [showSuccess, setShowSuccess] = useState(false);
+  const { saveSubmission } = useContent();
+  const navigate = useNavigate();
   
   const {
     register,
@@ -41,13 +46,43 @@ const CommsRequest: React.FC = () => {
 
   const onSubmit = async (data: CommsRequestFormData) => {
     try {
-      // TODO: Implement API call to submit the form
-      console.log('Form submitted:', data);
+      // Create a content submission from the form data
+      const submission: Partial<ContentSubmission> = {
+        id: crypto.randomUUID(),
+        title: data.suggestedSubjectLine,
+        content: data.text || '',
+        status: 'in_review',
+        submittedBy: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')!).id : 'anonymous',
+        submittedAt: new Date(),
+        formFields: [
+          { id: 'owner', label: 'Owner', value: data.owner, type: 'text', required: true },
+          { id: 'requiredApprovers', label: 'Required Approvers', value: data.requiredApprovers, type: 'text', required: true },
+          { id: 'publishBy', label: 'Publish By', value: data.publishBy, type: 'date', required: true },
+          { id: 'urgency', label: 'Urgency', value: data.urgency, type: 'text', required: true },
+          { id: 'audience', label: 'Audience', value: data.audience, type: 'text', required: true },
+          { id: 'description', label: 'Description', value: data.description, type: 'text', required: true },
+          { id: 'replyToAddress', label: 'Reply-To Address', value: data.replyToAddress, type: 'text', required: true },
+          { id: 'signatureText', label: 'Signature Text', value: data.signatureText, type: 'text', required: true },
+          { id: 'notes', label: 'Notes', value: data.notes || '', type: 'text', required: false },
+        ],
+        comments: [],
+        approvals: [],
+        changes: [],
+        assignedReviewers: [],
+        assignedCouncilManagers: []
+      };
+
+      await saveSubmission(submission as ContentSubmission);
       setShowSuccess(true);
       reset();
     } catch (error) {
       console.error('Error submitting form:', error);
     }
+  };
+
+  const handleViewSubmissions = () => {
+    setShowSuccess(false);
+    navigate('/content');
   };
 
   return (
@@ -58,12 +93,6 @@ const CommsRequest: React.FC = () => {
           Ranger Communications can write, edit, facilitate and make your message heard. 
           We can help you tell the Rangers what you need them to know.
         </p>
-
-        {showSuccess && (
-          <Alert variant="success" onClose={() => setShowSuccess(false)} dismissible>
-            Your comms request has been submitted successfully!
-          </Alert>
-        )}
 
         <Form onSubmit={handleSubmit(onSubmit)}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -242,6 +271,26 @@ const CommsRequest: React.FC = () => {
             </Button>
           </div>
         </Form>
+
+        <Modal show={showSuccess} onHide={() => setShowSuccess(false)} centered>
+          <Modal.Header closeButton>
+            <Modal.Title>Request Submitted Successfully!</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <p>Your comms request has been submitted and is now under review.</p>
+            <p className="mt-3">
+              You can track the status of your request and add comments in the submissions area.
+            </p>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowSuccess(false)}>
+              Close
+            </Button>
+            <Button variant="primary" onClick={handleViewSubmissions}>
+              View Submissions
+            </Button>
+          </Modal.Footer>
+        </Modal>
       </div>
     </div>
   );

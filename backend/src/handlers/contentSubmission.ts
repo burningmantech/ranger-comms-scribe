@@ -17,7 +17,7 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     content: submission.content!,
     submittedBy: user.id,
     submittedAt: new Date().toISOString(),
-    status: 'draft',
+    status: submission.status || 'draft',
     formFields: submission.formFields || [],
     comments: [],
     approvals: [],
@@ -42,7 +42,14 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   
   // Get all submissions from cache
   const response = await listObjects('content_submissions/', env);
-  const allSubmissions = response.objects as ContentSubmission[];
+  
+  // Fetch the full content of each submission
+  const submissionPromises = response.objects.map(async (obj: any) => {
+    const submission = await getObject<ContentSubmission>(obj.key, env);
+    return submission;
+  });
+  
+  const allSubmissions = (await Promise.all(submissionPromises)).filter((sub): sub is ContentSubmission => sub !== null);
   
   // Filter based on user type
   let submissions;

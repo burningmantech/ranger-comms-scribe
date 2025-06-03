@@ -27,7 +27,7 @@ export const ContentManagement: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'submissions' | 'council' | 'cadre' | 'reminders'>('submissions');
 
   const pendingSubmissions = submissions.filter(
-    submission => submission.status === 'UNDER_REVIEW'
+    submission => submission.status === 'in_review'
   );
 
   if (!currentUser) {

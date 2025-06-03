@@ -64,7 +64,26 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       });
       if (response.ok) {
         const data = await response.json();
-        setSubmissions(data);
+        // Convert date strings to Date objects
+        const submissionsWithDates = data.map((submission: any) => ({
+          ...submission,
+          submittedAt: new Date(submission.submittedAt),
+          comments: submission.comments.map((comment: any) => ({
+            ...comment,
+            createdAt: new Date(comment.createdAt),
+            updatedAt: new Date(comment.updatedAt)
+          })),
+          approvals: submission.approvals.map((approval: any) => ({
+            ...approval,
+            createdAt: new Date(approval.createdAt),
+            updatedAt: new Date(approval.updatedAt)
+          })),
+          changes: submission.changes.map((change: any) => ({
+            ...change,
+            changedAt: new Date(change.changedAt)
+          }))
+        }));
+        setSubmissions(submissionsWithDates);
       }
     } catch (err) {
       console.error('Error fetching submissions:', err);
@@ -105,19 +124,49 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const saveSubmission = async (submission: ContentSubmission) => {
     try {
-      const response = await fetch(`${API_URL}/content/submissions/${submission.id}`, {
-        method: 'PUT',
+      const isNewSubmission = !submissions.some(s => s.id === submission.id);
+      const url = isNewSubmission 
+        ? `${API_URL}/content/submissions`
+        : `${API_URL}/content/submissions/${submission.id}`;
+      
+      const response = await fetch(url, {
+        method: isNewSubmission ? 'POST' : 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
         body: JSON.stringify(submission),
       });
+      
       if (response.ok) {
-        const updatedSubmission = await response.json();
-        setSubmissions(prev => 
-          prev.map(s => s.id === submission.id ? updatedSubmission : s)
-        );
+        const data = await response.json();
+        // Convert date strings to Date objects
+        const updatedSubmission = {
+          ...data,
+          submittedAt: new Date(data.submittedAt),
+          comments: data.comments.map((comment: any) => ({
+            ...comment,
+            createdAt: new Date(comment.createdAt),
+            updatedAt: new Date(comment.updatedAt)
+          })),
+          approvals: data.approvals.map((approval: any) => ({
+            ...approval,
+            createdAt: new Date(approval.createdAt),
+            updatedAt: new Date(approval.updatedAt)
+          })),
+          changes: data.changes.map((change: any) => ({
+            ...change,
+            changedAt: new Date(change.changedAt)
+          }))
+        };
+
+        if (isNewSubmission) {
+          setSubmissions(prev => [...prev, updatedSubmission]);
+        } else {
+          setSubmissions(prev => 
+            prev.map(s => s.id === submission.id ? updatedSubmission : s)
+          );
+        }
       }
     } catch (err) {
       console.error('Error saving submission:', err);
