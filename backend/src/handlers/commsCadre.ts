@@ -1,10 +1,11 @@
-import { Router } from 'itty-router';
+import { AutoRouter } from 'itty-router';
+import { json } from 'itty-router-extras';
 import { UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
 import { getObject, putObject, deleteObject } from '../services/cacheService';
 
-const router = Router();
+export const router = AutoRouter({ base: '/comms-cadre' });
 
 interface CommsCadreMember {
   id: string;
@@ -17,18 +18,16 @@ interface CommsCadreMember {
 }
 
 // Get all Comms Cadre members
-router.get('/comms-cadre', withAuth, async (request: Request, env: Env) => {
+router.get('/', withAuth, async (request: Request, env: Env) => {
   const members = await getObject<CommsCadreMember[]>('comms_cadre:active', env) || [];
-  return new Response(JSON.stringify(members.filter(m => m.active)), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+  return json(members.filter(m => m.active));
 });
 
 // Add a new Comms Cadre member
-router.post('/comms-cadre', withAuth, async (request: Request, env: Env) => {
+router.post('/', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user as User;
   if (!user || user.userType !== UserType.Admin) {
-    return new Response('Unauthorized', { status: 401 });
+    return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const member: Partial<CommsCadreMember> = await request.json();
@@ -60,16 +59,14 @@ router.post('/comms-cadre', withAuth, async (request: Request, env: Env) => {
     await putObject('users', users, env);
   }
 
-  return new Response(JSON.stringify(newMember), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+  return json(newMember);
 });
 
 // Update a Comms Cadre member
-router.put('/comms-cadre/:id', withAuth, async (request: Request, env: Env) => {
+router.put('/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user as User;
   if (!user || user.userType !== UserType.Admin) {
-    return new Response('Unauthorized', { status: 401 });
+    return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { id } = (request as any).params;
@@ -80,7 +77,7 @@ router.put('/comms-cadre/:id', withAuth, async (request: Request, env: Env) => {
   const memberIndex = members.findIndex(m => m.id === id);
   
   if (memberIndex === -1) {
-    return new Response('Comms Cadre member not found', { status: 404 });
+    return json({ error: 'Comms Cadre member not found' }, { status: 404 });
   }
 
   const updatedMember: CommsCadreMember = {
@@ -95,16 +92,14 @@ router.put('/comms-cadre/:id', withAuth, async (request: Request, env: Env) => {
   // Update cache
   await putObject('comms_cadre:active', members, env);
 
-  return new Response(JSON.stringify(updatedMember), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+  return json(updatedMember);
 });
 
 // Deactivate a Comms Cadre member
-router.delete('/comms-cadre/:id', withAuth, async (request: Request, env: Env) => {
+router.delete('/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user as User;
   if (!user || user.userType !== UserType.Admin) {
-    return new Response('Unauthorized', { status: 401 });
+    return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { id } = (request as any).params;
@@ -114,7 +109,7 @@ router.delete('/comms-cadre/:id', withAuth, async (request: Request, env: Env) =
   const memberIndex = members.findIndex(m => m.id === id);
   
   if (memberIndex === -1) {
-    return new Response('Comms Cadre member not found', { status: 404 });
+    return json({ error: 'Comms Cadre member not found' }, { status: 404 });
   }
 
   const member = members[memberIndex];
@@ -143,6 +138,4 @@ router.delete('/comms-cadre/:id', withAuth, async (request: Request, env: Env) =
   }
 
   return new Response(null, { status: 204 });
-});
-
-export default router; 
+}); 

@@ -55,18 +55,18 @@ export const withAuth = async (request: Request, env: Env) => {
   console.log('withAuth called');
   const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
   if (!sessionId) {
-    return new Response('Unauthorized', { status: 401 });
+    return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const session = await GetSession(sessionId, env);
   if (!session) {
-    return new Response('Unauthorized', { status: 401 });
+    return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const userData = session.data as { email: string; name: string };
   const user = await getUser(userData.email, env);
   if (!user) {
-    return new Response('Unauthorized', { status: 401 });
+    return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   (request as any).user = user;

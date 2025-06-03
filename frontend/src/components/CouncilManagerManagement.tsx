@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CouncilManager, CouncilRole } from '../types/content';
+import { useContent } from '../contexts/ContentContext';
 
 interface CouncilManagerManagementProps {
   onSave: (managers: CouncilManager[]) => void;
@@ -10,6 +11,7 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
   onSave,
   initialManagers = []
 }) => {
+  const { removeCouncilManager } = useContent();
   const [managers, setManagers] = useState<CouncilManager[]>(initialManagers);
   const [newManager, setNewManager] = useState<Partial<CouncilManager>>({
     email: '',
@@ -29,8 +31,14 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
     }
   };
 
-  const handleRemoveManager = (id: string) => {
-    setManagers(managers.filter(manager => manager.id !== id));
+  const handleRemoveManager = async (id: string) => {
+    try {
+      await removeCouncilManager(id);
+      setManagers(managers.filter(manager => manager.id !== id));
+    } catch (error) {
+      console.error('Error removing manager:', error);
+      // You might want to show an error message to the user here
+    }
   };
 
   const handleSave = () => {

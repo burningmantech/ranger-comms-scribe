@@ -5,13 +5,13 @@ import { router as galleryRouter } from './handlers/gallery';
 import { router as adminRouter } from './handlers/admin';
 import { router as pageRouter } from './handlers/page';
 import { router as userRouter } from './handlers/user';
-import contentSubmissionRouter from './handlers/contentSubmission';
+import { router as contentSubmissionRouter } from './handlers/contentSubmission';
 import { router as councilMemberRouter } from './handlers/councilMembers';
 import reminderRouter from './handlers/reminders';
-import commsCadreRouter from './handlers/commsCadre';
+import { router as commsCadreRouter } from './handlers/commsCadre';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
-import { initializeFirstAdmin } from './services/userService';
+import { initializeFirstAdmin, getUser } from './services/userService';
 import { setExistingContentPublic } from './migrations/setExistingContentPublic';
 import { ensureUserGroups } from './migrations/ensureUserGroups';
 import { initCache } from './services/cacheService';
@@ -57,9 +57,14 @@ const withValidSession = async (request: Request, env: Env) => {
         return json({ error: 'Session not found or expired' }, { status: 403 });
     }
 
-    const user = session.data.email;
-    request.user = user
-    request.userId = session.id
+    const userData = session.data as { email: string; name: string };
+    const user = await getUser(userData.email, env);
+    if (!user) {
+        return json({ error: 'User not found' }, { status: 403 });
+    }
+
+    (request as any).user = user;
+    return undefined;
 }
 
 const withOptionalSession = async (request: Request, env: Env) => {
@@ -137,12 +142,19 @@ router
     .all('/user/*', withValidSession) // Middleware to check session for user routes
     .all('/user/*', userRouter.fetch) // Handle all user routes
     .all('/content/*', withValidSession) // Middleware to check session for content routes
-    .all('/content/*', contentSubmissionRouter.fetch) // Handle all content submission routes
+    .all('/content/*', async (request: Request, env: Env) => {
+        console.log('Content route handler called with URL:', request.url);
+        return contentSubmissionRouter.fetch(request, env);
+    }) // Handle all content submission routes
     .all('/council/*', withValidSession) // Middleware to check session for council routes
     .all('/council/*', councilMemberRouter.fetch) // Handle all council member routes
     .all('/reminders/*', withValidSession) // Middleware to check session for reminder routes
     .all('/reminders/*', reminderRouter.fetch) // Handle all reminder routes
     .all('/comms-cadre/*', withValidSession) // Middleware to check session for Comms Cadre routes
     .all('/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
+    .all('*', (request: Request) => {
+        console.log('Unmatched request in main router:', request.url);
+        return new Response('Not Found', { status: 404 });
+    });
 
 export default router

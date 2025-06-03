@@ -12,6 +12,7 @@ interface ContentContextType {
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
   addComment: (submission: ContentSubmission, comment: any) => Promise<void>;
   saveCouncilManagers: (managers: CouncilManager[]) => Promise<void>;
+  removeCouncilManager: (managerId: string) => Promise<void>;
   addCommsCadreMember: (email: string) => Promise<void>;
   removeCommsCadreMember: (userId: string) => Promise<void>;
   sendReminder: (submission: ContentSubmission, manager: CouncilManager) => Promise<void>;
@@ -88,7 +89,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const fetchCommsCadreMembers = async () => {
     try {
-      const response = await fetch(`${API_URL}/content/comms-cadre`, {
+      const response = await fetch(`${API_URL}/comms-cadre`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
@@ -219,9 +220,28 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
+  const removeCouncilManager = async (managerId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/council/members/${managerId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      if (response.ok) {
+        setCouncilManagers(prev => prev.filter(manager => manager.id !== managerId));
+      } else {
+        throw new Error('Failed to remove council manager');
+      }
+    } catch (err) {
+      console.error('Error removing council manager:', err);
+      throw err;
+    }
+  };
+
   const addCommsCadreMember = async (email: string) => {
     try {
-      const response = await fetch(`${API_URL}/content/comms-cadre`, {
+      const response = await fetch(`${API_URL}/comms-cadre`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -241,14 +261,14 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const removeCommsCadreMember = async (userId: string) => {
     try {
-      const response = await fetch(`${API_URL}/content/comms-cadre/${userId}`, {
+      const response = await fetch(`${API_URL}/comms-cadre/${userId}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
       });
       if (response.ok) {
-        setCommsCadreMembers(prev => prev.filter(m => m.id !== userId));
+        setCommsCadreMembers(prev => prev.filter(member => member.id !== userId));
       }
     } catch (err) {
       console.error('Error removing comms cadre member:', err);
@@ -285,6 +305,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     rejectSubmission,
     addComment,
     saveCouncilManagers,
+    removeCouncilManager,
     addCommsCadreMember,
     removeCommsCadreMember,
     sendReminder
