@@ -15,6 +15,26 @@ import CheckboxTest from './components/editor/tests/CheckboxTest';
 import { ContentManagement } from './pages/ContentManagement';
 import { ContentProvider } from './contexts/ContentContext';
 
+// Protected Route component
+const ProtectedRoute: React.FC<{
+  element: React.ReactElement;
+  allowedRoles: string[];
+}> = ({ element, allowedRoles }) => {
+  const userJson = localStorage.getItem('user');
+  if (!userJson) {
+    return <Navigate to="/login" replace />;
+  }
+
+  try {
+    const user = JSON.parse(userJson);
+    const hasAllowedRole = user.roles.some((role: string) => allowedRoles.includes(role));
+    return hasAllowedRole ? element : <Navigate to="/" replace />;
+  } catch (err) {
+    console.error('Error parsing user data:', err);
+    return <Navigate to="/login" replace />;
+  }
+};
+
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -68,7 +88,15 @@ const App: React.FC = () => {
                 <Route path="/verify-email" element={<VerifyEmail />} />
                 <Route path="/test-indentation" element={<IndentationTest />} />
                 <Route path="/checkbox-test" element={<CheckboxTest />} />
-                <Route path="/content" element={<ContentManagement />} />
+                <Route 
+                  path="/content" 
+                  element={
+                    <ProtectedRoute 
+                      element={<ContentManagement />} 
+                      allowedRoles={['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER']} 
+                    />
+                  } 
+                />
                 
                 {/* Final catch-all if nothing else matches */}
                 <Route path="*" element={<Navigate to="/" replace />} />

@@ -284,10 +284,12 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                 }
                 
                 const userData = {
+                    id: data.id,
                     email: data.email,
                     name: data.name,
                     isAdmin: data.isAdmin || false,
-                    approved: data.approved || false
+                    approved: data.approved || false,
+                    roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || [])
                 };
                 
                 handleUserLogin(userData, data.sessionId);
@@ -351,10 +353,12 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                 }
                 
                 const userData = {
+                    id: data.id,
                     email: data.email,
                     name: data.name,
                     isAdmin: data.isAdmin || false,
-                    approved: data.approved || false
+                    approved: data.approved || false,
+                    roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || [])
                 };
                 
                 handleUserLogin(userData, data.sessionId);

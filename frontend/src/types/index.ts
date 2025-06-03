@@ -8,12 +8,13 @@ export enum UserType {
 }
 
 export interface User {
-    id?: string;
+    id: string;
     email: string;
     name: string;
     approved?: boolean;
     isAdmin?: boolean; // Keeping for backward compatibility
     userType?: UserType;
+    roles: string[];
     groups?: string[]; // Array of group IDs the user belongs to
     notificationSettings?: {
         notifyOnReplies: boolean; // Notify when someone replies to posts or comments

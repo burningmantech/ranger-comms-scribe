@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { ContentSubmission, User, CouncilManager, SubmissionStatus, Approval } from '../types/content';
+import { API_URL } from '../config';
 
 interface ContentContextType {
   submissions: ContentSubmission[];
@@ -36,137 +37,242 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
   const [commsCadreMembers, setCommsCadreMembers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  // Mock data for development
   useEffect(() => {
-    // Mock current user
-    setCurrentUser({
-      id: '1',
-      email: 'test@example.com',
-      name: 'Test User',
-      roles: ['COMMS_CADRE']
-    });
-
-    // Mock submissions
-    setSubmissions([
-      {
-        id: '1',
-        title: 'Test Submission',
-        content: 'This is a test submission',
-        status: 'UNDER_REVIEW',
-        submittedBy: '1',
-        submittedAt: new Date(),
-        formFields: [],
-        comments: [],
-        approvals: [],
-        changes: [],
-        assignedReviewers: [],
-        assignedCouncilManagers: []
+    const userJson = localStorage.getItem('user');
+    if (userJson) {
+      try {
+        const user = JSON.parse(userJson);
+        setCurrentUser(user);
+      } catch (err) {
+        console.error('Error parsing user data:', err);
       }
-    ]);
+    }
 
-    // Mock council managers
-    setCouncilManagers([
-      {
-        id: '1',
-        email: 'manager@example.com',
-        name: 'Test Manager',
-        role: 'COMMUNICATIONS_MANAGER'
-      }
-    ]);
-
-    // Mock comms cadre members
-    setCommsCadreMembers([
-      {
-        id: '1',
-        email: 'cadre@example.com',
-        name: 'Test Cadre Member',
-        roles: ['COMMS_CADRE']
-      }
-    ]);
+    // Fetch initial data
+    fetchSubmissions();
+    fetchCouncilManagers();
+    fetchCommsCadreMembers();
   }, []);
 
+  const fetchSubmissions = async () => {
+    try {
+      const response = await fetch(`${API_URL}/content/submissions`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setSubmissions(data);
+      }
+    } catch (err) {
+      console.error('Error fetching submissions:', err);
+    }
+  };
+
+  const fetchCouncilManagers = async () => {
+    try {
+      const response = await fetch(`${API_URL}/council/members`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCouncilManagers(data);
+      }
+    } catch (err) {
+      console.error('Error fetching council managers:', err);
+    }
+  };
+
+  const fetchCommsCadreMembers = async () => {
+    try {
+      const response = await fetch(`${API_URL}/content/comms-cadre`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCommsCadreMembers(data);
+      }
+    } catch (err) {
+      console.error('Error fetching comms cadre members:', err);
+    }
+  };
+
   const saveSubmission = async (submission: ContentSubmission) => {
-    // TODO: Implement API call
-    setSubmissions(prev => 
-      prev.map(s => s.id === submission.id ? submission : s)
-    );
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify(submission),
+      });
+      if (response.ok) {
+        const updatedSubmission = await response.json();
+        setSubmissions(prev => 
+          prev.map(s => s.id === submission.id ? updatedSubmission : s)
+        );
+      }
+    } catch (err) {
+      console.error('Error saving submission:', err);
+      throw err;
+    }
   };
 
   const approveSubmission = async (submission: ContentSubmission) => {
-    // TODO: Implement API call
-    const updatedSubmission: ContentSubmission = {
-      ...submission,
-      status: 'APPROVED' as SubmissionStatus,
-      approvals: [
-        ...submission.approvals,
-        {
-          id: crypto.randomUUID(),
-          approverId: currentUser?.id || '',
-          status: 'APPROVED',
-          timestamp: new Date()
-        }
-      ]
-    };
-    setSubmissions(prev => 
-      prev.map(s => s.id === submission.id ? updatedSubmission : s)
-    );
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      if (response.ok) {
+        const updatedSubmission = await response.json();
+        setSubmissions(prev => 
+          prev.map(s => s.id === submission.id ? updatedSubmission : s)
+        );
+      }
+    } catch (err) {
+      console.error('Error approving submission:', err);
+      throw err;
+    }
   };
 
   const rejectSubmission = async (submission: ContentSubmission) => {
-    // TODO: Implement API call
-    const updatedSubmission: ContentSubmission = {
-      ...submission,
-      status: 'REJECTED' as SubmissionStatus,
-      approvals: [
-        ...submission.approvals,
-        {
-          id: crypto.randomUUID(),
-          approverId: currentUser?.id || '',
-          status: 'REJECTED',
-          timestamp: new Date()
-        }
-      ]
-    };
-    setSubmissions(prev => 
-      prev.map(s => s.id === submission.id ? updatedSubmission : s)
-    );
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      if (response.ok) {
+        const updatedSubmission = await response.json();
+        setSubmissions(prev => 
+          prev.map(s => s.id === submission.id ? updatedSubmission : s)
+        );
+      }
+    } catch (err) {
+      console.error('Error rejecting submission:', err);
+      throw err;
+    }
   };
 
   const addComment = async (submission: ContentSubmission, comment: any) => {
-    // TODO: Implement API call
-    const updatedSubmission = {
-      ...submission,
-      comments: [...submission.comments, comment]
-    };
-    setSubmissions(prev => 
-      prev.map(s => s.id === submission.id ? updatedSubmission : s)
-    );
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify(comment),
+      });
+      if (response.ok) {
+        const updatedSubmission = await response.json();
+        setSubmissions(prev => 
+          prev.map(s => s.id === submission.id ? updatedSubmission : s)
+        );
+      }
+    } catch (err) {
+      console.error('Error adding comment:', err);
+      throw err;
+    }
   };
 
   const saveCouncilManagers = async (managers: CouncilManager[]) => {
-    // TODO: Implement API call
-    setCouncilManagers(managers);
+    try {
+      // Process each manager
+      const results = await Promise.all(managers.map(async (manager) => {
+        const isNew = !manager.id;
+        const method = isNew ? 'POST' : 'PUT';
+        const url = isNew ? `${API_URL}/council/members` : `${API_URL}/council/members/${manager.id}`;
+
+        const response = await fetch(url, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+          body: JSON.stringify(manager),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to ${isNew ? 'create' : 'update'} council manager`);
+        }
+
+        return response.json();
+      }));
+
+      setCouncilManagers(results);
+    } catch (err) {
+      console.error('Error saving council managers:', err);
+      throw err;
+    }
   };
 
   const addCommsCadreMember = async (email: string) => {
-    // TODO: Implement API call
-    const newMember: User = {
-      id: crypto.randomUUID(),
-      email,
-      name: email.split('@')[0], // Mock name from email
-      roles: ['COMMS_CADRE']
-    };
-    setCommsCadreMembers(prev => [...prev, newMember]);
+    try {
+      const response = await fetch(`${API_URL}/content/comms-cadre`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({ email }),
+      });
+      if (response.ok) {
+        const newMember = await response.json();
+        setCommsCadreMembers(prev => [...prev, newMember]);
+      }
+    } catch (err) {
+      console.error('Error adding comms cadre member:', err);
+      throw err;
+    }
   };
 
   const removeCommsCadreMember = async (userId: string) => {
-    // TODO: Implement API call
-    setCommsCadreMembers(prev => prev.filter(m => m.id !== userId));
+    try {
+      const response = await fetch(`${API_URL}/content/comms-cadre/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      if (response.ok) {
+        setCommsCadreMembers(prev => prev.filter(m => m.id !== userId));
+      }
+    } catch (err) {
+      console.error('Error removing comms cadre member:', err);
+      throw err;
+    }
   };
 
   const sendReminder = async (submission: ContentSubmission, manager: CouncilManager) => {
-    // TODO: Implement API call
-    console.log('Sending reminder to', manager.email, 'for submission', submission.id);
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/remind`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({ managerId: manager.id }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to send reminder');
+      }
+    } catch (err) {
+      console.error('Error sending reminder:', err);
+      throw err;
+    }
   };
 
   const value = {

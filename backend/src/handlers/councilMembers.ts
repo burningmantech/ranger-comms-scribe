@@ -1,19 +1,31 @@
-import { Router } from 'itty-router';
+import { Router, AutoRouter } from 'itty-router';
 import { CouncilMember, CouncilRole, UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
+import { Env } from '../utils/sessionManager';
+import { getObject, putObject, listObjects } from '../services/cacheService';
 
-const router = Router();
+export const router = AutoRouter({ base: '/council' });
 
 // Get all council members
-router.get('/council-members', withAuth, async (request: Request, env: any) => {
-  const members = await env.DB.prepare('SELECT * FROM council_members WHERE active = true').all();
-  return new Response(JSON.stringify(members.results), {
+router.get('/members', withAuth, async (request: Request, env: Env) => {
+  console.log('GET /council/members called');
+  const objects = await listObjects('council_member/', env);
+  const members: CouncilMember[] = [];
+  
+  for (const object of objects.objects) {
+    const member = await getObject<CouncilMember>(object.key, env);
+    if (member && member.active) {
+      members.push(member);
+    }
+  }
+
+  return new Response(JSON.stringify(members), {
     headers: { 'Content-Type': 'application/json' }
   });
 });
 
 // Add a new council member
-router.post('/council-members', withAuth, async (request: Request, env: any) => {
+router.post('/members', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user as User;
   if (!user || user.userType !== UserType.Admin) {
     return new Response('Unauthorized', { status: 401 });
@@ -32,23 +44,21 @@ router.post('/council-members', withAuth, async (request: Request, env: any) => 
     updatedAt: new Date().toISOString()
   };
 
-  await env.DB.prepare(
-    'INSERT INTO council_members (id, userId, role, email, name, active, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(
-    newMember.id,
-    newMember.userId,
-    newMember.role,
-    newMember.email,
-    newMember.name,
-    newMember.active,
-    newMember.createdAt,
-    newMember.updatedAt
-  ).run();
+  // Store council member
+  await putObject(`council_member/${newMember.id}`, newMember, env, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { memberId: newMember.id }
+  });
 
   // Update user type to CouncilManager
-  await env.DB.prepare(
-    'UPDATE users SET userType = ? WHERE id = ?'
-  ).bind(UserType.CouncilManager, newMember.userId).run();
+  const userObj = await getObject<User>(`user/${newMember.userId}`, env);
+  if (userObj) {
+    userObj.userType = UserType.CouncilManager;
+    await putObject(`user/${newMember.userId}`, userObj, env, {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { userId: newMember.userId }
+    });
+  }
 
   return new Response(JSON.stringify(newMember), {
     headers: { 'Content-Type': 'application/json' }
@@ -56,7 +66,7 @@ router.post('/council-members', withAuth, async (request: Request, env: any) => 
 });
 
 // Update a council member
-router.put('/council-members/:id', withAuth, async (request: Request, env: any) => {
+router.put('/members/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user as User;
   if (!user || user.userType !== UserType.Admin) {
     return new Response('Unauthorized', { status: 401 });
@@ -65,7 +75,7 @@ router.put('/council-members/:id', withAuth, async (request: Request, env: any) 
   const { id } = (request as any).params;
   const updates: Partial<CouncilMember> = await request.json();
 
-  const member = await env.DB.prepare('SELECT * FROM council_members WHERE id = ?').bind(id).first();
+  const member = await getObject<CouncilMember>(`council_member/${id}`, env);
   if (!member) {
     return new Response('Council member not found', { status: 404 });
   }
@@ -76,16 +86,10 @@ router.put('/council-members/:id', withAuth, async (request: Request, env: any) 
     updatedAt: new Date().toISOString()
   };
 
-  await env.DB.prepare(
-    'UPDATE council_members SET role = ?, email = ?, name = ?, active = ?, updatedAt = ? WHERE id = ?'
-  ).bind(
-    updatedMember.role,
-    updatedMember.email,
-    updatedMember.name,
-    updatedMember.active,
-    updatedMember.updatedAt,
-    id
-  ).run();
+  await putObject(`council_member/${id}`, updatedMember, env, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { memberId: id }
+  });
 
   return new Response(JSON.stringify(updatedMember), {
     headers: { 'Content-Type': 'application/json' }
@@ -93,35 +97,64 @@ router.put('/council-members/:id', withAuth, async (request: Request, env: any) 
 });
 
 // Deactivate a council member
-router.delete('/council-members/:id', withAuth, async (request: Request, env: any) => {
+router.delete('/members/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user as User;
   if (!user || user.userType !== UserType.Admin) {
     return new Response('Unauthorized', { status: 401 });
   }
 
   const { id } = (request as any).params;
-  const member = await env.DB.prepare('SELECT * FROM council_members WHERE id = ?').bind(id).first();
+  const member = await getObject<CouncilMember>(`council_member/${id}`, env);
   
   if (!member) {
     return new Response('Council member not found', { status: 404 });
   }
 
-  await env.DB.prepare(
-    'UPDATE council_members SET active = false, updatedAt = ? WHERE id = ?'
-  ).bind(new Date().toISOString(), id).run();
+  // Update member to inactive
+  member.active = false;
+  member.updatedAt = new Date().toISOString();
+  await putObject(`council_member/${id}`, member, env, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { memberId: id }
+  });
 
-  // Revert user type if they are no longer a council member
-  const activeRoles = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM council_members WHERE userId = ? AND active = true'
-  ).bind(member.userId).first();
+  // Check if user has any other active council roles
+  const objects = await listObjects('council_member/', env);
+  let hasActiveRoles = false;
+  
+  for (const object of objects.objects) {
+    const otherMember = await getObject<CouncilMember>(object.key, env);
+    if (otherMember && otherMember.userId === member.userId && otherMember.active) {
+      hasActiveRoles = true;
+      break;
+    }
+  }
 
-  if (activeRoles.count === 0) {
-    await env.DB.prepare(
-      'UPDATE users SET userType = ? WHERE id = ?'
-    ).bind(UserType.Member, member.userId).run();
+  // If no active roles, revert user type
+  if (!hasActiveRoles) {
+    const userObj = await getObject<User>(`user/${member.userId}`, env);
+    if (userObj) {
+      userObj.userType = UserType.Member;
+      await putObject(`user/${member.userId}`, userObj, env, {
+        httpMetadata: { contentType: 'application/json' },
+        customMetadata: { userId: member.userId }
+      });
+    }
   }
 
   return new Response(null, { status: 204 });
 });
 
-export default router; 
+// // Add a catch-all route for debugging
+// router.all('*', async (request: Request, env: Env) => {
+//   console.log('Catch-all route hit:', request.url);
+//   console.log('Request method:', request.method);
+//   const headers: Record<string, string> = {};
+//   request.headers.forEach((value, key) => {
+//     headers[key] = value;
+//   });
+//   console.log('Request headers:', headers);
+//   console.log('ENV object:', env);
+//   console.log('ENV KEYS:', Object.keys(env));
+//   return new Response('Route not found', { status: 404 });
+// }); 

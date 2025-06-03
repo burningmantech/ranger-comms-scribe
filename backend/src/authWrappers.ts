@@ -52,23 +52,25 @@ export const withLeadCheck = async (request: Request, env: Env) => {
 
 // Middleware to check if the user is authenticated
 export const withAuth = async (request: Request, env: Env) => {
+  console.log('withAuth called');
   const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
   if (!sessionId) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const session = await env.DB.prepare('SELECT * FROM sessions WHERE id = ?').bind(sessionId).first();
+  const session = await GetSession(sessionId, env);
   if (!session) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(session.userId).first();
+  const userData = session.data as { email: string; name: string };
+  const user = await getUser(userData.email, env);
   if (!user) {
     return new Response('Unauthorized', { status: 401 });
   }
 
-  // Add user to request object
   (request as any).user = user;
+  return undefined;
 };
 
 // Middleware to check if the user can access a group's content

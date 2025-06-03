@@ -19,13 +19,12 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
 
   const handleAddManager = () => {
     if (newManager.email && newManager.name && newManager.role) {
-      const manager: CouncilManager = {
-        id: crypto.randomUUID(),
+      const manager: Partial<CouncilManager> = {
         email: newManager.email,
         name: newManager.name,
         role: newManager.role as CouncilRole
       };
-      setManagers([...managers, manager]);
+      setManagers([...managers, manager as CouncilManager]);
       setNewManager({ email: '', name: '', role: 'COMMUNICATIONS_MANAGER' });
     }
   };
