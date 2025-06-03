@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GOOGLE_CLIENT_ID, API_URL } from '../config';
 import { handleGoogleCredentialResponse } from '../utils/googleAuth';
-import { fetchBlogContent, LogoutUserReact, handleUserLogin } from '../utils/userActions';
+import { LogoutUserReact, handleUserLogin } from '../utils/userActions';
 import LoggedOutView from './LoggedOutView';
 import Home from './Home';
 import { User } from '../types';
@@ -39,7 +39,6 @@ interface PasswordRequirement {
 
 const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
     const [user, setUser] = useState<User | null>(null);
-    const [blogContent, setBlogContent] = useState<string | null>(null);
     const [authMode, setAuthMode] = useState<AuthMode>('login');
     const [formData, setFormData] = useState<LoginFormData>({ 
         email: '', 
@@ -173,7 +172,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
 
     useEffect(() => {
         if (user) {
-            navigate('/blog');
+            navigate('/');
         }
     }, [user]);
 
