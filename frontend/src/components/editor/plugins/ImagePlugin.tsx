@@ -7,11 +7,10 @@ import { $createParagraphNode } from 'lexical';
 export const INSERT_IMAGE_COMMAND = createCommand('insertImage');
 
 export interface ImagePluginProps {
-  galleryImages?: any[];
   onImageSelect?: () => void;
 }
 
-export function ImagePlugin({ galleryImages = [], onImageSelect }: ImagePluginProps) {
+export function ImagePlugin({ onImageSelect }: ImagePluginProps) {
   const [editor] = useLexicalComposerContext();
 
   const insertImage = useCallback(

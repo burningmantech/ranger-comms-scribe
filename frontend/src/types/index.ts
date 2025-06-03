@@ -7,25 +7,8 @@ export enum UserType {
     Admin = 'Admin'
 }
 
-export interface Page {
-    id: string;
-    title: string;
-    slug: string;
-    content: string;
-    createdBy: string;
-    createdAt: string;
-    updatedAt: string;
-    published: boolean;
-    isPublic: boolean;
-    groupId?: string; // Optional group ID if not public
-    order: number; // For ordering in navigation
-    showInNavigation: boolean; // Whether to show in main navigation
-    parentPageId?: string; // Optional parent page ID for hierarchical navigation
-    isHome?: boolean; // Whether this is the home page
-}
-
 export interface User {
-    id?: string; // Adding the id property that's used in the Blog component
+    id?: string;
     email: string;
     name: string;
     approved?: boolean;
@@ -63,34 +46,6 @@ export interface MediaItem {
     isPublic: boolean;       // Whether the media is publicly accessible
     groupId?: string;        // ID of the group the media belongs to if not public
     groupName?: string;      // Name of the group for display purposes
-}
-
-export interface BlogPost {
-    id: string;
-    title: string;
-    content: string;
-    author: string;
-    authorId: string;
-    createdAt: string;
-    updatedAt: string;
-    published: boolean;
-    commentsEnabled: boolean;
-    media?: MediaItem[];
-    isPublic: boolean;
-    groupId?: string; // Optional group ID if not public
-}
-
-export interface BlogComment {
-    id: string;
-    postId: string;
-    content: string;
-    author: string;
-    authorId: string;
-    createdAt: string;
-    isBlocked: boolean;
-    parentId?: string; // If this is a reply, this will point to the parent comment
-    replies?: BlogComment[]; // Array of reply comments
-    level: number; // Comment nesting level (0, 1, 2 for up to 3 levels)
 }
 
 export interface GalleryComment {
