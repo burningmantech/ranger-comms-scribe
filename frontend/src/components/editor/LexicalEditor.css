@@ -123,6 +123,12 @@
   margin: 6px 0;
 }
 
+/* Nested list items - remove the default list-style for indented items */
+.editor-nested-listitem {
+  list-style: none;
+  margin: 6px 0;
+}
+
 /* Indentation - For both editor and view mode */
 [data-indent="1"] {
   padding-left: 40px !important;
