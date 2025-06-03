@@ -1,7 +1,7 @@
 import { AutoRouter, cors } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
-import { withAdminCheck, withAuthCheck } from '../authWrappers';
+import { withAdminCheck, withAuth } from '../authWrappers';
 import { 
     getBlogPosts, 
     getBlogPost, 
@@ -205,7 +205,7 @@ router.get('/:id/comments', async (request: ExtendedRequest, env: Env) => {
 });
 
 // Add a comment to a blog post (authenticated users only)
-router.post('/:id/comments', withAuthCheck, async (request: ExtendedRequest, env: Env) => {
+router.post('/:id/comments', withAuth, async (request: ExtendedRequest, env: Env) => {
     try {
         const { id } = request.params;
         console.log(`POST /blog/${id}/comments called`);

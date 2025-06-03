@@ -43,7 +43,6 @@ interface EditorProps {
   onChange?: (editor: LexicalEditor, json: string) => void;
   className?: string;
   onImageSelect?: () => void;
-  galleryImages?: string[];
 }
 
 const LexicalEditorComponent: React.FC<EditorProps> = ({
@@ -54,7 +53,6 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   onChange,
   className = '',
   onImageSelect,
-  galleryImages = []
 }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const editorRef = useRef<LexicalEditor | null>(null);

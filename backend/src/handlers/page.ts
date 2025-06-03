@@ -1,7 +1,7 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
-import { withAdminCheck, withAuthCheck } from '../authWrappers';
+import { withAdminCheck, withAuth } from '../authWrappers';
 import {
   getPages,
   getAllPages,

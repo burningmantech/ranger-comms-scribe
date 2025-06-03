@@ -1,10 +1,24 @@
 // Shared types for the backend
 
+import { Router } from 'itty-router';
+
 export enum UserType {
   Public = 'Public',
   Member = 'Member',
   Lead = 'Lead',
-  Admin = 'Admin'
+  Admin = 'Admin',
+  CommsCadre = 'CommsCadre',
+  CouncilManager = 'CouncilManager'
+}
+
+export enum CouncilRole {
+  CommunicationsManager = 'CommunicationsManager',
+  IntakeManager = 'IntakeManager',
+  LogisticsManager = 'LogisticsManager',
+  OperationsManager = 'OperationsManager',
+  PersonnelManager = 'PersonnelManager',
+  DepartmentManager = 'DepartmentManager',
+  DeputyDepartmentManager = 'DeputyDepartmentManager'
 }
 
 export interface Page {
@@ -114,3 +128,100 @@ export interface GalleryComment {
   replies?: GalleryComment[]; // Array of reply comments
   level: number; // Comment nesting level (0, 1, 2 for up to 3 levels)
 }
+
+export interface CouncilMember {
+  id: string;
+  userId: string;
+  role: CouncilRole;
+  email: string;
+  name: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContentSubmission {
+  id: string;
+  title: string;
+  content: string;
+  submittedBy: string;
+  submittedAt: string;
+  status: 'draft' | 'submitted' | 'in_review' | 'approved' | 'rejected';
+  formFields: FormField[];
+  comments: ContentComment[];
+  approvals: ContentApproval[];
+  changes: ContentChange[];
+  commsCadreApprovals: number;
+  councilManagerApprovals: ContentApproval[];
+  finalApprovalDate?: string;
+  announcementSent: boolean;
+}
+
+export interface FormField {
+  id: string;
+  name: string;
+  type: 'text' | 'date' | 'time' | 'select' | 'multiselect';
+  label: string;
+  required: boolean;
+  options?: string[]; // For select/multiselect fields
+  value: string | string[];
+}
+
+export interface ContentComment {
+  id: string;
+  submissionId: string;
+  content: string;
+  authorId: string;
+  authorName: string;
+  createdAt: string;
+  updatedAt: string;
+  isSuggestion: boolean;
+  resolved: boolean;
+  parentId?: string;
+  replies?: ContentComment[];
+}
+
+export interface ContentApproval {
+  id: string;
+  submissionId: string;
+  approverId: string;
+  approverName: string;
+  approverType: UserType;
+  status: 'approved' | 'rejected';
+  comment?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContentChange {
+  id: string;
+  submissionId: string;
+  field: string;
+  oldValue: string;
+  newValue: string;
+  changedBy: string;
+  changedAt: string;
+  reason?: string;
+}
+
+export interface Reminder {
+  id: string;
+  submissionId: string;
+  approverId: string;
+  lastSentAt: string;
+  nextSendAt: string;
+  status: 'pending' | 'sent' | 'approved';
+}
+
+export interface Request {
+  params?: { [key: string]: string };
+  user?: User;
+}
+
+export interface CustomRequest extends Request {
+  params?: { [key: string]: string };
+  user?: User;
+  json(): Promise<any>;
+}
+
+export type CustomRequestHandler = (request: CustomRequest, env: any) => Promise<Response>;
