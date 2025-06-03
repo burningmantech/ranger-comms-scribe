@@ -17,9 +17,7 @@ import { ensureUserGroups } from './migrations/ensureUserGroups';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
 import { sendReminders } from './handlers/reminders';
-import { initializeContentTables } from './migrations/createContentTables';
 import { identifyCouncilManagers } from './services/councilManagerService';
-import { createAuthTables } from './migrations/createAuthTables';
 
 declare global {
     interface Request {
@@ -89,16 +87,12 @@ const initializeApp = async (env: Env) => {
         // Initialize cache database
         await initCache(env);
         
-        // Create auth tables
-        await createAuthTables(env);
-        
         // Initialize the first admin user
         await initializeFirstAdmin(env);
         
         // Run migrations
         await setExistingContentPublic(env);
         await ensureUserGroups(env);
-        await initializeContentTables(env);
 
         // Identify Council managers from org chart
         await identifyCouncilManagers(env);

@@ -1,5 +1,6 @@
 import { Env } from '../utils/sessionManager';
 import { CouncilRole, UserType, CouncilMember } from '../types';
+import { getObject, putObject, removeFromCache } from './cacheService';
 
 interface OrgChartEntry {
   role: CouncilRole;
@@ -56,15 +57,11 @@ const orgChartData: OrgChartEntry[] = [
 export async function identifyCouncilManagers(env: Env) {
   for (const entry of orgChartData) {
     // Check if user exists
-    const user = await env.DB.prepare(
-      'SELECT * FROM users WHERE email = ?'
-    ).bind(entry.email).first();
+    const user = await getObject<{ id: string }>(`users:${entry.email}`, env);
 
     if (user) {
       // Check if they're already a council member
-      const existingMember = await env.DB.prepare(
-        'SELECT * FROM council_members WHERE userId = ? AND role = ? AND active = true'
-      ).bind(user.id, entry.role).first();
+      const existingMember = await getObject<CouncilMember>(`council_members:${user.id}:${entry.role}`, env);
 
       if (!existingMember) {
         // Create new council member entry
@@ -79,34 +76,18 @@ export async function identifyCouncilManagers(env: Env) {
           updatedAt: new Date().toISOString()
         };
 
-        await env.DB.prepare(
-          'INSERT INTO council_members (id, userId, role, email, name, active, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(
-          newMember.id,
-          newMember.userId,
-          newMember.role,
-          newMember.email,
-          newMember.name,
-          newMember.active,
-          newMember.createdAt,
-          newMember.updatedAt
-        ).run();
+        await putObject(`council_members:${user.id}:${entry.role}`, newMember, env);
 
         // Update user type
-        await env.DB.prepare(
-          'UPDATE users SET userType = ? WHERE id = ?'
-        ).bind(UserType.CouncilManager, user.id).run();
+        await putObject(`users:${entry.email}`, { ...user, userType: UserType.CouncilManager }, env);
       }
     }
   }
 }
 
 export async function getCouncilManagersForRole(role: CouncilRole, env: Env): Promise<CouncilMember[]> {
-  const members = (await env.DB.prepare(
-    'SELECT * FROM council_members WHERE role = ? AND active = true'
-  ).bind(role).all()) as unknown as D1Result<CouncilMember>;
-  
-  return members.results;
+  const members = await getObject<CouncilMember[]>(`council_members:role:${role}`, env);
+  return members || [];
 }
 
 export async function updateOrgChartData(newData: OrgChartEntry[]) {
