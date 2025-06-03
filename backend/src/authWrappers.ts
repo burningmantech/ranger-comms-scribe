@@ -1,7 +1,7 @@
 import { GetSession, Env } from './utils/sessionManager';
 import { isAdmin, getUser, canAccessGroup } from './services/userService';
 import { json } from 'itty-router-extras';
-import { UserType } from './types';
+import { UserType, User } from './types';
 
 // Middleware to check if the user is an admin
 export const withAdminCheck = async (request: Request, env: Env) => {
@@ -51,19 +51,24 @@ export const withLeadCheck = async (request: Request, env: Env) => {
 };
 
 // Middleware to check if the user is authenticated
-export const withAuthCheck = async (request: Request, env: Env) => {
+export const withAuth = async (request: Request, env: Env) => {
   const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
   if (!sessionId) {
-    return json({ error: 'Session ID is required' }, { status: 400 });
+    return new Response('Unauthorized', { status: 401 });
   }
 
-  const session = await GetSession(sessionId, env);
+  const session = await env.DB.prepare('SELECT * FROM sessions WHERE id = ?').bind(sessionId).first();
   if (!session) {
-    return json({ error: 'Session not found or expired' }, { status: 403 });
+    return new Response('Unauthorized', { status: 401 });
   }
 
-  // Add user data to request for use in route handlers
-  request.user = session.userId;
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(session.userId).first();
+  if (!user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  // Add user to request object
+  (request as any).user = user;
 };
 
 // Middleware to check if the user can access a group's content
@@ -73,7 +78,7 @@ export const withGroupAccessCheck = async (request: Request, env: Env) => {
   
   // If no group ID is provided, just check authentication
   if (!groupId) {
-    return withAuthCheck(request, env);
+    return withAuth(request, env);
   }
   
   // If no session ID is provided, check if the content is public

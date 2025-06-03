@@ -26,6 +26,8 @@ export interface Env {
     SESSecret?: string;
     TURSTILESECRET?: string; // Added Turnstile secret binding
     D1?: D1Database; // Add D1 database property
+    DB: D1Database;
+    EMAIL: any;
 }
 
 export async function CreateSession(

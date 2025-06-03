@@ -1,7 +1,7 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env, GetSession } from '../utils/sessionManager';
-import { withAuthCheck } from '../authWrappers';
+import { withAuth } from '../authWrappers';
 import { getUserNotificationSettings, updateUserNotificationSettings } from '../services/userService';
 
 // Extend the Request interface to include user property
@@ -13,7 +13,7 @@ interface ExtendedRequest extends Request {
 export const router = AutoRouter({ base: '/user' });
 
 // Get user settings
-router.get('/settings', withAuthCheck, async (request: ExtendedRequest, env: Env) => {
+router.get('/settings', withAuth, async (request: ExtendedRequest, env: Env) => {
   try {
     if (!request.user) {
       return json({ error: 'User not authenticated' }, { status: 401 });
@@ -35,7 +35,7 @@ router.get('/settings', withAuthCheck, async (request: ExtendedRequest, env: Env
 });
 
 // Update user settings
-router.put('/settings', withAuthCheck, async (request: ExtendedRequest, env: Env) => {
+router.put('/settings', withAuth, async (request: ExtendedRequest, env: Env) => {
   try {
     if (!request.user) {
       return json({ error: 'User not authenticated' }, { status: 401 });

@@ -5,6 +5,10 @@ import { router as galleryRouter } from './handlers/gallery';
 import { router as adminRouter } from './handlers/admin';
 import { router as pageRouter } from './handlers/page';
 import { router as userRouter } from './handlers/user';
+import contentSubmissionRouter from './handlers/contentSubmission';
+import councilMemberRouter from './handlers/councilMembers';
+import reminderRouter from './handlers/reminders';
+import commsCadreRouter from './handlers/commsCadre';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin } from './services/userService';
@@ -12,6 +16,9 @@ import { setExistingContentPublic } from './migrations/setExistingContentPublic'
 import { ensureUserGroups } from './migrations/ensureUserGroups';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
+import { sendReminders } from './handlers/reminders';
+import { initializeContentTables } from './migrations/createContentTables';
+import { identifyCouncilManagers } from './services/councilManagerService';
 
 declare global {
     interface Request {
@@ -79,6 +86,10 @@ const initializeApp = async (env: Env) => {
     // Run migrations
     await setExistingContentPublic(env);
     await ensureUserGroups(env);
+    await initializeContentTables(env);
+
+    // Identify Council managers from org chart
+    await identifyCouncilManagers(env);
 
     // Cache page slugs
     await cachePageSlugs(env);
@@ -97,6 +108,11 @@ const initializeApp = async (env: Env) => {
         console.error('Error during automatic initialization:', error);
     }
 })();
+
+// Add scheduled reminder sending
+export async function scheduled(env: Env) {
+  await sendReminders(env);
+}
 
 router
     .get('/', async (request: Request, env: Env) => {
@@ -165,6 +181,13 @@ router
     .all('/admin/*', adminRouter.fetch) // Handle all admin routes
     .all('/user/*', withValidSession) // Middleware to check session for user routes
     .all('/user/*', userRouter.fetch) // Handle all user routes
-    
+    .all('/content/*', withValidSession) // Middleware to check session for content routes
+    .all('/content/*', contentSubmissionRouter.fetch) // Handle all content submission routes
+    .all('/council/*', withValidSession) // Middleware to check session for council routes
+    .all('/council/*', councilMemberRouter.fetch) // Handle all council member routes
+    .all('/reminders/*', withValidSession) // Middleware to check session for reminder routes
+    .all('/reminders/*', reminderRouter.fetch) // Handle all reminder routes
+    .all('/comms-cadre/*', withValidSession) // Middleware to check session for Comms Cadre routes
+    .all('/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
 
 export default router
