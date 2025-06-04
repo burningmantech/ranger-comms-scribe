@@ -33,9 +33,13 @@ import FontSizePlugin from './plugins/FontSizePlugin';
 import FontFamilyPlugin from './plugins/FontFamilyPlugin';
 import AlignmentPlugin from './plugins/AlignmentPlugin';
 import QuotePlugin from './plugins/QuotePlugin';
+import { SuggestionNode } from './nodes/SuggestionNode';
+import SuggestionPlugin from './plugins/SuggestionPlugin';
 import './LexicalEditor.css';
 import './styles/TableControlsPlugin.css';
 import './styles/IndentationStyles.css';
+import './styles/SuggestionStyles.css';
+import './styles/ContextMenuStyles.css';
 
 // Define EditorProps interface
 interface EditorProps {
@@ -46,6 +50,12 @@ interface EditorProps {
   onChange?: (editor: LexicalEditor, json: string) => void;
   className?: string;
   onImageSelect?: () => void;
+  currentUserId?: string;
+  onSuggestionCreate?: (suggestion: any) => void;
+  onSuggestionApprove?: (suggestionId: string, reason?: string) => void;
+  onSuggestionReject?: (suggestionId: string, reason?: string) => void;
+  canCreateSuggestions?: boolean;
+  canApproveSuggestions?: boolean;
 }
 
 const LexicalEditorComponent: React.FC<EditorProps> = ({
@@ -56,18 +66,33 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   onChange,
   className = '',
   onImageSelect,
+  currentUserId,
+  onSuggestionCreate,
+  onSuggestionApprove,
+  onSuggestionReject,
+  canCreateSuggestions = true,
+  canApproveSuggestions = false,
 }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const editorRef = useRef<LexicalEditor | null>(null);
 
   // Prevent form submission when interacting with editor
   const handleEditorClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+    // Allow normal text selection when suggestions are enabled
+    if (canCreateSuggestions) {
+      return;
+    }
+    
+    // Only prevent default for non-suggestion interactions
+    if (!currentUserId) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   };
 
   const handleEditorKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Only prevent Enter in edit mode, allow text selection in suggestion mode
+    if (e.key === 'Enter' && !e.shiftKey && !readOnly) {
       e.preventDefault();
     }
   };
@@ -174,6 +199,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       LinkNode,
       ImageNode,
       CheckboxNode,
+      SuggestionNode,
     ],
     onError: (error: Error) => {
       console.error('Lexical Editor Error:', error);
@@ -229,6 +255,16 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
           <FontFamilyPlugin />
           <AlignmentPlugin />
           <QuotePlugin />
+          {currentUserId && (
+            <SuggestionPlugin
+              currentUserId={currentUserId}
+              onSuggestionCreate={onSuggestionCreate}
+              onSuggestionApprove={onSuggestionApprove}
+              onSuggestionReject={onSuggestionReject}
+              canCreateSuggestions={canCreateSuggestions}
+              canApproveSuggestions={canApproveSuggestions}
+            />
+          )}
         </LexicalComposer>
       </div>
     </div>

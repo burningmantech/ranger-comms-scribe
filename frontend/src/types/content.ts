@@ -9,7 +9,8 @@ export type UserRole =
   | 'COMMS_CADRE'
   | 'COUNCIL_MANAGER'
   | 'REVIEWER'
-  | 'SUBMITTER';
+  | 'SUBMITTER'
+  | 'ADMIN';
 
 export interface CouncilManager {
   id: string;
@@ -41,6 +42,7 @@ export interface ContentSubmission {
   changes: Change[];
   assignedReviewers: string[];
   assignedCouncilManagers: string[];
+  suggestedEdits: SuggestedEdit[];
 }
 
 export type SubmissionStatus =
@@ -59,6 +61,26 @@ export interface FormField {
   options?: string[];
 }
 
+export interface SuggestedEdit {
+  id: string;
+  originalText: string;
+  suggestedText: string;
+  range: {
+    startOffset: number;
+    endOffset: number;
+    startKey: string;
+    endKey: string;
+  };
+  authorId: string;
+  createdAt: Date;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reviewerId?: string;
+  reviewedAt?: Date;
+  reason?: string;
+  contextBefore?: string;
+  contextAfter?: string;
+}
+
 export interface Comment {
   id: string;
   content: string;
@@ -66,6 +88,7 @@ export interface Comment {
   createdAt: Date;
   type: 'COMMENT' | 'SUGGESTION';
   resolved: boolean;
+  suggestedEdit?: SuggestedEdit;
 }
 
 export interface Approval {

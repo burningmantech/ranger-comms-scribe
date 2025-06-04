@@ -20,7 +20,10 @@ export const ContentManagement: React.FC = () => {
     saveCouncilManagers,
     addCommsCadreMember,
     removeCommsCadreMember,
-    sendReminder
+    sendReminder,
+    createSuggestion,
+    approveSuggestion,
+    rejectSuggestion
   } = useContent();
 
   const [selectedSubmission, setSelectedSubmission] = useState<ContentSubmission | null>(null);
@@ -45,6 +48,9 @@ export const ContentManagement: React.FC = () => {
             onApprove={approveSubmission}
             onReject={rejectSubmission}
             onComment={addComment}
+            onSuggestionCreate={createSuggestion}
+            onSuggestionApprove={approveSuggestion}
+            onSuggestionReject={rejectSuggestion}
           />
         ) : (
           <SubmissionHistory

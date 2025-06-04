@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { ContentSubmission, User, CouncilManager, SubmissionStatus, Approval } from '../types/content';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { ContentSubmission, User, CouncilManager, SubmissionStatus, Approval, Comment, SuggestedEdit } from '../types/content';
 import { API_URL } from '../config';
 
 interface ContentContextType {
@@ -10,12 +10,15 @@ interface ContentContextType {
   saveSubmission: (submission: ContentSubmission) => Promise<void>;
   approveSubmission: (submission: ContentSubmission) => Promise<void>;
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
-  addComment: (submission: ContentSubmission, comment: any) => Promise<void>;
+  addComment: (submission: ContentSubmission, comment: Comment) => Promise<void>;
   saveCouncilManagers: (managers: CouncilManager[]) => Promise<void>;
   removeCouncilManager: (managerId: string) => Promise<void>;
   addCommsCadreMember: (email: string, name: string) => Promise<void>;
   removeCommsCadreMember: (userId: string) => Promise<void>;
   sendReminder: (submission: ContentSubmission, manager: CouncilManager) => Promise<void>;
+  createSuggestion: (submission: ContentSubmission, suggestion: SuggestedEdit) => Promise<void>;
+  approveSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
+  rejectSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
 }
 
 const ContentContext = createContext<ContentContextType | null>(null);
@@ -216,7 +219,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const addComment = async (submission: ContentSubmission, comment: any) => {
+  const addComment = async (submission: ContentSubmission, comment: Comment) => {
     try {
       console.log('Adding comment to submission in memory:', submission.id, comment);
       
@@ -348,6 +351,137 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
+  const createSuggestion = async (submission: ContentSubmission, suggestion: SuggestedEdit) => {
+    try {
+      console.log('Creating suggestion:', suggestion);
+      
+      // For now, update local state since backend might not have suggestion endpoints yet
+      // TODO: Add backend API call when endpoints are available
+      /*
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify(suggestion),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to create suggestion');
+      }
+      */
+      
+      // Update local state
+      setSubmissions(prev => 
+        prev.map(s => 
+          s.id === submission.id 
+            ? { ...s, suggestedEdits: [...(s.suggestedEdits || []), suggestion] }
+            : s
+        )
+      );
+    } catch (err) {
+      console.error('Error creating suggestion:', err);
+      throw err;
+    }
+  };
+
+  const approveSuggestion = async (submission: ContentSubmission, suggestionId: string, reason?: string) => {
+    try {
+      console.log('Approving suggestion:', suggestionId, reason);
+      
+      // For now, update local state since backend might not have suggestion endpoints yet
+      // TODO: Add backend API call when endpoints are available
+      /*
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions/${suggestionId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to approve suggestion');
+      }
+      */
+      
+      // Update local state
+      setSubmissions(prev => 
+        prev.map(s => 
+          s.id === submission.id 
+            ? {
+                ...s, 
+                suggestedEdits: (s.suggestedEdits || []).map(suggestion =>
+                  suggestion.id === suggestionId
+                    ? { 
+                        ...suggestion, 
+                        status: 'APPROVED' as const,
+                        reviewerId: currentUser?.id || currentUser?.email,
+                        reviewedAt: new Date(),
+                        reason 
+                      }
+                    : suggestion
+                )
+              }
+            : s
+        )
+      );
+    } catch (err) {
+      console.error('Error approving suggestion:', err);
+      throw err;
+    }
+  };
+
+  const rejectSuggestion = async (submission: ContentSubmission, suggestionId: string, reason?: string) => {
+    try {
+      console.log('Rejecting suggestion:', suggestionId, reason);
+      
+      // For now, update local state since backend might not have suggestion endpoints yet
+      // TODO: Add backend API call when endpoints are available
+      /*
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions/${suggestionId}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to reject suggestion');
+      }
+      */
+      
+      // Update local state
+      setSubmissions(prev => 
+        prev.map(s => 
+          s.id === submission.id 
+            ? {
+                ...s, 
+                suggestedEdits: (s.suggestedEdits || []).map(suggestion =>
+                  suggestion.id === suggestionId
+                    ? { 
+                        ...suggestion, 
+                        status: 'REJECTED' as const,
+                        reviewerId: currentUser?.id || currentUser?.email,
+                        reviewedAt: new Date(),
+                        reason 
+                      }
+                    : suggestion
+                )
+              }
+            : s
+        )
+      );
+    } catch (err) {
+      console.error('Error rejecting suggestion:', err);
+      throw err;
+    }
+  };
+
   const value = {
     submissions,
     councilManagers,
@@ -361,7 +495,10 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     removeCouncilManager,
     addCommsCadreMember,
     removeCommsCadreMember,
-    sendReminder
+    sendReminder,
+    createSuggestion,
+    approveSuggestion,
+    rejectSuggestion
   };
 
   return (

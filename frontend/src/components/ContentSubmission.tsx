@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User } from '../types/content';
+import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User, SuggestedEdit } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
+import { SuggestionsList } from './SuggestionsList';
 
 interface ContentSubmissionComponentProps {
   submission: ContentSubmissionType;
@@ -9,6 +10,10 @@ interface ContentSubmissionComponentProps {
   onApprove: (submission: ContentSubmissionType) => void;
   onReject: (submission: ContentSubmissionType) => void;
   onComment: (submission: ContentSubmissionType, comment: Comment) => Promise<void>;
+  onSuggestionCreate?: (submission: ContentSubmissionType, suggestion: SuggestedEdit) => Promise<void>;
+  onSuggestionApprove?: (submission: ContentSubmissionType, suggestionId: string, reason?: string) => Promise<void>;
+  onSuggestionReject?: (submission: ContentSubmissionType, suggestionId: string, reason?: string) => Promise<void>;
+  users?: User[];
 }
 
 export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
@@ -17,26 +22,71 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   onSave,
   onApprove,
   onReject,
-  onComment
+  onComment,
+  onSuggestionCreate,
+  onSuggestionApprove,
+  onSuggestionReject,
+  users = []
 }) => {
   const [newComment, setNewComment] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState(submission.content);
-  const [editedRichTextContent, setEditedRichTextContent] = useState(submission.richTextContent || '');
+  const [editedRichTextContent, setEditedRichTextContent] = useState(submission.richTextContent || submission.content || '');
   const [editedFormFields, setEditedFormFields] = useState(submission.formFields);
   const [localComments, setLocalComments] = useState(submission.comments || []);
+  const [localSuggestions, setLocalSuggestions] = useState(submission.suggestedEdits || []);
 
-  // Update local comments when submission changes
+  // Update local state when submission changes
   React.useEffect(() => {
     setLocalComments(submission.comments || []);
-  }, [submission.comments]);
+    setLocalSuggestions(submission.suggestedEdits || []);
+  }, [submission.comments, submission.suggestedEdits]);
+
+  // Debug: Log user permissions
+  console.log('🔍 Current User Debug:', {
+    id: currentUser.id,
+    userId: (currentUser as any).userId,
+    email: currentUser.email,
+    name: currentUser.name,  
+    roles: currentUser.roles,
+    fullUserObject: currentUser,
+    canCreateSuggestions: currentUser.roles.includes('REVIEWER') || 
+                         currentUser.roles.includes('COMMS_CADRE') || 
+                         currentUser.roles.includes('COUNCIL_MANAGER') ||
+                         currentUser.roles.includes('ADMIN')
+  });
 
   const canEdit = currentUser.roles.includes('COMMS_CADRE') || 
                  currentUser.roles.includes('COUNCIL_MANAGER') ||
+                 currentUser.roles.includes('ADMIN') ||
                  submission.submittedBy === currentUser.id;
 
   const canApprove = currentUser.roles.includes('COMMS_CADRE') || 
-                    currentUser.roles.includes('COUNCIL_MANAGER');
+                    currentUser.roles.includes('COUNCIL_MANAGER') ||
+                    currentUser.roles.includes('ADMIN');
+
+  const canCreateSuggestions = currentUser.roles.includes('REVIEWER') ||
+                              currentUser.roles.includes('COMMS_CADRE') ||
+                              currentUser.roles.includes('COUNCIL_MANAGER') ||
+                              currentUser.roles.includes('ADMIN');
+
+  const canApproveSuggestions = currentUser.roles.includes('COMMS_CADRE') || 
+                               currentUser.roles.includes('COUNCIL_MANAGER') ||
+                               currentUser.roles.includes('ADMIN');
+
+  // Use email as fallback for user ID since the id field is undefined
+  const effectiveUserId = currentUser.id || currentUser.email;
+
+  // Debug: Log permission calculations
+  console.log('🔑 Permission Debug:', {
+    userRoles: currentUser.roles,
+    canEdit,
+    canApprove,
+    canCreateSuggestions,
+    canApproveSuggestions,
+    effectiveUserId,
+    isEditing
+  });
 
   const handleAddFormField = () => {
     const newField: FormField = {
@@ -59,6 +109,75 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     setEditedRichTextContent(json);
   };
 
+  const handleSuggestionCreate = async (suggestion: SuggestedEdit) => {
+    if (onSuggestionCreate) {
+      try {
+        // Optimistically update local state
+        setLocalSuggestions(prev => [...prev, suggestion]);
+        
+        await onSuggestionCreate(submission, suggestion);
+      } catch (error: any) {
+        console.error('Failed to create suggestion:', error);
+        // Revert local state on error
+        setLocalSuggestions(prev => prev.filter(s => s.id !== suggestion.id));
+      }
+    }
+  };
+
+  const handleSuggestionApprove = async (suggestionId: string, reason?: string) => {
+    if (onSuggestionApprove) {
+      try {
+        // Optimistically update local state
+        setLocalSuggestions(prev => prev.map(s => 
+          s.id === suggestionId 
+            ? { 
+                ...s, 
+                status: 'APPROVED' as const, 
+                reviewerId: effectiveUserId, 
+                reviewedAt: new Date(),
+                reason 
+              }
+            : s
+        ));
+        
+        await onSuggestionApprove(submission, suggestionId, reason);
+      } catch (error: any) {
+        console.error('Failed to approve suggestion:', error);
+        // Revert local state on error
+        setLocalSuggestions(prev => prev.map(s => 
+          s.id === suggestionId ? { ...s, status: 'PENDING' as const } : s
+        ));
+      }
+    }
+  };
+
+  const handleSuggestionReject = async (suggestionId: string, reason?: string) => {
+    if (onSuggestionReject) {
+      try {
+        // Optimistically update local state
+        setLocalSuggestions(prev => prev.map(s => 
+          s.id === suggestionId 
+            ? { 
+                ...s, 
+                status: 'REJECTED' as const, 
+                reviewerId: effectiveUserId, 
+                reviewedAt: new Date(),
+                reason 
+              }
+            : s
+        ));
+        
+        await onSuggestionReject(submission, suggestionId, reason);
+      } catch (error: any) {
+        console.error('Failed to reject suggestion:', error);
+        // Revert local state on error
+        setLocalSuggestions(prev => prev.map(s => 
+          s.id === suggestionId ? { ...s, status: 'PENDING' as const } : s
+        ));
+      }
+    }
+  };
+
   const handleSave = () => {
     const changes: Change[] = [];
     if (editedContent !== submission.content) {
@@ -67,7 +186,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         field: 'content',
         oldValue: submission.content,
         newValue: editedContent,
-        changedBy: currentUser.id,
+        changedBy: effectiveUserId,
         timestamp: new Date()
       });
     }
@@ -77,7 +196,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         field: 'richTextContent',
         oldValue: submission.richTextContent || '',
         newValue: editedRichTextContent,
-        changedBy: currentUser.id,
+        changedBy: effectiveUserId,
         timestamp: new Date()
       });
     }
@@ -97,7 +216,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       const comment: Comment = {
         id: crypto.randomUUID(),
         content: newComment,
-        authorId: currentUser.id,
+        authorId: effectiveUserId,
         createdAt: new Date(),
         type: 'COMMENT',
         resolved: false
@@ -135,6 +254,12 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
             onChange={handleEditorChange}
             placeholder="Edit the content..."
             className="h-96"
+            currentUserId={effectiveUserId}
+            onSuggestionCreate={handleSuggestionCreate}
+            onSuggestionApprove={handleSuggestionApprove}
+            onSuggestionReject={handleSuggestionReject}
+            canCreateSuggestions={canCreateSuggestions}
+            canApproveSuggestions={canApproveSuggestions}
           />
 
           <div className="mt-4 flex space-x-3">
@@ -162,6 +287,12 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
               readOnly={true}
               showToolbar={false}
               className="h-96"
+              currentUserId={effectiveUserId}
+              onSuggestionCreate={handleSuggestionCreate}
+              onSuggestionApprove={handleSuggestionApprove}
+              onSuggestionReject={handleSuggestionReject}
+              canCreateSuggestions={canCreateSuggestions}
+              canApproveSuggestions={canApproveSuggestions}
             />
           </div>
           
@@ -189,6 +320,17 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
             </button>
           )}
         </div>
+      )}
+
+      {/* Suggested Edits Section */}
+      {(localSuggestions.length > 0 || canCreateSuggestions) && (
+        <SuggestionsList
+          suggestions={localSuggestions}
+          currentUser={currentUser}
+          onApproveSuggestion={handleSuggestionApprove}
+          onRejectSuggestion={handleSuggestionReject}
+          users={users}
+        />
       )}
 
       <div className="mt-8 bg-white rounded-lg shadow-sm p-6">
