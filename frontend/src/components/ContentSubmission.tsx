@@ -53,26 +53,26 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     canCreateSuggestions: currentUser.roles.includes('REVIEWER') || 
                          currentUser.roles.includes('COMMS_CADRE') || 
                          currentUser.roles.includes('COUNCIL_MANAGER') ||
-                         currentUser.roles.includes('ADMIN')
+                         (currentUser as any).isAdmin
   });
 
   const canEdit = currentUser.roles.includes('COMMS_CADRE') || 
                  currentUser.roles.includes('COUNCIL_MANAGER') ||
-                 currentUser.roles.includes('ADMIN') ||
+                 (currentUser as any).isAdmin ||
                  submission.submittedBy === currentUser.id;
 
   const canApprove = currentUser.roles.includes('COMMS_CADRE') || 
                     currentUser.roles.includes('COUNCIL_MANAGER') ||
-                    currentUser.roles.includes('ADMIN');
+                    (currentUser as any).isAdmin;
 
   const canCreateSuggestions = currentUser.roles.includes('REVIEWER') ||
                               currentUser.roles.includes('COMMS_CADRE') ||
                               currentUser.roles.includes('COUNCIL_MANAGER') ||
-                              currentUser.roles.includes('ADMIN');
+                              (currentUser as any).isAdmin;
 
   const canApproveSuggestions = currentUser.roles.includes('COMMS_CADRE') || 
                                currentUser.roles.includes('COUNCIL_MANAGER') ||
-                               currentUser.roles.includes('ADMIN');
+                               (currentUser as any).isAdmin;
 
   // Use email as fallback for user ID since the id field is undefined
   const effectiveUserId = currentUser.id || currentUser.email;

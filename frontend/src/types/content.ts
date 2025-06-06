@@ -9,8 +9,7 @@ export type UserRole =
   | 'COMMS_CADRE'
   | 'COUNCIL_MANAGER'
   | 'REVIEWER'
-  | 'SUBMITTER'
-  | 'ADMIN';
+  | 'SUBMITTER';
 
 export interface CouncilManager {
   id: string;

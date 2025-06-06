@@ -34,6 +34,10 @@ const CommsRequest: React.FC = () => {
   const { saveSubmission } = useContent();
   const navigate = useNavigate();
   
+  // Get the logged-in user's email from localStorage
+  const userJson = localStorage.getItem('user');
+  const userEmail = userJson ? JSON.parse(userJson).email : '';
+  
   const {
     register,
     handleSubmit,
@@ -43,7 +47,7 @@ const CommsRequest: React.FC = () => {
   } = useForm<CommsRequestFormData>({
     resolver: zodResolver(commsRequestSchema),
     defaultValues: {
-      email: 'ranger.helpdesk@burningman.org',
+      email: userEmail, // Use the logged-in user's email instead of hardcoded value
     },
   });
 
