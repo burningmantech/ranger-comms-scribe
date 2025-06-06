@@ -48,15 +48,15 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
               </p>
               <p className="text-sm text-gray-600">Status: {submission.status}</p>
               
-              <div className="mt-2 flex space-x-2">
+              <div className="mt-2 flex">
                 <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
-                  {submission.comments?.length || 0} Comments
+                  {`${submission.comments?.length || 0} Comments `}
                 </span>
                 <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
-                  {submission.approvals?.length || 0} Approvals
+                  {`${submission.approvals?.length || 0} Approvals `}
                 </span>
                 <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
-                  {submission.changes?.length || 0} Changes
+                  {`${submission.changes?.length || 0} Changes`}
                 </span>
               </div>
             </div>
