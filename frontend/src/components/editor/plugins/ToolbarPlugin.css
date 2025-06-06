@@ -111,8 +111,26 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+.font-size-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1000;
+  background-color: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  padding: 8px;
+  margin-top: 4px;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .font-size-option {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   padding: 6px 8px;
   border: none;
@@ -123,6 +141,25 @@
   border-radius: 4px;
   transition: all 0.15s ease;
   font-size: 14px;
+  min-height: 32px;
+}
+
+.font-size-option:hover {
+  background-color: #f7fafc;
+  color: #2d3748;
+}
+
+.font-size-option[style*="font-size"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.font-size-option[style*="font-size"]::after {
+  content: attr(style);
+  font-size: 12px;
+  color: #718096;
+  margin-left: 8px;
 }
 
 .font-family-option {

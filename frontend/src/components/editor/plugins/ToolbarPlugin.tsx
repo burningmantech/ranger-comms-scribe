@@ -498,28 +498,44 @@ export const ToolbarPlugin: React.FC = () => {
       <div className="lexical-editor-toolbar" aria-label="Formatting options">
         <div className="toolbar-group">
           <button
-            onClick={() => formatParagraph()}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatParagraph();
+            }}
             className="toolbar-item"
             title="Paragraph"
           >
             <span className="text-sm">P</span>
           </button>
           <button
-            onClick={() => formatHeading('h1')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatHeading('h1');
+            }}
             className="toolbar-item"
             title="Heading 1"
           >
             <span className="text-sm font-bold">H1</span>
           </button>
           <button
-            onClick={() => formatHeading('h2')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatHeading('h2');
+            }}
             className="toolbar-item"
             title="Heading 2"
           >
             <span className="text-sm font-bold">H2</span>
           </button>
           <button
-            onClick={() => formatHeading('h3')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatHeading('h3');
+            }}
             className="toolbar-item"
             title="Heading 3"
           >
@@ -529,28 +545,44 @@ export const ToolbarPlugin: React.FC = () => {
 
         <div className="toolbar-group">
           <button
-            onClick={() => formatText('bold')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('bold');
+            }}
             className={`toolbar-item ${isBold ? 'active' : ''}`}
             title="Bold"
           >
             <BoldIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => formatText('italic')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('italic');
+            }}
             className={`toolbar-item ${isItalic ? 'active' : ''}`}
             title="Italic"
           >
             <ItalicIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => formatText('underline')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('underline');
+            }}
             className={`toolbar-item ${isUnderline ? 'active' : ''}`}
             title="Underline"
           >
             <UnderlineIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => formatText('strikethrough')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('strikethrough');
+            }}
             className={`toolbar-item ${isStrikethrough ? 'active' : ''}`}
             title="Strikethrough"
           >
@@ -560,21 +592,33 @@ export const ToolbarPlugin: React.FC = () => {
 
         <div className="toolbar-group">
           <button
-            onClick={() => formatList('bullet')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatList('bullet');
+            }}
             className={`toolbar-item ${isList ? 'active' : ''}`}
             title="Bullet List"
           >
             <ListBulletIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => formatList('number')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatList('number');
+            }}
             className={`toolbar-item ${isOrderedList ? 'active' : ''}`}
             title="Numbered List"
           >
             <DocumentDuplicateIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => formatQuote()}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatQuote();
+            }}
             className={`toolbar-item ${isQuote ? 'active' : ''}`}
             title="Quote"
           >
@@ -585,7 +629,11 @@ export const ToolbarPlugin: React.FC = () => {
         <div className="toolbar-group">
           <div className="relative">
             <button
-              onClick={() => setIsColorPicker(!isColorPicker)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsColorPicker(!isColorPicker);
+              }}
               className="toolbar-item"
               title="Text Color"
             >
@@ -599,7 +647,9 @@ export const ToolbarPlugin: React.FC = () => {
                     key={color}
                     className="color-option"
                     style={{ backgroundColor: color }}
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       formatColor(color);
                       setIsColorPicker(false);
                     }}
@@ -614,7 +664,11 @@ export const ToolbarPlugin: React.FC = () => {
         <div className="toolbar-group">
           <div className="relative">
             <button
-              onClick={() => setIsFontSize(!isFontSize)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsFontSize(!isFontSize);
+              }}
               className="toolbar-item"
               title="Font Size"
             >
@@ -627,7 +681,9 @@ export const ToolbarPlugin: React.FC = () => {
                   <button
                     key={size}
                     className="font-size-option"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       formatFontSize(size);
                       setIsFontSize(false);
                     }}
@@ -644,7 +700,11 @@ export const ToolbarPlugin: React.FC = () => {
         <div className="toolbar-group">
           <div className="relative">
             <button
-              onClick={() => setIsFontFamily(!isFontFamily)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsFontFamily(!isFontFamily);
+              }}
               className="toolbar-item"
               title="Font Family"
             >
@@ -657,7 +717,9 @@ export const ToolbarPlugin: React.FC = () => {
                   <button
                     key={family}
                     className="font-family-option"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       formatFontFamily(family);
                       setIsFontFamily(false);
                     }}
@@ -673,21 +735,33 @@ export const ToolbarPlugin: React.FC = () => {
 
         <div className="toolbar-group">
           <button
-            onClick={() => formatElement('left')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatElement('left');
+            }}
             className={`toolbar-item ${currentAlignment === 'left' ? 'active' : ''}`}
             title="Align Left"
           >
             <DocumentTextIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => formatElement('center')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatElement('center');
+            }}
             className={`toolbar-item ${currentAlignment === 'center' ? 'active' : ''}`}
             title="Align Center"
           >
             <DocumentIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => formatElement('right')}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatElement('right');
+            }}
             className={`toolbar-item ${currentAlignment === 'right' ? 'active' : ''}`}
             title="Align Right"
           >
@@ -697,14 +771,22 @@ export const ToolbarPlugin: React.FC = () => {
 
         <div className="toolbar-group">
           <button
-            onClick={() => editor.dispatchCommand(UNDO_COMMAND, undefined)}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              editor.dispatchCommand(UNDO_COMMAND, undefined);
+            }}
             className="toolbar-item"
             title="Undo"
           >
             <ArrowUturnLeftIcon className="w-5 h-5" />
           </button>
           <button
-            onClick={() => editor.dispatchCommand(REDO_COMMAND, undefined)}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              editor.dispatchCommand(REDO_COMMAND, undefined);
+            }}
             className="toolbar-item"
             title="Redo"
           >

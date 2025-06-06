@@ -114,7 +114,7 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute 
                       element={<CommsRequest />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER']} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
                     />
                   } 
                 />

@@ -65,7 +65,7 @@ const CommsRequest: React.FC = () => {
         content: data.text || '',
         richTextContent: editorContent,
         status: 'in_review',
-        submittedBy: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')!).id : 'anonymous',
+        submittedBy: userEmail,
         submittedAt: new Date(),
         formFields: [
           { id: 'owner', label: 'Owner', value: data.owner, type: 'text', required: true },
