@@ -1,6 +1,7 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User } from '../types';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group } from '../types';
+import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 
@@ -51,9 +52,32 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   
   const allSubmissions = (await Promise.all(submissionPromises)).filter((sub): sub is ContentSubmission => sub !== null);
   
-  // Filter based on user type
+  // Get user's groups and their associated roles
+  const userGroups = await Promise.all((user.groups || []).map(async (groupId: string) => {
+    const group = await getObject<Group>(`groups/${groupId}`, env);
+    if (!group) return null;
+    
+    // Get the role associated with this group
+    const role = await getObject<Role>(`roles/${group.name}`, env);
+    return { group, role };
+  }));
+  
+  // Check if user has any group with content management permissions
+  const hasContentManagementGroup = userGroups.some((groupData) => {
+    if (!groupData) return false;
+    const { role } = groupData;
+    return role && (
+      role.permissions.canEdit ||
+      role.permissions.canApprove ||
+      role.permissions.canCreateSuggestions ||
+      role.permissions.canApproveSuggestions ||
+      role.permissions.canReviewSuggestions
+    );
+  });
+  
+  // Filter based on user's groups and permissions
   let submissions;
-  if (user.userType === UserType.CommsCadre || user.userType === UserType.CouncilManager) {
+  if (hasContentManagementGroup || user.userType === UserType.Admin) {
     submissions = allSubmissions;
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 

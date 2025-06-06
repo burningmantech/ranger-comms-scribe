@@ -23,6 +23,17 @@
 }
 
 /* Admin specific styles */
+.admin-container {
+  width: 100%;
+  min-height: 100vh;
+  background-color: var(--primary-light);
+}
+
+.admin-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
 
 .admin-dashboard {
   max-width: 1200px;
@@ -325,7 +336,7 @@
 
 /* Mobile responsiveness for admin dashboard */
 @media (max-width: 768px) {
-  .admin-dashboard {
+  .admin-content {
     padding: 10px;
   }
 
@@ -383,6 +394,26 @@
     height: 28px;
     min-width: 28px;
     padding: 0;
+  }
+
+  /* Adjust group cards for mobile */
+  .groups-container {
+    grid-template-columns: 1fr;
+  }
+
+  .group-card {
+    margin: 0 0 15px 0;
+  }
+
+  /* Adjust bulk add form for mobile */
+  .bulk-add-form {
+    padding: 15px;
+  }
+
+  .bulk-users-table {
+    margin: 0 -15px;
+    padding: 0 15px;
+    width: calc(100% + 30px);
   }
 }
 

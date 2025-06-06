@@ -13,6 +13,7 @@ import { USER_LOGIN_EVENT } from './utils/userActions';
 import IndentationTest from './components/editor/tests/IndentationTest';
 import CheckboxTest from './components/editor/tests/CheckboxTest';
 import { ContentManagement } from './pages/ContentManagement';
+import { MySubmissions } from './pages/MySubmissions';
 import { ContentProvider } from './contexts/ContentContext';
 import CommsRequest from './components/CommsRequest';
 
@@ -28,7 +29,8 @@ const ProtectedRoute: React.FC<{
 
   try {
     const user = JSON.parse(userJson);
-    const hasAllowedRole = user.roles.some((role: string) => allowedRoles.includes(role));
+    // Check if user is admin or has an allowed user type
+    const hasAllowedRole = user.isAdmin || allowedRoles.includes(user.userType);
     return hasAllowedRole ? element : <Navigate to="/" replace />;
   } catch (err) {
     console.error('Error parsing user data:', err);
@@ -95,6 +97,15 @@ const App: React.FC = () => {
                     <ProtectedRoute 
                       element={<ContentManagement />} 
                       allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager']} 
+                    />
+                  } 
+                />
+                <Route 
+                  path="/my-submissions" 
+                  element={
+                    <ProtectedRoute 
+                      element={<MySubmissions />} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
                     />
                   } 
                 />
