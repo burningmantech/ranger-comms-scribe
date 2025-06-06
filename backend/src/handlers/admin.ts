@@ -16,10 +16,25 @@ import {
   deleteUser,
   updateUserName
 } from '../services/userService';
+import { 
+  getAllRoles,
+  getRole,
+  updateRole,
+  createRole,
+  deleteRole,
+  createGroupsForExistingRoles,
+  Role
+} from '../services/roleService';
 import { sendEmail } from '../utils/email';
 import { UserType } from '../types';
 import { GetSession, Env } from '../utils/sessionManager';
 import { withAdminCheck } from '../authWrappers';
+
+interface RequestWithParams extends Request {
+  params: {
+    roleName: string;
+  };
+}
 
 export const router = AutoRouter({ base: '/admin' });
 
@@ -374,4 +389,99 @@ router.get('/check', async (request: Request, env: Env) => {
   const isUserAdmin = await isAdmin(userData.email, env);
 
   return json({ isAdmin: isUserAdmin });
+});
+
+// Role management endpoints
+router.get('/roles', withAdminCheck, async (request: Request, env: Env) => {
+  try {
+    const roles = await getAllRoles(env);
+    return json({ roles });
+  } catch (error) {
+    return json({ error: 'Failed to fetch roles' }, { status: 500 });
+  }
+});
+
+router.get('/roles/:roleName', withAdminCheck, async (request: RequestWithParams, env: Env) => {
+  const { roleName } = request.params;
+  try {
+    const role = await getRole(roleName, env);
+    if (!role) {
+      return json({ error: 'Role not found' }, { status: 404 });
+    }
+    return json({ role });
+  } catch (error) {
+    return json({ error: 'Failed to fetch role' }, { status: 500 });
+  }
+});
+
+router.put('/roles/:roleName', withAdminCheck, async (request: RequestWithParams, env: Env) => {
+  const { roleName } = request.params;
+  const updatedRole = await request.json() as Role;
+  
+  if (updatedRole.name !== roleName) {
+    return json({ error: 'Role name mismatch' }, { status: 400 });
+  }
+
+  try {
+    const role = await updateRole(roleName, updatedRole, env);
+    return json({ role });
+  } catch (error) {
+    return json({ error: 'Failed to update role' }, { status: 500 });
+  }
+});
+
+router.post('/roles', withAdminCheck, async (request: Request, env: Env) => {
+  const newRole = await request.json() as Role;
+  
+  // Get the creator's ID from the session
+  const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+  if (!sessionId) {
+    return json({ error: 'Session ID is required' }, { status: 400 });
+  }
+
+  const session = await GetSession(sessionId, env);
+  if (!session) {
+    return json({ error: 'Session not found or expired' }, { status: 403 });
+  }
+
+  try {
+    const role = await createRole(newRole, session.userId, env);
+    return json({ role });
+  } catch (error) {
+    return json({ error: 'Failed to create role' }, { status: 500 });
+  }
+});
+
+router.delete('/roles/:roleName', withAdminCheck, async (request: RequestWithParams, env: Env) => {
+  const { roleName } = request.params;
+  try {
+    await deleteRole(roleName, env);
+    return json({ message: 'Role deleted successfully' });
+  } catch (error) {
+    return json({ error: 'Failed to delete role' }, { status: 500 });
+  }
+});
+
+router.post('/roles/sync-groups', withAdminCheck, async (request: Request, env: Env) => {
+  // Get the creator's ID from the session
+  const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+  if (!sessionId) {
+    return json({ error: 'Session ID is required' }, { status: 400 });
+  }
+
+  const session = await GetSession(sessionId, env);
+  if (!session) {
+    return json({ error: 'Session not found or expired' }, { status: 403 });
+  }
+
+  try {
+    const result = await createGroupsForExistingRoles(session.userId, env);
+    return json({
+      message: 'Groups synchronized with roles',
+      created: result.created,
+      existing: result.existing
+    });
+  } catch (error) {
+    return json({ error: 'Failed to sync groups with roles' }, { status: 500 });
+  }
 });

@@ -3,6 +3,7 @@ import { CouncilMember, CouncilRole, UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
 import { getObject, putObject, listObjects } from '../services/cacheService';
+import { changeUserType } from '../services/userService';
 
 export const router = AutoRouter({ base: '/council' });
 
@@ -50,15 +51,8 @@ router.post('/members', withAuth, async (request: Request, env: Env) => {
     customMetadata: { memberId: newMember.id }
   });
 
-  // Update user type to CouncilManager
-  const userObj = await getObject<User>(`user/${newMember.userId}`, env);
-  if (userObj) {
-    userObj.userType = UserType.CouncilManager;
-    await putObject(`user/${newMember.userId}`, userObj, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: newMember.userId }
-    });
-  }
+  // Update user type to CouncilManager and add to group
+  await changeUserType(newMember.userId, UserType.CouncilManager, env);
 
   return new Response(JSON.stringify(newMember), {
     headers: { 'Content-Type': 'application/json' }
@@ -130,16 +124,9 @@ router.delete('/members/:id', withAuth, async (request: Request, env: Env) => {
     }
   }
 
-  // If no active roles, revert user type
+  // If no active roles, revert user type and remove from group
   if (!hasActiveRoles) {
-    const userObj = await getObject<User>(`user/${member.userId}`, env);
-    if (userObj) {
-      userObj.userType = UserType.Member;
-      await putObject(`user/${member.userId}`, userObj, env, {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { userId: member.userId }
-      });
-    }
+    await changeUserType(member.userId, UserType.Member, env);
   }
 
   return new Response(null, { status: 204 });

@@ -6,8 +6,12 @@ export interface User {
 }
 
 export type UserRole = 
-  | 'COMMS_CADRE'
-  | 'COUNCIL_MANAGER'
+  | 'Public'
+  | 'Member'
+  | 'Lead'
+  | 'Admin'
+  | 'CommsCadre'
+  | 'CouncilManager'
   | 'REVIEWER'
   | 'SUBMITTER';
 

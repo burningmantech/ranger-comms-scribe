@@ -102,7 +102,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     const currentPageSlug = location.pathname.split('/')[1] || '';
 
     const canAccessContent = userRoles.some(role => 
-        ['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER'].includes(role)
+        ['ADMIN', 'CommsCadre', 'CouncilManager'].includes(role)
     );
 
     return (

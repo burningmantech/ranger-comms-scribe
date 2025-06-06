@@ -13,7 +13,7 @@ export interface User {
     name: string;
     approved?: boolean;
     isAdmin?: boolean; // Keeping for backward compatibility
-    userType?: UserType;
+    userType: UserType;
     roles: string[];
     groups?: string[]; // Array of group IDs the user belongs to
     notificationSettings?: {

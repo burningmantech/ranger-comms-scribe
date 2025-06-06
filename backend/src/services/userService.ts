@@ -2,6 +2,7 @@ import { Env } from '../utils/sessionManager';
 import { User, UserType, Group } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
+import { DEFAULT_ROLES, Role } from './roleService';
 
 // Store users in R2 with prefix 'user:'
 export async function getOrCreateUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
@@ -140,6 +141,66 @@ export async function changeUserType(id: string, userType: UserType, env: Env): 
   const user = await getUser(id, env);
   if (!user) return null;
   
+  // Get all groups to find the role group
+  const groups = await getAllGroups(env);
+  
+  // Map user type to role name
+  const roleName = userType === UserType.CouncilManager ? 'CouncilManager' :
+                  userType === UserType.CommsCadre ? 'CommsCadre' :
+                  userType === UserType.Admin ? 'Admin' :
+                  'Public';
+  
+  // Remove user from any existing role groups
+  if (user.groups) {
+    const roleGroups = groups.filter(g => DEFAULT_ROLES.some(role => role.name === g.name));
+    for (const group of roleGroups) {
+      if (group.members.includes(id)) {
+        await removeUserFromGroup(id, group.id, env);
+      }
+    }
+  }
+  
+  // If changing to Public, we're done - no need to add to any role group
+  if (userType === UserType.Public) {
+    user.userType = userType;
+    if (user.isAdmin) {
+      user.isAdmin = false;
+    }
+    
+    // Update user
+    await putObject(`user/${user.email}`, user, env, {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { userId: id }
+    });
+    
+    return user;
+  }
+  
+  // For other types, find or create the role group
+  let roleGroup = groups.find(group => group.name === roleName);
+  
+  // If role group doesn't exist, create it
+  if (!roleGroup) {
+    const role = DEFAULT_ROLES.find(r => r.name === roleName);
+    if (role) {
+      const newGroup = await createGroup(
+        role.name,
+        `Group for role: ${role.description}`,
+        'admin@burningman.org',
+        env
+      );
+      if (newGroup) {
+        roleGroup = newGroup;
+      }
+    }
+  }
+  
+  // Add user to the new role group if it exists
+  if (roleGroup) {
+    await addUserToGroup(id, roleGroup.id, env);
+  }
+
+  // Update user type
   user.userType = userType;
   
   // If changing to Admin, also set isAdmin flag for backward compatibility
@@ -149,13 +210,13 @@ export async function changeUserType(id: string, userType: UserType, env: Env): 
     // If demoting from Admin, remove isAdmin flag
     user.isAdmin = false;
   }
-  
-  // Update with caching
+
+  // Update user
   await putObject(`user/${user.email}`, user, env, {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: id }
   });
-  
+
   return user;
 }
 

@@ -1,5 +1,5 @@
 import { API_URL } from '../config';
-import { User } from '../types';
+import { User, UserType } from '../types';
 import { handleUserLogin } from './userActions';
 
 export const loadGoogleOneTap = (clientId: string, callback: (response: any) => void) => {
@@ -53,7 +53,8 @@ export const handleGoogleCredentialResponse = (
                 name: data.name,
                 isAdmin: data.isAdmin || false,
                 approved: data.approved || false,
-                roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || [])
+                roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || []),
+                userType: data.isAdmin ? UserType.Admin : (data.roles?.includes('Lead') ? UserType.Lead : (data.roles?.includes('Member') ? UserType.Member : UserType.Public))
             };
 
             // Use handleUserLogin instead of directly setting localStorage

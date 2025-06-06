@@ -94,7 +94,7 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute 
                       element={<ContentManagement />} 
-                      allowedRoles={['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER']} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager']} 
                     />
                   } 
                 />
@@ -103,7 +103,7 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute 
                       element={<CommsRequest />} 
-                      allowedRoles={['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER', 'USER']} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER']} 
                     />
                   } 
                 />

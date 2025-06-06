@@ -253,6 +253,47 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         const method = isNew ? 'POST' : 'PUT';
         const url = isNew ? `${API_URL}/council/members` : `${API_URL}/council/members/${manager.id}`;
 
+        // For new managers, we need to create the user first
+        if (isNew) {
+          // Create the user
+          const createUserResponse = await fetch(`${API_URL}/admin/bulk-create-users`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+            },
+            body: JSON.stringify({
+              users: [{
+                name: manager.name,
+                email: manager.email,
+                approved: true
+              }]
+            }),
+          });
+
+          if (!createUserResponse.ok) {
+            throw new Error('Failed to create user');
+          }
+
+          // Change user type to CouncilManager which will add them to the group
+          const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+            },
+            body: JSON.stringify({
+              userId: manager.email,
+              userType: 'CouncilManager'
+            }),
+          });
+
+          if (!changeTypeResponse.ok) {
+            throw new Error('Failed to set user type to CouncilManager');
+          }
+        }
+
+        // Add/update the council member
         const response = await fetch(url, {
           method,
           headers: {
@@ -278,14 +319,66 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const removeCouncilManager = async (managerId: string) => {
     try {
+      // Get the manager's email before removing them
+      const manager = councilManagers.find(m => m.id === managerId);
+      if (!manager) {
+        throw new Error('Council manager not found');
+      }
+
+      // First remove from the CouncilManager group
+      const groupsResponse = await fetch(`${API_URL}/admin/groups`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+
+      if (!groupsResponse.ok) {
+        throw new Error('Failed to fetch groups');
+      }
+
+      const groups = await groupsResponse.json();
+      const councilManagerGroup = groups.find((g: any) => g.name === 'CouncilManager');
+      
+      if (councilManagerGroup) {
+        const removeFromGroupResponse = await fetch(`${API_URL}/admin/groups/${councilManagerGroup.id}/members/${manager.email}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+        });
+
+        if (!removeFromGroupResponse.ok) {
+          throw new Error('Failed to remove from CouncilManager group');
+        }
+      }
+
+      // Then remove from council members
       const response = await fetch(`${API_URL}/council/members/${managerId}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
       });
+
       if (response.ok) {
-        setCouncilManagers(prev => prev.filter(manager => manager.id !== managerId));
+        // Finally change user type to Public
+        const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+          body: JSON.stringify({
+            userId: manager.email,
+            userType: 'Public'
+          }),
+        });
+
+        if (!changeTypeResponse.ok) {
+          throw new Error('Failed to update user type');
+        }
+
+        setCouncilManagers(prev => prev.filter(m => m.id !== managerId));
       } else {
         throw new Error('Failed to remove council manager');
       }
@@ -297,6 +390,44 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const addCommsCadreMember = async (email: string, name: string) => {
     try {
+      // First create the user
+      const createUserResponse = await fetch(`${API_URL}/admin/bulk-create-users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({
+          users: [{
+            name,
+            email,
+            approved: true
+          }]
+        }),
+      });
+
+      if (!createUserResponse.ok) {
+        throw new Error('Failed to create user');
+      }
+
+      // Change user type to CommsCadre which will add them to the group
+      const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({
+          userId: email,
+          userType: 'CommsCadre'
+        }),
+      });
+
+      if (!changeTypeResponse.ok) {
+        throw new Error('Failed to set user type to CommsCadre');
+      }
+
+      // Then add them to the comms cadre
       const response = await fetch(`${API_URL}/comms-cadre`, {
         method: 'POST',
         headers: {
@@ -305,9 +436,12 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         },
         body: JSON.stringify({ email, name }),
       });
+
       if (response.ok) {
         const newMember = await response.json();
         setCommsCadreMembers(prev => [...prev, newMember]);
+      } else {
+        throw new Error('Failed to add comms cadre member');
       }
     } catch (err) {
       console.error('Error adding comms cadre member:', err);
@@ -317,14 +451,68 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const removeCommsCadreMember = async (userId: string) => {
     try {
+      // Get the member's email before removing them
+      const member = commsCadreMembers.find(m => m.id === userId);
+      if (!member) {
+        throw new Error('Comms cadre member not found');
+      }
+
+      // First remove from the CommsCadre group
+      const groupsResponse = await fetch(`${API_URL}/admin/groups`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+
+      if (!groupsResponse.ok) {
+        throw new Error('Failed to fetch groups');
+      }
+
+      const groups = await groupsResponse.json();
+      const commsCadreGroup = groups.find((g: any) => g.name === 'CommsCadre');
+      
+      if (commsCadreGroup) {
+        const removeFromGroupResponse = await fetch(`${API_URL}/admin/groups/${commsCadreGroup.id}/members/${member.email}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+        });
+
+        if (!removeFromGroupResponse.ok) {
+          throw new Error('Failed to remove from CommsCadre group');
+        }
+      }
+
+      // Then remove from comms cadre
       const response = await fetch(`${API_URL}/comms-cadre/${userId}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
       });
+
       if (response.ok) {
-        setCommsCadreMembers(prev => prev.filter(member => member.id !== userId));
+        // Finally change user type to Public
+        const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+          body: JSON.stringify({
+            userId: member.email,
+            userType: 'Public'
+          }),
+        });
+
+        if (!changeTypeResponse.ok) {
+          throw new Error('Failed to update user type');
+        }
+
+        setCommsCadreMembers(prev => prev.filter(m => m.id !== userId));
+      } else {
+        throw new Error('Failed to remove comms cadre member');
       }
     } catch (err) {
       console.error('Error removing comms cadre member:', err);

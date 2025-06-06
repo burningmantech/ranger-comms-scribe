@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User, SuggestedEdit } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { SuggestionsList } from './SuggestionsList';
+import { API_URL } from '../config';
 
 interface ContentSubmissionComponentProps {
   submission: ContentSubmissionType;
@@ -14,6 +15,18 @@ interface ContentSubmissionComponentProps {
   onSuggestionApprove?: (submission: ContentSubmissionType, suggestionId: string, reason?: string) => Promise<void>;
   onSuggestionReject?: (submission: ContentSubmissionType, suggestionId: string, reason?: string) => Promise<void>;
   users?: User[];
+}
+
+interface RolePermissions {
+  canEdit: boolean;
+  canApprove: boolean;
+  canCreateSuggestions: boolean;
+  canApproveSuggestions: boolean;
+  canReviewSuggestions: boolean;
+}
+
+interface UserWithPermissions extends User {
+  rolePermissions?: RolePermissions;
 }
 
 export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
@@ -35,12 +48,45 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const [editedFormFields, setEditedFormFields] = useState(submission.formFields);
   const [localComments, setLocalComments] = useState(submission.comments || []);
   const [localSuggestions, setLocalSuggestions] = useState(submission.suggestedEdits || []);
+  const [userPermissions, setUserPermissions] = useState<RolePermissions | null>(null);
+
+  // Fetch user permissions when component mounts
+  useEffect(() => {
+    const fetchUserPermissions = async () => {
+      try {
+        const sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) return;
+
+        const response = await fetch(`${API_URL}/admin/roles/${currentUser.roles[0]}`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setUserPermissions(data.role.permissions);
+        }
+      } catch (error) {
+        console.error('Error fetching user permissions:', error);
+      }
+    };
+
+    fetchUserPermissions();
+  }, [currentUser.roles]);
 
   // Update local state when submission changes
   React.useEffect(() => {
     setLocalComments(submission.comments || []);
     setLocalSuggestions(submission.suggestedEdits || []);
   }, [submission.comments, submission.suggestedEdits]);
+
+  // Use permissions from the backend
+  const canEdit = userPermissions?.canEdit || submission.submittedBy === currentUser.id;
+  const canApprove = userPermissions?.canApprove || false;
+  const canCreateSuggestions = userPermissions?.canCreateSuggestions || false;
+  const canApproveSuggestions = userPermissions?.canApproveSuggestions || false;
+  const canReviewSuggestions = userPermissions?.canReviewSuggestions || false;
 
   // Debug: Log user permissions
   console.log('🔍 Current User Debug:', {
@@ -50,29 +96,10 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     name: currentUser.name,  
     roles: currentUser.roles,
     fullUserObject: currentUser,
-    canCreateSuggestions: currentUser.roles.includes('REVIEWER') || 
-                         currentUser.roles.includes('COMMS_CADRE') || 
-                         currentUser.roles.includes('COUNCIL_MANAGER') ||
+    canCreateSuggestions: currentUser.roles.includes('CommsCadre') || 
+                         currentUser.roles.includes('CouncilManager') ||
                          (currentUser as any).isAdmin
   });
-
-  const canEdit = currentUser.roles.includes('COMMS_CADRE') || 
-                 currentUser.roles.includes('COUNCIL_MANAGER') ||
-                 (currentUser as any).isAdmin ||
-                 submission.submittedBy === currentUser.id;
-
-  const canApprove = currentUser.roles.includes('COMMS_CADRE') || 
-                    currentUser.roles.includes('COUNCIL_MANAGER') ||
-                    (currentUser as any).isAdmin;
-
-  const canCreateSuggestions = currentUser.roles.includes('REVIEWER') ||
-                              currentUser.roles.includes('COMMS_CADRE') ||
-                              currentUser.roles.includes('COUNCIL_MANAGER') ||
-                              (currentUser as any).isAdmin;
-
-  const canApproveSuggestions = currentUser.roles.includes('COMMS_CADRE') || 
-                               currentUser.roles.includes('COUNCIL_MANAGER') ||
-                               (currentUser as any).isAdmin;
 
   // Use email as fallback for user ID since the id field is undefined
   const effectiveUserId = currentUser.id || currentUser.email;
@@ -84,6 +111,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     canApprove,
     canCreateSuggestions,
     canApproveSuggestions,
+    canReviewSuggestions,
     effectiveUserId,
     isEditing
   });
