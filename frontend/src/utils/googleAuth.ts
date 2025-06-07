@@ -23,7 +23,7 @@ export const loadGoogleOneTap = (clientId: string, callback: (response: any) => 
 };
 
 
-export const handleGoogleCredentialResponse = (
+export const handleGoogleCredentialResponse = async (
     response: any,
     setUser: React.Dispatch<React.SetStateAction<User | null>>,
     setParentUser?: React.Dispatch<React.SetStateAction<User | null>>
@@ -31,50 +31,45 @@ export const handleGoogleCredentialResponse = (
     console.log('Encoded JWT ID token:', response.credential);
 
     // Send the token to your backend for verification
-    fetch(`${API_URL}/auth/loginGoogleToken`, {
+    const res = await fetch(`${API_URL}/auth/loginGoogleToken`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify({ token: response.credential }),
-    })
-        .then((res) => {
-            if (!res.ok) {
-                throw new Error('Failed to log in');
-            }
-            return res.json();
-        })
-        .then((data) => {
-            console.log('Response from backend:', data);
+    });
 
-            const userData = { 
-                id: data.id,
-                email: data.email, 
-                name: data.name,
-                isAdmin: data.isAdmin || false,
-                approved: data.approved || false,
-                roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || []),
-                userType: data.isAdmin ? UserType.Admin : (data.roles?.includes('Lead') ? UserType.Lead : (data.roles?.includes('Member') ? UserType.Member : UserType.Public))
-            };
+    if (!res.ok) {
+        throw new Error('Failed to log in');
+    }
 
-            // Use handleUserLogin instead of directly setting localStorage
-            // This will both update localStorage and dispatch the login event
-            handleUserLogin(userData, data.sessionId);
+    const data = await res.json();
+    console.log('Response from backend:', data);
 
-            // Update local state
-            setUser(userData);
-            
-            // Update parent state if provided
-            if (setParentUser) {
-                setParentUser(userData);
-            }
+    const userData = { 
+        id: data.id,
+        email: data.email, 
+        name: data.name,
+        isAdmin: data.isAdmin || false,
+        approved: data.approved || false,
+        roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || []),
+        userType: data.isAdmin ? UserType.Admin : (data.roles?.includes('Lead') ? UserType.Lead : (data.roles?.includes('Member') ? UserType.Member : UserType.Public))
+    };
 
-            // Redirect to admin dashboard if user is an admin
-            if (data.isAdmin) {
-                window.location.href = '/admin';
-            }
-        })
-        .catch((error) => {
-            console.error('Error during login:', error);
-        });
+    // Use handleUserLogin instead of directly setting localStorage
+    // This will both update localStorage and dispatch the login event
+    await handleUserLogin(userData, data.sessionId);
+
+    // Update local state
+    setUser(userData);
+    
+    // Update parent state if provided
+    if (setParentUser) {
+        setParentUser(userData);
+    }
+
+    // Redirect to admin dashboard if user is an admin
+    if (data.isAdmin) {
+        window.location.href = '/admin';
+    }
 };

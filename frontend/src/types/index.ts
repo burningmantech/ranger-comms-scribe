@@ -4,7 +4,9 @@ export enum UserType {
     Public = 'Public',
     Member = 'Member',
     Lead = 'Lead',
-    Admin = 'Admin'
+    Admin = 'Admin',
+    CommsCadre = 'CommsCadre',
+    CouncilManager = 'CouncilManager'
 }
 
 export interface User {

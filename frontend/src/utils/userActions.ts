@@ -12,7 +12,24 @@ const dispatchLoginStateChange = (user: User | null) => {
 };
 
 // Function to handle user login
-export const handleUserLogin = (userData: User, sessionId: string) => {
+export const handleUserLogin = async (userData: User, sessionId: string) => {
+    // Fetch user roles from backend
+    try {
+        const response = await fetch(`${API_URL}/admin/user-roles`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${sessionId}`,
+            },
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            userData.roles = data.roles;
+        }
+    } catch (error) {
+        console.error('Error fetching user roles:', error);
+    }
+
     localStorage.setItem('user', JSON.stringify(userData));
     localStorage.setItem('sessionId', sessionId);
     dispatchLoginStateChange(userData);

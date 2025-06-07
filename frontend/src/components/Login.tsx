@@ -293,7 +293,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                     userType: data.isAdmin ? UserType.Admin : (data.roles?.includes('Lead') ? UserType.Lead : (data.roles?.includes('Member') ? UserType.Member : UserType.Public))
                 };
                 
-                handleUserLogin(userData, data.sessionId);
+                await handleUserLogin(userData, data.sessionId);
                 setUser(userData);
                 setParentUser(userData);
                 
@@ -363,7 +363,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                     userType: data.isAdmin ? UserType.Admin : (data.roles?.includes('Lead') ? UserType.Lead : (data.roles?.includes('Member') ? UserType.Member : UserType.Public))
                 };
                 
-                handleUserLogin(userData, data.sessionId);
+                await handleUserLogin(userData, data.sessionId);
                 setUser(userData);
                 setParentUser(userData);
                 

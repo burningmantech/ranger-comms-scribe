@@ -794,6 +794,8 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                             <option value={UserType.Member}>Member</option>
                             <option value={UserType.Lead}>Lead</option>
                             <option value={UserType.Admin}>Admin</option>
+                            <option value={UserType.CommsCadre}>Comms Cadre</option>
+                            <option value={UserType.CouncilManager}>Council Manager</option>
                           </select>
                           <button 
                             onClick={() => {
