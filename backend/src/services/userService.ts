@@ -555,7 +555,7 @@ export async function canAccessGroup(userId: string, groupId: string, env: Env):
 
 export async function isAdmin(id: string, env: Env): Promise<boolean> {
   const user = await getUser(id, env);
-  return user ? user.isAdmin : false;
+  return user ? (user.isAdmin || user.userType === UserType.Admin) : false;
 }
 
 // Initialize first admin if not exists

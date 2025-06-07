@@ -138,7 +138,14 @@ router.post('/register', async (request: Request, env) => {
         }
 
         // Create a session for the user
-        const sessionId = await CreateSession(user.id, { email, name }, env);
+        const sessionId = await CreateSession(user.id, { 
+          email, 
+          name,
+          isAdmin: user.isAdmin,
+          userType: user.userType,
+          approved: user.approved,
+          verified: user.verified
+        }, env);
 
         return json({
             message: 'User registered successfully. Please check your email to verify your account.',
@@ -305,7 +312,14 @@ router.post('/login', async (request: Request, env) => {
         }
 
         // Create a session for the user
-        const sessionId = await CreateSession(user.id, { email: user.email, name: user.name }, env);
+        const sessionId = await CreateSession(user.id, { 
+          email, 
+          name,
+          isAdmin: user.isAdmin,
+          userType: user.userType,
+          approved: user.approved,
+          verified: user.verified
+        }, env);
 
         return json({
             message: 'Login successful',
@@ -551,7 +565,14 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         const user = await getOrCreateUser({ name, email }, env);
 
         // Create a session for the user
-        const sessionId = await CreateSession(user.id, { email, name }, env);
+        const sessionId = await CreateSession(user.id, { 
+          email, 
+          name,
+          isAdmin: user.isAdmin,
+          userType: user.userType,
+          approved: user.approved,
+          verified: user.verified
+        }, env);
 
         return json({
             message: 'Token verified',

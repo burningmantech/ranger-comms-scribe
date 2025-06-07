@@ -49,26 +49,50 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const [localComments, setLocalComments] = useState(submission.comments || []);
   const [localSuggestions, setLocalSuggestions] = useState(submission.suggestedEdits || []);
   const [userPermissions, setUserPermissions] = useState<RolePermissions | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Fetch user permissions when component mounts
   useEffect(() => {
     const fetchUserPermissions = async () => {
       try {
+        setIsLoading(true);
         const sessionId = localStorage.getItem('sessionId');
         if (!sessionId) return;
 
-        const response = await fetch(`${API_URL}/admin/roles/${currentUser.roles[0]}`, {
+        // Fetch all roles and permissions for the user
+        const response = await fetch(`${API_URL}/admin/user-roles`, {
           headers: {
             Authorization: `Bearer ${sessionId}`,
           },
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          setUserPermissions(data.role.permissions);
+        if (!response.ok) {
+          console.error('Failed to fetch user roles:', response.status);
+          return;
         }
+
+        const data = await response.json();
+        console.log('🔑 User roles and permissions:', data);
+        
+        // Set permissions from the response
+        setUserPermissions(data.permissions);
+        
+        // Debug log the current user and permissions
+        console.log('🔍 Current User Debug:', {
+          ...currentUser,
+          roles: currentUser.roles.map(role => role.toLowerCase())
+        });
+        
+        console.log('🔑 Permission Debug:', {
+          userRoles: currentUser.roles,
+          ...data.permissions,
+          effectiveUserId: currentUser.email,
+          isEditing: false
+        });
       } catch (error) {
         console.error('Error fetching user permissions:', error);
+      } finally {
+        setIsLoading(false);
       }
     };
 
@@ -265,6 +289,12 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     }
   };
 
+  if (isLoading) {
+    return <div className="flex justify-center items-center h-96">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+    </div>;
+  }
+
   return (
     <div className="p-4">
       <div className="mb-6 bg-white rounded-lg shadow-sm p-6">
@@ -312,8 +342,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
           <div className="prose max-w-none">
             <LexicalEditorComponent
               initialContent={submission.richTextContent || submission.content || ''}
-              readOnly={true}
-              showToolbar={false}
+              readOnly={!canEdit}
+              showToolbar={canEdit}
               className="h-96"
               currentUserId={effectiveUserId}
               onSuggestionCreate={handleSuggestionCreate}

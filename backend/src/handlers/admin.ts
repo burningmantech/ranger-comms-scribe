@@ -14,7 +14,8 @@ import {
   deleteGroup,
   getOrCreateUser,
   deleteUser,
-  updateUserName
+  updateUserName,
+  getUser
 } from '../services/userService';
 import { 
   getAllRoles,
@@ -401,15 +402,21 @@ router.get('/roles', withAdminCheck, async (request: Request, env: Env) => {
   }
 });
 
-router.get('/roles/:roleName', withAdminCheck, async (request: RequestWithParams, env: Env) => {
-  const { roleName } = request.params;
+router.get('/roles/:roleName', async (request: Request, env: Env) => {
   try {
-    const role = await getRole(roleName, env);
+    const roleName = (request as any).params.roleName;
+    console.log('🔍 Fetching role:', roleName);
+    
+    const role = getRole(roleName);
     if (!role) {
+      console.log('❌ Role not found:', roleName);
       return json({ error: 'Role not found' }, { status: 404 });
     }
+    
+    console.log('✅ Role found:', role);
     return json({ role });
   } catch (error) {
+    console.error('❌ Error fetching role:', error);
     return json({ error: 'Failed to fetch role' }, { status: 500 });
   }
 });
@@ -483,5 +490,68 @@ router.post('/roles/sync-groups', withAdminCheck, async (request: Request, env: 
     });
   } catch (error) {
     return json({ error: 'Failed to sync groups with roles' }, { status: 500 });
+  }
+});
+
+// Add a new endpoint to get all roles for a user
+router.get('/user-roles', async (request: Request, env: Env) => {
+  const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+  if (!sessionId) {
+    return json({ error: 'Session ID is required' }, { status: 400 });
+  }
+
+  const session = await GetSession(sessionId, env);
+  if (!session) {
+    return json({ error: 'Session not found or expired' }, { status: 403 });
+  }
+
+  try {
+    const userData = session.data as { email: string; name: string };
+    const user = await getUser(userData.email, env);
+    if (!user) {
+      return json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // Get all roles
+    const allRoles = await getAllRoles(env);
+    
+    // Get user's roles (including groups)
+    const userRoles = new Set<string>();
+    
+    // Add roles from user type
+    if (user.isAdmin) {
+      userRoles.add('Admin');
+    }
+    if (user.userType === UserType.CouncilManager) {
+      userRoles.add('CouncilManager');
+    }
+    if (user.userType === UserType.CommsCadre) {
+      userRoles.add('CommsCadre');
+    }
+
+    // Get permissions from all roles
+    const permissions = allRoles
+      .filter(role => userRoles.has(role.name))
+      .reduce((acc, role) => ({
+        canEdit: acc.canEdit || role.permissions.canEdit,
+        canApprove: acc.canApprove || role.permissions.canApprove,
+        canCreateSuggestions: acc.canCreateSuggestions || role.permissions.canCreateSuggestions,
+        canApproveSuggestions: acc.canApproveSuggestions || role.permissions.canApproveSuggestions,
+        canReviewSuggestions: acc.canReviewSuggestions || role.permissions.canReviewSuggestions
+      }), {
+        canEdit: false,
+        canApprove: false,
+        canCreateSuggestions: false,
+        canApproveSuggestions: false,
+        canReviewSuggestions: false
+      });
+
+    return json({ 
+      roles: Array.from(userRoles),
+      permissions
+    });
+  } catch (error) {
+    console.error('Error fetching user roles:', error);
+    return json({ error: 'Failed to fetch user roles' }, { status: 500 });
   }
 });

@@ -336,7 +336,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         throw new Error('Failed to fetch groups');
       }
 
-      const groups = await groupsResponse.json();
+      const { groups } = await groupsResponse.json();
       const councilManagerGroup = groups.find((g: any) => g.name === 'CouncilManager');
       
       if (councilManagerGroup) {
