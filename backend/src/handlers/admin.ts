@@ -506,14 +506,16 @@ router.get('/user-roles', async (request: Request, env: Env) => {
   }
 
   try {
-    const userData = session.data as { email: string; name: string };
-    const user = await getUser(userData.email, env);
+    const user = await getUser(session.userId, env);
     if (!user) {
       return json({ error: 'User not found' }, { status: 404 });
     }
 
+    console.log('🔍 User data:', user);
+
     // Get all roles
     const allRoles = await getAllRoles(env);
+    console.log('📋 All roles:', allRoles);
     
     // Get user's roles (including groups)
     const userRoles = new Set<string>();
@@ -529,22 +531,49 @@ router.get('/user-roles', async (request: Request, env: Env) => {
       userRoles.add('CommsCadre');
     }
 
+    // Add roles from groups
+    if (user.groups) {
+      const groups = await getAllGroups(env);
+      for (const groupId of user.groups) {
+        const group = groups.find(g => g.id === groupId);
+        if (group && allRoles.some(role => role.name === group.name)) {
+          userRoles.add(group.name);
+        }
+      }
+    }
+
+    console.log('👤 User roles:', Array.from(userRoles));
+
     // Get permissions from all roles
     const permissions = allRoles
       .filter(role => userRoles.has(role.name))
-      .reduce((acc, role) => ({
-        canEdit: acc.canEdit || role.permissions.canEdit,
-        canApprove: acc.canApprove || role.permissions.canApprove,
-        canCreateSuggestions: acc.canCreateSuggestions || role.permissions.canCreateSuggestions,
-        canApproveSuggestions: acc.canApproveSuggestions || role.permissions.canApproveSuggestions,
-        canReviewSuggestions: acc.canReviewSuggestions || role.permissions.canReviewSuggestions
-      }), {
+      .reduce((acc, role) => {
+        console.log(`🔑 Processing role ${role.name} permissions:`, role.permissions);
+        return {
+          canEdit: acc.canEdit || role.permissions.canEdit,
+          canApprove: acc.canApprove || role.permissions.canApprove,
+          canCreateSuggestions: acc.canCreateSuggestions || role.permissions.canCreateSuggestions,
+          canApproveSuggestions: acc.canApproveSuggestions || role.permissions.canApproveSuggestions,
+          canReviewSuggestions: acc.canReviewSuggestions || role.permissions.canReviewSuggestions
+        };
+      }, {
         canEdit: false,
         canApprove: false,
         canCreateSuggestions: false,
         canApproveSuggestions: false,
         canReviewSuggestions: false
       });
+
+    // If user has Admin, CouncilManager, or CommsCadre role, grant all permissions
+    if (userRoles.has('Admin') || userRoles.has('CouncilManager') || userRoles.has('CommsCadre')) {
+      permissions.canEdit = true;
+      permissions.canApprove = true;
+      permissions.canCreateSuggestions = true;
+      permissions.canApproveSuggestions = true;
+      permissions.canReviewSuggestions = true;
+    }
+
+    console.log('🔐 Final permissions:', permissions);
 
     return json({ 
       roles: Array.from(userRoles),

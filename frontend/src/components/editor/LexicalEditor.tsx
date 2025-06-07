@@ -76,6 +76,13 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   const [isLoaded, setIsLoaded] = useState(false);
   const editorRef = useRef<LexicalEditor | null>(null);
 
+  // Update editor state when readOnly changes
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.setEditable(!readOnly);
+    }
+  }, [readOnly]);
+
   // Prevent form submission when interacting with editor
   const handleEditorClick = (e: React.MouseEvent) => {
     // Allow normal text selection when suggestions are enabled

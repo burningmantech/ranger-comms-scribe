@@ -68,8 +68,8 @@ export const withAuth = async (request: Request, env: Env) => {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const userData = session.data as { email: string; name: string };
-  const user = await getUser(userData.email, env);
+  // Get user by userId instead of email
+  const user = await getUser(session.userId, env);
   if (!user) {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }

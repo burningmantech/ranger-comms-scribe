@@ -6,7 +6,7 @@ import { ContentSubmission } from '../types/content';
 import './MySubmissions.css';
 
 export const MySubmissions: React.FC = () => {
-  const { submissions, currentUser } = useContent();
+  const { submissions, currentUser, saveSubmission, approveSubmission, rejectSubmission, addComment, createSuggestion, approveSuggestion, rejectSuggestion } = useContent();
   const [selectedSubmission, setSelectedSubmission] = React.useState<ContentSubmission | null>(null);
 
   React.useEffect(() => {
@@ -20,7 +20,7 @@ export const MySubmissions: React.FC = () => {
 
   // Filter submissions to only show those submitted by the current user
   const mySubmissions = submissions.filter(
-    submission => submission.submittedBy === currentUser.id || submission.submittedBy === currentUser.email
+    submission => submission.submittedBy === currentUser.email
   );
 
   console.log('Filtered Submissions:', mySubmissions);
@@ -44,10 +44,13 @@ export const MySubmissions: React.FC = () => {
           <ContentSubmissionComponent
             submission={selectedSubmission}
             currentUser={currentUser}
-            onSave={() => {}}
-            onApprove={() => {}}
-            onReject={() => {}}
-            onComment={() => Promise.resolve()}
+            onSave={saveSubmission}
+            onApprove={approveSubmission}
+            onReject={rejectSubmission}
+            onComment={addComment}
+            onSuggestionCreate={createSuggestion}
+            onSuggestionApprove={approveSuggestion}
+            onSuggestionReject={rejectSuggestion}
           />
         ) : (
           <SubmissionHistory

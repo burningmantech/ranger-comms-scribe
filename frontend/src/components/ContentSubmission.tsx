@@ -59,7 +59,17 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         const sessionId = localStorage.getItem('sessionId');
         if (!sessionId) return;
 
-        // Fetch all roles and permissions for the user
+        // First try to get permissions from localStorage
+        const storedPermissions = localStorage.getItem('userPermissions');
+        if (storedPermissions) {
+          const permissions = JSON.parse(storedPermissions);
+          console.log('🔑 Using stored permissions:', permissions);
+          setUserPermissions(permissions);
+          setIsLoading(false);
+          return;
+        }
+
+        // If not in localStorage, fetch from backend
         const response = await fetch(`${API_URL}/admin/user-roles`, {
           headers: {
             Authorization: `Bearer ${sessionId}`,
@@ -75,20 +85,22 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         console.log('🔑 User roles and permissions:', data);
         
         // Set permissions from the response
-        setUserPermissions(data.permissions);
-        
-        // Debug log the current user and permissions
-        console.log('🔍 Current User Debug:', {
-          ...currentUser,
-          roles: currentUser.roles.map(role => role.toLowerCase())
-        });
-        
-        console.log('🔑 Permission Debug:', {
-          userRoles: currentUser.roles,
-          ...data.permissions,
-          effectiveUserId: currentUser.email,
-          isEditing: false
-        });
+        if (data.permissions) {
+          setUserPermissions(data.permissions);
+          // Store permissions in localStorage
+          localStorage.setItem('userPermissions', JSON.stringify(data.permissions));
+        } else {
+          // If no permissions in response, calculate them based on roles
+          const permissions = {
+            canEdit: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
+            canApprove: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
+            canCreateSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
+            canApproveSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
+            canReviewSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre')
+          };
+          setUserPermissions(permissions);
+          localStorage.setItem('userPermissions', JSON.stringify(permissions));
+        }
       } catch (error) {
         console.error('Error fetching user permissions:', error);
       } finally {
@@ -106,11 +118,26 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   }, [submission.comments, submission.suggestedEdits]);
 
   // Use permissions from the backend
-  const canEdit = userPermissions?.canEdit || submission.submittedBy === currentUser.id;
-  const canApprove = userPermissions?.canApprove || false;
-  const canCreateSuggestions = userPermissions?.canCreateSuggestions || false;
-  const canApproveSuggestions = userPermissions?.canApproveSuggestions || false;
-  const canReviewSuggestions = userPermissions?.canReviewSuggestions || false;
+  const storedPermissions = localStorage.getItem('userPermissions');
+  const parsedPermissions = storedPermissions ? JSON.parse(storedPermissions) : null;
+  
+  // Calculate permissions based on roles if stored permissions are not available
+  const roleBasedPermissions = {
+    canEdit: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
+    canApprove: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
+    canCreateSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
+    canApproveSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
+    canReviewSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre')
+  };
+
+  // Use stored permissions if available, otherwise use role-based permissions
+  const effectivePermissions = parsedPermissions || roleBasedPermissions;
+  
+  const canEdit = effectivePermissions.canEdit;
+  const canApprove = effectivePermissions.canApprove;
+  const canCreateSuggestions = effectivePermissions.canCreateSuggestions;
+  const canApproveSuggestions = effectivePermissions.canApproveSuggestions;
+  const canReviewSuggestions = effectivePermissions.canReviewSuggestions;
 
   // Debug: Log user permissions
   console.log('🔍 Current User Debug:', {
@@ -120,24 +147,25 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     name: currentUser.name,  
     roles: currentUser.roles,
     fullUserObject: currentUser,
-    canCreateSuggestions: currentUser.roles.includes('CommsCadre') || 
-                         currentUser.roles.includes('CouncilManager') ||
-                         (currentUser as any).isAdmin
+    permissions: effectivePermissions
   });
 
   // Use email as fallback for user ID since the id field is undefined
-  const effectiveUserId = currentUser.id || currentUser.email;
+  const effectiveUserId = currentUser.email;
 
   // Debug: Log permission calculations
   console.log('🔑 Permission Debug:', {
     userRoles: currentUser.roles,
-    canEdit,
-    canApprove,
-    canCreateSuggestions,
-    canApproveSuggestions,
-    canReviewSuggestions,
+    permissions: effectivePermissions,
     effectiveUserId,
-    isEditing
+    isEditing,
+    calculatedPermissions: {
+      canEdit,
+      canApprove,
+      canCreateSuggestions,
+      canApproveSuggestions,
+      canReviewSuggestions
+    }
   });
 
   const handleAddFormField = () => {
@@ -307,18 +335,22 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
 
       {isEditing ? (
         <div className="mb-6 bg-white rounded-lg shadow-sm p-6">
-          <LexicalEditorComponent
-            initialContent={editedRichTextContent}
-            onChange={handleEditorChange}
-            placeholder="Edit the content..."
-            className="h-96"
-            currentUserId={effectiveUserId}
-            onSuggestionCreate={handleSuggestionCreate}
-            onSuggestionApprove={handleSuggestionApprove}
-            onSuggestionReject={handleSuggestionReject}
-            canCreateSuggestions={canCreateSuggestions}
-            canApproveSuggestions={canApproveSuggestions}
-          />
+          <div className="lexical-editor-container">
+            <LexicalEditorComponent
+              initialContent={editedRichTextContent}
+              onChange={handleEditorChange}
+              placeholder="Edit the content..."
+              className="h-96"
+              readOnly={false}
+              showToolbar={true}
+              currentUserId={effectiveUserId}
+              onSuggestionCreate={handleSuggestionCreate}
+              onSuggestionApprove={handleSuggestionApprove}
+              onSuggestionReject={handleSuggestionReject}
+              canCreateSuggestions={canCreateSuggestions}
+              canApproveSuggestions={canApproveSuggestions}
+            />
+          </div>
 
           <div className="mt-4 flex space-x-3">
             <button
@@ -340,18 +372,20 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       ) : (
         <div className="mb-6 bg-white rounded-lg shadow-sm p-6">
           <div className="prose max-w-none">
-            <LexicalEditorComponent
-              initialContent={submission.richTextContent || submission.content || ''}
-              readOnly={!canEdit}
-              showToolbar={canEdit}
-              className="h-96"
-              currentUserId={effectiveUserId}
-              onSuggestionCreate={handleSuggestionCreate}
-              onSuggestionApprove={handleSuggestionApprove}
-              onSuggestionReject={handleSuggestionReject}
-              canCreateSuggestions={canCreateSuggestions}
-              canApproveSuggestions={canApproveSuggestions}
-            />
+            <div className="lexical-editor-container read-only">
+              <LexicalEditorComponent
+                initialContent={submission.richTextContent || submission.content || ''}
+                readOnly={true}
+                showToolbar={false}
+                className="h-96"
+                currentUserId={effectiveUserId}
+                onSuggestionCreate={handleSuggestionCreate}
+                onSuggestionApprove={handleSuggestionApprove}
+                onSuggestionReject={handleSuggestionReject}
+                canCreateSuggestions={canCreateSuggestions}
+                canApproveSuggestions={canApproveSuggestions}
+              />
+            </div>
           </div>
           
           <div className="mt-6 bg-gray-50 rounded-lg p-4">
@@ -371,7 +405,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
           {canEdit && (
             <button
               onClick={() => setIsEditing(true)}
-              className="btn btn-tertiary btn-with-icon"
+              className="btn btn-tertiary btn-with-icon mt-4"
             >
               <i className="fas fa-edit"></i>
               <span className="btn-text">Edit Content</span>

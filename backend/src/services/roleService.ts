@@ -65,30 +65,41 @@ export const DEFAULT_ROLES: Role[] = [
 const ROLES_CACHE_KEY = 'roles';
 
 export const getAllRoles = async (env: Env): Promise<Role[]> => {
-  const roles = await getObject<Role[]>(ROLES_CACHE_KEY, env);
-  if (!roles) {
-    // Initialize with default roles if none exist
-    await putObject(ROLES_CACHE_KEY, DEFAULT_ROLES, env);
+  try {
+    const roles = await getObject<Role[]>(ROLES_CACHE_KEY, env);
+    if (!roles || roles.length === 0) {
+      console.log('Initializing default roles...');
+      // Initialize with default roles if none exist
+      await putObject(ROLES_CACHE_KEY, DEFAULT_ROLES, env, {
+        httpMetadata: { contentType: 'application/json' }
+      });
 
-    // Create corresponding groups for default roles
-    const groups = await getAllGroups(env);
-    const existingGroupNames = new Set(groups.map(group => group.name));
+      // Create corresponding groups for default roles
+      const groups = await getAllGroups(env);
+      const existingGroupNames = new Set(groups.map(group => group.name));
 
-    // Create groups for any default roles that don't have corresponding groups
-    for (const role of DEFAULT_ROLES) {
-      if (!existingGroupNames.has(role.name)) {
-        await createGroup(
-          role.name,
-          `Group for role: ${role.description}`,
-          'admin@burningman.org', // Use a default admin account for system-created groups
-          env
-        );
+      // Create groups for any default roles that don't have corresponding groups
+      for (const role of DEFAULT_ROLES) {
+        if (!existingGroupNames.has(role.name)) {
+          console.log(`Creating group for role: ${role.name}`);
+          await createGroup(
+            role.name,
+            `Group for role: ${role.description}`,
+            'admin@burningman.org', // Use a default admin account for system-created groups
+            env
+          );
+        }
       }
-    }
 
+      return DEFAULT_ROLES;
+    }
+    console.log('Retrieved roles:', roles);
+    return roles;
+  } catch (error) {
+    console.error('Error in getAllRoles:', error);
+    // If there's an error, return default roles
     return DEFAULT_ROLES;
   }
-  return roles;
 };
 
 export const getRoles = (): Role[] => {

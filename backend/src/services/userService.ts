@@ -38,20 +38,28 @@ export async function getOrCreateUser({ name, email, password }: { name: string;
   return newUser;
 }
 
-export async function getUser(email: string, env: Env): Promise<User | null>  {
+export async function getUser(id: string, env: Env): Promise<User | null>  {
   // Check if user already exists
-  const existingUser = await getUserInternal(email, env);
+  const existingUser = await getUserInternal(id, env);
   if (existingUser) {
     return existingUser;
   }
 
-  const isFirstAdmin = email === 'alexander.young@gmail.com';
+  // If id is an email, try looking up by email
+  if (id.includes('@')) {
+    const userByEmail = await getUserInternal(id, env);
+    if (userByEmail) {
+      return userByEmail;
+    }
+  }
+
+  const isFirstAdmin = id === 'alexander.young@gmail.com';
 
   if (isFirstAdmin) {
     const newUser: User = { 
-      id: email, 
+      id, 
       name: "Alex Young", 
-      email, 
+      email: id, 
       approved: true, 
       isAdmin: true,
       userType: UserType.Admin,
@@ -59,15 +67,15 @@ export async function getUser(email: string, env: Env): Promise<User | null>  {
     };
     
     // Store in R2 with caching
-    await putObject(`user/${email}`, newUser, env, {
+    await putObject(`user/${id}`, newUser, env, {
       httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: email }
+      customMetadata: { userId: id }
     });
     
     return newUser;
   }
 
-  return null
+  return null;
 }
 
 export async function getUserInternal(id: string, env: Env): Promise<User | null> {
