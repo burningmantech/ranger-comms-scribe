@@ -554,14 +554,16 @@ router.get('/user-roles', async (request: Request, env: Env) => {
           canApprove: acc.canApprove || role.permissions.canApprove,
           canCreateSuggestions: acc.canCreateSuggestions || role.permissions.canCreateSuggestions,
           canApproveSuggestions: acc.canApproveSuggestions || role.permissions.canApproveSuggestions,
-          canReviewSuggestions: acc.canReviewSuggestions || role.permissions.canReviewSuggestions
+          canReviewSuggestions: acc.canReviewSuggestions || role.permissions.canReviewSuggestions,
+          canViewFilteredSubmissions: acc.canViewFilteredSubmissions || role.permissions.canViewFilteredSubmissions
         };
       }, {
         canEdit: false,
         canApprove: false,
         canCreateSuggestions: false,
         canApproveSuggestions: false,
-        canReviewSuggestions: false
+        canReviewSuggestions: false,
+        canViewFilteredSubmissions: false
       });
 
     // If user has Admin, CouncilManager, or CommsCadre role, grant all permissions
@@ -571,6 +573,7 @@ router.get('/user-roles', async (request: Request, env: Env) => {
       permissions.canCreateSuggestions = true;
       permissions.canApproveSuggestions = true;
       permissions.canReviewSuggestions = true;
+      permissions.canViewFilteredSubmissions = true;
     }
 
     console.log('🔐 Final permissions:', permissions);

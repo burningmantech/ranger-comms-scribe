@@ -23,6 +23,7 @@ interface RolePermissions {
   canCreateSuggestions: boolean;
   canApproveSuggestions: boolean;
   canReviewSuggestions: boolean;
+  canViewFilteredSubmissions: boolean;
 }
 
 interface UserWithPermissions extends User {
@@ -96,7 +97,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
             canApprove: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
             canCreateSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
             canApproveSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-            canReviewSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre')
+            canReviewSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
+            canViewFilteredSubmissions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre')
           };
           setUserPermissions(permissions);
           localStorage.setItem('userPermissions', JSON.stringify(permissions));
@@ -127,7 +129,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     canApprove: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
     canCreateSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
     canApproveSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
-    canReviewSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre')
+    canReviewSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
+    canViewFilteredSubmissions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre')
   };
 
   // Use stored permissions if available, otherwise use role-based permissions
@@ -138,6 +141,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const canCreateSuggestions = effectivePermissions.canCreateSuggestions;
   const canApproveSuggestions = effectivePermissions.canApproveSuggestions;
   const canReviewSuggestions = effectivePermissions.canReviewSuggestions;
+  const canViewFilteredSubmissions = effectivePermissions.canViewFilteredSubmissions;
 
   // Debug: Log user permissions
   console.log('🔍 Current User Debug:', {
@@ -164,7 +168,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       canApprove,
       canCreateSuggestions,
       canApproveSuggestions,
-      canReviewSuggestions
+      canReviewSuggestions,
+      canViewFilteredSubmissions
     }
   });
 

@@ -53,7 +53,8 @@ export type SubmissionStatus =
   | 'submitted'
   | 'in_review'
   | 'approved'
-  | 'rejected';
+  | 'rejected'
+  | 'sent';
 
 export interface FormField {
   id: string;
@@ -109,4 +110,13 @@ export interface Change {
   newValue: string;
   changedBy: string;
   timestamp: Date;
+}
+
+interface RolePermissions {
+  canEdit: boolean;
+  canApprove: boolean;
+  canCreateSuggestions: boolean;
+  canApproveSuggestions: boolean;
+  canReviewSuggestions: boolean;
+  canViewFilteredSubmissions: boolean;
 } 

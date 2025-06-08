@@ -1,33 +1,52 @@
-import React from 'react';
-import { ContentSubmission, Change } from '../types/content';
+import React, { useState } from 'react';
+import { ContentSubmission, Change, SubmissionStatus } from '../types/content';
 
 interface SubmissionHistoryProps {
   submissions: ContentSubmission[];
   onSelectSubmission: (submission: ContentSubmission) => void;
+  canViewFilteredSubmissions?: boolean;
 }
 
 export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
   submissions,
-  onSelectSubmission
+  onSelectSubmission,
+  canViewFilteredSubmissions = false
 }) => {
+  const [selectedStatuses, setSelectedStatuses] = useState<Set<SubmissionStatus | 'all'>>(new Set(['all']));
+
+  const allStatuses: (SubmissionStatus | 'all')[] = ['all', 'draft', 'submitted', 'in_review', 'approved', 'rejected', 'sent'];
+
+  const handleStatusChange = (status: SubmissionStatus | 'all') => {
+    const newSelectedStatuses = new Set(selectedStatuses);
+    
+    if (status === 'all') {
+      if (newSelectedStatuses.has('all')) {
+        newSelectedStatuses.clear();
+        newSelectedStatuses.add('submitted');
+      } else {
+        allStatuses.forEach(s => newSelectedStatuses.add(s));
+      }
+    } else {
+      newSelectedStatuses.delete('all');
+      if (newSelectedStatuses.has(status)) {
+        if (newSelectedStatuses.size > 1) {
+          newSelectedStatuses.delete(status);
+        }
+      } else {
+        newSelectedStatuses.add(status);
+      }
+    }
+    
+    setSelectedStatuses(newSelectedStatuses);
+  };
+
+  const filteredSubmissions = selectedStatuses.has('all') || selectedStatuses.size === 0
+    ? submissions 
+    : submissions.filter(sub => selectedStatuses.has(sub.status));
+
   const renderChange = (change: Change) => (
-    <div key={change.id} className="p-2 border-b">
-      <p className="text-sm text-gray-600">
-        Changed by {change.changedBy} on {new Date(change.timestamp).toLocaleDateString()}
-      </p>
-      <div className="mt-1">
-        <p className="text-sm font-medium">Field: {change.field}</p>
-        <div className="grid grid-cols-2 gap-4 mt-1">
-          <div>
-            <p className="text-xs text-gray-500">Old Value:</p>
-            <p className="text-sm">{change.oldValue}</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-500">New Value:</p>
-            <p className="text-sm">{change.newValue}</p>
-          </div>
-        </div>
-      </div>
+    <div key={change.id} className="text-sm text-gray-600">
+      <span className="font-medium">{change.field}</span> changed by {change.changedBy} on {new Date(change.timestamp).toLocaleDateString()}
     </div>
   );
 
@@ -35,8 +54,29 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-4">Submission History</h2>
       
+      {canViewFilteredSubmissions && (
+        <div className="mb-6 p-4 bg-white rounded-lg shadow-sm">
+          <h3 className="text-lg font-semibold mb-3">Filter by Status</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {allStatuses.map((status) => (
+              <label key={status} className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={selectedStatuses.has(status)}
+                  onChange={() => handleStatusChange(status)}
+                  className="form-checkbox h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
+                />
+                <span className="text-gray-700 capitalize">
+                  {status === 'all' ? 'All Statuses' : status.replace('_', ' ')}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      
       <div className="space-y-4">
-        {submissions.map((submission) => (
+        {filteredSubmissions.map((submission) => (
           <div key={submission.id} className="border rounded-lg overflow-hidden">
             <div 
               className="p-4 cursor-pointer hover:bg-gray-50"

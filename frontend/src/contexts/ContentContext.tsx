@@ -7,14 +7,15 @@ interface ContentContextType {
   councilManagers: CouncilManager[];
   commsCadreMembers: User[];
   currentUser: User | null;
+  userPermissions: any;
   saveSubmission: (submission: ContentSubmission) => Promise<void>;
   approveSubmission: (submission: ContentSubmission) => Promise<void>;
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
   addComment: (submission: ContentSubmission, comment: Comment) => Promise<void>;
   saveCouncilManagers: (managers: CouncilManager[]) => Promise<void>;
   removeCouncilManager: (managerId: string) => Promise<void>;
-  addCommsCadreMember: (email: string, name: string) => Promise<void>;
-  removeCommsCadreMember: (userId: string) => Promise<void>;
+  addCommsCadreMember: (member: User) => Promise<void>;
+  removeCommsCadreMember: (memberId: string) => Promise<void>;
   sendReminder: (submission: ContentSubmission, manager: CouncilManager) => Promise<void>;
   createSuggestion: (submission: ContentSubmission, suggestion: SuggestedEdit) => Promise<void>;
   approveSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
@@ -40,6 +41,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
   const [councilManagers, setCouncilManagers] = useState<CouncilManager[]>([]);
   const [commsCadreMembers, setCommsCadreMembers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userPermissions, setUserPermissions] = useState<any>(null);
 
   useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -56,7 +58,30 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     fetchSubmissions();
     fetchCouncilManagers();
     fetchCommsCadreMembers();
+    fetchUserPermissions();
   }, []);
+
+  const fetchUserPermissions = async () => {
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) return;
+
+      const response = await fetch(`${API_URL}/admin/user-roles`, {
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('🔑 User permissions:', data.permissions);
+        setUserPermissions(data.permissions);
+        localStorage.setItem('userPermissions', JSON.stringify(data.permissions));
+      }
+    } catch (err) {
+      console.error('Error fetching user permissions:', err);
+    }
+  };
 
   const fetchSubmissions = async () => {
     try {
@@ -185,6 +210,9 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
+        body: JSON.stringify({
+          status: 'approved'
+        })
       });
       if (response.ok) {
         const updatedSubmission = await response.json();
@@ -200,12 +228,15 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const rejectSubmission = async (submission: ContentSubmission) => {
     try {
-      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/reject`, {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
+        body: JSON.stringify({
+          status: 'rejected'
+        })
       });
       if (response.ok) {
         const updatedSubmission = await response.json();
@@ -388,7 +419,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const addCommsCadreMember = async (email: string, name: string) => {
+  const addCommsCadreMember = async (member: User) => {
     try {
       // First create the user
       const createUserResponse = await fetch(`${API_URL}/admin/bulk-create-users`, {
@@ -399,8 +430,8 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         },
         body: JSON.stringify({
           users: [{
-            name,
-            email,
+            name: member.name,
+            email: member.email,
             approved: true
           }]
         }),
@@ -418,7 +449,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
         body: JSON.stringify({
-          userId: email,
+          userId: member.email,
           userType: 'CommsCadre'
         }),
       });
@@ -434,7 +465,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
-        body: JSON.stringify({ email, name }),
+        body: JSON.stringify({ email: member.email, name: member.name }),
       });
 
       if (response.ok) {
@@ -449,10 +480,10 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const removeCommsCadreMember = async (userId: string) => {
+  const removeCommsCadreMember = async (memberId: string) => {
     try {
       // Get the member's email before removing them
-      const member = commsCadreMembers.find(m => m.id === userId);
+      const member = commsCadreMembers.find(m => m.id === memberId);
       if (!member) {
         throw new Error('Comms cadre member not found');
       }
@@ -485,7 +516,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       }
 
       // Then remove from comms cadre
-      const response = await fetch(`${API_URL}/comms-cadre/${userId}`, {
+      const response = await fetch(`${API_URL}/comms-cadre/${memberId}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
@@ -510,7 +541,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           throw new Error('Failed to update user type');
         }
 
-        setCommsCadreMembers(prev => prev.filter(m => m.id !== userId));
+        setCommsCadreMembers(prev => prev.filter(m => m.id !== memberId));
       } else {
         throw new Error('Failed to remove comms cadre member');
       }
@@ -675,6 +706,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     councilManagers,
     commsCadreMembers,
     currentUser,
+    userPermissions,
     saveSubmission,
     approveSubmission,
     rejectSubmission,

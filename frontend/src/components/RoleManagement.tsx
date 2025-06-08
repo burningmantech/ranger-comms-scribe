@@ -10,6 +10,7 @@ interface Role {
     canCreateSuggestions: boolean;
     canApproveSuggestions: boolean;
     canReviewSuggestions: boolean;
+    canViewFilteredSubmissions: boolean;
   };
 }
 
@@ -31,7 +32,8 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({ onSave }) => {
       canApprove: false,
       canCreateSuggestions: false,
       canApproveSuggestions: false,
-      canReviewSuggestions: false
+      canReviewSuggestions: false,
+      canViewFilteredSubmissions: false
     }
   });
 
@@ -103,7 +105,8 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({ onSave }) => {
           canApprove: false,
           canCreateSuggestions: false,
           canApproveSuggestions: false,
-          canReviewSuggestions: false
+          canReviewSuggestions: false,
+          canViewFilteredSubmissions: false
         }
       });
       
@@ -162,13 +165,26 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({ onSave }) => {
     }
 
     try {
+      // Find the current role
+      const currentRole = roles.find(r => r.name === roleName);
+      if (!currentRole) {
+        setError('Role not found');
+        return;
+      }
+
+      // Create updated role object
+      const updatedRole: Role = {
+        ...currentRole,
+        permissions
+      };
+
       const response = await fetch(`${API_URL}/admin/roles/${roleName}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${sessionId}`,
         },
-        body: JSON.stringify({ permissions }),
+        body: JSON.stringify(updatedRole),
       });
 
       if (!response.ok) {
@@ -319,6 +335,22 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({ onSave }) => {
                 Can Review Suggestions
               </label>
             </div>
+            <div className="permission-item">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={newRole.permissions?.canViewFilteredSubmissions}
+                  onChange={(e) => setNewRole({
+                    ...newRole,
+                    permissions: {
+                      ...newRole.permissions!,
+                      canViewFilteredSubmissions: e.target.checked
+                    }
+                  })}
+                />
+                Can View Filtered Submissions
+              </label>
+            </div>
           </div>
           <div className="form-actions">
             <button 
@@ -424,6 +456,20 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({ onSave }) => {
                     })}
                   />
                   Can Review Suggestions
+                </label>
+              </div>
+
+              <div className="permission-item">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={role.permissions.canViewFilteredSubmissions}
+                    onChange={(e) => updateRolePermissions(role.name, {
+                      ...role.permissions,
+                      canViewFilteredSubmissions: e.target.checked
+                    })}
+                  />
+                  Can View Filtered Submissions
                 </label>
               </div>
             </div>

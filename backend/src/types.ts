@@ -147,7 +147,7 @@ export interface ContentSubmission {
   richTextContent?: string; // Stores the Lexical editor state as JSON
   submittedBy: string;
   submittedAt: string;
-  status: 'draft' | 'submitted' | 'in_review' | 'approved' | 'rejected';
+  status: 'draft' | 'submitted' | 'in_review' | 'approved' | 'rejected' | 'sent';
   formFields: FormField[];
   comments: ContentComment[];
   approvals: ContentApproval[];
@@ -156,6 +156,7 @@ export interface ContentSubmission {
   councilManagerApprovals: ContentApproval[];
   finalApprovalDate?: string;
   announcementSent: boolean;
+  assignedCouncilManagers: string[];
 }
 
 export interface FormField {

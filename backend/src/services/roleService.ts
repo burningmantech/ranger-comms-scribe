@@ -12,6 +12,7 @@ export interface Role {
     canCreateSuggestions: boolean;
     canApproveSuggestions: boolean;
     canReviewSuggestions: boolean;
+    canViewFilteredSubmissions: boolean;
   };
 }
 
@@ -24,7 +25,8 @@ export const DEFAULT_ROLES: Role[] = [
       canApprove: true,
       canCreateSuggestions: true,
       canApproveSuggestions: true,
-      canReviewSuggestions: true
+      canReviewSuggestions: true,
+      canViewFilteredSubmissions: true
     }
   },
   {
@@ -35,7 +37,8 @@ export const DEFAULT_ROLES: Role[] = [
       canApprove: true,
       canCreateSuggestions: true,
       canApproveSuggestions: true,
-      canReviewSuggestions: true
+      canReviewSuggestions: true,
+      canViewFilteredSubmissions: true
     }
   },
   {
@@ -46,7 +49,8 @@ export const DEFAULT_ROLES: Role[] = [
       canApprove: true,
       canCreateSuggestions: true,
       canApproveSuggestions: true,
-      canReviewSuggestions: true
+      canReviewSuggestions: true,
+      canViewFilteredSubmissions: true
     }
   },
   {
@@ -57,7 +61,8 @@ export const DEFAULT_ROLES: Role[] = [
       canApprove: false,
       canCreateSuggestions: false,
       canApproveSuggestions: false,
-      canReviewSuggestions: false
+      canReviewSuggestions: false,
+      canViewFilteredSubmissions: false
     }
   }
 ];

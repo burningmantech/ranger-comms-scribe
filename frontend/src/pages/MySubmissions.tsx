@@ -6,7 +6,18 @@ import { ContentSubmission } from '../types/content';
 import './MySubmissions.css';
 
 export const MySubmissions: React.FC = () => {
-  const { submissions, currentUser, saveSubmission, approveSubmission, rejectSubmission, addComment, createSuggestion, approveSuggestion, rejectSuggestion } = useContent();
+  const { 
+    submissions, 
+    currentUser, 
+    userPermissions,
+    saveSubmission, 
+    approveSubmission, 
+    rejectSubmission, 
+    addComment, 
+    createSuggestion, 
+    approveSuggestion, 
+    rejectSuggestion 
+  } = useContent();
   const [selectedSubmission, setSelectedSubmission] = React.useState<ContentSubmission | null>(null);
 
   React.useEffect(() => {
@@ -56,6 +67,7 @@ export const MySubmissions: React.FC = () => {
           <SubmissionHistory
             submissions={mySubmissions}
             onSelectSubmission={setSelectedSubmission}
+            canViewFilteredSubmissions={userPermissions?.canViewFilteredSubmissions || false}
           />
         )}
       </div>

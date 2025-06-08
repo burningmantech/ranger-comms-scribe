@@ -13,6 +13,7 @@ export const ContentManagement: React.FC = () => {
     councilManagers,
     commsCadreMembers,
     currentUser,
+    userPermissions,
     saveSubmission,
     approveSubmission,
     rejectSubmission,
@@ -56,6 +57,7 @@ export const ContentManagement: React.FC = () => {
           <SubmissionHistory
             submissions={submissions}
             onSelectSubmission={setSelectedSubmission}
+            canViewFilteredSubmissions={userPermissions?.canViewFilteredSubmissions || false}
           />
         );
       case 'council':

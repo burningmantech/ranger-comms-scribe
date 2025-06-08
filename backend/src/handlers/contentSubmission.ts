@@ -25,7 +25,8 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     changes: [],
     commsCadreApprovals: 0,
     councilManagerApprovals: [],
-    announcementSent: false
+    announcementSent: false,
+    assignedCouncilManagers: submission.assignedCouncilManagers || []
   };
 
   // Store in cache with appropriate key
@@ -163,9 +164,15 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     a.approverType === UserType.CouncilManager && a.status === 'approved'
   );
 
+  // Get total required approvers
+  const requiredCommsCadreApprovers = 2; // Minimum required CommsCadre approvers
+  const requiredCouncilManagers = submission.assignedCouncilManagers?.length || 0;
+
   // Update status if needed
-  if (commsCadreApprovals >= 2 && councilManagerApprovals.length > 0) {
+  if (commsCadreApprovals >= requiredCommsCadreApprovers && 
+      councilManagerApprovals.length >= requiredCouncilManagers) {
     submission.status = 'approved';
+    submission.finalApprovalDate = new Date().toISOString();
     // Send announcement email
     await env.EMAIL.send({
       to: 'announce@rangers.burningman.org',
