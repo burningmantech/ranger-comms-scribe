@@ -96,7 +96,7 @@ const CommsRequest: React.FC = () => {
 
   const handleViewSubmissions = () => {
     setShowSuccess(false);
-    navigate('/content');
+    navigate('/requests');
   };
 
   return (

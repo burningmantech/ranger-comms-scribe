@@ -4,6 +4,10 @@ import { API_URL } from '../config';
 import './Admin.css';
 import Navbar from './Navbar';
 import { RoleManagement } from './RoleManagement';
+import { CouncilManagerManagement } from './CouncilManagerManagement';
+import { CommsCadreManagement } from './CommsCadreManagement';
+import { ApprovalReminders } from './ApprovalReminders';
+import { useContent } from '../contexts/ContentContext';
 import './RoleManagement.css';
 
 import { User, UserType, Group } from '../types';
@@ -32,7 +36,10 @@ enum AdminTab {
   Users = 'users',
   Groups = 'groups',
   BulkAdd = 'bulkAdd',
-  Roles = 'roles'
+  Roles = 'roles',
+  Council = 'council',
+  CommsCadre = 'commsCadre',
+  Reminders = 'reminders'
 }
 
 // Email dialog interface
@@ -133,6 +140,17 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
   const [bulkAddStatus, setBulkAddStatus] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  // Get content context
+  const {
+    submissions,
+    councilManagers,
+    commsCadreMembers,
+    saveCouncilManagers,
+    addCommsCadreMember,
+    removeCommsCadreMember,
+    sendReminder
+  } = useContent();
 
   useEffect(() => {
     // Check if user is admin
@@ -696,6 +714,24 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
           >
             Roles
           </button>
+          <button
+            className={activeTab === AdminTab.Council ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.Council)}
+          >
+            Council
+          </button>
+          <button
+            className={activeTab === AdminTab.CommsCadre ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.CommsCadre)}
+          >
+            Comms Cadre
+          </button>
+          <button
+            className={activeTab === AdminTab.Reminders ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.Reminders)}
+          >
+            Reminders
+          </button>
         </div>
 
         {error && <div className="error-message">{error}</div>}
@@ -1041,10 +1077,32 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
         )}
         
         {activeTab === AdminTab.Roles && (
-          <RoleManagement onSave={() => {
-            setSuccessMessage('Role permissions updated successfully');
-            setTimeout(() => setSuccessMessage(null), 3000);
-          }} />
+          <RoleManagement
+            onSave={() => {
+              setSuccessMessage('Role permissions updated successfully');
+              setTimeout(() => setSuccessMessage(null), 3000);
+            }}
+          />
+        )}
+        {activeTab === AdminTab.Council && (
+          <CouncilManagerManagement
+            initialManagers={councilManagers}
+            onSave={saveCouncilManagers}
+          />
+        )}
+        {activeTab === AdminTab.CommsCadre && (
+          <CommsCadreManagement
+            members={commsCadreMembers}
+            onAddMember={addCommsCadreMember}
+            onRemoveMember={removeCommsCadreMember}
+          />
+        )}
+        {activeTab === AdminTab.Reminders && (
+          <ApprovalReminders
+            pendingSubmissions={submissions.filter(sub => sub.status === 'in_review')}
+            councilManagers={councilManagers}
+            onSendReminder={sendReminder}
+          />
         )}
       </div>
       

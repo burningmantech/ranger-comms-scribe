@@ -83,7 +83,7 @@ const App: React.FC = () => {
               <div className="loading-container">Loading...</div>
             ) : (
               <Routes>
-                <Route path="/" element={<Home skipNavbar={true} />} />
+                <Route path="/" element={<Navigate to="/requests" replace />} />
                 <Route path="/login" element={<Login skipNavbar={true} setParentUser={setUser} />} />
                 <Route path="/admin" element={<Admin skipNavbar={true} />} />
                 <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
@@ -92,16 +92,7 @@ const App: React.FC = () => {
                 <Route path="/test-indentation" element={<IndentationTest />} />
                 <Route path="/checkbox-test" element={<CheckboxTest />} />
                 <Route 
-                  path="/content" 
-                  element={
-                    <ProtectedRoute 
-                      element={<ContentManagement />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager']} 
-                    />
-                  } 
-                />
-                <Route 
-                  path="/my-submissions" 
+                  path="/requests" 
                   element={
                     <ProtectedRoute 
                       element={<MySubmissions />} 

@@ -123,8 +123,8 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                 )}
                 {isLoggedIn && (
                     <>
-                        <Link to="/comms-request" className={`navbar-item ${currentPageSlug === 'comms-request' ? 'active' : ''}`} onClick={handleMenuItemClick}>Comms Request</Link>
-                        <Link to="/my-submissions" className={`navbar-item ${currentPageSlug === 'my-submissions' ? 'active' : ''}`} onClick={handleMenuItemClick}>My Submissions</Link>
+                        <Link to="/requests" className={`navbar-item ${currentPageSlug === 'requests' ? 'active' : ''}`} onClick={handleMenuItemClick}>Requests</Link>
+                        <Link to="/comms-request" className={`navbar-item ${currentPageSlug === 'comms-request' ? 'active' : ''}`} onClick={handleMenuItemClick}>New Request</Link>
                     </>
                 )}
                 {isLoggedIn ? (

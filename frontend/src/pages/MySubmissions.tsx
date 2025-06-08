@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useContent } from '../contexts/ContentContext';
 import { ContentSubmission as ContentSubmissionComponent } from '../components/ContentSubmission';
 import { SubmissionHistory } from '../components/SubmissionHistory';
@@ -6,6 +7,7 @@ import { ContentSubmission } from '../types/content';
 import './MySubmissions.css';
 
 export const MySubmissions: React.FC = () => {
+  const navigate = useNavigate();
   const { 
     submissions, 
     currentUser, 
@@ -26,26 +28,26 @@ export const MySubmissions: React.FC = () => {
   }, [currentUser, submissions]);
 
   if (!currentUser) {
-    return <div className="error-message">Please log in to view your submissions.</div>;
+    return <div className="error-message">Please log in to view requests.</div>;
   }
 
-  // Filter submissions to only show those submitted by the current user
-  const mySubmissions = submissions.filter(
-    submission => submission.submittedBy === currentUser.email
-  );
+  // Filter submissions based on user permissions
+  const filteredSubmissions = userPermissions?.canViewFilteredSubmissions
+    ? submissions // Show all submissions if user has permission
+    : submissions.filter(submission => submission.submittedBy === currentUser.email); // Show only user's submissions
 
-  console.log('Filtered Submissions:', mySubmissions);
+  console.log('Filtered Submissions:', filteredSubmissions);
 
   return (
     <div className="content-management">
       <div className="content-header">
-        <h1>My Submissions</h1>
+        <h1>Requests</h1>
         {selectedSubmission && (
           <button
             onClick={() => setSelectedSubmission(null)}
             className="back-button"
           >
-            ← Back to Submissions
+            ← Back to Requests
           </button>
         )}
       </div>
@@ -65,12 +67,21 @@ export const MySubmissions: React.FC = () => {
           />
         ) : (
           <SubmissionHistory
-            submissions={mySubmissions}
+            submissions={filteredSubmissions}
             onSelectSubmission={setSelectedSubmission}
             canViewFilteredSubmissions={userPermissions?.canViewFilteredSubmissions || false}
           />
         )}
       </div>
+
+      {/* Floating Action Button */}
+      <button
+        onClick={() => navigate('/comms-request')}
+        className="floating-action-button"
+        title="Create New Request"
+      >
+        <i className="fas fa-plus"></i>
+      </button>
     </div>
   );
 }; 
