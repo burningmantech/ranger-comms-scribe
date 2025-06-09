@@ -183,21 +183,24 @@ export const CommsRequest: React.FC = () => {
 
   const handleEmailKeyDown = (index: number, e: React.KeyboardEvent<any>) => {
     if (!suggestions[index] || suggestions[index].length === 0) return;
+    
     if (e.key === 'ArrowDown') {
+      e.preventDefault();
       setActiveSuggestionIndex(prev => ({
         ...prev,
         [index]: Math.min((prev[index] ?? 0) + 1, suggestions[index].length - 1)
       }));
     } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
       setActiveSuggestionIndex(prev => ({
         ...prev,
         [index]: Math.max((prev[index] ?? 0) - 1, 0)
       }));
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
       const activeIdx = activeSuggestionIndex[index] ?? 0;
       if (suggestions[index][activeIdx]) {
         handleSuggestionClick(index, suggestions[index][activeIdx].email);
-        e.preventDefault();
       }
     }
   };
@@ -344,60 +347,58 @@ export const CommsRequest: React.FC = () => {
                   <p className="text-sm text-gray-600 mb-3">
                     At least one council manager must be selected as an approver. You can also add other registered users or email addresses.
                   </p>
-                  {approverEmails.map((email, index) => (
-                    <div key={index} className="mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-grow relative">
-                          <Form.Control
-                            type="email"
-                            value={email}
-                            onChange={(e) => handleEmailChange(index, e.target.value)}
-                            onKeyDown={(e) => handleEmailKeyDown(index, e)}
-                            placeholder="Enter approver email"
-                            className="form-input"
-                            autoComplete="off"
-                          />
-                          {suggestions[index]?.length > 0 && (
-                            <div className="suggestions-dropdown" style={{ zIndex: 1000 }}>
-                              {suggestions[index].map((user, sIdx) => (
-                                <div
-                                  key={user.email}
-                                  className={`suggestion-item${(activeSuggestionIndex[index] ?? 0) === sIdx ? ' active' : ''}`}
-                                  onClick={() => handleSuggestionClick(index, user.email)}
-                                  style={{ 
-                                    background: (activeSuggestionIndex[index] ?? 0) === sIdx ? '#e0e7ff' : undefined,
-                                    cursor: 'pointer',
-                                    padding: '8px 12px',
-                                    borderBottom: '1px solid #eee'
-                                  }}
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <div>
-                                      {user.email}
-                                      {user.name && <span className="text-gray-400 ml-2">({user.name})</span>}
-                                    </div>
-                                    {councilManagers.some(manager => manager.email === user.email) && (
-                                      <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">Council Manager</span>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
+                  {approverEmails.map((email, index) => {
+                    const suggestionUser = suggestions[index]?.[activeSuggestionIndex[index] ?? 0];
+                    let completion = '';
+                    let ghostName = '';
+                    let ghostBadge = '';
+                    if (suggestionUser) {
+                      const inputValue = email.toLowerCase();
+                      const emailLower = suggestionUser.email.toLowerCase();
+                      if (emailLower.startsWith(inputValue)) {
+                        completion = suggestionUser.email.slice(email.length);
+                        ghostName = suggestionUser.name ? ` (${suggestionUser.name})` : '';
+                        ghostBadge = councilManagers.some(manager => manager.email === suggestionUser.email)
+                          ? '  Council Manager' : '';
+                      }
+                    }
+                    return (
+                      <div key={index} className="mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-grow relative approver-field">
+                            <div className="input-ghost-wrapper">
+                              {completion && (
+                                <span className="input-ghost-suggestion">
+                                  {email}{completion}{ghostName}{ghostBadge}
+                                </span>
+                              )}
+                              <Form.Control
+                                type="email"
+                                value={email}
+                                onChange={(e) => handleEmailChange(index, e.target.value)}
+                                onKeyDown={(e) => handleEmailKeyDown(index, e)}
+                                placeholder="Enter approver email"
+                                className="form-input"
+                                autoComplete="off"
+                                spellCheck={false}
+                                style={{ background: 'transparent', position: 'relative', zIndex: 2 }}
+                              />
                             </div>
+                          </div>
+                          {approverEmails.length > 1 && (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => removeApproverField(index)}
+                              className="remove-approver-btn"
+                            >
+                              <i className="fas fa-times"></i>
+                            </Button>
                           )}
                         </div>
-                        {approverEmails.length > 1 && (
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={() => removeApproverField(index)}
-                            className="remove-approver-btn"
-                          >
-                            <i className="fas fa-times"></i>
-                          </Button>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <Button
                     variant="outline-primary"
                     onClick={addApproverField}
