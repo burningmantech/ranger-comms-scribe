@@ -27,36 +27,65 @@ router.get('/members', withAuth, async (request: Request, env: Env) => {
 
 // Add a new council member
 router.post('/members', withAuth, async (request: Request, env: Env) => {
+  console.log('🔍 Received request to add council member');
   const user = (request as any).user as User;
+  console.log('👤 Authenticated user:', { id: user.id, email: user.email, userType: user.userType });
+  
   if (!user || user.userType !== UserType.Admin) {
+    console.error('❌ Unauthorized: User is not an admin');
     return new Response('Unauthorized', { status: 401 });
   }
 
-  const member: Partial<CouncilMember> = await request.json();
-  
-  const newMember: CouncilMember = {
-    id: crypto.randomUUID(),
-    userId: member.userId!,
-    role: member.role!,
-    email: member.email!,
-    name: member.name!,
-    active: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
+  try {
+    const member: Partial<CouncilMember> = await request.json();
+    console.log('📝 Request body:', member);
+    
+    const newMember: CouncilMember = {
+      id: crypto.randomUUID(),
+      userId: member.userId!,
+      role: member.role!,
+      email: member.email!,
+      name: member.name!,
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    console.log('📦 Created new member object:', newMember);
 
-  // Store council member
-  await putObject(`council_member/${newMember.id}`, newMember, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { memberId: newMember.id }
-  });
+    // Store council member
+    console.log('💾 Storing council member in cache');
+    await putObject(`council_member/${newMember.id}`, newMember, env, {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { memberId: newMember.id }
+    });
+    console.log('✅ Council member stored successfully');
 
-  // Update user type to CouncilManager and add to group
-  await changeUserType(newMember.userId, UserType.CouncilManager, env);
+    // Update user type to CouncilManager and add to group
+    console.log('🔄 Updating user type to CouncilManager');
+    const user = await getObject<User>(`user/${newMember.email}`, env);
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    // Update user with CouncilManager role
+    await putObject(`user/${newMember.email}`, {
+      ...user,
+      userType: UserType.CouncilManager,
+      roles: ['CouncilManager']
+    }, env);
+    console.log('✅ User type updated successfully');
 
-  return new Response(JSON.stringify(newMember), {
-    headers: { 'Content-Type': 'application/json' }
-  });
+    console.log('✅ Successfully added council member');
+    return new Response(JSON.stringify(newMember), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error: any) {
+    console.error('❌ Error adding council member:', error);
+    return new Response(JSON.stringify({ error: 'Failed to add council member', details: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
 });
 
 // Update a council member

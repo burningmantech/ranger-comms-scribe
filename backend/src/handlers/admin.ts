@@ -27,9 +27,11 @@ import {
   Role
 } from '../services/roleService';
 import { sendEmail } from '../utils/email';
-import { UserType } from '../types';
+import { UserType, CouncilRole, CouncilMember } from '../types';
 import { GetSession, Env } from '../utils/sessionManager';
 import { withAdminCheck } from '../authWrappers';
+import { getCouncilManagersForRole, addCouncilMember, removeCouncilMember } from '../services/councilManagerService';
+import { getObject, putObject, removeFromCache } from '../services/cacheService';
 
 interface RequestWithParams extends Request {
   params: {
@@ -585,5 +587,64 @@ router.get('/user-roles', async (request: Request, env: Env) => {
   } catch (error) {
     console.error('Error fetching user roles:', error);
     return json({ error: 'Failed to fetch user roles' }, { status: 500 });
+  }
+});
+
+// Get all council managers
+router.get('/council-managers', withAdminCheck, async (request: Request, env: Env) => {
+  try {
+    // Get managers for each role
+    const commsManagers = await getCouncilManagersForRole(CouncilRole.CommunicationsManager, env);
+    const intakeManagers = await getCouncilManagersForRole(CouncilRole.IntakeManager, env);
+    const logisticsManagers = await getCouncilManagersForRole(CouncilRole.LogisticsManager, env);
+    const operationsManagers = await getCouncilManagersForRole(CouncilRole.OperationsManager, env);
+    const personnelManagers = await getCouncilManagersForRole(CouncilRole.PersonnelManager, env);
+    const departmentManagers = await getCouncilManagersForRole(CouncilRole.DepartmentManager, env);
+    const deputyManagers = await getCouncilManagersForRole(CouncilRole.DeputyDepartmentManager, env);
+
+    // Combine all managers
+    const allManagers = [
+      ...commsManagers,
+      ...intakeManagers,
+      ...logisticsManagers,
+      ...operationsManagers,
+      ...personnelManagers,
+      ...departmentManagers,
+      ...deputyManagers
+    ];
+
+    return json(allManagers);
+  } catch (error) {
+    console.error('Error fetching council managers:', error);
+    return json({ error: 'Error fetching council managers' }, { status: 500 });
+  }
+});
+
+// Update council managers
+router.put('/council-managers', withAdminCheck, async (request: Request, env: Env) => {
+  try {
+    const body = await request.json() as { email: string; role: CouncilRole; action: 'add' | 'remove' };
+    const { email, role, action } = body;
+
+    if (!email || !role || !action) {
+      return json({ error: 'Email, role, and action are required' }, { status: 400 });
+    }
+
+    if (action === 'add') {
+      const newMember = await addCouncilMember(email, role, env);
+      if (!newMember) {
+        return json({ error: 'Failed to add council member' }, { status: 500 });
+      }
+      return json({ message: 'Council member added successfully', member: newMember });
+    } else {
+      const success = await removeCouncilMember(email, role, env);
+      if (!success) {
+        return json({ error: 'Failed to remove council member' }, { status: 500 });
+      }
+      return json({ message: 'Council member removed successfully' });
+    }
+  } catch (error) {
+    console.error('Error updating council manager:', error);
+    return json({ error: 'Failed to update council manager' }, { status: 500 });
   }
 });

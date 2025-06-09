@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Form, Button, Alert, Modal } from 'react-bootstrap';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useContent } from '../contexts/ContentContext';
 import { Link, useNavigate } from 'react-router-dom';
-import { ContentSubmission, FormField } from '../types/content';
+import { ContentSubmission, FormField, CouncilRole } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
+import { User } from '../types';
+import { API_URL } from '../config';
+import './CommsRequest.css';
 
 // Define the form schema using Zod
 const commsRequestSchema = z.object({
@@ -28,7 +31,7 @@ const commsRequestSchema = z.object({
 
 type CommsRequestFormData = z.infer<typeof commsRequestSchema>;
 
-const CommsRequest: React.FC = () => {
+export const CommsRequest: React.FC = () => {
   const [showSuccess, setShowSuccess] = useState(false);
   const [editorContent, setEditorContent] = useState('');
   const { saveSubmission } = useContent();
@@ -51,13 +54,194 @@ const CommsRequest: React.FC = () => {
     },
   });
 
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [councilManagers, setCouncilManagers] = useState<User[]>([]);
+  const [selectedApprovers, setSelectedApprovers] = useState<string[]>([]);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [approverEmails, setApproverEmails] = useState<string[]>(['']);
+  const [suggestions, setSuggestions] = useState<{ [key: number]: User[] }>({});
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<{ [key: number]: number }>({});
+
+  // Fetch all users and council managers when component mounts
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) return;
+
+        // Fetch all users
+        const usersResponse = await fetch(`${API_URL}/admin/users`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+        
+        if (!usersResponse.ok) {
+          throw new Error('Failed to fetch users');
+        }
+        
+        const usersData = await usersResponse.json();
+        console.log('Fetched users:', usersData);
+        // Extract the users array from the response
+        setAllUsers(usersData.users || []);
+
+        // Fetch council managers
+        const managersResponse = await fetch(`${API_URL}/admin/council-managers`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+        
+        if (!managersResponse.ok) {
+          throw new Error('Failed to fetch council managers');
+        }
+        
+        const managersData = await managersResponse.json();
+        console.log('Fetched council managers:', managersData);
+        setCouncilManagers(managersData);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+      }
+    };
+
+    fetchUsers();
+  }, []);
+
   const handleEditorChange = (editor: any, json: string) => {
     setEditorContent(json);
     setValue('text', json);
   };
 
+  const handleEmailChange = (index: number, value: string) => {
+    const newEmails = [...approverEmails];
+    newEmails[index] = value;
+    setApproverEmails(newEmails);
+
+    // Filter suggestions based on input
+    if (value && allUsers.length > 0) {
+      const filtered = allUsers.filter(user => 
+        user.email.toLowerCase().includes(value.toLowerCase()) ||
+        (user.name && user.name.toLowerCase().includes(value.toLowerCase()))
+      );
+      console.log('Filtered suggestions:', filtered);
+      setSuggestions(prev => ({ ...prev, [index]: filtered }));
+      setActiveSuggestionIndex(prev => ({ ...prev, [index]: 0 }));
+    } else {
+      setSuggestions(prev => ({ ...prev, [index]: [] }));
+      setActiveSuggestionIndex(prev => ({ ...prev, [index]: 0 }));
+    }
+  };
+
+  const handleSuggestionClick = async (index: number, email: string) => {
+    const newEmails = [...approverEmails];
+    newEmails[index] = email;
+    setApproverEmails(newEmails);
+    setSuggestions(prev => ({ ...prev, [index]: [] }));
+
+    // If this is a council manager, ensure they're properly registered
+    const isCouncilManager = councilManagers.some(manager => manager.email === email);
+    if (!isCouncilManager) {
+      try {
+        const sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) return;
+
+        const response = await fetch(`${API_URL}/admin/council-managers`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${sessionId}`,
+          },
+          body: JSON.stringify({
+            email,
+            role: 'COMMUNICATIONS_MANAGER',
+            action: 'add'
+          })
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          console.error('Failed to add council manager:', error);
+          return;
+        }
+
+        // Refresh council managers list
+        const managersResponse = await fetch(`${API_URL}/admin/council-managers`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+        
+        if (managersResponse.ok) {
+          const managersData = await managersResponse.json();
+          setCouncilManagers(managersData);
+        }
+      } catch (error) {
+        console.error('Error updating council manager:', error);
+      }
+    }
+  };
+
+  const handleEmailKeyDown = (index: number, e: React.KeyboardEvent<any>) => {
+    if (!suggestions[index] || suggestions[index].length === 0) return;
+    if (e.key === 'ArrowDown') {
+      setActiveSuggestionIndex(prev => ({
+        ...prev,
+        [index]: Math.min((prev[index] ?? 0) + 1, suggestions[index].length - 1)
+      }));
+    } else if (e.key === 'ArrowUp') {
+      setActiveSuggestionIndex(prev => ({
+        ...prev,
+        [index]: Math.max((prev[index] ?? 0) - 1, 0)
+      }));
+    } else if (e.key === 'Enter') {
+      const activeIdx = activeSuggestionIndex[index] ?? 0;
+      if (suggestions[index][activeIdx]) {
+        handleSuggestionClick(index, suggestions[index][activeIdx].email);
+        e.preventDefault();
+      }
+    }
+  };
+
+  const addApproverField = () => {
+    setApproverEmails([...approverEmails, '']);
+  };
+
+  const removeApproverField = (index: number) => {
+    if (approverEmails.length === 1) return;
+    const newEmails = approverEmails.filter((_, i) => i !== index);
+    setApproverEmails(newEmails);
+    setSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[index];
+      return newSuggestions;
+    });
+    setActiveSuggestionIndex(prev => {
+      const newActive = { ...prev };
+      delete newActive[index];
+      return newActive;
+    });
+  };
+
   const onSubmit = async (data: CommsRequestFormData) => {
     try {
+      // Filter out empty email fields
+      const validApprovers = approverEmails.filter(email => email.trim() !== '');
+      
+      if (validApprovers.length === 0) {
+        setFormError('At least one approver is required');
+        return;
+      }
+
+      // Check if at least one council manager is selected
+      const hasCouncilManager = validApprovers.some(email => 
+        councilManagers.some(manager => manager.email === email)
+      );
+
+      if (!hasCouncilManager) {
+        setFormError('At least one council manager must be selected as an approver');
+        return;
+      }
+
       // Create a content submission from the form data
       const submission: Partial<ContentSubmission> = {
         id: crypto.randomUUID(),
@@ -69,7 +253,6 @@ const CommsRequest: React.FC = () => {
         submittedAt: new Date(),
         formFields: [
           { id: 'owner', label: 'Owner', value: data.owner, type: 'text', required: true },
-          { id: 'requiredApprovers', label: 'Required Approvers', value: data.requiredApprovers, type: 'text', required: true },
           { id: 'publishBy', label: 'Publish By', value: data.publishBy, type: 'date', required: true },
           { id: 'urgency', label: 'Urgency', value: data.urgency, type: 'text', required: true },
           { id: 'audience', label: 'Audience', value: data.audience, type: 'text', required: true },
@@ -82,13 +265,15 @@ const CommsRequest: React.FC = () => {
         approvals: [],
         changes: [],
         assignedReviewers: [],
-        assignedCouncilManagers: []
+        assignedCouncilManagers: [],
+        requiredApprovers: validApprovers
       };
 
       await saveSubmission(submission as ContentSubmission);
       setShowSuccess(true);
       reset();
       setEditorContent('');
+      setSelectedApprovers([]);
     } catch (error) {
       console.error('Error submitting form:', error);
     }
@@ -152,6 +337,77 @@ const CommsRequest: React.FC = () => {
                     <Form.Text className="text-danger">{errors.owner.message}</Form.Text>
                   )}
                 </Form.Group>
+
+                {/* Required Approvers Section */}
+                <div className="col-span-2">
+                  <h3 className="text-lg font-semibold mb-3">Required Approvers</h3>
+                  <p className="text-sm text-gray-600 mb-3">
+                    At least one council manager must be selected as an approver. You can also add other registered users or email addresses.
+                  </p>
+                  {approverEmails.map((email, index) => (
+                    <div key={index} className="mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-grow relative">
+                          <Form.Control
+                            type="email"
+                            value={email}
+                            onChange={(e) => handleEmailChange(index, e.target.value)}
+                            onKeyDown={(e) => handleEmailKeyDown(index, e)}
+                            placeholder="Enter approver email"
+                            className="form-input"
+                            autoComplete="off"
+                          />
+                          {suggestions[index]?.length > 0 && (
+                            <div className="suggestions-dropdown" style={{ zIndex: 1000 }}>
+                              {suggestions[index].map((user, sIdx) => (
+                                <div
+                                  key={user.email}
+                                  className={`suggestion-item${(activeSuggestionIndex[index] ?? 0) === sIdx ? ' active' : ''}`}
+                                  onClick={() => handleSuggestionClick(index, user.email)}
+                                  style={{ 
+                                    background: (activeSuggestionIndex[index] ?? 0) === sIdx ? '#e0e7ff' : undefined,
+                                    cursor: 'pointer',
+                                    padding: '8px 12px',
+                                    borderBottom: '1px solid #eee'
+                                  }}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      {user.email}
+                                      {user.name && <span className="text-gray-400 ml-2">({user.name})</span>}
+                                    </div>
+                                    {councilManagers.some(manager => manager.email === user.email) && (
+                                      <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">Council Manager</span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {approverEmails.length > 1 && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => removeApproverField(index)}
+                            className="remove-approver-btn"
+                          >
+                            <i className="fas fa-times"></i>
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline-primary"
+                    onClick={addApproverField}
+                    className="add-approver-btn mt-2"
+                    type="button"
+                  >
+                    <i className="fas fa-plus"></i> Add Approver
+                  </Button>
+                  {formError && <div className="error-message mt-2">{formError}</div>}
+                </div>
 
                 <Form.Group>
                   <Form.Label>Publish By *</Form.Label>
@@ -253,19 +509,6 @@ const CommsRequest: React.FC = () => {
             <div className="col-span-2">
               <h3 className="text-lg font-semibold mb-3">Additional Information</h3>
               <div className="grid grid-cols-1 gap-4">
-                <Form.Group>
-                  <Form.Label>Required Approvers *</Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={3}
-                    {...register('requiredApprovers')}
-                    placeholder="Include email addresses of individual people who need to approve the content"
-                  />
-                  {errors.requiredApprovers && (
-                    <Form.Text className="text-danger">{errors.requiredApprovers.message}</Form.Text>
-                  )}
-                </Form.Group>
-
                 <Form.Group>
                   <Form.Label>Notes</Form.Label>
                   <Form.Control

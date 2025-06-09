@@ -83,7 +83,7 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 
       sub.submittedBy === user.id || 
-      sub.approvals.some((a: ContentApproval) => a.approverId === user.id)
+      (sub.approvals && sub.approvals.some((a: ContentApproval) => a.approverId === user.id))
     );
   }
 

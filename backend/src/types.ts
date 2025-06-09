@@ -46,6 +46,7 @@ export interface User {
   isAdmin: boolean; // Keeping for backward compatibility
   userType: UserType;
   groups: string[]; // Array of group IDs the user belongs to
+  roles: string[]; // Array of role names
   passwordHash?: string; // Added for email/password authentication
   verified?: boolean; // Added for email verification
   notificationSettings?: {

@@ -303,7 +303,8 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           });
 
           if (!createUserResponse.ok) {
-            throw new Error('Failed to create user');
+            const errorData = await createUserResponse.json();
+            throw new Error(`Failed to create user: ${JSON.stringify(errorData)}`);
           }
 
           // Change user type to CouncilManager which will add them to the group
@@ -320,7 +321,8 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           });
 
           if (!changeTypeResponse.ok) {
-            throw new Error('Failed to set user type to CouncilManager');
+            const errorData = await changeTypeResponse.json();
+            throw new Error(`Failed to set user type to CouncilManager: ${JSON.stringify(errorData)}`);
           }
         }
 
@@ -335,10 +337,12 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to ${isNew ? 'create' : 'update'} council manager`);
+          const errorData = await response.json();
+          throw new Error(`Failed to ${isNew ? 'create' : 'update'} council manager: ${JSON.stringify(errorData)}`);
         }
 
-        return response.json();
+        const result = await response.json();
+        return result;
       }));
 
       setCouncilManagers(results);

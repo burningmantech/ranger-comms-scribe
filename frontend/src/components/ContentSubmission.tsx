@@ -173,6 +173,53 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     }
   });
 
+  // Check if all required approvers have approved
+  const allRequiredApproversApproved = submission.requiredApprovers.every(approverEmail =>
+    submission.approvals.some(approval => 
+      approval.approverId === approverEmail && approval.status === 'APPROVED'
+    )
+  );
+
+  // Check if user is a Comms Cadre member
+  const isCommsCadre = currentUser.roles.includes('CommsCadre');
+
+  // Handle approval
+  const handleApprove = async () => {
+    if (allRequiredApproversApproved && submission.status === 'in_review') {
+      // If all required approvers have approved, move to approved status
+      await onApprove({
+        ...submission,
+        status: 'approved'
+      });
+    } else {
+      // Otherwise, just add the approval
+      await onApprove(submission);
+    }
+  };
+
+  // Handle Comms approval
+  const handleCommsApprove = async () => {
+    if (submission.status === 'approved') {
+      await onSave({
+        ...submission,
+        status: 'comms_approved',
+        commsApprovedBy: currentUser.email
+      });
+    }
+  };
+
+  // Handle marking as sent
+  const handleMarkAsSent = async () => {
+    if (submission.status === 'comms_approved') {
+      await onSave({
+        ...submission,
+        status: 'sent',
+        sentBy: currentUser.email,
+        sentAt: new Date()
+      });
+    }
+  };
+
   const handleAddFormField = () => {
     const newField: FormField = {
       id: crypto.randomUUID(),
@@ -465,10 +512,11 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         </div>
       </div>
 
-      {canApprove && submission.status === 'in_review' && (
+      {/* Approval buttons */}
+      {submission.status === 'in_review' && canApprove && (
         <div className="mt-8 flex space-x-4">
           <button
-            onClick={() => onApprove(submission)}
+            onClick={handleApprove}
             className="btn btn-primary btn-with-icon"
           >
             <i className="fas fa-check"></i>
@@ -483,6 +531,62 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
           </button>
         </div>
       )}
+
+      {/* Comms approval button */}
+      {submission.status === 'approved' && isCommsCadre && (
+        <div className="mt-8">
+          <button
+            onClick={handleCommsApprove}
+            className="btn btn-primary btn-with-icon"
+          >
+            <i className="fas fa-check-double"></i>
+            <span className="btn-text">Comms Approve</span>
+          </button>
+        </div>
+      )}
+
+      {/* Mark as sent button */}
+      {submission.status === 'comms_approved' && isCommsCadre && (
+        <div className="mt-8">
+          <button
+            onClick={handleMarkAsSent}
+            className="btn btn-success btn-with-icon"
+          >
+            <i className="fas fa-paper-plane"></i>
+            <span className="btn-text">Mark as Sent</span>
+          </button>
+        </div>
+      )}
+
+      {/* Status information */}
+      <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+        <h3 className="text-lg font-semibold mb-2">Status Information</h3>
+        <p>Current Status: {submission.status}</p>
+        {submission.commsApprovedBy && (
+          <p>Comms Approved by: {submission.commsApprovedBy}</p>
+        )}
+        {submission.sentBy && (
+          <p>Sent by: {submission.sentBy} on {submission.sentAt?.toLocaleDateString()}</p>
+        )}
+        <div className="mt-2">
+          <h4 className="font-medium">Required Approvers:</h4>
+          <ul className="list-disc list-inside">
+            {submission.requiredApprovers.map((approverEmail) => {
+              const approval = submission.approvals.find(a => a.approverId === approverEmail);
+              return (
+                <li key={approverEmail} className="flex items-center">
+                  <span>{approverEmail}</span>
+                  {approval && (
+                    <span className={`ml-2 ${approval.status === 'APPROVED' ? 'text-green-600' : 'text-red-600'}`}>
+                      ({approval.status})
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }; 

@@ -46,6 +46,10 @@ export interface ContentSubmission {
   assignedReviewers: string[];
   assignedCouncilManagers: string[];
   suggestedEdits: SuggestedEdit[];
+  requiredApprovers: string[];
+  commsApprovedBy?: string;
+  sentBy?: string;
+  sentAt?: Date;
 }
 
 export type SubmissionStatus =
@@ -53,8 +57,9 @@ export type SubmissionStatus =
   | 'submitted'
   | 'in_review'
   | 'approved'
-  | 'rejected'
-  | 'sent';
+  | 'comms_approved'
+  | 'sent'
+  | 'rejected';
 
 export interface FormField {
   id: string;

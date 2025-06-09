@@ -36,6 +36,7 @@ export const SuggestedEditsExample: React.FC = () => {
     changes: [],
     assignedReviewers: ['user-1'],
     assignedCouncilManagers: [],
+    requiredApprovers: ['manager@example.com'],
     suggestedEdits: [
       {
         id: 'suggestion-1',
