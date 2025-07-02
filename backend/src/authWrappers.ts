@@ -15,9 +15,14 @@ export const withAdminCheck = async (request: Request, env: Env) => {
     return json({ error: 'Session not found or expired' }, { status: 403 });
   }
 
-  const userData = session.data as { email: string; name: string };
-  const userIsAdmin = await isAdmin(userData.email, env);
-  if (!userIsAdmin) {
+  const userData = session.data as { 
+    email: string; 
+    name: string;
+    isAdmin: boolean;
+    userType: string;
+  };
+
+  if (!userData.isAdmin && userData.userType !== 'Admin') {
     return json({ error: 'Unauthorized: Admin access required' }, { status: 403 });
   }
 
@@ -63,8 +68,8 @@ export const withAuth = async (request: Request, env: Env) => {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const userData = session.data as { email: string; name: string };
-  const user = await getUser(userData.email, env);
+  // Get user by userId instead of email
+  const user = await getUser(session.userId, env);
   if (!user) {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }

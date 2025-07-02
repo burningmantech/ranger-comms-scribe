@@ -9,19 +9,19 @@ import {
 import { $patchStyleText } from '@lexical/selection';
 import { useEffect } from 'react';
 
-export const TEXT_COLOR_COMMAND: LexicalCommand<string> = createCommand('textColor');
+export const FONT_FAMILY_COMMAND: LexicalCommand<string> = createCommand('fontFamily');
 
-const TextColorPlugin = () => {
+const FontFamilyPlugin = () => {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
     return editor.registerCommand(
-      TEXT_COLOR_COMMAND,
-      (color: string) => {
+      FONT_FAMILY_COMMAND,
+      (fontFamily: string) => {
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
           $patchStyleText(selection, {
-            color: color,
+            'font-family': fontFamily,
           });
         }
         return true;
@@ -33,4 +33,4 @@ const TextColorPlugin = () => {
   return null;
 };
 
-export default TextColorPlugin;
+export default FontFamilyPlugin; 

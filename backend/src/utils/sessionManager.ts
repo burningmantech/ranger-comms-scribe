@@ -1,5 +1,6 @@
 // Import the R2Bucket type from Cloudflare Workers types
 import { R2Bucket } from '@cloudflare/workers-types';
+import { KVNamespace } from '@cloudflare/workers-types';
 
 // Define more specific D1 types
 interface D1PreparedStatement {
@@ -28,6 +29,10 @@ export interface Env {
     D1?: D1Database; // Add D1 database property
     DB: D1Database;
     EMAIL: any;
+    SESSIONS: KVNamespace;
+    USERS: KVNamespace;
+    GROUPS: KVNamespace;
+    ROLES: KVNamespace;
 }
 
 export async function CreateSession(

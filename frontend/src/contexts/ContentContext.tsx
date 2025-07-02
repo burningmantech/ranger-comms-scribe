@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { ContentSubmission, User, CouncilManager, SubmissionStatus, Approval } from '../types/content';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { ContentSubmission, User, CouncilManager, SubmissionStatus, Approval, Comment, SuggestedEdit } from '../types/content';
 import { API_URL } from '../config';
 
 interface ContentContextType {
@@ -7,15 +7,19 @@ interface ContentContextType {
   councilManagers: CouncilManager[];
   commsCadreMembers: User[];
   currentUser: User | null;
+  userPermissions: any;
   saveSubmission: (submission: ContentSubmission) => Promise<void>;
   approveSubmission: (submission: ContentSubmission) => Promise<void>;
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
-  addComment: (submission: ContentSubmission, comment: any) => Promise<void>;
+  addComment: (submission: ContentSubmission, comment: Comment) => Promise<void>;
   saveCouncilManagers: (managers: CouncilManager[]) => Promise<void>;
   removeCouncilManager: (managerId: string) => Promise<void>;
-  addCommsCadreMember: (email: string, name: string) => Promise<void>;
-  removeCommsCadreMember: (userId: string) => Promise<void>;
+  addCommsCadreMember: (member: User) => Promise<void>;
+  removeCommsCadreMember: (memberId: string) => Promise<void>;
   sendReminder: (submission: ContentSubmission, manager: CouncilManager) => Promise<void>;
+  createSuggestion: (submission: ContentSubmission, suggestion: SuggestedEdit) => Promise<void>;
+  approveSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
+  rejectSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
 }
 
 const ContentContext = createContext<ContentContextType | null>(null);
@@ -37,6 +41,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
   const [councilManagers, setCouncilManagers] = useState<CouncilManager[]>([]);
   const [commsCadreMembers, setCommsCadreMembers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userPermissions, setUserPermissions] = useState<any>(null);
 
   useEffect(() => {
     const userJson = localStorage.getItem('user');
@@ -53,7 +58,30 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     fetchSubmissions();
     fetchCouncilManagers();
     fetchCommsCadreMembers();
+    fetchUserPermissions();
   }, []);
+
+  const fetchUserPermissions = async () => {
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) return;
+
+      const response = await fetch(`${API_URL}/admin/user-roles`, {
+        headers: {
+          Authorization: `Bearer ${sessionId}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('🔑 User permissions:', data.permissions);
+        setUserPermissions(data.permissions);
+        localStorage.setItem('userPermissions', JSON.stringify(data.permissions));
+      }
+    } catch (err) {
+      console.error('Error fetching user permissions:', err);
+    }
+  };
 
   const fetchSubmissions = async () => {
     try {
@@ -64,7 +92,26 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       });
       if (response.ok) {
         const data = await response.json();
-        setSubmissions(data);
+        // Convert date strings to Date objects
+        const submissionsWithDates = data.map((submission: any) => ({
+          ...submission,
+          submittedAt: new Date(submission.submittedAt),
+          comments: submission.comments.map((comment: any) => ({
+            ...comment,
+            createdAt: new Date(comment.createdAt),
+            updatedAt: new Date(comment.updatedAt)
+          })),
+          approvals: submission.approvals.map((approval: any) => ({
+            ...approval,
+            createdAt: new Date(approval.createdAt),
+            updatedAt: new Date(approval.updatedAt)
+          })),
+          changes: submission.changes.map((change: any) => ({
+            ...change,
+            changedAt: new Date(change.changedAt)
+          }))
+        }));
+        setSubmissions(submissionsWithDates);
       }
     } catch (err) {
       console.error('Error fetching submissions:', err);
@@ -105,19 +152,49 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const saveSubmission = async (submission: ContentSubmission) => {
     try {
-      const response = await fetch(`${API_URL}/content/submissions/${submission.id}`, {
-        method: 'PUT',
+      const isNewSubmission = !submissions.some(s => s.id === submission.id);
+      const url = isNewSubmission 
+        ? `${API_URL}/content/submissions`
+        : `${API_URL}/content/submissions/${submission.id}`;
+      
+      const response = await fetch(url, {
+        method: isNewSubmission ? 'POST' : 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
         body: JSON.stringify(submission),
       });
+      
       if (response.ok) {
-        const updatedSubmission = await response.json();
-        setSubmissions(prev => 
-          prev.map(s => s.id === submission.id ? updatedSubmission : s)
-        );
+        const data = await response.json();
+        // Convert date strings to Date objects
+        const updatedSubmission = {
+          ...data,
+          submittedAt: new Date(data.submittedAt),
+          comments: data.comments.map((comment: any) => ({
+            ...comment,
+            createdAt: new Date(comment.createdAt),
+            updatedAt: new Date(comment.updatedAt)
+          })),
+          approvals: data.approvals.map((approval: any) => ({
+            ...approval,
+            createdAt: new Date(approval.createdAt),
+            updatedAt: new Date(approval.updatedAt)
+          })),
+          changes: data.changes.map((change: any) => ({
+            ...change,
+            changedAt: new Date(change.changedAt)
+          }))
+        };
+
+        if (isNewSubmission) {
+          setSubmissions(prev => [...prev, updatedSubmission]);
+        } else {
+          setSubmissions(prev => 
+            prev.map(s => s.id === submission.id ? updatedSubmission : s)
+          );
+        }
       }
     } catch (err) {
       console.error('Error saving submission:', err);
@@ -133,6 +210,9 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
+        body: JSON.stringify({
+          status: 'approved'
+        })
       });
       if (response.ok) {
         const updatedSubmission = await response.json();
@@ -148,12 +228,15 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const rejectSubmission = async (submission: ContentSubmission) => {
     try {
-      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/reject`, {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
+        body: JSON.stringify({
+          status: 'rejected'
+        })
       });
       if (response.ok) {
         const updatedSubmission = await response.json();
@@ -167,22 +250,26 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const addComment = async (submission: ContentSubmission, comment: any) => {
+  const addComment = async (submission: ContentSubmission, comment: Comment) => {
     try {
-      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/comments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
-        body: JSON.stringify(comment),
+      console.log('Adding comment to submission in memory:', submission.id, comment);
+      
+      // Update the submission in memory
+      setSubmissions(prev => {
+        const updatedSubmissions = prev.map(s => {
+          if (s.id === submission.id) {
+            const updatedSubmission = {
+              ...s,
+              comments: [...(s.comments || []), comment]
+            };
+            console.log('Updated submission with new comment:', updatedSubmission);
+            return updatedSubmission;
+          }
+          return s;
+        });
+        console.log('Updated submissions array:', updatedSubmissions);
+        return updatedSubmissions;
       });
-      if (response.ok) {
-        const updatedSubmission = await response.json();
-        setSubmissions(prev => 
-          prev.map(s => s.id === submission.id ? updatedSubmission : s)
-        );
-      }
     } catch (err) {
       console.error('Error adding comment:', err);
       throw err;
@@ -197,6 +284,49 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         const method = isNew ? 'POST' : 'PUT';
         const url = isNew ? `${API_URL}/council/members` : `${API_URL}/council/members/${manager.id}`;
 
+        // For new managers, we need to create the user first
+        if (isNew) {
+          // Create the user
+          const createUserResponse = await fetch(`${API_URL}/admin/bulk-create-users`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+            },
+            body: JSON.stringify({
+              users: [{
+                name: manager.name,
+                email: manager.email,
+                approved: true
+              }]
+            }),
+          });
+
+          if (!createUserResponse.ok) {
+            const errorData = await createUserResponse.json();
+            throw new Error(`Failed to create user: ${JSON.stringify(errorData)}`);
+          }
+
+          // Change user type to CouncilManager which will add them to the group
+          const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+            },
+            body: JSON.stringify({
+              userId: manager.email,
+              userType: 'CouncilManager'
+            }),
+          });
+
+          if (!changeTypeResponse.ok) {
+            const errorData = await changeTypeResponse.json();
+            throw new Error(`Failed to set user type to CouncilManager: ${JSON.stringify(errorData)}`);
+          }
+        }
+
+        // Add/update the council member
         const response = await fetch(url, {
           method,
           headers: {
@@ -207,10 +337,12 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to ${isNew ? 'create' : 'update'} council manager`);
+          const errorData = await response.json();
+          throw new Error(`Failed to ${isNew ? 'create' : 'update'} council manager: ${JSON.stringify(errorData)}`);
         }
 
-        return response.json();
+        const result = await response.json();
+        return result;
       }));
 
       setCouncilManagers(results);
@@ -222,14 +354,66 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const removeCouncilManager = async (managerId: string) => {
     try {
+      // Get the manager's email before removing them
+      const manager = councilManagers.find(m => m.id === managerId);
+      if (!manager) {
+        throw new Error('Council manager not found');
+      }
+
+      // First remove from the CouncilManager group
+      const groupsResponse = await fetch(`${API_URL}/admin/groups`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+
+      if (!groupsResponse.ok) {
+        throw new Error('Failed to fetch groups');
+      }
+
+      const { groups } = await groupsResponse.json();
+      const councilManagerGroup = groups.find((g: any) => g.name === 'CouncilManager');
+      
+      if (councilManagerGroup) {
+        const removeFromGroupResponse = await fetch(`${API_URL}/admin/groups/${councilManagerGroup.id}/members/${manager.email}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+        });
+
+        if (!removeFromGroupResponse.ok) {
+          throw new Error('Failed to remove from CouncilManager group');
+        }
+      }
+
+      // Then remove from council members
       const response = await fetch(`${API_URL}/council/members/${managerId}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
       });
+
       if (response.ok) {
-        setCouncilManagers(prev => prev.filter(manager => manager.id !== managerId));
+        // Finally change user type to Public
+        const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+          body: JSON.stringify({
+            userId: manager.email,
+            userType: 'Public'
+          }),
+        });
+
+        if (!changeTypeResponse.ok) {
+          throw new Error('Failed to update user type');
+        }
+
+        setCouncilManagers(prev => prev.filter(m => m.id !== managerId));
       } else {
         throw new Error('Failed to remove council manager');
       }
@@ -239,19 +423,60 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const addCommsCadreMember = async (email: string, name: string) => {
+  const addCommsCadreMember = async (member: User) => {
     try {
+      // First create the user
+      const createUserResponse = await fetch(`${API_URL}/admin/bulk-create-users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({
+          users: [{
+            name: member.name,
+            email: member.email,
+            approved: true
+          }]
+        }),
+      });
+
+      if (!createUserResponse.ok) {
+        throw new Error('Failed to create user');
+      }
+
+      // Change user type to CommsCadre which will add them to the group
+      const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({
+          userId: member.email,
+          userType: 'CommsCadre'
+        }),
+      });
+
+      if (!changeTypeResponse.ok) {
+        throw new Error('Failed to set user type to CommsCadre');
+      }
+
+      // Then add them to the comms cadre
       const response = await fetch(`${API_URL}/comms-cadre`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
-        body: JSON.stringify({ email, name }),
+        body: JSON.stringify({ email: member.email, name: member.name }),
       });
+
       if (response.ok) {
         const newMember = await response.json();
         setCommsCadreMembers(prev => [...prev, newMember]);
+      } else {
+        throw new Error('Failed to add comms cadre member');
       }
     } catch (err) {
       console.error('Error adding comms cadre member:', err);
@@ -259,16 +484,70 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const removeCommsCadreMember = async (userId: string) => {
+  const removeCommsCadreMember = async (memberId: string) => {
     try {
-      const response = await fetch(`${API_URL}/comms-cadre/${userId}`, {
+      // Get the member's email before removing them
+      const member = commsCadreMembers.find(m => m.id === memberId);
+      if (!member) {
+        throw new Error('Comms cadre member not found');
+      }
+
+      // First remove from the CommsCadre group
+      const groupsResponse = await fetch(`${API_URL}/admin/groups`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+
+      if (!groupsResponse.ok) {
+        throw new Error('Failed to fetch groups');
+      }
+
+      const groups = await groupsResponse.json();
+      const commsCadreGroup = groups.find((g: any) => g.name === 'CommsCadre');
+      
+      if (commsCadreGroup) {
+        const removeFromGroupResponse = await fetch(`${API_URL}/admin/groups/${commsCadreGroup.id}/members/${member.email}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+        });
+
+        if (!removeFromGroupResponse.ok) {
+          throw new Error('Failed to remove from CommsCadre group');
+        }
+      }
+
+      // Then remove from comms cadre
+      const response = await fetch(`${API_URL}/comms-cadre/${memberId}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
         },
       });
+
       if (response.ok) {
-        setCommsCadreMembers(prev => prev.filter(member => member.id !== userId));
+        // Finally change user type to Public
+        const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+          },
+          body: JSON.stringify({
+            userId: member.email,
+            userType: 'Public'
+          }),
+        });
+
+        if (!changeTypeResponse.ok) {
+          throw new Error('Failed to update user type');
+        }
+
+        setCommsCadreMembers(prev => prev.filter(m => m.id !== memberId));
+      } else {
+        throw new Error('Failed to remove comms cadre member');
       }
     } catch (err) {
       console.error('Error removing comms cadre member:', err);
@@ -295,11 +574,143 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
+  const createSuggestion = async (submission: ContentSubmission, suggestion: SuggestedEdit) => {
+    try {
+      console.log('Creating suggestion:', suggestion);
+      
+      // For now, update local state since backend might not have suggestion endpoints yet
+      // TODO: Add backend API call when endpoints are available
+      /*
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify(suggestion),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to create suggestion');
+      }
+      */
+      
+      // Update local state
+      setSubmissions(prev => 
+        prev.map(s => 
+          s.id === submission.id 
+            ? { ...s, suggestedEdits: [...(s.suggestedEdits || []), suggestion] }
+            : s
+        )
+      );
+    } catch (err) {
+      console.error('Error creating suggestion:', err);
+      throw err;
+    }
+  };
+
+  const approveSuggestion = async (submission: ContentSubmission, suggestionId: string, reason?: string) => {
+    try {
+      console.log('Approving suggestion:', suggestionId, reason);
+      
+      // For now, update local state since backend might not have suggestion endpoints yet
+      // TODO: Add backend API call when endpoints are available
+      /*
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions/${suggestionId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to approve suggestion');
+      }
+      */
+      
+      // Update local state
+      setSubmissions(prev => 
+        prev.map(s => 
+          s.id === submission.id 
+            ? {
+                ...s, 
+                suggestedEdits: (s.suggestedEdits || []).map(suggestion =>
+                  suggestion.id === suggestionId
+                    ? { 
+                        ...suggestion, 
+                        status: 'APPROVED' as const,
+                        reviewerId: currentUser?.id || currentUser?.email,
+                        reviewedAt: new Date(),
+                        reason 
+                      }
+                    : suggestion
+                )
+              }
+            : s
+        )
+      );
+    } catch (err) {
+      console.error('Error approving suggestion:', err);
+      throw err;
+    }
+  };
+
+  const rejectSuggestion = async (submission: ContentSubmission, suggestionId: string, reason?: string) => {
+    try {
+      console.log('Rejecting suggestion:', suggestionId, reason);
+      
+      // For now, update local state since backend might not have suggestion endpoints yet
+      // TODO: Add backend API call when endpoints are available
+      /*
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions/${suggestionId}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({ reason }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to reject suggestion');
+      }
+      */
+      
+      // Update local state
+      setSubmissions(prev => 
+        prev.map(s => 
+          s.id === submission.id 
+            ? {
+                ...s, 
+                suggestedEdits: (s.suggestedEdits || []).map(suggestion =>
+                  suggestion.id === suggestionId
+                    ? { 
+                        ...suggestion, 
+                        status: 'REJECTED' as const,
+                        reviewerId: currentUser?.id || currentUser?.email,
+                        reviewedAt: new Date(),
+                        reason 
+                      }
+                    : suggestion
+                )
+              }
+            : s
+        )
+      );
+    } catch (err) {
+      console.error('Error rejecting suggestion:', err);
+      throw err;
+    }
+  };
+
   const value = {
     submissions,
     councilManagers,
     commsCadreMembers,
     currentUser,
+    userPermissions,
     saveSubmission,
     approveSubmission,
     rejectSubmission,
@@ -308,7 +719,10 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     removeCouncilManager,
     addCommsCadreMember,
     removeCommsCadreMember,
-    sendReminder
+    sendReminder,
+    createSuggestion,
+    approveSuggestion,
+    rejectSuggestion
   };
 
   return (

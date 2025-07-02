@@ -3,8 +3,8 @@ import { User } from '../types/content';
 
 interface CommsCadreManagementProps {
   members: User[];
-  onAddMember: (email: string, name: string) => void;
-  onRemoveMember: (userId: string) => void;
+  onAddMember: (member: User) => void;
+  onRemoveMember: (memberId: string) => void;
 }
 
 export const CommsCadreManagement: React.FC<CommsCadreManagementProps> = ({
@@ -19,7 +19,13 @@ export const CommsCadreManagement: React.FC<CommsCadreManagementProps> = ({
 
   const handleAddMember = () => {
     if (newMember.email.trim() && newMember.name.trim()) {
-      onAddMember(newMember.email.trim(), newMember.name.trim());
+      const member: User = {
+        id: newMember.email, // Using email as ID since that's what we use in the backend
+        email: newMember.email.trim(),
+        name: newMember.name.trim(),
+        roles: ['CommsCadre']
+      };
+      onAddMember(member);
       setNewMember({ email: '', name: '' });
     }
   };

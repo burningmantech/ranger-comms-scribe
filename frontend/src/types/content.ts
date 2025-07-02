@@ -6,8 +6,12 @@ export interface User {
 }
 
 export type UserRole = 
-  | 'COMMS_CADRE'
-  | 'COUNCIL_MANAGER'
+  | 'Public'
+  | 'Member'
+  | 'Lead'
+  | 'Admin'
+  | 'CommsCadre'
+  | 'CouncilManager'
   | 'REVIEWER'
   | 'SUBMITTER';
 
@@ -31,6 +35,7 @@ export interface ContentSubmission {
   id: string;
   title: string;
   content: string;
+  richTextContent?: string;
   status: SubmissionStatus;
   submittedBy: string;
   submittedAt: Date;
@@ -40,15 +45,21 @@ export interface ContentSubmission {
   changes: Change[];
   assignedReviewers: string[];
   assignedCouncilManagers: string[];
+  suggestedEdits: SuggestedEdit[];
+  requiredApprovers: string[];
+  commsApprovedBy?: string;
+  sentBy?: string;
+  sentAt?: Date;
 }
 
 export type SubmissionStatus =
-  | 'DRAFT'
-  | 'SUBMITTED'
-  | 'UNDER_REVIEW'
-  | 'APPROVED'
-  | 'REJECTED'
-  | 'PUBLISHED';
+  | 'draft'
+  | 'submitted'
+  | 'in_review'
+  | 'approved'
+  | 'comms_approved'
+  | 'sent'
+  | 'rejected';
 
 export interface FormField {
   id: string;
@@ -59,6 +70,26 @@ export interface FormField {
   options?: string[];
 }
 
+export interface SuggestedEdit {
+  id: string;
+  originalText: string;
+  suggestedText: string;
+  range: {
+    startOffset: number;
+    endOffset: number;
+    startKey: string;
+    endKey: string;
+  };
+  authorId: string;
+  createdAt: Date;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reviewerId?: string;
+  reviewedAt?: Date;
+  reason?: string;
+  contextBefore?: string;
+  contextAfter?: string;
+}
+
 export interface Comment {
   id: string;
   content: string;
@@ -66,6 +97,7 @@ export interface Comment {
   createdAt: Date;
   type: 'COMMENT' | 'SUGGESTION';
   resolved: boolean;
+  suggestedEdit?: SuggestedEdit;
 }
 
 export interface Approval {
@@ -83,4 +115,13 @@ export interface Change {
   newValue: string;
   changedBy: string;
   timestamp: Date;
+}
+
+interface RolePermissions {
+  canEdit: boolean;
+  canApprove: boolean;
+  canCreateSuggestions: boolean;
+  canApproveSuggestions: boolean;
+  canReviewSuggestions: boolean;
+  canViewFilteredSubmissions: boolean;
 } 

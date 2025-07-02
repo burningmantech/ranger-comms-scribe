@@ -5,7 +5,7 @@ import { handleGoogleCredentialResponse } from '../utils/googleAuth';
 import { LogoutUserReact, handleUserLogin } from '../utils/userActions';
 import LoggedOutView from './LoggedOutView';
 import Home from './Home';
-import { User } from '../types';
+import { User, UserType } from '../types';
 
 declare global {
     interface Window {
@@ -248,126 +248,63 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true);
         setError(null);
-        setMessage(null);
-        
+        setLoading(true);
+
         try {
-            if (authMode === 'register') {
-                if (!formData.name) {
-                    throw new Error('Name is required');
-                }
-                if (formData.password !== formData.confirmPassword) {
-                    throw new Error('Passwords do not match');
-                }
-                if (!passwordRequirements.every(r => r.met)) {
-                    throw new Error('Password does not meet all requirements');
-                }
-                
-                const response = await fetch(`${API_URL}/auth/register`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        name: formData.name,
-                        email: formData.email,
-                        password: formData.password,
-                        turnstileToken,
-                    }),
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.error || 'Registration failed');
-                }
-                
-                const userData = {
-                    id: data.id,
-                    email: data.email,
-                    name: data.name,
-                    isAdmin: data.isAdmin || false,
-                    approved: data.approved || false,
-                    roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || [])
-                };
-                
-                handleUserLogin(userData, data.sessionId);
-                setUser(userData);
-                setParentUser(userData);
-                
-                if (data.isAdmin) {
-                    navigate('/admin');
-                }
-            } else if (authMode === 'forgotPassword') {
-                if (!formData.email) {
-                    throw new Error('Email address is required');
-                }
+            const response = await fetch(`${API_URL}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    email: formData.email,
+                    password: formData.password,
+                    turnstileToken,
+                }),
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Login failed');
+            }
 
-                if (!turnstileToken) {
-                    throw new Error('Please complete the security check');
-                }
+            // First, fetch the user roles
+            const rolesResponse = await fetch(`${API_URL}/admin/user-roles`, {
+                headers: {
+                    'Authorization': `Bearer ${data.sessionId}`,
+                },
+            });
 
-                const response = await fetch(`${API_URL}/auth/forgot-password`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email: formData.email,
-                        turnstileToken,
-                    }),
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.error || 'Failed to process request');
-                }
-                
-                setMessage(data.message || 'Password reset link has been sent to your email');
-                
-                setFormData({...formData, email: ''});
-                // Reset turnstile after successful password reset request
-                if (turnstileWidgetId.current && window.turnstile) {
-                    window.turnstile.reset(turnstileWidgetId.current);
-                    setTurnstileToken(null);
-                }
-            } else {
-                const response = await fetch(`${API_URL}/auth/login`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email: formData.email,
-                        password: formData.password,
-                        turnstileToken,
-                    }),
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.error || 'Login failed');
-                }
-                
-                const userData = {
-                    id: data.id,
-                    email: data.email,
-                    name: data.name,
-                    isAdmin: data.isAdmin || false,
-                    approved: data.approved || false,
-                    roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || [])
-                };
-                
-                handleUserLogin(userData, data.sessionId);
-                setUser(userData);
-                setParentUser(userData);
-                
-                if (data.isAdmin) {
-                    navigate('/admin');
-                }
+            if (!rolesResponse.ok) {
+                throw new Error('Failed to fetch user roles');
+            }
+
+            const rolesData = await rolesResponse.json();
+            
+            // Construct user data with roles from the roles endpoint
+            const userData = {
+                id: data.id,
+                email: data.email,
+                name: data.name,
+                isAdmin: data.isAdmin || false,
+                approved: data.approved || false,
+                roles: rolesData.roles || [],
+                userType: data.isAdmin ? UserType.Admin : 
+                         rolesData.roles.includes('CouncilManager') ? UserType.CouncilManager :
+                         rolesData.roles.includes('CommsCadre') ? UserType.CommsCadre :
+                         rolesData.roles.includes('Lead') ? UserType.Lead :
+                         rolesData.roles.includes('Member') ? UserType.Member :
+                         UserType.Public
+            };
+            
+            await handleUserLogin(userData, data.sessionId);
+            setUser(userData);
+            setParentUser(userData);
+            
+            if (data.isAdmin) {
+                navigate('/admin');
             }
         } catch (err) {
             setError((err as Error).message);

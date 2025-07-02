@@ -23,18 +23,20 @@ import {
 } from 'lexical';
 import {
   $setBlocksType,
+  $patchStyleText,
 } from '@lexical/selection';
 import {
-  $createHeadingNode,
-  $isHeadingNode,
-  HeadingTagType,
+  HeadingNode,
+  QuoteNode,
 } from '@lexical/rich-text';
 import {
   INSERT_ORDERED_LIST_COMMAND,
   INSERT_UNORDERED_LIST_COMMAND,
   REMOVE_LIST_COMMAND,
-  $isListNode,
   $isListItemNode,
+  $createListNode,
+  $createListItemNode,
+  $isListNode,
   ListNode,
 } from '@lexical/list';
 import {
@@ -49,6 +51,29 @@ import { CheckboxNode, $createCheckboxNode, $isCheckboxNode } from '../nodes/Che
 import { createPortal } from 'react-dom';
 import { INSERT_IMAGE_COMMAND } from './ImagePlugin';
 import { INDENT_COMMAND, OUTDENT_COMMAND } from './IndentationPlugin';
+import { TEXT_COLOR_COMMAND } from './TextColorPlugin';
+import { FONT_SIZE_COMMAND } from './FontSizePlugin';
+import { FONT_FAMILY_COMMAND } from './FontFamilyPlugin';
+import { ALIGNMENT_FORMAT } from './AlignmentPlugin';
+import { QUOTE_COMMAND } from './QuotePlugin';
+import {
+  BoldIcon,
+  ItalicIcon,
+  UnderlineIcon,
+  StrikethroughIcon,
+  ListBulletIcon,
+  ArrowPathIcon,
+  ArrowUturnLeftIcon,
+  ChatBubbleLeftIcon,
+  ChevronDownIcon,
+  DocumentTextIcon,
+  DocumentDuplicateIcon,
+  DocumentIcon,
+} from '@heroicons/react/24/outline';
+import './ToolbarPlugin.css';
+
+// Define the heading tag type
+type HeadingTagType = 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
 
 // Helper function to replace $findMatchingParent
 function $findMatchingParent(node: any, predicate: (node: any) => boolean): any {
@@ -67,6 +92,27 @@ interface ExtendedCheckboxNode extends CheckboxNode {
   __cachedText?: string;
 }
 
+// Helper function to parse CSS style string
+const parseStyleString = (styleString: string): Record<string, string> => {
+  const styles: Record<string, string> = {};
+  if (!styleString) return styles;
+  
+  styleString.split(';').forEach(style => {
+    const [property, value] = style.split(':').map(s => s.trim());
+    if (property && value) {
+      styles[property] = value;
+    }
+  });
+  
+  return styles;
+};
+
+// Helper function to get style value from style string
+const getStyleValue = (styleString: string, property: string, defaultValue: string): string => {
+  const styles = parseStyleString(styleString);
+  return styles[property] || defaultValue;
+};
+
 export const ToolbarPlugin: React.FC = () => {
   const [editor] = useLexicalComposerContext();
   const [showTableModal, setShowTableModal] = useState(false);
@@ -74,6 +120,22 @@ export const ToolbarPlugin: React.FC = () => {
   const [tableColumns, setTableColumns] = useState(3);
   const [isUnorderedList, setIsUnorderedList] = useState(false);
   const [isOrderedList, setIsOrderedList] = useState(false);
+  const [isLink, setIsLink] = useState(false);
+  const [isTable, setIsTable] = useState(false);
+  const [isImage, setIsImage] = useState(false);
+  const [isColorPicker, setIsColorPicker] = useState(false);
+  const [isFontSize, setIsFontSize] = useState(false);
+  const [isFontFamily, setIsFontFamily] = useState(false);
+  const [isBold, setIsBold] = useState(false);
+  const [isItalic, setIsItalic] = useState(false);
+  const [isUnderline, setIsUnderline] = useState(false);
+  const [isStrikethrough, setIsStrikethrough] = useState(false);
+  const [isList, setIsList] = useState(false);
+  const [isQuote, setIsQuote] = useState(false);
+  const [currentColor, setCurrentColor] = useState('#000000');
+  const [currentFontSize, setCurrentFontSize] = useState('16px');
+  const [currentFontFamily, setCurrentFontFamily] = useState('Arial');
+  const [currentAlignment, setCurrentAlignment] = useState('left');
   
   // Track current selection state for proper toggling
   useEffect(() => {
@@ -219,8 +281,12 @@ export const ToolbarPlugin: React.FC = () => {
             if ($isTableRowNode(row)) {
               const cells = row.getChildren();
               cells.forEach(cell => {
-                if ($isTableCellNode(cell) && cell.getChildrenSize() === 0) {
-                  cell.append($createParagraphNode());
+                if ($isTableCellNode(cell)) {
+                  const children = cell.getChildren();
+                  if (children.length === 0) {
+                    const paragraphNode = $createParagraphNode();
+                    cell.append(paragraphNode);
+                  }
                 }
               });
             }
@@ -246,7 +312,7 @@ export const ToolbarPlugin: React.FC = () => {
       editor.update(() => {
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
-          $setBlocksType(selection, () => $createHeadingNode(headingTag));
+          $setBlocksType(selection, () => new HeadingNode(headingTag));
         }
       });
     },
@@ -288,140 +354,445 @@ export const ToolbarPlugin: React.FC = () => {
     editor.dispatchCommand(FORMAT_TEXT_COMMAND, format);
   };
 
+  const formatParagraph = () => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        $setBlocksType(selection, () => $createParagraphNode());
+      }
+    });
+  };
+
+  const formatQuote = () => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        $setBlocksType(selection, () => new QuoteNode());
+      }
+    });
+  };
+
+  const formatList = (listType: 'number' | 'bullet') => {
+    if (listType === 'number') {
+      editor.dispatchCommand(INSERT_ORDERED_LIST_COMMAND, undefined);
+    } else {
+      editor.dispatchCommand(INSERT_UNORDERED_LIST_COMMAND, undefined);
+    }
+  };
+
+  const formatElement = (format: ElementFormatType) => {
+    editor.dispatchCommand(FORMAT_ELEMENT_COMMAND, format);
+  };
+
+  const insertImage = () => {
+    editor.dispatchCommand(INSERT_IMAGE_COMMAND, {
+      altText: 'Image',
+      src: 'https://via.placeholder.com/150',
+    });
+  };
+
+  const setTextColor = (color: string) => {
+    editor.dispatchCommand(TEXT_COLOR_COMMAND, color);
+  };
+
+  const setFontSize = (size: string) => {
+    editor.dispatchCommand(FONT_SIZE_COMMAND, size);
+  };
+
+  const setFontFamily = (font: string) => {
+    editor.dispatchCommand(FONT_FAMILY_COMMAND, font);
+  };
+
+  const updateToolbar = useCallback(() => {
+    const selection = $getSelection();
+    if ($isRangeSelection(selection)) {
+      setIsBold(selection.hasFormat('bold'));
+      setIsItalic(selection.hasFormat('italic'));
+      setIsUnderline(selection.hasFormat('underline'));
+      setIsStrikethrough(selection.hasFormat('strikethrough'));
+      setIsList($isListNode(selection.anchor.getNode().getParent()));
+      setIsQuote(selection.anchor.getNode().getParent()?.getType() === 'quote');
+      
+      // Get style values from the selection
+      const node = selection.anchor.getNode();
+      const styleString = node.getStyle() || '';
+      const color = getStyleValue(styleString, 'color', '#000000');
+      const fontSize = getStyleValue(styleString, 'font-size', '16px');
+      const fontFamily = getStyleValue(styleString, 'font-family', 'Arial');
+      const alignment = getStyleValue(styleString, 'text-align', 'left');
+      
+      setCurrentColor(color);
+      setCurrentFontSize(fontSize);
+      setCurrentFontFamily(fontFamily);
+      setCurrentAlignment(alignment);
+    }
+  }, []);
+
+  const formatColor = (color: string) => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        $patchStyleText(selection, {
+          'color': color
+        });
+      }
+    });
+  };
+
+  const formatFontSize = (size: string) => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        $patchStyleText(selection, {
+          'font-size': size
+        });
+      }
+    });
+  };
+
+  const formatFontFamily = (family: string) => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        $patchStyleText(selection, {
+          'font-family': family
+        });
+      }
+    });
+  };
+
+  const formatAlignment = (alignment: string) => {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        $patchStyleText(selection, {
+          'text-align': alignment
+        });
+      }
+    });
+  };
+
+  const colors = [
+    '#000000', '#4A5568', '#718096', '#A0AEC0', '#E2E8F0',
+    '#E53E3E', '#F56565', '#FC8181', '#FED7D7',
+    '#DD6B20', '#ED8936', '#F6AD55', '#FEEBC8',
+    '#D69E2E', '#ECC94B', '#F6E05E', '#FEFCBF',
+    '#38A169', '#48BB78', '#68D391', '#C6F6D5',
+    '#319795', '#4FD1C5', '#9AE6B4', '#B2F5EA',
+    '#3182CE', '#4299E1', '#63B3ED', '#BEE3F8',
+    '#5A67D8', '#667EEA', '#7F9CF5', '#C3DAFE',
+    '#805AD5', '#9F7AEA', '#B794F4', '#E9D8FD',
+  ];
+
+  const fontSizes = [
+    '12px', '14px', '16px', '18px', '20px', '24px', '28px', '32px', '36px', '48px'
+  ];
+
+  const fontFamilies = [
+    'Arial', 'Times New Roman', 'Courier New', 'Georgia', 'Verdana',
+    'Helvetica', 'Tahoma', 'Trebuchet MS', 'Impact', 'Comic Sans MS'
+  ];
+
   return (
     <>
       <div className="lexical-editor-toolbar" aria-label="Formatting options">
-        {/* Text formatting */}
-        <button
-          onClick={() => formatText('bold')}
-          className="lexical-toolbar-button"
-          aria-label="Format text as bold"
-          title="Bold"
-        >
-          B
-        </button>
-        <button
-          onClick={() => formatText('italic')}
-          className="lexical-toolbar-button"
-          aria-label="Format text as italics"
-          title="Italic"
-        >
-          I
-        </button>
-        <button
-          onClick={() => formatText('underline')}
-          className="lexical-toolbar-button"
-          aria-label="Format text as underlined"
-          title="Underline"
-        >
-          U
-        </button>
+        <div className="toolbar-group">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatParagraph();
+            }}
+            className="toolbar-item"
+            title="Paragraph"
+          >
+            <span className="text-sm">P</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatHeading('h1');
+            }}
+            className="toolbar-item"
+            title="Heading 1"
+          >
+            <span className="text-sm font-bold">H1</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatHeading('h2');
+            }}
+            className="toolbar-item"
+            title="Heading 2"
+          >
+            <span className="text-sm font-bold">H2</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatHeading('h3');
+            }}
+            className="toolbar-item"
+            title="Heading 3"
+          >
+            <span className="text-sm font-bold">H3</span>
+          </button>
+        </div>
 
-        {/* Headings */}
-        <button
-          onClick={() => formatHeading('h1')}
-          className="lexical-toolbar-button"
-          aria-label="Format as heading 1"
-          title="Heading 1"
-        >
-          H1
-        </button>
-        <button
-          onClick={() => formatHeading('h2')}
-          className="lexical-toolbar-button"
-          aria-label="Format as heading 2"
-          title="Heading 2"
-        >
-          H2
-        </button>
-        <button
-          onClick={() => formatHeading('h3')}
-          className="lexical-toolbar-button"
-          aria-label="Format as heading 3"
-          title="Heading 3"
-        >
-          H3
-        </button>
+        <div className="toolbar-group">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('bold');
+            }}
+            className={`toolbar-item ${isBold ? 'active' : ''}`}
+            title="Bold"
+          >
+            <BoldIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('italic');
+            }}
+            className={`toolbar-item ${isItalic ? 'active' : ''}`}
+            title="Italic"
+          >
+            <ItalicIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('underline');
+            }}
+            className={`toolbar-item ${isUnderline ? 'active' : ''}`}
+            title="Underline"
+          >
+            <UnderlineIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatText('strikethrough');
+            }}
+            className={`toolbar-item ${isStrikethrough ? 'active' : ''}`}
+            title="Strikethrough"
+          >
+            <StrikethroughIcon className="w-5 h-5" />
+          </button>
+        </div>
 
-        {/* Lists with toggle behavior */}
-        <button
-          onClick={toggleUnorderedList}
-          className={`lexical-toolbar-button ${isUnorderedList ? 'active' : ''}`}
-          aria-label="Toggle unordered list"
-          title="Bullet List"
-        >
-          • List
-        </button>
-        <button
-          onClick={toggleOrderedList}
-          className={`lexical-toolbar-button ${isOrderedList ? 'active' : ''}`}
-          aria-label="Toggle ordered list"
-          title="Numbered List"
-        >
-          1. List
-        </button>
+        <div className="toolbar-group">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatList('bullet');
+            }}
+            className={`toolbar-item ${isList ? 'active' : ''}`}
+            title="Bullet List"
+          >
+            <ListBulletIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatList('number');
+            }}
+            className={`toolbar-item ${isOrderedList ? 'active' : ''}`}
+            title="Numbered List"
+          >
+            <DocumentDuplicateIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatQuote();
+            }}
+            className={`toolbar-item ${isQuote ? 'active' : ''}`}
+            title="Quote"
+          >
+            <ChatBubbleLeftIcon className="w-5 h-5" />
+          </button>
+        </div>
 
-        {/* Indent/Outdent controls */}
-        <button
-          onClick={indent}
-          className="lexical-toolbar-button"
-          aria-label="Indent"
-          title="Indent"
-        >
-          →
-        </button>
-        <button
-          onClick={outdent}
-          className="lexical-toolbar-button"
-          aria-label="Outdent" 
-          title="Outdent"
-        >
-          ←
-        </button>
+        <div className="toolbar-group">
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsColorPicker(!isColorPicker);
+              }}
+              className="toolbar-item"
+              title="Text Color"
+            >
+              <div className="w-5 h-5 rounded-full border" style={{ backgroundColor: currentColor }} />
+              <ChevronDownIcon className="w-4 h-4 ml-1" />
+            </button>
+            {isColorPicker && (
+              <div className="color-picker-dropdown">
+                {colors.map((color) => (
+                  <button
+                    key={color}
+                    className="color-option"
+                    style={{ backgroundColor: color }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      formatColor(color);
+                      setIsColorPicker(false);
+                    }}
+                    title={color}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
-        {/* Custom elements */}
-        <button
-          onClick={insertCheckbox}
-          className="lexical-toolbar-button"
-          aria-label="Insert checkbox"
-          title="Checkbox"
-        >
-          ☑ Checkbox
-        </button>
-        <button
-          onClick={insertTable}
-          className="lexical-toolbar-button"
-          aria-label="Insert table"
-          title="Insert Table"
-        >
-          Table
-        </button>
-        <button
-          onClick={insertLink}
-          className="lexical-toolbar-button"
-          aria-label="Insert link"
-          title="Link"
-        >
-          Link
-        </button>
+        <div className="toolbar-group">
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsFontSize(!isFontSize);
+              }}
+              className="toolbar-item"
+              title="Font Size"
+            >
+              <span className="text-sm">{currentFontSize}</span>
+              <ChevronDownIcon className="w-4 h-4 ml-1" />
+            </button>
+            {isFontSize && (
+              <div className="font-size-dropdown">
+                {fontSizes.map((size) => (
+                  <button
+                    key={size}
+                    className="font-size-option"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      formatFontSize(size);
+                      setIsFontSize(false);
+                    }}
+                    style={{ fontSize: size }}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
-        {/* History */}
-        <button
-          onClick={() => editor.dispatchCommand(UNDO_COMMAND, undefined)}
-          className="lexical-toolbar-button"
-          aria-label="Undo"
-          title="Undo"
-        >
-          Undo
-        </button>
-        <button
-          onClick={() => editor.dispatchCommand(REDO_COMMAND, undefined)}
-          className="lexical-toolbar-button"
-          aria-label="Redo"
-          title="Redo"
-        >
-          Redo
-        </button>
+        <div className="toolbar-group">
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsFontFamily(!isFontFamily);
+              }}
+              className="toolbar-item"
+              title="Font Family"
+            >
+              <span className="text-sm">{currentFontFamily}</span>
+              <ChevronDownIcon className="w-4 h-4 ml-1" />
+            </button>
+            {isFontFamily && (
+              <div className="font-family-dropdown">
+                {fontFamilies.map((family) => (
+                  <button
+                    key={family}
+                    className="font-family-option"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      formatFontFamily(family);
+                      setIsFontFamily(false);
+                    }}
+                    style={{ fontFamily: family }}
+                  >
+                    {family}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="toolbar-group">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatElement('left');
+            }}
+            className={`toolbar-item ${currentAlignment === 'left' ? 'active' : ''}`}
+            title="Align Left"
+          >
+            <DocumentTextIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatElement('center');
+            }}
+            className={`toolbar-item ${currentAlignment === 'center' ? 'active' : ''}`}
+            title="Align Center"
+          >
+            <DocumentIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              formatElement('right');
+            }}
+            className={`toolbar-item ${currentAlignment === 'right' ? 'active' : ''}`}
+            title="Align Right"
+          >
+            <DocumentTextIcon className="w-5 h-5 transform rotate-180" />
+          </button>
+        </div>
+
+        <div className="toolbar-group">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              editor.dispatchCommand(UNDO_COMMAND, undefined);
+            }}
+            className="toolbar-item"
+            title="Undo"
+          >
+            <ArrowUturnLeftIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              editor.dispatchCommand(REDO_COMMAND, undefined);
+            }}
+            className="toolbar-item"
+            title="Redo"
+          >
+            <ArrowPathIcon className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Table Modal */}

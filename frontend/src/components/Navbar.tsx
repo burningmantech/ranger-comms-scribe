@@ -102,7 +102,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     const currentPageSlug = location.pathname.split('/')[1] || '';
 
     const canAccessContent = userRoles.some(role => 
-        ['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER'].includes(role)
+        ['ADMIN', 'CommsCadre', 'CouncilManager'].includes(role)
     );
 
     return (
@@ -120,6 +120,12 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                 )}
                 {canAccessContent && (
                     <Link to="/content" className={`navbar-item ${currentPageSlug === 'content' ? 'active' : ''}`} onClick={handleMenuItemClick}>Content</Link>
+                )}
+                {isLoggedIn && (
+                    <>
+                        <Link to="/requests" className={`navbar-item ${currentPageSlug === 'requests' ? 'active' : ''}`} onClick={handleMenuItemClick}>Requests</Link>
+                        <Link to="/comms-request" className={`navbar-item ${currentPageSlug === 'comms-request' ? 'active' : ''}`} onClick={handleMenuItemClick}>New Request</Link>
+                    </>
                 )}
                 {isLoggedIn ? (
                     <>

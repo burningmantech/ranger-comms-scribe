@@ -138,7 +138,8 @@ export const mockUsers: User[] = [
     approved: true,
     isAdmin: true,
     userType: UserType.Admin,
-    groups: ['group1']
+    groups: ['group1'],
+    roles: ['Admin']
   },
   {
     id: 'member@example.com',
@@ -147,7 +148,8 @@ export const mockUsers: User[] = [
     approved: true,
     isAdmin: false,
     userType: UserType.Member,
-    groups: ['group1']
+    groups: ['group1'],
+    roles: ['Member']
   },
   {
     id: 'public@example.com',
@@ -156,7 +158,8 @@ export const mockUsers: User[] = [
     approved: true,
     isAdmin: false,
     userType: UserType.Public,
-    groups: []
+    groups: [],
+    roles: ['Public']
   }
 ];
 

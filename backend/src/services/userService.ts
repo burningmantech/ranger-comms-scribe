@@ -2,6 +2,7 @@ import { Env } from '../utils/sessionManager';
 import { User, UserType, Group } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
+import { DEFAULT_ROLES, Role } from './roleService';
 
 // Store users in R2 with prefix 'user:'
 export async function getOrCreateUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
@@ -13,14 +14,16 @@ export async function getOrCreateUser({ name, email, password }: { name: string;
   
   const id = email
   
-  const newUser: User = { 
-    id, 
-    name, 
-    email, 
-    approved: false, 
-    isAdmin: false,
+  // Create new user
+  const newUser: User = {
+    id: crypto.randomUUID(),
+    email,
+    name: name || email.split('@')[0],
     userType: UserType.Public,
-    groups: []
+    approved: false,
+    isAdmin: false,
+    groups: [],
+    roles: ['Public'] // Initialize with Public role
   };
 
   // If password is provided, hash it and store it
@@ -37,54 +40,90 @@ export async function getOrCreateUser({ name, email, password }: { name: string;
   return newUser;
 }
 
-export async function getUser(email: string, env: Env): Promise<User | null>  {
+export async function getUser(id: string, env: Env): Promise<User | null> {
+  console.log('🔍 Getting user:', id);
+  
   // Check if user already exists
-  const existingUser = await getUserInternal(email, env);
+  const existingUser = await getUserInternal(id, env);
+  console.log('👤 Existing user check:', existingUser);
+  
   if (existingUser) {
     return existingUser;
   }
 
-  const isFirstAdmin = email === 'alexander.young@gmail.com';
+  // If id is an email, try looking up by email
+  if (id.includes('@')) {
+    console.log('📧 Looking up user by email');
+    const userByEmail = await getUserInternal(id, env);
+    console.log('👤 User by email:', userByEmail);
+    
+    if (userByEmail) {
+      return userByEmail;
+    }
+  }
+
+  const isFirstAdmin = id === 'alexander.young@gmail.com';
+  console.log('👑 Is first admin:', isFirstAdmin);
 
   if (isFirstAdmin) {
+    console.log('👑 Creating first admin user');
     const newUser: User = { 
-      id: email, 
+      id, 
       name: "Alex Young", 
-      email, 
+      email: id, 
       approved: true, 
       isAdmin: true,
       userType: UserType.Admin,
-      groups: []
+      groups: [],
+      roles: ['Admin'] // Initialize with Admin role
     };
     
     // Store in R2 with caching
-    await putObject(`user/${email}`, newUser, env, {
+    console.log('💾 Storing first admin user');
+    await putObject(`user/${id}`, newUser, env, {
       httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: email }
+      customMetadata: { userId: id }
     });
     
     return newUser;
   }
 
-  return null
+  console.log('❌ User not found');
+  return null;
 }
 
 export async function getUserInternal(id: string, env: Env): Promise<User | null> {
+  console.log('🔍 Getting user from storage:', id);
   try {
-    if (!id) return null;
+    if (!id) {
+      console.log('❌ No ID provided');
+      return null;
+    }
     
     // Try to get from cache first, then fallback to R2
     const user = await getObject<User>(`user/${id}`, env);
-    if (!user) return null;
+    console.log('👤 Retrieved user from storage:', user);
+    
+    if (!user) {
+      console.log('❌ User not found in storage');
+      return null;
+    }
     
     // Ensure user has a groups array
     if (!user.groups) {
+      console.log('📝 Initializing empty groups array');
       user.groups = [];
+    }
+    
+    // Ensure user has a roles array
+    if (!user.roles) {
+      console.log('📝 Initializing empty roles array');
+      user.roles = [];
     }
     
     return user;
   } catch (error) {
-    console.error(`Error fetching user ${id}:`, error);
+    console.error(`❌ Error fetching user ${id}:`, error);
     return null;
   }
 }
@@ -137,25 +176,99 @@ export async function makeAdmin(id: string, env: Env): Promise<User | null> {
 
 // Change a user's type
 export async function changeUserType(id: string, userType: UserType, env: Env): Promise<User | null> {
+  console.log('🔄 Starting changeUserType for:', { id, userType });
   const user = await getUser(id, env);
-  if (!user) return null;
+  console.log('👤 Retrieved user:', user);
   
-  user.userType = userType;
-  
-  // If changing to Admin, also set isAdmin flag for backward compatibility
-  if (userType === UserType.Admin) {
-    user.isAdmin = true;
-  } else if (user.isAdmin) {
-    // If demoting from Admin, remove isAdmin flag
-    user.isAdmin = false;
+  if (!user) {
+    console.error('❌ User not found:', id);
+    return null;
   }
   
-  // Update with caching
+  // Get all groups to find the role group
+  const groups = await getAllGroups(env);
+  console.log('👥 Available groups:', groups);
+  
+  // Map user type to role name
+  const roleName = userType === UserType.CouncilManager ? 'CouncilManager' :
+                  userType === UserType.CommsCadre ? 'CommsCadre' :
+                  userType === UserType.Admin ? 'Admin' :
+                  'Public';
+  console.log('🎭 Mapped role name:', roleName);
+  
+  // Remove user from any existing role groups
+  if (user.groups) {
+    console.log('🔄 Removing user from existing role groups');
+    const roleGroups = groups.filter(g => DEFAULT_ROLES.some(role => role.name === g.name));
+    for (const group of roleGroups) {
+      if (group.members.includes(id)) {
+        console.log('👋 Removing from group:', group.name);
+        await removeUserFromGroup(id, group.id, env);
+      }
+    }
+  }
+  
+  // If changing to Public, we're done - no need to add to any role group
+  if (userType === UserType.Public) {
+    console.log('👤 Setting user to Public type');
+    user.userType = userType;
+    if (user.isAdmin) {
+      user.isAdmin = false;
+    }
+    // Clear roles array for public users
+    user.roles = [];
+    
+    // Update user
+    console.log('💾 Updating user:', user);
+    await putObject(`user/${user.email}`, user, env, {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { userId: id }
+    });
+    
+    return user;
+  }
+  
+  // For other types, find or create the role group
+  let roleGroup = groups.find(group => group.name === roleName);
+  console.log('🔍 Found role group:', roleGroup);
+  
+  // If role group doesn't exist, create it
+  if (!roleGroup) {
+    console.log('📝 Creating new role group for:', roleName);
+    const role = DEFAULT_ROLES.find(r => r.name === roleName);
+    if (role) {
+      const newGroup = await createGroup(
+        role.name,
+        `Group for role: ${role.description}`,
+        'admin@burningman.org',
+        env
+      );
+      if (newGroup) {
+        roleGroup = newGroup;
+        console.log('✅ Created new role group:', newGroup);
+      }
+    }
+  }
+  
+  // Add user to the new role group if it exists
+  if (roleGroup) {
+    console.log('➕ Adding user to role group:', roleGroup.name);
+    await addUserToGroup(id, roleGroup.id, env);
+  }
+
+  // Update user type and roles
+  console.log('🔄 Updating user type and roles');
+  user.userType = userType;
+  user.roles = [roleName]; // Set the roles array based on the role name
+  
+  // Update user
+  console.log('💾 Saving updated user:', user);
   await putObject(`user/${user.email}`, user, env, {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: id }
   });
   
+  console.log('✅ Successfully updated user type and roles');
   return user;
 }
 
@@ -494,7 +607,7 @@ export async function canAccessGroup(userId: string, groupId: string, env: Env):
 
 export async function isAdmin(id: string, env: Env): Promise<boolean> {
   const user = await getUser(id, env);
-  return user ? user.isAdmin : false;
+  return user ? (user.isAdmin || user.userType === UserType.Admin) : false;
 }
 
 // Initialize first admin if not exists

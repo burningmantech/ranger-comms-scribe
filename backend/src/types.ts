@@ -46,6 +46,7 @@ export interface User {
   isAdmin: boolean; // Keeping for backward compatibility
   userType: UserType;
   groups: string[]; // Array of group IDs the user belongs to
+  roles: string[]; // Array of role names
   passwordHash?: string; // Added for email/password authentication
   verified?: boolean; // Added for email verification
   notificationSettings?: {
@@ -144,9 +145,10 @@ export interface ContentSubmission {
   id: string;
   title: string;
   content: string;
+  richTextContent?: string; // Stores the Lexical editor state as JSON
   submittedBy: string;
   submittedAt: string;
-  status: 'draft' | 'submitted' | 'in_review' | 'approved' | 'rejected';
+  status: 'draft' | 'submitted' | 'in_review' | 'approved' | 'rejected' | 'sent';
   formFields: FormField[];
   comments: ContentComment[];
   approvals: ContentApproval[];
@@ -155,6 +157,7 @@ export interface ContentSubmission {
   councilManagerApprovals: ContentApproval[];
   finalApprovalDate?: string;
   announcementSent: boolean;
+  assignedCouncilManagers: string[];
 }
 
 export interface FormField {

@@ -1,6 +1,7 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User } from '../types';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group } from '../types';
+import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 
@@ -17,14 +18,15 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     content: submission.content!,
     submittedBy: user.id,
     submittedAt: new Date().toISOString(),
-    status: 'draft',
+    status: submission.status || 'draft',
     formFields: submission.formFields || [],
     comments: [],
     approvals: [],
     changes: [],
     commsCadreApprovals: 0,
     councilManagerApprovals: [],
-    announcementSent: false
+    announcementSent: false,
+    assignedCouncilManagers: submission.assignedCouncilManagers || []
   };
 
   // Store in cache with appropriate key
@@ -42,16 +44,46 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   
   // Get all submissions from cache
   const response = await listObjects('content_submissions/', env);
-  const allSubmissions = response.objects as ContentSubmission[];
   
-  // Filter based on user type
+  // Fetch the full content of each submission
+  const submissionPromises = response.objects.map(async (obj: any) => {
+    const submission = await getObject<ContentSubmission>(obj.key, env);
+    return submission;
+  });
+  
+  const allSubmissions = (await Promise.all(submissionPromises)).filter((sub): sub is ContentSubmission => sub !== null);
+  
+  // Get user's groups and their associated roles
+  const userGroups = await Promise.all((user.groups || []).map(async (groupId: string) => {
+    const group = await getObject<Group>(`groups/${groupId}`, env);
+    if (!group) return null;
+    
+    // Get the role associated with this group
+    const role = await getObject<Role>(`roles/${group.name}`, env);
+    return { group, role };
+  }));
+  
+  // Check if user has any group with content management permissions
+  const hasContentManagementGroup = userGroups.some((groupData) => {
+    if (!groupData) return false;
+    const { role } = groupData;
+    return role && (
+      role.permissions.canEdit ||
+      role.permissions.canApprove ||
+      role.permissions.canCreateSuggestions ||
+      role.permissions.canApproveSuggestions ||
+      role.permissions.canReviewSuggestions
+    );
+  });
+  
+  // Filter based on user's groups and permissions
   let submissions;
-  if (user.userType === UserType.CommsCadre || user.userType === UserType.CouncilManager) {
+  if (hasContentManagementGroup || user.userType === UserType.Admin) {
     submissions = allSubmissions;
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 
       sub.submittedBy === user.id || 
-      sub.approvals.some((a: ContentApproval) => a.approverId === user.id)
+      (sub.approvals && sub.approvals.some((a: ContentApproval) => a.approverId === user.id))
     );
   }
 
@@ -132,9 +164,15 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     a.approverType === UserType.CouncilManager && a.status === 'approved'
   );
 
+  // Get total required approvers
+  const requiredCommsCadreApprovers = 2; // Minimum required CommsCadre approvers
+  const requiredCouncilManagers = submission.assignedCouncilManagers?.length || 0;
+
   // Update status if needed
-  if (commsCadreApprovals >= 2 && councilManagerApprovals.length > 0) {
+  if (commsCadreApprovals >= requiredCommsCadreApprovers && 
+      councilManagerApprovals.length >= requiredCouncilManagers) {
     submission.status = 'approved';
+    submission.finalApprovalDate = new Date().toISOString();
     // Send announcement email
     await env.EMAIL.send({
       to: 'announce@rangers.burningman.org',

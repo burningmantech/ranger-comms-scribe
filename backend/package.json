@@ -22,7 +22,7 @@
     "wrangler": "^4.6.0"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@zxcvbn-ts/core": "^3.0.4",
