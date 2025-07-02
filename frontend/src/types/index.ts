@@ -4,7 +4,9 @@ export enum UserType {
     Public = 'Public',
     Member = 'Member',
     Lead = 'Lead',
-    Admin = 'Admin'
+    Admin = 'Admin',
+    CommsCadre = 'CommsCadre',
+    CouncilManager = 'CouncilManager'
 }
 
 export interface User {
@@ -13,7 +15,7 @@ export interface User {
     name: string;
     approved?: boolean;
     isAdmin?: boolean; // Keeping for backward compatibility
-    userType?: UserType;
+    userType: UserType;
     roles: string[];
     groups?: string[]; // Array of group IDs the user belongs to
     notificationSettings?: {

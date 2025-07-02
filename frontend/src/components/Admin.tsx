@@ -3,6 +3,12 @@ import { useNavigate, Link } from 'react-router-dom';
 import { API_URL } from '../config';
 import './Admin.css';
 import Navbar from './Navbar';
+import { RoleManagement } from './RoleManagement';
+import { CouncilManagerManagement } from './CouncilManagerManagement';
+import { CommsCadreManagement } from './CommsCadreManagement';
+import { ApprovalReminders } from './ApprovalReminders';
+import { useContent } from '../contexts/ContentContext';
+import './RoleManagement.css';
 
 import { User, UserType, Group } from '../types';
 import { LogoutUserReact } from '../utils/userActions';
@@ -29,7 +35,11 @@ interface BulkUserEntry {
 enum AdminTab {
   Users = 'users',
   Groups = 'groups',
-  BulkAdd = 'bulkAdd'
+  BulkAdd = 'bulkAdd',
+  Roles = 'roles',
+  Council = 'council',
+  CommsCadre = 'commsCadre',
+  Reminders = 'reminders'
 }
 
 // Email dialog interface
@@ -130,6 +140,17 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
   const [bulkAddStatus, setBulkAddStatus] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  // Get content context
+  const {
+    submissions,
+    councilManagers,
+    commsCadreMembers,
+    saveCouncilManagers,
+    addCommsCadreMember,
+    removeCommsCadreMember,
+    sendReminder
+  } = useContent();
 
   useEffect(() => {
     // Check if user is admin
@@ -664,374 +685,426 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
   }
 
   return (
-    <div className="admin-dashboard">
+    <div className="admin-container">
       {!skipNavbar && <Navbar />}
-      <h1>Admin Dashboard</h1>
-      <div className="admin-header">
+      
+      <div className="admin-content">
         <div className="admin-tabs">
-          <button 
-            className={activeTab === AdminTab.Users ? 'active' : ''} 
+          <button
+            className={activeTab === AdminTab.Users ? 'active' : ''}
             onClick={() => setActiveTab(AdminTab.Users)}
           >
-            User Management
+            Users
           </button>
-          <button 
-            className={activeTab === AdminTab.Groups ? 'active' : ''} 
+          <button
+            className={activeTab === AdminTab.Groups ? 'active' : ''}
             onClick={() => setActiveTab(AdminTab.Groups)}
           >
-            Group Management
+            Groups
           </button>
-          <button 
-            className={activeTab === AdminTab.BulkAdd ? 'active' : ''} 
+          <button
+            className={activeTab === AdminTab.BulkAdd ? 'active' : ''}
             onClick={() => setActiveTab(AdminTab.BulkAdd)}
           >
-            Bulk Add Users
+            Bulk Add
+          </button>
+          <button
+            className={activeTab === AdminTab.Roles ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.Roles)}
+          >
+            Roles
+          </button>
+          <button
+            className={activeTab === AdminTab.Council ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.Council)}
+          >
+            Council
+          </button>
+          <button
+            className={activeTab === AdminTab.CommsCadre ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.CommsCadre)}
+          >
+            Comms Cadre
+          </button>
+          <button
+            className={activeTab === AdminTab.Reminders ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.Reminders)}
+          >
+            Reminders
           </button>
         </div>
-        <div className="admin-actions">
-          {/* Home and Logout buttons removed as they're already in the navbar */}
-        </div>
-      </div>
-      
-      {successMessage && <div className="success-message">{successMessage}</div>}
-      {error && <div className="error">{error}</div>}
-      
-      {activeTab === AdminTab.Users && (
-        <div className="admin-section">
-          <h2>User Management</h2>
-          {users.length === 0 ? (
-            <p>No users found. New users will appear here when they sign up.</p>
-          ) : (
-            <table className="users-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Status</th>
-                  <th>Role</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map(user => (
-                  <tr key={user.id}>
-                    <td>
-                      {user.isEditingName ? (
-                        <div className="editable-name">
-                          <input
-                            type="text"
-                            value={user.tempName || ''}
-                            onChange={(e) =>
-                              setUsers(users.map(u =>
-                                u.id === user.id
-                                  ? { ...u, tempName: e.target.value }
-                                  : u
-                              ))
-                            }
-                            onBlur={() => {
-                              if (user.tempName && user.tempName.trim() !== user.name) {
-                                updateUserName(user.id, user.tempName.trim());
-                              } else {
-                                cancelEditingUserName(user.id);
-                              }
-                            }}
-                            onKeyDown={(e) => handleUserNameKeyDown(e, user)}
-                            autoFocus
-                          />
-                          <div className="editable-actions">
-                            <button 
-                              className="save-button"
-                              onClick={() => {
-                                if (user.tempName && user.tempName.trim() !== user.name) {
-                                  updateUserName(user.id, user.tempName.trim());
-                                }
-                              }}
-                              title="Save"
-                            >
-                              ✓
-                            </button>
-                            <button 
-                              className="cancel-button"
-                              onClick={() => cancelEditingUserName(user.id)}
-                              title="Cancel"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="user-name" onClick={() => startEditingUserName(user)}>
-                          <span>{user.name}</span>
-                          <button className="edit-name-button" title="Edit Name">✎</button>
-                        </div>
-                      )}
-                    </td>
-                    <td>{user.email}</td>
-                    <td>{user.approved ? 'Approved' : 'Pending'}</td>
-                    <td>{user.userType}</td>
-                    <td>
-                      <div className="action-buttons">
-                        {!user.approved && (
-                          <button 
-                            onClick={() => approveUser(user.id)}
-                            className="btn btn-tertiary"
-                          >
-                            <i className="fas fa-check"></i>
-                            <span className="btn-text">Approve</span>
-                          </button>
-                        )}
-                        <select 
-                          value={user.userType}
-                          onChange={(e) => changeUserType(user.id, e.target.value as UserType)}
-                          className="form-select"
-                        >
-                          <option value={UserType.Public}>Public</option>
-                          <option value={UserType.Member}>Member</option>
-                          <option value={UserType.Lead}>Lead</option>
-                          <option value={UserType.Admin}>Admin</option>
-                        </select>
-                        <button 
-                          onClick={() => {
-                            if (window.confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
-                              deleteUser(user.id);
-                            }
-                          }}
-                          className="btn btn-danger btn-with-icon"
-                        >
-                          <i className="fas fa-trash"></i>
-                          <span className="btn-text">Delete</span>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-      
-      {activeTab === AdminTab.Groups && (
-        <div className="admin-section">
-          <h2>Group Management</h2>
-          
-          <div className="create-group-form">
-            <h3>Create New Group</h3>
-            <div className="form-group">
-              <label htmlFor="groupName">Group Name:</label>
-              <input 
-                type="text" 
-                id="groupName" 
-                value={newGroupName}
-                onChange={(e) => setNewGroupName(e.target.value)}
-                placeholder="Enter group name"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="groupDescription">Description:</label>
-              <textarea 
-                id="groupDescription" 
-                value={newGroupDescription}
-                onChange={(e) => setNewGroupDescription(e.target.value)}
-                placeholder="Enter group description"
-              />
-            </div>
-            <button 
-              onClick={createGroup}
-              className="btn btn-primary btn-with-icon"
-            >
-              <i className="fas fa-plus"></i>
-              <span className="btn-text">Create Group</span>
-            </button>
-          </div>
-          
-          <div className="groups-list">
-            <h3>Existing Groups</h3>
-            {groups.length === 0 ? (
-              <p>No groups found. Create a new group to get started.</p>
+
+        {error && <div className="error-message">{error}</div>}
+        {successMessage && <div className="success-message">{successMessage}</div>}
+
+        {activeTab === AdminTab.Users && (
+          <div className="admin-section">
+            <h2>User Management</h2>
+            {users.length === 0 ? (
+              <p>No users found. New users will appear here when they sign up.</p>
             ) : (
-              <div className="groups-container">
-                {groups.map(group => (
-                  <div 
-                    key={group.id} 
-                    className="group-card"
-                    style={{ cursor: 'default' }}
-                  >
-                      <div className="group-actions">
-                        <button 
-                          onClick={() => setEditingGroup(group)}
-                          className="btn btn-tertiary btn-with-icon"
-                        >
-                          <i className="fas fa-edit"></i>
-                          <span className="btn-text">Edit</span>
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setSelectedGroup({ id: group.id, name: group.name });
-                            setShowEmailDialog(true);
-                          }}
-                          className="btn btn-secondary btn-with-icon"
-                        >
-                          <i className="fas fa-envelope"></i>
-                          <span className="btn-text">Email</span>
-                        </button>
-                        <button 
-                          onClick={() => deleteGroup(group.id)}
-                          className="btn btn-danger btn-with-icon"
-                        >
-                          <i className="fas fa-trash"></i>
-                          <span className="btn-text">Delete</span>
-                        </button>
-                      </div>
-                    <div className="group-header">
-                      <h4>{group.name}</h4>
-
-                    </div>
-                    <p>{group.description}</p>
-                    <div className="group-details">
-                      <p><strong>Created:</strong> {new Date(group.createdAt).toLocaleDateString()}</p>
-                      <p><strong>Members:</strong> {group.members ? group.members.length : 0}</p>
-                    </div>
-                    <div className="group-members">
-                      <h5>Members</h5>
-                      <ul>
-                        {group.members ? group.members.map(memberId => {
-                          const member = users.find(u => u.id === memberId);
-                          return member ? (
-                            <li key={memberId}>
-                              {member.name} ({member.email})
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation(); // Prevent event bubbling
-                                  removeUserFromGroup(memberId, group.id);
-                                }}
-                                className="btn btn-danger btn-with-icon btn-sm"
-                              >
-                                <i className="fas fa-times"></i>
-                              </button>
-                            </li>
-                          ) : null;
-                        }) : <li>No members</li>}
-                      </ul>
-                    </div>
-                    <div className="add-member-form">
-                      <h5>Add Member</h5>
-                      <select 
-                        onChange={(e) => {
-                          e.stopPropagation(); // Prevent event bubbling
-                          if (e.target.value) {
-                            addUserToGroup(e.target.value, group.id);
-                            e.target.value = ''; // Reset select after adding
-                          }
-                        }}
-                        onClick={(e) => e.stopPropagation()} // Prevent event bubbling on click
-                        defaultValue=""
-                      >
-                        <option value="" disabled>Select a user</option>
-                        {users
-                          .filter(user => !group.members || !group.members.includes(user.id))
-                          .map(user => (
-                            <option key={user.id} value={user.id}>
-                              {user.name} ({user.email})
-                            </option>
-                          ))
-                        }
-                      </select>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {activeTab === AdminTab.BulkAdd && (
-        <div className="admin-section">
-          <h2>Bulk Add Users</h2>
-          
-          {bulkAddStatus && (
-            <div className={bulkAddStatus.startsWith('Error') ? 'error' : 'success-message'}>
-              {bulkAddStatus}
-            </div>
-          )}
-          
-          <div className="bulk-add-form">
-            <p>Add multiple users at once. Fill in the name and email for each user. Check the "Approve" box to automatically approve the user.</p>
-            
-            <div className="bulk-users-table">
-              <table>
+              <table className="users-table">
                 <thead>
                   <tr>
                     <th>Name</th>
                     <th>Email</th>
-                    <th>Approve</th>
+                    <th>Status</th>
+                    <th>Role</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {bulkUsers.map((user, index) => (
-                    <tr key={index}>
+                  {users.map(user => (
+                    <tr key={user.id}>
                       <td>
-                        <input 
-                          type="text" 
-                          value={user.name}
-                          onChange={(e) => updateBulkUserEntry(index, 'name', e.target.value)}
-                          placeholder="Enter name"
-                        />
+                        {user.isEditingName ? (
+                          <div className="editable-name">
+                            <input
+                              type="text"
+                              value={user.tempName || ''}
+                              onChange={(e) =>
+                                setUsers(users.map(u =>
+                                  u.id === user.id
+                                    ? { ...u, tempName: e.target.value }
+                                    : u
+                                ))
+                              }
+                              onBlur={() => {
+                                if (user.tempName && user.tempName.trim() !== user.name) {
+                                  updateUserName(user.id, user.tempName.trim());
+                                } else {
+                                  cancelEditingUserName(user.id);
+                                }
+                              }}
+                              onKeyDown={(e) => handleUserNameKeyDown(e, user)}
+                              autoFocus
+                            />
+                            <div className="editable-actions">
+                              <button 
+                                className="save-button"
+                                onClick={() => {
+                                  if (user.tempName && user.tempName.trim() !== user.name) {
+                                    updateUserName(user.id, user.tempName.trim());
+                                  }
+                                }}
+                                title="Save"
+                              >
+                                ✓
+                              </button>
+                              <button 
+                                className="cancel-button"
+                                onClick={() => cancelEditingUserName(user.id)}
+                                title="Cancel"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="user-name" onClick={() => startEditingUserName(user)}>
+                            <span>{user.name}</span>
+                            <button className="edit-name-button" title="Edit Name">✎</button>
+                          </div>
+                        )}
                       </td>
+                      <td>{user.email}</td>
+                      <td>{user.approved ? 'Approved' : 'Pending'}</td>
+                      <td>{user.userType}</td>
                       <td>
-                        <input 
-                          type="email" 
-                          value={user.email}
-                          onChange={(e) => updateBulkUserEntry(index, 'email', e.target.value)}
-                          placeholder="Enter email"
-                        />
-                      </td>
-                      <td className="approve-checkbox">
-                        <input 
-                          type="checkbox" 
-                          checked={user.approved}
-                          onChange={(e) => updateBulkUserEntry(index, 'approved', e.target.checked)}
-                        />
-                      </td>
-                      <td>
-                        <button 
-                          onClick={() => removeBulkUserRow(index)}
-                          className="btn btn-danger btn-with-icon btn-sm"
-                          disabled={bulkUsers.length <= 1}
-                        >
-                          <i className="fas fa-times"></i>
-                          <span className="btn-text">Remove</span>
-                        </button>
+                        <div className="action-buttons">
+                          {!user.approved && (
+                            <button 
+                              onClick={() => approveUser(user.id)}
+                              className="btn btn-tertiary"
+                            >
+                              <i className="fas fa-check"></i>
+                              <span className="btn-text">Approve</span>
+                            </button>
+                          )}
+                          <select 
+                            value={user.userType}
+                            onChange={(e) => changeUserType(user.id, e.target.value as UserType)}
+                            className="form-select"
+                          >
+                            <option value={UserType.Public}>Public</option>
+                            <option value={UserType.Member}>Member</option>
+                            <option value={UserType.Lead}>Lead</option>
+                            <option value={UserType.Admin}>Admin</option>
+                            <option value={UserType.CommsCadre}>Comms Cadre</option>
+                            <option value={UserType.CouncilManager}>Council Manager</option>
+                          </select>
+                          <button 
+                            onClick={() => {
+                              if (window.confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
+                                deleteUser(user.id);
+                              }
+                            }}
+                            className="btn btn-danger btn-with-icon"
+                          >
+                            <i className="fas fa-trash"></i>
+                            <span className="btn-text">Delete</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            )}
+          </div>
+        )}
+        
+        {activeTab === AdminTab.Groups && (
+          <div className="admin-section">
+            <h2>Group Management</h2>
             
-            <div className="bulk-add-actions">
+            <div className="create-group-form">
+              <h3>Create New Group</h3>
+              <div className="form-group">
+                <label htmlFor="groupName">Group Name:</label>
+                <input 
+                  type="text" 
+                  id="groupName" 
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  placeholder="Enter group name"
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="groupDescription">Description:</label>
+                <textarea 
+                  id="groupDescription" 
+                  value={newGroupDescription}
+                  onChange={(e) => setNewGroupDescription(e.target.value)}
+                  placeholder="Enter group description"
+                />
+              </div>
               <button 
-                onClick={addBulkUserRow}
-                className="btn btn-secondary btn-with-icon"
+                onClick={createGroup}
+                className="btn btn-primary btn-with-icon"
               >
                 <i className="fas fa-plus"></i>
-                <span className="btn-text">Add Row</span>
-              </button>
-              
-              <button 
-                onClick={submitBulkUsers}
-                className="btn btn-primary btn-with-icon"
-                disabled={bulkUsers.every(user => !user.name.trim() || !user.email.trim())}
-              >
-                <i className="fas fa-upload"></i>
-                <span className="btn-text">Submit</span>
+                <span className="btn-text">Create Group</span>
               </button>
             </div>
+            
+            <div className="groups-list">
+              <h3>Existing Groups</h3>
+              {groups.length === 0 ? (
+                <p>No groups found. Create a new group to get started.</p>
+              ) : (
+                <div className="groups-container">
+                  {groups.map(group => (
+                    <div 
+                      key={group.id} 
+                      className="group-card"
+                      style={{ cursor: 'default' }}
+                    >
+                        <div className="group-actions">
+                          <button 
+                            onClick={() => setEditingGroup(group)}
+                            className="btn btn-tertiary btn-with-icon"
+                          >
+                            <i className="fas fa-edit"></i>
+                            <span className="btn-text">Edit</span>
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setSelectedGroup({ id: group.id, name: group.name });
+                              setShowEmailDialog(true);
+                            }}
+                            className="btn btn-secondary btn-with-icon"
+                          >
+                            <i className="fas fa-envelope"></i>
+                            <span className="btn-text">Email</span>
+                          </button>
+                          <button 
+                            onClick={() => deleteGroup(group.id)}
+                            className="btn btn-danger btn-with-icon"
+                          >
+                            <i className="fas fa-trash"></i>
+                            <span className="btn-text">Delete</span>
+                          </button>
+                        </div>
+                      <div className="group-header">
+                        <h4>{group.name}</h4>
+
+                      </div>
+                      <p>{group.description}</p>
+                      <div className="group-details">
+                        <p><strong>Created:</strong> {new Date(group.createdAt).toLocaleDateString()}</p>
+                        <p><strong>Members:</strong> {group.members ? group.members.length : 0}</p>
+                      </div>
+                      <div className="group-members">
+                        <h5>Members</h5>
+                        <ul>
+                          {group.members ? group.members.map(memberId => {
+                            const member = users.find(u => u.id === memberId);
+                            return member ? (
+                              <li key={memberId}>
+                                {member.name} ({member.email})
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation(); // Prevent event bubbling
+                                    removeUserFromGroup(memberId, group.id);
+                                  }}
+                                  className="btn btn-danger btn-with-icon btn-sm"
+                                >
+                                  <i className="fas fa-times"></i>
+                                </button>
+                              </li>
+                            ) : null;
+                          }) : <li>No members</li>}
+                        </ul>
+                      </div>
+                      <div className="add-member-form">
+                        <h5>Add Member</h5>
+                        <select 
+                          onChange={(e) => {
+                            e.stopPropagation(); // Prevent event bubbling
+                            if (e.target.value) {
+                              addUserToGroup(e.target.value, group.id);
+                              e.target.value = ''; // Reset select after adding
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()} // Prevent event bubbling on click
+                          defaultValue=""
+                        >
+                          <option value="" disabled>Select a user</option>
+                          {users
+                            .filter(user => !group.members || !group.members.includes(user.id))
+                            .map(user => (
+                              <option key={user.id} value={user.id}>
+                                {user.name} ({user.email})
+                              </option>
+                            ))
+                          }
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {activeTab === AdminTab.BulkAdd && (
+          <div className="admin-section">
+            <h2>Bulk Add Users</h2>
+            
+            {bulkAddStatus && (
+              <div className={bulkAddStatus.startsWith('Error') ? 'error' : 'success-message'}>
+                {bulkAddStatus}
+              </div>
+            )}
+            
+            <div className="bulk-add-form">
+              <p>Add multiple users at once. Fill in the name and email for each user. Check the "Approve" box to automatically approve the user.</p>
+              
+              <div className="bulk-users-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Approve</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkUsers.map((user, index) => (
+                      <tr key={index}>
+                        <td>
+                          <input 
+                            type="text" 
+                            value={user.name}
+                            onChange={(e) => updateBulkUserEntry(index, 'name', e.target.value)}
+                            placeholder="Enter name"
+                          />
+                        </td>
+                        <td>
+                          <input 
+                            type="email" 
+                            value={user.email}
+                            onChange={(e) => updateBulkUserEntry(index, 'email', e.target.value)}
+                            placeholder="Enter email"
+                          />
+                        </td>
+                        <td className="approve-checkbox">
+                          <input 
+                            type="checkbox" 
+                            checked={user.approved}
+                            onChange={(e) => updateBulkUserEntry(index, 'approved', e.target.checked)}
+                          />
+                        </td>
+                        <td>
+                          <button 
+                            onClick={() => removeBulkUserRow(index)}
+                            className="btn btn-danger btn-with-icon btn-sm"
+                            disabled={bulkUsers.length <= 1}
+                          >
+                            <i className="fas fa-times"></i>
+                            <span className="btn-text">Remove</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              
+              <div className="bulk-add-actions">
+                <button 
+                  onClick={addBulkUserRow}
+                  className="btn btn-secondary btn-with-icon"
+                >
+                  <i className="fas fa-plus"></i>
+                  <span className="btn-text">Add Row</span>
+                </button>
+                
+                <button 
+                  onClick={submitBulkUsers}
+                  className="btn btn-primary btn-with-icon"
+                  disabled={bulkUsers.every(user => !user.name.trim() || !user.email.trim())}
+                >
+                  <i className="fas fa-upload"></i>
+                  <span className="btn-text">Submit</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {activeTab === AdminTab.Roles && (
+          <RoleManagement
+            onSave={() => {
+              setSuccessMessage('Role permissions updated successfully');
+              setTimeout(() => setSuccessMessage(null), 3000);
+            }}
+          />
+        )}
+        {activeTab === AdminTab.Council && (
+          <CouncilManagerManagement
+            initialManagers={councilManagers}
+            onSave={saveCouncilManagers}
+          />
+        )}
+        {activeTab === AdminTab.CommsCadre && (
+          <CommsCadreManagement
+            members={commsCadreMembers}
+            onAddMember={addCommsCadreMember}
+            onRemoveMember={removeCommsCadreMember}
+          />
+        )}
+        {activeTab === AdminTab.Reminders && (
+          <ApprovalReminders
+            pendingSubmissions={submissions.filter(sub => sub.status === 'in_review')}
+            councilManagers={councilManagers}
+            onSendReminder={sendReminder}
+          />
+        )}
+      </div>
       
       {editingGroup && (
         <div className="email-dialog-overlay">

@@ -9,19 +9,19 @@ import {
 import { $patchStyleText } from '@lexical/selection';
 import { useEffect } from 'react';
 
-export const TEXT_COLOR_COMMAND: LexicalCommand<string> = createCommand('textColor');
+export const FONT_SIZE_COMMAND: LexicalCommand<string> = createCommand('fontSize');
 
-const TextColorPlugin = () => {
+const FontSizePlugin = () => {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
     return editor.registerCommand(
-      TEXT_COLOR_COMMAND,
-      (color: string) => {
+      FONT_SIZE_COMMAND,
+      (size: string) => {
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
           $patchStyleText(selection, {
-            color: color,
+            'font-size': size,
           });
         }
         return true;
@@ -33,4 +33,4 @@ const TextColorPlugin = () => {
   return null;
 };
 
-export default TextColorPlugin;
+export default FontSizePlugin; 

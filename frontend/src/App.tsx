@@ -13,7 +13,9 @@ import { USER_LOGIN_EVENT } from './utils/userActions';
 import IndentationTest from './components/editor/tests/IndentationTest';
 import CheckboxTest from './components/editor/tests/CheckboxTest';
 import { ContentManagement } from './pages/ContentManagement';
+import { MySubmissions } from './pages/MySubmissions';
 import { ContentProvider } from './contexts/ContentContext';
+import CommsRequest from './components/CommsRequest';
 
 // Protected Route component
 const ProtectedRoute: React.FC<{
@@ -27,7 +29,8 @@ const ProtectedRoute: React.FC<{
 
   try {
     const user = JSON.parse(userJson);
-    const hasAllowedRole = user.roles.some((role: string) => allowedRoles.includes(role));
+    // Check if user is admin or has an allowed user type
+    const hasAllowedRole = user.isAdmin || allowedRoles.includes(user.userType);
     return hasAllowedRole ? element : <Navigate to="/" replace />;
   } catch (err) {
     console.error('Error parsing user data:', err);
@@ -80,7 +83,7 @@ const App: React.FC = () => {
               <div className="loading-container">Loading...</div>
             ) : (
               <Routes>
-                <Route path="/" element={<Home skipNavbar={true} />} />
+                <Route path="/" element={<Navigate to="/requests" replace />} />
                 <Route path="/login" element={<Login skipNavbar={true} setParentUser={setUser} />} />
                 <Route path="/admin" element={<Admin skipNavbar={true} />} />
                 <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
@@ -89,11 +92,20 @@ const App: React.FC = () => {
                 <Route path="/test-indentation" element={<IndentationTest />} />
                 <Route path="/checkbox-test" element={<CheckboxTest />} />
                 <Route 
-                  path="/content" 
+                  path="/requests" 
                   element={
                     <ProtectedRoute 
-                      element={<ContentManagement />} 
-                      allowedRoles={['ADMIN', 'COMMS_CADRE', 'COUNCIL_MANAGER']} 
+                      element={<MySubmissions />} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
+                    />
+                  } 
+                />
+                <Route 
+                  path="/comms-request" 
+                  element={
+                    <ProtectedRoute 
+                      element={<CommsRequest />} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
                     />
                   } 
                 />

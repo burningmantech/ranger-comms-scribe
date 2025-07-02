@@ -13,6 +13,7 @@ export const ContentManagement: React.FC = () => {
     councilManagers,
     commsCadreMembers,
     currentUser,
+    userPermissions,
     saveSubmission,
     approveSubmission,
     rejectSubmission,
@@ -20,14 +21,17 @@ export const ContentManagement: React.FC = () => {
     saveCouncilManagers,
     addCommsCadreMember,
     removeCommsCadreMember,
-    sendReminder
+    sendReminder,
+    createSuggestion,
+    approveSuggestion,
+    rejectSuggestion
   } = useContent();
 
   const [selectedSubmission, setSelectedSubmission] = useState<ContentSubmission | null>(null);
   const [activeTab, setActiveTab] = useState<'submissions' | 'council' | 'cadre' | 'reminders'>('submissions');
 
   const pendingSubmissions = submissions.filter(
-    submission => submission.status === 'UNDER_REVIEW'
+    submission => submission.status === 'in_review'
   );
 
   if (!currentUser) {
@@ -45,11 +49,15 @@ export const ContentManagement: React.FC = () => {
             onApprove={approveSubmission}
             onReject={rejectSubmission}
             onComment={addComment}
+            onSuggestionCreate={createSuggestion}
+            onSuggestionApprove={approveSuggestion}
+            onSuggestionReject={rejectSuggestion}
           />
         ) : (
           <SubmissionHistory
             submissions={submissions}
             onSelectSubmission={setSelectedSubmission}
+            canViewFilteredSubmissions={userPermissions?.canViewFilteredSubmissions || false}
           />
         );
       case 'council':
