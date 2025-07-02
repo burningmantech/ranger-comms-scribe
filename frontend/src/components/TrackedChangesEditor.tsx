@@ -39,6 +39,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onReject,
   onSuggestion,
 }) => {
+  // Debug: Log the submission content
+  console.log('TrackedChangesEditor received submission:', {
+    id: submission.id,
+    title: submission.title,
+    content: submission.content,
+    contentLength: submission.content?.length,
+    contentPreview: submission.content?.substring(0, 100)
+  });
   const [showOriginal, setShowOriginal] = useState(false);
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
@@ -67,8 +75,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Check if user can make editorial decisions
   const canMakeEditorialDecisions = useCallback(() => {
-    return currentUser.roles.includes('COMMS_CADRE') ||
-           currentUser.roles.includes('COUNCIL_MANAGER') ||
+    return currentUser.roles.includes('CommsCadre') ||
+           currentUser.roles.includes('CouncilManager') ||
            currentUser.roles.includes('REVIEWER') ||
            currentUser.id === submission.submittedBy;
   }, [currentUser, submission.submittedBy]);

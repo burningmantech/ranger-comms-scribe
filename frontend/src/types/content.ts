@@ -23,13 +23,13 @@ export interface CouncilManager {
 }
 
 export type CouncilRole =
-  | 'COMMUNICATIONS_MANAGER'
-  | 'INTAKE_MANAGER'
-  | 'LOGISTICS_MANAGER'
-  | 'OPERATIONS_MANAGER'
-  | 'PERSONNEL_MANAGER'
-  | 'DEPARTMENT_MANAGER'
-  | 'DEPUTY_DEPARTMENT_MANAGER';
+  | 'CommunicationsManager'
+  | 'IntakeManager'
+  | 'LogisticsManager'
+  | 'OperationsManager'
+  | 'PersonnelManager'
+  | 'DepartmentManager'
+  | 'DeputyDepartmentManager';
 
 export interface ContentSubmission {
   id: string;

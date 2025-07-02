@@ -12,8 +12,10 @@ import Navbar from './components/Navbar';
 import { USER_LOGIN_EVENT } from './utils/userActions';
 import IndentationTest from './components/editor/tests/IndentationTest';
 import CheckboxTest from './components/editor/tests/CheckboxTest';
+import LexicalExtractionTest from './components/editor/tests/LexicalExtractionTest';
 import { ContentManagement } from './pages/ContentManagement';
 import { MySubmissions } from './pages/MySubmissions';
+import { TrackedChangesView } from './pages/TrackedChangesView';
 import { ContentProvider } from './contexts/ContentContext';
 import CommsRequest from './components/CommsRequest';
 
@@ -91,6 +93,7 @@ const App: React.FC = () => {
                 <Route path="/verify-email" element={<VerifyEmail />} />
                 <Route path="/test-indentation" element={<IndentationTest />} />
                 <Route path="/checkbox-test" element={<CheckboxTest />} />
+                <Route path="/lexical-extraction-test" element={<LexicalExtractionTest />} />
                 <Route 
                   path="/requests" 
                   element={
@@ -105,6 +108,15 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute 
                       element={<CommsRequest />} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
+                    />
+                  } 
+                />
+                <Route 
+                  path="/tracked-changes/:submissionId" 
+                  element={
+                    <ProtectedRoute 
+                      element={<TrackedChangesView />} 
                       allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
                     />
                   } 

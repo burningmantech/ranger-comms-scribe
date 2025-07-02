@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ContentSubmission, Change, SubmissionStatus } from '../types/content';
 
 interface SubmissionHistoryProps {
@@ -12,6 +13,7 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
   onSelectSubmission,
   canViewFilteredSubmissions = false
 }) => {
+  const navigate = useNavigate();
   const [selectedStatuses, setSelectedStatuses] = useState<Set<SubmissionStatus | 'all'>>(new Set(['all']));
 
   const allStatuses: (SubmissionStatus | 'all')[] = ['all', 'draft', 'submitted', 'in_review', 'approved', 'rejected', 'sent'];
@@ -78,26 +80,49 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
       <div className="space-y-4">
         {filteredSubmissions.map((submission) => (
           <div key={submission.id} className="border rounded-lg overflow-hidden">
-            <div 
-              className="p-4 cursor-pointer hover:bg-gray-50"
-              onClick={() => onSelectSubmission(submission)}
-            >
-              <h3 className="text-lg font-semibold">{submission.title}</h3>
-              <p className="text-sm text-gray-600">
-                Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
-              </p>
-              <p className="text-sm text-gray-600">Status: {submission.status}</p>
+            <div className="p-4">
+              <div 
+                className="cursor-pointer hover:bg-gray-50"
+                onClick={() => onSelectSubmission(submission)}
+              >
+                <h3 className="text-lg font-semibold">{submission.title}</h3>
+                <p className="text-sm text-gray-600">
+                  Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
+                </p>
+                <p className="text-sm text-gray-600">Status: {submission.status}</p>
+                
+                <div className="mt-2 flex">
+                  <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
+                    {`${submission.comments?.length || 0} Comments `}
+                  </span>
+                  <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
+                    {`${submission.approvals?.length || 0} Approvals `}
+                  </span>
+                  <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
+                    {`${submission.changes?.length || 0} Changes`}
+                  </span>
+                </div>
+              </div>
               
-              <div className="mt-2 flex">
-                <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
-                  {`${submission.comments?.length || 0} Comments `}
-                </span>
-                <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
-                  {`${submission.approvals?.length || 0} Approvals `}
-                </span>
-                <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
-                  {`${submission.changes?.length || 0} Changes`}
-                </span>
+              <div className="mt-3 flex space-x-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectSubmission(submission);
+                  }}
+                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  View Details
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/tracked-changes/${submission.id}`);
+                  }}
+                  className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700"
+                >
+                  Tracked Changes
+                </button>
               </div>
             </div>
 

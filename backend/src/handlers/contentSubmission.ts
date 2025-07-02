@@ -90,6 +90,67 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   return json(submissions);
 });
 
+// Get a single submission by ID
+router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+
+  // Get the submission from cache
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Check if user has access to this submission
+  const hasAccess = user.userType === UserType.Admin ||
+                   submission.submittedBy === user.id ||
+                   (submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id));
+
+  if (!hasAccess) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  return json(submission);
+});
+
+// Update a submission
+router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const updates = await request.json();
+
+  // Get the current submission
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Check if user has permission to edit this submission
+  const canEdit = user.userType === UserType.Admin ||
+                 submission.submittedBy === user.id;
+
+  if (!canEdit) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  // Update the submission
+  const updatedSubmission = {
+    ...submission,
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  // Store the updated submission
+  await putObject(`content_submissions/${id}`, updatedSubmission, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
+
+  return json(updatedSubmission);
+});
+
 // Add a comment to a submission
 router.post('/submissions/:id/comments', withAuth, async (request: Request, env: any) => {
   const { id } = (request as any).params;

@@ -152,10 +152,14 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const saveSubmission = async (submission: ContentSubmission) => {
     try {
+      console.log('💾 saveSubmission called with:', submission);
       const isNewSubmission = !submissions.some(s => s.id === submission.id);
       const url = isNewSubmission 
         ? `${API_URL}/content/submissions`
         : `${API_URL}/content/submissions/${submission.id}`;
+      
+      console.log('🌐 Making request to:', url);
+      console.log('📤 Request body:', JSON.stringify(submission, null, 2));
       
       const response = await fetch(url, {
         method: isNewSubmission ? 'POST' : 'PUT',
@@ -166,8 +170,12 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         body: JSON.stringify(submission),
       });
       
+      console.log('📥 Response status:', response.status);
+      console.log('📥 Response headers:', Object.fromEntries(response.headers.entries()));
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('📥 Response data:', data);
         // Convert date strings to Date objects
         const updatedSubmission = {
           ...data,
@@ -195,9 +203,14 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
             prev.map(s => s.id === submission.id ? updatedSubmission : s)
           );
         }
+      } else {
+        console.error('❌ Response not ok:', response.status, response.statusText);
+        const errorText = await response.text();
+        console.error('❌ Error response body:', errorText);
+        throw new Error(`Failed to save submission: ${response.status} ${response.statusText}`);
       }
     } catch (err) {
-      console.error('Error saving submission:', err);
+      console.error('❌ Error saving submission:', err);
       throw err;
     }
   };

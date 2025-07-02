@@ -1,6 +1,7 @@
 import { Env } from '../utils/sessionManager';
-import { CouncilRole, UserType, CouncilMember } from '../types';
+import { CouncilRole, UserType, CouncilMember, User } from '../types';
 import { getObject, putObject, removeFromCache } from './cacheService';
+import { getUser } from './userService';
 
 interface OrgChartEntry {
   role: CouncilRole;
@@ -57,7 +58,7 @@ const orgChartData: OrgChartEntry[] = [
 export async function identifyCouncilManagers(env: Env) {
   for (const entry of orgChartData) {
     // Check if user exists
-    const user = await getObject<{ id: string }>(`users:${entry.email}`, env);
+    const user = await getUser(entry.email, env);
 
     if (user) {
       // Check if they're already a council member
@@ -78,8 +79,19 @@ export async function identifyCouncilManagers(env: Env) {
 
         await putObject(`council_members:${user.id}:${entry.role}`, newMember, env);
 
-        // Update user type
-        await putObject(`users:${entry.email}`, { ...user, userType: UserType.CouncilManager }, env);
+        // Update user type and roles
+        if (!user.roles) {
+          user.roles = [];
+        }
+        if (!user.roles.includes('CouncilManager')) {
+          user.roles.push('CouncilManager');
+        }
+        user.userType = UserType.CouncilManager;
+        
+        await putObject(`user/${user.email}`, user, env, {
+          httpMetadata: { contentType: 'application/json' },
+          customMetadata: { userId: user.id }
+        });
       }
     }
   }
@@ -87,6 +99,8 @@ export async function identifyCouncilManagers(env: Env) {
 
 export async function getCouncilManagersForRole(role: CouncilRole, env: Env): Promise<CouncilMember[]> {
   const members = await getObject<CouncilMember[]>(`council_members:role:${role}`, env);
+  console.log(`🔍 getCouncilManagersForRole(${role}):`, members);
+  console.log(`🔍 getCouncilManagersForRole(${role}) count:`, members?.length || 0);
   return members || [];
 }
 
@@ -100,18 +114,25 @@ export async function updateOrgChartData(newData: OrgChartEntry[]) {
 
 export async function addCouncilMember(email: string, role: CouncilRole, env: Env): Promise<CouncilMember | null> {
   try {
+    console.log('🔄 Adding council member:', { email, role });
+    
     // Get or create the user
-    const user = await getObject<{ id: string; name?: string; userType?: UserType }>(`users:${email}`, env);
+    const user = await getUser(email, env);
     if (!user) {
+      console.log('❌ User not found:', email);
       return null;
     }
+    
+    console.log('👤 Found user:', { email: user.email, name: user.name, userType: user.userType, roles: user.roles });
 
     // Get existing council members for this role
     const existingMembers = await getObject<CouncilMember[]>(`council_members:role:${role}`, env) || [];
+    console.log('📋 Existing members for role:', role, existingMembers.length);
 
     // Check if user is already a council member for this role
     const isAlreadyMember = existingMembers.some(member => member.email === email);
     if (isAlreadyMember) {
+      console.log('⚠️ User is already a council member for this role:', email);
       return null;
     }
 
@@ -129,19 +150,40 @@ export async function addCouncilMember(email: string, role: CouncilRole, env: En
 
     // Add to role-specific list
     await putObject(`council_members:role:${role}`, [...existingMembers, newMember], env);
+    console.log('✅ Added to role-specific list');
 
     // Add to user-specific entry
     await putObject(`council_members:${user.id}:${role}`, newMember, env);
+    console.log('✅ Added to user-specific entry');
 
     // Update user type if needed
     if (user.userType !== UserType.CouncilManager) {
-      await putObject(`users:${email}`, { 
-        ...user, 
-        userType: UserType.CouncilManager,
-        roles: ['CouncilManager'] // Add the CouncilManager role
-      }, env);
+      console.log('🔄 Updating user to CouncilManager type:', user.email);
+      
+      // Ensure user has a roles array
+      if (!user.roles) {
+        user.roles = [];
+      }
+      
+      // Add CouncilManager role if not already present
+      if (!user.roles.includes('CouncilManager')) {
+        user.roles.push('CouncilManager');
+        console.log('➕ Added CouncilManager role to user:', user.email);
+      }
+      
+      user.userType = UserType.CouncilManager;
+      
+      await putObject(`user/${user.email}`, user, env, {
+        httpMetadata: { contentType: 'application/json' },
+        customMetadata: { userId: user.id }
+      });
+      
+      console.log('✅ Updated user roles:', user.roles);
+    } else {
+      console.log('👤 User is already CouncilManager type:', user.email);
     }
 
+    console.log('🎉 Successfully added council member:', newMember);
     return newMember;
   } catch (error) {
     console.error('Error adding council member:', error);
@@ -152,7 +194,7 @@ export async function addCouncilMember(email: string, role: CouncilRole, env: En
 export async function removeCouncilMember(email: string, role: CouncilRole, env: Env): Promise<boolean> {
   try {
     // Get the user
-    const user = await getObject<{ id: string; userType?: UserType }>(`users:${email}`, env);
+    const user = await getUser(email, env);
     if (!user) {
       return false;
     }
@@ -171,11 +213,13 @@ export async function removeCouncilMember(email: string, role: CouncilRole, env:
     const hasOtherRoles = await getObject<CouncilMember[]>(`council_members:${user.id}`, env);
     if (!hasOtherRoles || hasOtherRoles.length === 0) {
       // If no other roles, update user type back to Member and clear roles
-      await putObject(`users:${email}`, { 
-        ...user, 
-        userType: UserType.Member,
-        roles: ['Member'] // Set to Member role
-      }, env);
+      user.userType = UserType.Member;
+      user.roles = ['Member']; // Set to Member role
+      
+      await putObject(`user/${user.email}`, user, env, {
+        httpMetadata: { contentType: 'application/json' },
+        customMetadata: { userId: user.id }
+      });
     }
 
     return true;

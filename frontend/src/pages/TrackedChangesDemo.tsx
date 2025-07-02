@@ -7,7 +7,7 @@ const demoUser: User = {
   id: 'user-1',
   email: 'demo@example.com',
   name: 'Demo User',
-  roles: ['COMMS_CADRE', 'REVIEWER']
+  roles: ['CommsCadre', 'REVIEWER']
 };
 
 const initialSubmission: ContentSubmission = {
@@ -30,7 +30,7 @@ Please let us know if you can accommodate these requests and what the timeline w
 
 Best regards,
 Event Planning Committee`,
-  status: 'UNDER_REVIEW',
+  status: 'in_review',
   submittedBy: 'Event Planning Committee',
   submittedAt: new Date('2024-01-15'),
   formFields: [],
@@ -63,7 +63,9 @@ Event Planning Committee`,
     }
   ],
   assignedReviewers: ['reviewer-1', 'reviewer-2'],
-  assignedCouncilManagers: ['council-1']
+  assignedCouncilManagers: ['council-1'],
+  suggestedEdits: [],
+  requiredApprovers: []
 };
 
 export const TrackedChangesDemo: React.FC = () => {

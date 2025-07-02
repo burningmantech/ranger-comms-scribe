@@ -6,7 +6,7 @@ export const SuggestionDebugTest: React.FC = () => {
     id: 'test-user',
     email: 'test@example.com',
     name: 'Test User',
-    roles: ['REVIEWER', 'COMMS_CADRE'] as const
+    roles: ['REVIEWER', 'CommsCadre'] as const
   };
 
   const handleSuggestionCreate = (suggestion: any) => {
