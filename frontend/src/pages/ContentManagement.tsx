@@ -18,6 +18,7 @@ export const ContentManagement: React.FC = () => {
     approveSubmission,
     rejectSubmission,
     addComment,
+    deleteSubmission,
     saveCouncilManagers,
     addCommsCadreMember,
     removeCommsCadreMember,
@@ -57,6 +58,7 @@ export const ContentManagement: React.FC = () => {
           <SubmissionHistory
             submissions={submissions}
             onSelectSubmission={setSelectedSubmission}
+            onDeleteSubmission={deleteSubmission}
             canViewFilteredSubmissions={userPermissions?.canViewFilteredSubmissions || false}
           />
         );

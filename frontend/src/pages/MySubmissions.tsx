@@ -16,6 +16,7 @@ export const MySubmissions: React.FC = () => {
     approveSubmission, 
     rejectSubmission, 
     addComment, 
+    deleteSubmission,
     createSuggestion, 
     approveSuggestion, 
     rejectSuggestion 
@@ -69,6 +70,7 @@ export const MySubmissions: React.FC = () => {
           <SubmissionHistory
             submissions={filteredSubmissions}
             onSelectSubmission={setSelectedSubmission}
+            onDeleteSubmission={deleteSubmission}
             canViewFilteredSubmissions={userPermissions?.canViewFilteredSubmissions || false}
           />
         )}

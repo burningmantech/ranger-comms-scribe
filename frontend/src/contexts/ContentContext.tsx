@@ -12,6 +12,7 @@ interface ContentContextType {
   approveSubmission: (submission: ContentSubmission) => Promise<void>;
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
   addComment: (submission: ContentSubmission, comment: Comment) => Promise<void>;
+  deleteSubmission: (submissionId: string) => Promise<void>;
   saveCouncilManagers: (managers: CouncilManager[]) => Promise<void>;
   removeCouncilManager: (managerId: string) => Promise<void>;
   addCommsCadreMember: (member: User) => Promise<void>;
@@ -285,6 +286,28 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       });
     } catch (err) {
       console.error('Error adding comment:', err);
+      throw err;
+    }
+  };
+
+  const deleteSubmission = async (submissionId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submissionId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      
+      if (response.ok) {
+        // Remove the submission from local state
+        setSubmissions(prev => prev.filter(s => s.id !== submissionId));
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete submission');
+      }
+    } catch (err) {
+      console.error('Error deleting submission:', err);
       throw err;
     }
   };
@@ -728,6 +751,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     approveSubmission,
     rejectSubmission,
     addComment,
+    deleteSubmission,
     saveCouncilManagers,
     removeCouncilManager,
     addCommsCadreMember,

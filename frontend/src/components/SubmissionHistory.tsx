@@ -5,16 +5,21 @@ import { ContentSubmission, Change, SubmissionStatus } from '../types/content';
 interface SubmissionHistoryProps {
   submissions: ContentSubmission[];
   onSelectSubmission: (submission: ContentSubmission) => void;
+  onDeleteSubmission: (submissionId: string) => Promise<void>;
   canViewFilteredSubmissions?: boolean;
 }
 
 export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
   submissions,
   onSelectSubmission,
+  onDeleteSubmission,
   canViewFilteredSubmissions = false
 }) => {
   const navigate = useNavigate();
   const [selectedStatuses, setSelectedStatuses] = useState<Set<SubmissionStatus | 'all'>>(new Set(['all']));
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [submissionToDelete, setSubmissionToDelete] = useState<ContentSubmission | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const allStatuses: (SubmissionStatus | 'all')[] = ['all', 'draft', 'submitted', 'in_review', 'approved', 'rejected', 'sent'];
 
@@ -51,6 +56,33 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
       <span className="font-medium">{change.field}</span> changed by {change.changedBy} on {new Date(change.timestamp).toLocaleDateString()}
     </div>
   );
+
+  const handleDeleteClick = (submission: ContentSubmission, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSubmissionToDelete(submission);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!submissionToDelete) return;
+    
+    setIsDeleting(true);
+    try {
+      await onDeleteSubmission(submissionToDelete.id);
+      setShowDeleteModal(false);
+      setSubmissionToDelete(null);
+    } catch (error) {
+      console.error('Error deleting submission:', error);
+      // You could add a toast notification here
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteModal(false);
+    setSubmissionToDelete(null);
+  };
 
   return (
     <div className="p-4">
@@ -123,6 +155,12 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
                 >
                   Tracked Changes
                 </button>
+                <button
+                  onClick={(e) => handleDeleteClick(submission, e)}
+                  className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Delete
+                </button>
               </div>
             </div>
 
@@ -137,6 +175,47 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
           </div>
         ))}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && submissionToDelete && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>Delete Request</h3>
+              <button 
+                className="modal-close"
+                onClick={handleDeleteCancel}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                Are you sure you want to delete the request "{submissionToDelete.title}"?
+              </p>
+              <p className="text-sm text-gray-600 mt-2">
+                This action cannot be undone. All comments, approvals, and changes associated with this request will be permanently deleted.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button 
+                className="btn btn-danger"
+                onClick={handleDeleteConfirm}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Request'}
+              </button>
+              <button 
+                className="btn btn-neutral"
+                onClick={handleDeleteCancel}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }; 

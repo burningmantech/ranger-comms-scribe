@@ -284,4 +284,33 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
   await deleteObject('content_submissions/list', env);
 
   return json(newChange);
+});
+
+// Delete a submission
+router.delete('/submissions/:id', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+
+  // Get the submission from cache
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Check if user has permission to delete this submission
+  const canDelete = user.userType === UserType.Admin ||
+                   submission.submittedBy === user.id;
+
+  if (!canDelete) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  // Delete the submission from cache
+  await deleteObject(`content_submissions/${id}`, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
+
+  return json({ message: 'Submission deleted successfully' });
 }); 
