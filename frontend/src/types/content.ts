@@ -50,6 +50,7 @@ export interface ContentSubmission {
   commsApprovedBy?: string;
   sentBy?: string;
   sentAt?: Date;
+  proposedVersions?: Record<string, string>;
 }
 
 export type SubmissionStatus =
@@ -115,6 +116,13 @@ export interface Change {
   newValue: string;
   changedBy: string;
   timestamp: Date;
+  status?: 'pending' | 'approved' | 'rejected';
+  approvedBy?: string;
+  rejectedBy?: string;
+  approvedAt?: Date;
+  rejectedAt?: Date;
+  isIncremental?: boolean;
+  previousVersionId?: string;
 }
 
 interface RolePermissions {

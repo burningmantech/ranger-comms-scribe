@@ -8,6 +8,7 @@ import {
   getChangeComments, 
   addChangeComment, 
   getChangeHistory,
+  getCompleteProposedVersion,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
@@ -48,7 +49,21 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
       })
     );
 
-    return new Response(JSON.stringify(changesWithComments), {
+    // Get complete proposed versions for each field
+    const fields = [...new Set(changes.map(change => change.field))];
+    const proposedVersions: Record<string, string> = {};
+    
+    for (const field of fields) {
+      const completeVersion = await getCompleteProposedVersion(submissionId, field, env);
+      if (completeVersion) {
+        proposedVersions[field] = completeVersion;
+      }
+    }
+
+    return new Response(JSON.stringify({
+      changes: changesWithComments,
+      proposedVersions
+    }), {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error) {

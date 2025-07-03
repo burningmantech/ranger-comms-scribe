@@ -18,6 +18,8 @@ export interface TrackedChange {
   rejectedByName?: string;
   approvedAt?: string;
   rejectedAt?: string;
+  isIncremental?: boolean;
+  previousVersionId?: string;
 }
 
 export interface ChangeComment {
@@ -81,7 +83,68 @@ export const getTrackedChanges = async (submissionId: string, env: Env): Promise
   }
 };
 
-// Create a new tracked change
+// Calculate incremental changes between two versions
+export const calculateIncrementalChange = (
+  previousVersion: string,
+  currentVersion: string
+): { oldValue: string; newValue: string } => {
+  // Split into words for better diff calculation
+  const previousWords = previousVersion.split(/\s+/);
+  const currentWords = currentVersion.split(/\s+/);
+  
+  // Find the longest common prefix
+  let prefixLength = 0;
+  while (prefixLength < previousWords.length && 
+         prefixLength < currentWords.length && 
+         previousWords[prefixLength] === currentWords[prefixLength]) {
+    prefixLength++;
+  }
+  
+  // Find the longest common suffix
+  let suffixLength = 0;
+  while (suffixLength < previousWords.length - prefixLength && 
+         suffixLength < currentWords.length - prefixLength && 
+         previousWords[previousWords.length - 1 - suffixLength] === currentWords[currentWords.length - 1 - suffixLength]) {
+    suffixLength++;
+  }
+  
+  // Extract the changed portions
+  const oldWords = previousWords.slice(prefixLength, previousWords.length - suffixLength);
+  const newWords = currentWords.slice(prefixLength, currentWords.length - suffixLength);
+  
+  const oldValue = oldWords.join(' ');
+  const newValue = newWords.join(' ');
+  
+  return { oldValue, newValue };
+};
+
+// Get the latest proposed version for a field
+export const getLatestProposedVersion = async (
+  submissionId: string,
+  field: string,
+  env: Env
+): Promise<string | null> => {
+  try {
+    const changes = await getTrackedChanges(submissionId, env);
+    
+    // Get the most recent pending or approved change for this field
+    const fieldChanges = changes
+      .filter(change => change.field === field && change.status !== 'rejected')
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    
+    if (fieldChanges.length === 0) {
+      return null;
+    }
+    
+    // Return the newValue of the most recent change
+    return fieldChanges[0].newValue;
+  } catch (error) {
+    console.error('Error getting latest proposed version:', error);
+    return null;
+  }
+};
+
+// Create a new tracked change with incremental changes
 export const createTrackedChange = async (
   submissionId: string,
   field: string,
@@ -95,17 +158,45 @@ export const createTrackedChange = async (
     const changeId = uuidv4();
     const timestamp = new Date().toISOString();
     
+    // Get the latest proposed version to calculate incremental changes
+    const latestProposedVersion = await getLatestProposedVersion(submissionId, field, env);
+    
+    let incrementalOldValue = oldValue;
+    let incrementalNewValue = newValue;
+    let previousVersionId: string | undefined;
+    let isIncremental = false;
+    
+    if (latestProposedVersion && latestProposedVersion !== oldValue) {
+      // Calculate incremental changes from the latest proposed version
+      const incrementalChange = calculateIncrementalChange(latestProposedVersion, newValue);
+      incrementalOldValue = incrementalChange.oldValue;
+      incrementalNewValue = incrementalChange.newValue;
+      isIncremental = true;
+      
+      // Find the ID of the previous version
+      const changes = await getTrackedChanges(submissionId, env);
+      const previousChange = changes
+        .filter(change => change.field === field && change.status !== 'rejected')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+      
+      if (previousChange) {
+        previousVersionId = previousChange.id;
+      }
+    }
+    
     // Create the tracked change object
     const newChange: TrackedChange = {
       id: changeId,
       submissionId,
       field,
-      oldValue,
-      newValue,
+      oldValue: incrementalOldValue,
+      newValue: incrementalNewValue,
       changedBy,
       changedByName,
       timestamp,
-      status: 'pending'
+      status: 'pending',
+      isIncremental,
+      previousVersionId
     };
     
     // Store the change in R2 and cache
@@ -280,6 +371,54 @@ export const addChangeComment = async (
   } catch (error) {
     console.error('Error adding change comment:', error);
     throw error;
+  }
+};
+
+// Get the complete proposed version for a field by applying all incremental changes
+export const getCompleteProposedVersion = async (
+  submissionId: string,
+  field: string,
+  env: Env
+): Promise<string | null> => {
+  try {
+    const changes = await getTrackedChanges(submissionId, env);
+    
+    // Get all approved and pending changes for this field, sorted by timestamp
+    const fieldChanges = changes
+      .filter(change => change.field === field && change.status !== 'rejected')
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    if (fieldChanges.length === 0) {
+      return null;
+    }
+    
+    // Start with the original value (first change's oldValue if it's not incremental)
+    let currentVersion = fieldChanges[0].isIncremental ? '' : fieldChanges[0].oldValue;
+    
+    // Apply each change sequentially
+    for (const change of fieldChanges) {
+      if (change.isIncremental) {
+        // For incremental changes, we need to find where to apply the change
+        // This is a simplified approach - in practice, you might need more sophisticated logic
+        const changeIndex = currentVersion.indexOf(change.oldValue);
+        if (changeIndex !== -1) {
+          currentVersion = currentVersion.substring(0, changeIndex) + 
+                          change.newValue + 
+                          currentVersion.substring(changeIndex + change.oldValue.length);
+        } else {
+          // If we can't find the exact match, append the new value
+          currentVersion += change.newValue;
+        }
+      } else {
+        // For non-incremental changes, replace the entire value
+        currentVersion = change.newValue;
+      }
+    }
+    
+    return currentVersion;
+  } catch (error) {
+    console.error('Error getting complete proposed version:', error);
+    return null;
   }
 };
 

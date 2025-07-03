@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
-import { smartDiff, WordDiff, applyChanges } from '../utils/diffAlgorithm';
+import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import './TrackedChangesEditor.css';
 
@@ -56,12 +56,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [editedContent, setEditedContent] = useState(() => {
-    // Extract text from submission content if it's Lexical JSON
-    return isLexicalJson(submission.content) 
-      ? extractTextFromLexical(submission.content) 
-      : submission.content;
-  });
+
+  // Helper to get the latest version for editing
+  const getLatestEditableContent = useCallback(() => {
+    return submission.proposedVersions?.content
+      ?? (isLexicalJson(submission.content)
+          ? extractTextFromLexical(submission.content)
+          : submission.content);
+  }, [submission]);
+
+  // State for edit mode content
+  const [editedContent, setEditedContent] = useState(() => getLatestEditableContent());
+
+  // When toggling edit mode on, reset editedContent to latest version
+  useEffect(() => {
+    if (editMode) {
+      setEditedContent(getLatestEditableContent());
+    }
+    // Only run when editMode toggles or submission changes
+  }, [editMode, getLatestEditableContent]);
+
   const editorRef = useRef<HTMLDivElement>(null);
 
   // Helper function to get displayable text from content
@@ -100,6 +114,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Get the current version of the text with approved changes applied
   const currentContent = useMemo(() => {
+    // If we have a proposed version for content, use it
+    if (submission.proposedVersions?.content) {
+      return submission.proposedVersions.content;
+    }
+    
     const approvedChanges = trackedChanges
       .filter(change => change.status === 'approved' && change.field === 'content')
       .map(change => ({
@@ -114,7 +133,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       : submission.content;
     
     return applyChanges(baseContent, approvedChanges);
-  }, [submission.content, trackedChanges]);
+  }, [submission.content, submission.proposedVersions, trackedChanges]);
 
   // Process text to show tracked changes using diff algorithm
   const processedSegments: TextSegment[] = useMemo(() => {
@@ -140,81 +159,181 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }];
     }
 
-    // For each change, create diff segments
-    let workingText = getDisplayableText(submission.content);
-    
-    contentChanges.forEach(change => {
-      // Extract text from change values if they're Lexical JSON
-      const oldValueText = getDisplayableText(change.oldValue);
-      const newValueText = getDisplayableText(change.newValue);
+    // For incremental changes, we need to show the complete proposed version
+    // with highlights for the incremental changes only
+    if (submission.proposedVersions?.content) {
+      const proposedText = submission.proposedVersions.content;
+      const originalText = getDisplayableText(submission.content);
       
-      const diff = smartDiff(oldValueText, newValueText);
+      // Find incremental changes and highlight only those parts
+      const incrementalChanges = contentChanges.filter(change => change.isIncremental);
       
-      // Find where this change occurs in the working text
-      const changeIndex = workingText.indexOf(oldValueText);
-      
-      if (changeIndex !== -1) {
-        // Add text before the change
-        if (changeIndex > 0) {
+      if (incrementalChanges.length > 0) {
+        // Get the previous version by applying all changes except the latest incremental one
+        const sortedChanges = contentChanges
+          .filter(change => change.status !== 'rejected')
+          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        
+        // Find the latest incremental change
+        const latestIncrementalChange = sortedChanges
+          .filter(change => change.isIncremental)
+          .pop();
+        
+        if (latestIncrementalChange) {
+          // Calculate the previous version by applying all changes except the latest incremental one
+          const previousChanges = sortedChanges.filter(change => 
+            change.id !== latestIncrementalChange.id
+          );
+          
+          let previousVersion = originalText;
+          for (const change of previousChanges) {
+            if (change.isIncremental) {
+              const index = previousVersion.indexOf(change.oldValue);
+              if (index !== -1) {
+                previousVersion = previousVersion.substring(0, index) + 
+                                change.newValue + 
+                                previousVersion.substring(index + change.oldValue.length);
+              }
+            } else {
+              previousVersion = change.newValue;
+            }
+          }
+          
+          // Now calculate only the incremental changes from the previous version
+          const incrementalDiff = calculateIncrementalChanges(originalText, previousVersion, proposedText);
+          
+          // Apply the incremental diff to the previous version to show only the changes
+          let currentPos = 0;
+          let previousPos = 0;
+          
+          incrementalDiff.forEach((segment: WordDiff) => {
+            if (segment.type === 'equal') {
+              // Find this text in the previous version and add it as unchanged
+              const index = previousVersion.indexOf(segment.value, previousPos);
+              if (index !== -1) {
+                segments.push({
+                  id: `equal-${segmentId++}`,
+                  text: segment.value,
+                  type: 'unchanged'
+                });
+                previousPos = index + segment.value.length;
+                currentPos += segment.value.length;
+              }
+            } else if (segment.type === 'delete') {
+              segments.push({
+                id: `del-${latestIncrementalChange.id}-${segmentId++}`,
+                text: segment.value,
+                type: 'deletion',
+                changeId: latestIncrementalChange.id,
+                author: latestIncrementalChange.changedBy,
+                timestamp: latestIncrementalChange.timestamp,
+                status: latestIncrementalChange.status
+              });
+            } else if (segment.type === 'insert') {
+              segments.push({
+                id: `add-${latestIncrementalChange.id}-${segmentId++}`,
+                text: segment.value,
+                type: 'addition',
+                changeId: latestIncrementalChange.id,
+                author: latestIncrementalChange.changedBy,
+                timestamp: latestIncrementalChange.timestamp,
+                status: latestIncrementalChange.status
+              });
+            }
+          });
+        } else {
+          // No incremental changes found, show the complete proposed version
           segments.push({
-            id: `unchanged-${segmentId++}`,
-            text: workingText.substring(0, changeIndex),
+            id: 'proposed',
+            text: proposedText,
             type: 'unchanged'
           });
         }
-        
-        // Add the diff segments
-        diff.forEach((segment: WordDiff) => {
-          if (segment.type === 'equal') {
-            segments.push({
-              id: `equal-${segmentId++}`,
-              text: segment.value,
-              type: 'unchanged'
-            });
-          } else if (segment.type === 'delete') {
-            segments.push({
-              id: `del-${change.id}-${segmentId++}`,
-              text: segment.value,
-              type: 'deletion',
-              changeId: change.id,
-              author: change.changedBy,
-              timestamp: change.timestamp,
-              status: change.status
-            });
-          } else if (segment.type === 'insert') {
-            segments.push({
-              id: `add-${change.id}-${segmentId++}`,
-              text: segment.value,
-              type: 'addition',
-              changeId: change.id,
-              author: change.changedBy,
-              timestamp: change.timestamp,
-              status: change.status
-            });
-          }
-        });
-        
-        // Update working text for next iteration
-        workingText = workingText.substring(0, changeIndex) + 
-                     newValueText + 
-                     workingText.substring(changeIndex + oldValueText.length);
-      }
-    });
-
-    // Add any remaining text
-    if (workingText.length > 0) {
-      const remainingStart = segments.reduce((acc, seg) => acc + seg.text.length, 0);
-      if (remainingStart < workingText.length) {
+      } else {
+        // No incremental changes, show the proposed version as is
         segments.push({
-          id: `remaining-${segmentId++}`,
-          text: workingText.substring(remainingStart),
+          id: 'proposed',
+          text: proposedText,
           type: 'unchanged'
         });
+      }
+    } else {
+      // Fallback to the old logic for non-incremental changes
+      let workingText = getDisplayableText(submission.content);
+      
+      contentChanges.forEach(change => {
+        // Extract text from change values if they're Lexical JSON
+        const oldValueText = getDisplayableText(change.oldValue);
+        const newValueText = getDisplayableText(change.newValue);
+        
+        const diff = smartDiff(oldValueText, newValueText);
+        
+        // Find where this change occurs in the working text
+        const changeIndex = workingText.indexOf(oldValueText);
+        
+        if (changeIndex !== -1) {
+          // Add text before the change
+          if (changeIndex > 0) {
+            segments.push({
+              id: `unchanged-${segmentId++}`,
+              text: workingText.substring(0, changeIndex),
+              type: 'unchanged'
+            });
+          }
+          
+          // Add the diff segments
+          diff.forEach((segment: WordDiff) => {
+            if (segment.type === 'equal') {
+              segments.push({
+                id: `equal-${segmentId++}`,
+                text: segment.value,
+                type: 'unchanged'
+              });
+            } else if (segment.type === 'delete') {
+              segments.push({
+                id: `del-${change.id}-${segmentId++}`,
+                text: segment.value,
+                type: 'deletion',
+                changeId: change.id,
+                author: change.changedBy,
+                timestamp: change.timestamp,
+                status: change.status
+              });
+            } else if (segment.type === 'insert') {
+              segments.push({
+                id: `add-${change.id}-${segmentId++}`,
+                text: segment.value,
+                type: 'addition',
+                changeId: change.id,
+                author: change.changedBy,
+                timestamp: change.timestamp,
+                status: change.status
+              });
+            }
+          });
+          
+          // Update working text for next iteration
+          workingText = workingText.substring(0, changeIndex) + 
+                       newValueText + 
+                       workingText.substring(changeIndex + oldValueText.length);
+        }
+      });
+
+      // Add any remaining text
+      if (workingText.length > 0) {
+        const remainingStart = segments.reduce((acc, seg) => acc + seg.text.length, 0);
+        if (remainingStart < workingText.length) {
+          segments.push({
+            id: `remaining-${segmentId++}`,
+            text: workingText.substring(remainingStart),
+            type: 'unchanged'
+          });
+        }
       }
     }
 
     return segments;
-  }, [submission.content, trackedChanges, showOriginal, currentContent, getDisplayableText]);
+  }, [showOriginal, submission.content, submission.proposedVersions, trackedChanges, currentContent]);
 
   // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
@@ -398,15 +517,35 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 </div>
                 <div className="change-content">
                   <div className="change-diff">
-                    {change.oldValue && (
-                      <span className="diff-old">
-                        {getDisplayableText(change.oldValue).substring(0, 50)}...
-                      </span>
-                    )}
-                    {change.newValue && (
-                      <span className="diff-new">
-                        {getDisplayableText(change.newValue).substring(0, 50)}...
-                      </span>
+                    {change.isIncremental ? (
+                      <>
+                        <div className="change-type-indicator">
+                          <span className="incremental-badge">Incremental Change</span>
+                        </div>
+                        {change.oldValue && (
+                          <span className="diff-old">
+                            {getDisplayableText(change.oldValue).substring(0, 50)}...
+                          </span>
+                        )}
+                        {change.newValue && (
+                          <span className="diff-new">
+                            {getDisplayableText(change.newValue).substring(0, 50)}...
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {change.oldValue && (
+                          <span className="diff-old">
+                            {getDisplayableText(change.oldValue).substring(0, 50)}...
+                          </span>
+                        )}
+                        {change.newValue && (
+                          <span className="diff-new">
+                            {getDisplayableText(change.newValue).substring(0, 50)}...
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

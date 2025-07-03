@@ -235,3 +235,57 @@ export function calculateSimilarity(text1: string, text2: string): number {
 
   return totalChars === 0 ? 1 : equalChars / totalChars;
 }
+
+// Calculate incremental changes between consecutive versions
+export function calculateIncrementalChanges(
+  originalText: string,
+  previousVersion: string,
+  currentVersion: string
+): WordDiff[] {
+  // If there's no previous version, show the full diff from original
+  if (!previousVersion || previousVersion === originalText) {
+    return smartDiff(originalText, currentVersion);
+  }
+  
+  // Calculate the diff between the previous version and current version
+  // This shows only what changed from the previous proposed version
+  return smartDiff(previousVersion, currentVersion);
+}
+
+// Apply incremental changes to reconstruct the full text
+export function applyIncrementalChanges(
+  originalText: string,
+  changes: Array<{
+    oldValue: string;
+    newValue: string;
+    isIncremental: boolean;
+    timestamp: Date;
+  }>
+): string {
+  let currentText = originalText;
+  
+  // Sort changes by timestamp
+  const sortedChanges = [...changes].sort((a, b) => 
+    a.timestamp.getTime() - b.timestamp.getTime()
+  );
+
+  for (const change of sortedChanges) {
+    if (change.isIncremental) {
+      // For incremental changes, find and replace the old value with the new value
+      const index = currentText.indexOf(change.oldValue);
+      if (index !== -1) {
+        currentText = currentText.substring(0, index) + 
+                     change.newValue + 
+                     currentText.substring(index + change.oldValue.length);
+      } else {
+        // If we can't find the exact match, append the new value
+        currentText += change.newValue;
+      }
+    } else {
+      // For non-incremental changes, replace the entire text
+      currentText = change.newValue;
+    }
+  }
+
+  return currentText;
+}

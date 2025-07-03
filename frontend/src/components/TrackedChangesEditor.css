@@ -575,3 +575,20 @@
   background-color: #1557b0;
   border-color: #1557b0;
 }
+
+/* Change Type Indicator */
+.change-type-indicator {
+  margin-bottom: 8px;
+}
+
+.incremental-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  color: #1a73e8;
+  background-color: #e8f0fe;
+  padding: 2px 6px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
