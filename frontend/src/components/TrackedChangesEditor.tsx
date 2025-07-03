@@ -48,7 +48,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     contentLength: submission.content?.length,
     contentPreview: submission.content?.substring(0, 100)
   });
-  const [showOriginal, setShowOriginal] = useState(false);
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
   const [showCommentDialog, setShowCommentDialog] = useState(false);
@@ -56,7 +55,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [showDiffOnRight, setShowDiffOnRight] = useState(true);
 
   // Helper to get the latest version for editing
   const getLatestEditableContent = useCallback(() => {
@@ -113,39 +111,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
            currentUser.id === submission.submittedBy;
   }, [currentUser, submission.submittedBy]);
 
-  // Get the current version of the text with approved changes applied
+  // Get current content (proposed version or original)
   const currentContent = useMemo(() => {
-    // If we have a proposed version for content, use it
-    if (submission.proposedVersions?.content) {
-      return submission.proposedVersions.content;
-    }
-    
-    const approvedChanges = trackedChanges
-      .filter(change => change.status === 'approved' && change.field === 'content')
-      .map(change => ({
-        oldValue: change.oldValue,
-        newValue: change.newValue,
-        timestamp: change.timestamp
-      }));
-    
-    // Extract text from submission content if it's Lexical JSON
-    const baseContent = isLexicalJson(submission.content) 
-      ? extractTextFromLexical(submission.content) 
-      : submission.content;
-    
-    return applyChanges(baseContent, approvedChanges);
-  }, [submission.content, submission.proposedVersions, trackedChanges]);
+    return getDisplayableText(submission.proposedVersions?.content || submission.content);
+  }, [submission.proposedVersions?.content, submission.content, getDisplayableText]);
 
   // Process text to show tracked changes using diff algorithm
   const processedSegments: TextSegment[] = useMemo(() => {
-    if (showOriginal) {
-      return [{
-        id: 'original',
-        text: getDisplayableText(submission.content),
-        type: 'unchanged'
-      }];
-    }
-
     const segments: TextSegment[] = [];
     let segmentId = 0;
 
@@ -188,7 +160,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     });
 
     return segments;
-  }, [showOriginal, submission.content, submission.proposedVersions, currentContent, trackedChanges]);
+  }, [submission.content, submission.proposedVersions, currentContent, trackedChanges, getDisplayableText]);
 
   // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
@@ -199,57 +171,49 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [editMode]);
 
-  // Handle suggestion submission
-  const handleSuggestionSubmit = useCallback(() => {
-    if (selectedText && suggestionText) {
-      console.log('TrackedChangesEditor: Submitting suggestion:', { selectedText, suggestionText });
-      const newChange: Change = {
-        id: crypto.randomUUID(),
-        field: 'content',
-        oldValue: selectedText,
-        newValue: suggestionText,
-        changedBy: currentUser.id,
-        timestamp: new Date()
-      };
-      console.log('TrackedChangesEditor: Created change object:', newChange);
-      onSuggestion(newChange);
-      setShowSuggestionDialog(false);
-      setSuggestionText('');
-      setSelectedText('');
-    }
-  }, [selectedText, suggestionText, currentUser.id, onSuggestion]);
-
-  // Handle direct edit submission
+  // Handle edit submission
   const handleEditSubmit = useCallback(() => {
     if (editedContent !== currentContent) {
-      console.log('TrackedChangesEditor: Submitting edit:', { 
-        oldContent: currentContent, 
-        newContent: editedContent 
-      });
-      const newChange: Change = {
+      const suggestion: Change = {
         id: crypto.randomUUID(),
         field: 'content',
         oldValue: currentContent,
         newValue: editedContent,
         changedBy: currentUser.id,
-        timestamp: new Date()
+        timestamp: new Date(),
+        isIncremental: true
       };
-      console.log('TrackedChangesEditor: Created edit change object:', newChange);
-      onSuggestion(newChange);
-      setEditMode(false);
+      onSuggestion(suggestion);
     }
+    setEditMode(false);
   }, [editedContent, currentContent, currentUser.id, onSuggestion]);
 
-  // Handle change approval/rejection
+  // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
-    if (canMakeEditorialDecisions()) {
-      if (decision === 'approve') {
-        onApprove(changeId);
-      } else {
-        onReject(changeId);
-      }
+    if (decision === 'approve') {
+      onApprove(changeId);
+    } else {
+      onReject(changeId);
     }
-  }, [canMakeEditorialDecisions, onApprove, onReject]);
+  }, [onApprove, onReject]);
+
+  // Handle suggestion submission
+  const handleSuggestionSubmit = useCallback(() => {
+    if (selectedText && suggestionText) {
+      const suggestion: Change = {
+        id: crypto.randomUUID(),
+        field: 'content',
+        oldValue: selectedText,
+        newValue: suggestionText,
+        changedBy: currentUser.id,
+        timestamp: new Date(),
+        isIncremental: true
+      };
+      onSuggestion(suggestion);
+      setSuggestionText('');
+      setShowSuggestionDialog(false);
+    }
+  }, [selectedText, suggestionText, currentUser.id, onSuggestion]);
 
   // Handle comment on change
   const handleCommentSubmit = useCallback(() => {
@@ -273,31 +237,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       <div className="editor-toolbar">
         <div className="toolbar-left">
           <button
-            className={`toolbar-button ${showOriginal ? 'active' : ''}`}
-            onClick={() => setShowOriginal(!showOriginal)}
-          >
-            {showOriginal ? 'Show Changes' : 'Show Original'}
-          </button>
-          <div className="toolbar-separator" />
-          <button
             className={`toolbar-button ${editMode ? 'active' : ''}`}
             onClick={() => setEditMode(!editMode)}
-            disabled={showOriginal}
           >
             {editMode ? 'Preview' : 'Edit'}
           </button>
           <div className="toolbar-separator" />
-          <button
-            className={`toolbar-button ${showDiffOnRight ? 'active' : ''}`}
-            onClick={() => setShowDiffOnRight(!showDiffOnRight)}
-            disabled={showOriginal || editMode}
-          >
-            {showDiffOnRight ? 'Show Full' : 'Show Diff'}
-          </button>
-          <div className="toolbar-separator" />
           <span className="toolbar-label">Viewing mode:</span>
           <span className="toolbar-value">
-            {showOriginal ? 'Original' : editMode ? 'Edit mode' : showDiffOnRight ? 'With tracked changes' : 'Full proposed version'}
+            {editMode ? 'Edit mode' : 'Proposed version with tracked changes'}
           </span>
         </div>
         <div className="toolbar-right">
@@ -345,28 +293,46 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               </div>
             </div>
           ) : (
-            <div 
-              className="document-body"
-              onMouseUp={handleTextSelection}
-            >
-              {showDiffOnRight ? (
-                // Show diff with tracked changes
-                processedSegments.map(segment => (
-                  <span
-                    key={segment.id}
-                    className={`text-segment ${segment.type} ${segment.status || ''}`}
-                    onClick={() => segment.changeId && setSelectedChange(segment.changeId)}
-                    title={segment.author ? `Changed by ${segment.author}` : ''}
-                  >
-                    {segment.text}
+            <div className="document-body">
+              {/* Always show proposed version at the top */}
+              <div className="proposed-version-section">
+                <h2 className="section-title">Proposed Version</h2>
+                <div className="proposed-content">
+                  <span className="text-segment unchanged">
+                    {getDisplayableText(submission.proposedVersions?.content || currentContent)}
                   </span>
-                ))
-              ) : (
-                // Show full proposed version
-                <span className="text-segment unchanged">
-                  {getDisplayableText(submission.proposedVersions?.content || currentContent)}
-                </span>
-              )}
+                </div>
+              </div>
+
+              {/* Always show diff with tracked changes below */}
+              <div className="diff-section">
+                <h2 className="section-title">Tracked Changes</h2>
+                <div 
+                  className="diff-content"
+                  onMouseUp={handleTextSelection}
+                >
+                  {processedSegments.map(segment => (
+                    <span
+                      key={segment.id}
+                      className={`text-segment ${segment.type} ${segment.status || ''}`}
+                      onClick={() => segment.changeId && setSelectedChange(segment.changeId)}
+                      title={segment.author ? `Changed by ${segment.author}` : ''}
+                    >
+                      {segment.text}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Always show original version at the bottom */}
+              <div className="original-version-section">
+                <h2 className="section-title">Original Version</h2>
+                <div className="original-content">
+                  <span className="text-segment unchanged">
+                    {getDisplayableText(submission.content)}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
         </div>
