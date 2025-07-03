@@ -9,11 +9,13 @@ import {
   addChangeComment, 
   getChangeHistory,
   getCompleteProposedVersion,
+  getCompleteRichTextProposedVersion,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
 import { getObject } from '../services/cacheService';
 import { mergeTextIntoLexicalJson } from '../services/trackedChangesService';
+
 
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
@@ -61,12 +63,17 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     
     for (const field of fields) {
       const completeVersion = await getCompleteProposedVersion(submissionId, field, env);
+      const completeRichTextVersion = await getCompleteRichTextProposedVersion(submissionId, field, env);
+      
       if (completeVersion) {
         proposedVersions[field] = completeVersion;
-        // If the original is Lexical JSON, merge the new text into it
-        if (submission && submission.richTextContent && submission.richTextContent.trim().startsWith('{')) {
-          proposedVersionsRichText[field] = mergeTextIntoLexicalJson(submission.richTextContent, completeVersion);
-        }
+      }
+      
+      if (completeRichTextVersion) {
+        proposedVersionsRichText[field] = completeRichTextVersion;
+      } else if (submission && submission.richTextContent && submission.richTextContent.trim().startsWith('{')) {
+        // Fallback: merge the plain text into the original rich text structure
+        proposedVersionsRichText[field] = mergeTextIntoLexicalJson(submission.richTextContent, completeVersion || '');
       }
     }
 
@@ -92,7 +99,7 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
   }
 
   try {
-    const { field, oldValue, newValue } = await request.json();
+    const { field, oldValue, newValue, richTextOldValue, richTextNewValue } = await request.json();
 
     if (!field || !oldValue || !newValue) {
       return new Response('Missing required fields', { status: 400 });
@@ -106,7 +113,9 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
       newValue,
       request.user.id,
       request.user.name,
-      env
+      env,
+      richTextOldValue,
+      richTextNewValue
     );
 
     return new Response(JSON.stringify(newChange), {

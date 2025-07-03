@@ -21,6 +21,8 @@ export interface TrackedChange {
   isIncremental?: boolean;
   previousVersionId?: string;
   completeProposedVersion?: string; // Store the complete proposed version for incremental changes
+  richTextOldValue?: string; // Store the rich text content for the old value
+  richTextNewValue?: string; // Store the rich text content for the new value
 }
 
 export interface ChangeComment {
@@ -190,7 +192,9 @@ export const createTrackedChange = async (
   newValue: string,
   changedBy: string,
   changedByName: string,
-  env: Env
+  env: Env,
+  richTextOldValue?: string,
+  richTextNewValue?: string
 ): Promise<TrackedChange> => {
   try {
     const changeId = uuidv4();
@@ -243,7 +247,9 @@ export const createTrackedChange = async (
       status: 'pending',
       isIncremental,
       previousVersionId,
-      completeProposedVersion: isIncremental ? newValue : undefined
+      completeProposedVersion: isIncremental ? newValue : undefined,
+      richTextOldValue,
+      richTextNewValue
     };
     
     // Store the change in R2 and cache
@@ -308,7 +314,9 @@ export const updateChangeStatus = async (
       approvedAt: status === 'approved' ? timestamp : change.approvedAt,
       rejectedBy: status === 'rejected' ? rejectedBy : change.rejectedBy,
       rejectedByName: status === 'rejected' ? rejectedByName : change.rejectedByName,
-      rejectedAt: status === 'rejected' ? timestamp : change.rejectedAt
+      rejectedAt: status === 'rejected' ? timestamp : change.rejectedAt,
+      richTextOldValue: status === 'approved' ? change.richTextOldValue : change.richTextOldValue,
+      richTextNewValue: status === 'approved' ? change.richTextNewValue : change.richTextNewValue
     };
     
     // Store the updated change in R2 and cache
@@ -449,6 +457,38 @@ export const getCompleteProposedVersion = async (
     return latestChange.newValue;
   } catch (error) {
     console.error('Error getting complete proposed version:', error);
+    return null;
+  }
+};
+
+// Get the complete rich text proposed version for a field
+export const getCompleteRichTextProposedVersion = async (
+  submissionId: string,
+  field: string,
+  env: Env
+): Promise<string | null> => {
+  try {
+    const changes = await getTrackedChanges(submissionId, env);
+    
+    // Get all approved and pending changes for this field, sorted by timestamp
+    const latestChange = changes
+      .filter(change => change.field === field && change.status !== 'rejected')
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .pop();
+    
+    if (!latestChange) {
+      return null;
+    }
+    
+    // If this change has rich text content, use the rich text new value
+    if (latestChange.richTextNewValue) {
+      return latestChange.richTextNewValue;
+    }
+    
+    // Fallback to the regular newValue if no rich text content is available
+    return latestChange.newValue;
+  } catch (error) {
+    console.error('Error getting complete rich text proposed version:', error);
     return null;
   }
 };

@@ -200,11 +200,29 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
 
   // Update editor content when content prop changes (for external updates)
   useEffect(() => {
-    if (!editorRef.current || !content || !isLoaded) {
+    console.log('LexicalEditor content prop changed:', {
+      hasEditor: !!editorRef.current,
+      isLoaded,
+      content,
+      contentType: typeof content,
+      contentLength: content?.length,
+      contentPreview: content?.substring(0, 100)
+    });
+    
+    if (!editorRef.current || !isLoaded) {
+      console.log('LexicalEditor: Skipping content update - missing editor or not loaded');
+      return;
+    }
+    
+    // Allow empty content to be set (for clearing the editor)
+    if (content === undefined || content === null) {
+      console.log('LexicalEditor: Skipping content update - content is undefined/null');
       return;
     }
 
     const editor = editorRef.current;
+    
+    console.log('LexicalEditor: Processing content update');
     
     // Check if the content is a Lexical JSON state
     if (content.startsWith('{') && content.includes('"root":')) {
@@ -212,6 +230,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
         console.log('LexicalEditor: Updating with Lexical JSON state');
         const editorState = editor.parseEditorState(content);
         editor.setEditorState(editorState);
+        console.log('LexicalEditor: Successfully updated with Lexical JSON state');
         return;
       } catch (e) {
         console.error('Error parsing Lexical state for content update:', e);

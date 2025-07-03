@@ -124,6 +124,8 @@ export interface Change {
   isIncremental?: boolean;
   previousVersionId?: string;
   completeProposedVersion?: string;
+  richTextOldValue?: string;
+  richTextNewValue?: string;
 }
 
 interface RolePermissions {

@@ -65,6 +65,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [editMode, setEditMode] = useState(false);
   const [isEditingProposed, setIsEditingProposed] = useState(false);
   const [editedProposedContent, setEditedProposedContent] = useState('');
+  const editedProposedContentRef = useRef(editedProposedContent);
+  const initialEditorContentRef = useRef<string>('');
+
+  // Update ref when content changes
+  useEffect(() => {
+    editedProposedContentRef.current = editedProposedContent;
+  }, [editedProposedContent]);
+
+  // Stable onChange handler for the editor
+  const handleEditorChange = useCallback((editor: any, json: string) => {
+    // Only update if the content has actually changed
+    if (json !== editedProposedContentRef.current) {
+      setEditedProposedContent(json);
+    }
+  }, []);
 
   // Helper to get the latest version for editing
   const getLatestEditableContent = useCallback(() => {
@@ -96,6 +111,73 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return extractTextFromLexical(content);
     }
     
+    return content;
+  }, []);
+
+  // Helper function to get displayable text from change values (with debugging)
+  const getChangeDisplayText = useCallback((content: string): string => {
+    console.log('getChangeDisplayText called with:', {
+      content,
+      contentType: typeof content,
+      contentLength: content?.length,
+      contentPreview: content?.substring(0, 100),
+      isLexical: isLexicalJson(content)
+    });
+    
+    if (!content) return '';
+    
+    // Check if content is Lexical JSON and extract text
+    if (isLexicalJson(content)) {
+      const extracted = extractTextFromLexical(content);
+      console.log('getChangeDisplayText: Extracted from Lexical JSON:', extracted);
+      return extracted;
+    }
+    
+    // Handle partial JSON fragments (like the ones you're seeing)
+    if (typeof content === 'string' && content.includes('"text":"')) {
+      console.log('getChangeDisplayText: Detected partial JSON with text field');
+      
+      // Extract text values from JSON fragments using regex
+      const textMatches = content.match(/"text":"([^"]*)"/g);
+      if (textMatches && textMatches.length > 0) {
+        const extractedTexts = textMatches.map(match => {
+          // Remove the "text":" and " parts
+          return match.replace(/"text":"/, '').replace(/"$/, '');
+        }).filter(text => text.trim() !== '');
+        
+        if (extractedTexts.length > 0) {
+          const result = extractedTexts.join(' ');
+          console.log('getChangeDisplayText: Extracted text from JSON fragments:', result);
+          return result;
+        }
+      }
+    }
+    
+    // If it's a string that looks like JSON but isn't Lexical, try to parse it
+    if (typeof content === 'string' && content.trim().startsWith('{') && content.trim().endsWith('}')) {
+      try {
+        const parsed = JSON.parse(content);
+        // If it's an object with text-like properties, try to extract text
+        if (typeof parsed === 'object' && parsed !== null) {
+          if (parsed.text) {
+            console.log('getChangeDisplayText: Found text property in JSON:', parsed.text);
+            return parsed.text;
+          }
+          if (parsed.content) {
+            console.log('getChangeDisplayText: Found content property in JSON:', parsed.content);
+            return parsed.content;
+          }
+          // If it's a complex object, stringify it for display
+          const stringified = JSON.stringify(parsed, null, 2);
+          console.log('getChangeDisplayText: Stringified complex JSON:', stringified.substring(0, 100));
+          return stringified.substring(0, 200) + (stringified.length > 200 ? '...' : '');
+        }
+      } catch (e) {
+        console.log('getChangeDisplayText: Failed to parse as JSON, treating as plain text');
+      }
+    }
+    
+    console.log('getChangeDisplayText: Returning as plain text:', content);
     return content;
   }, []);
 
@@ -168,7 +250,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                    submission.proposedVersions?.content || 
                    submission.richTextContent || 
                    submission.content || '';
-    setEditedProposedContent(getRichTextContent(content));
+    const richTextContent = getRichTextContent(content);
+    setEditedProposedContent(richTextContent);
+    
+    // Store the initial content for the editor (only set once)
+    if (!initialEditorContentRef.current) {
+      initialEditorContentRef.current = richTextContent;
+    }
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
   // Convert changes to tracked changes with status
@@ -276,8 +364,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       for (const change of relevantChanges) {
         // Compare plain text versions for matching
-        const changeOldText = getDisplayableText(change.oldValue || '');
-        const changeNewText = getDisplayableText(change.newValue || '');
+        const changeOldText = getChangeDisplayText(change.oldValue || '');
+        const changeNewText = getChangeDisplayText(change.newValue || '');
         
         if (type === 'addition' && changeNewText && changeNewText.includes(text)) {
           return change.id;
@@ -369,14 +457,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                    submission.richTextContent || 
                                    submission.content || '';
     if (editedProposedContent !== currentProposedContent) {
+      // Extract plain text for the backend to calculate incremental changes
+      const currentText = getDisplayableText(currentProposedContent);
+      const editedText = getDisplayableText(editedProposedContent);
+      
       const suggestion: Change = {
         id: crypto.randomUUID(),
         field: 'content',
-        oldValue: currentProposedContent,
-        newValue: editedProposedContent,
+        oldValue: currentText,  // Send plain text for diff calculation
+        newValue: editedText,   // Send plain text for diff calculation
         changedBy: currentUser.id,
         timestamp: new Date(),
-        isIncremental: true
+        isIncremental: true,
+        // Store the rich text content separately for preservation
+        richTextOldValue: currentProposedContent,
+        richTextNewValue: editedProposedContent
       };
       onSuggestion(suggestion);
     }
@@ -497,7 +592,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     {!isEditingProposed ? (
                       <button
                         className="edit-button"
-                        onClick={() => setIsEditingProposed(true)}
+                        onClick={() => {
+                          // Reset the initial content when starting to edit
+                          const content = submission.proposedVersions?.richTextContent || 
+                                         submission.proposedVersions?.content || 
+                                         submission.richTextContent || 
+                                         submission.content || '';
+                          initialEditorContentRef.current = getRichTextContent(content);
+                          setIsEditingProposed(true);
+                        }}
                         title="Edit proposed version"
                       >
                         <i className="fas fa-edit"></i>
@@ -537,13 +640,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     <div className="rich-text-editor-container">
                       <LexicalEditorComponent
                         key="proposed-edit-editor"
-                        initialContent={proposedEditorContent}
-                        onChange={(editor, json) => {
-                          // Only update if the content has actually changed
-                          if (json !== editedProposedContent) {
-                            setEditedProposedContent(json);
-                          }
-                        }}
+                        initialContent={initialEditorContentRef.current}
+                        onChange={handleEditorChange}
                         placeholder="Edit the proposed version..."
                         readOnly={false}
                         showToolbar={true}
@@ -637,12 +735,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         </div>
                         {change.oldValue && (
                           <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>Removed:</strong> {getDisplayableText(change.oldValue)}
+                            <strong>Removed:</strong> {getChangeDisplayText(change.oldValue)}
                           </span>
                         )}
                         {change.newValue && (
                           <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>Added:</strong> {getDisplayableText(change.newValue)}
+                            <strong>Added:</strong> {getChangeDisplayText(change.newValue)}
                           </span>
                         )}
 
@@ -651,12 +749,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       <>
                         {change.oldValue && (
                           <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>Previous:</strong> {getDisplayableText(change.oldValue).substring(0, 100)}...
+                            <strong>Previous:</strong> {getChangeDisplayText(change.oldValue).substring(0, 100)}...
                           </span>
                         )}
                         {change.newValue && (
                           <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>New:</strong> {getDisplayableText(change.newValue).substring(0, 100)}...
+                            <strong>New:</strong> {getChangeDisplayText(change.newValue).substring(0, 100)}...
                           </span>
                         )}
 
