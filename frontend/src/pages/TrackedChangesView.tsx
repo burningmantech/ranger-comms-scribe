@@ -547,6 +547,7 @@ export const TrackedChangesView: React.FC = () => {
           approvals: (data.approvals || []).map((approval: any) => ({
             id: approval.id,
             approverId: approval.approverId,
+            approverEmail: approval.approverEmail || approval.approverId, // Fallback for backward compatibility
             status: approval.status.toUpperCase(),
             comment: approval.comment,
             timestamp: new Date(approval.createdAt)
@@ -555,7 +556,7 @@ export const TrackedChangesView: React.FC = () => {
           assignedReviewers: [],
           assignedCouncilManagers: data.assignedCouncilManagers || [],
           suggestedEdits: [],
-          requiredApprovers: [],
+          requiredApprovers: data.requiredApprovers || [],
           commsApprovedBy: data.commsApprovedBy,
           sentBy: data.sentBy,
           sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
@@ -689,6 +690,92 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  const handleUndo = async (changeId: string) => {
+    try {
+      console.log('TrackedChangesView: handleUndo called with changeId:', changeId);
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) throw new Error('Not authenticated');
+
+      const response = await fetch(`${API_URL}/tracked-changes/${changeId}/undo`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to undo change: ${response.status} - ${errorText}`);
+      }
+
+      // Refresh the data after undo by refetching
+      window.location.reload();
+    } catch (err) {
+      console.error('Error undoing change:', err);
+    }
+  };
+
+  const handleApproveProposedVersion = async (approverId: string, comment?: string) => {
+    try {
+      console.log('TrackedChangesView: handleApproveProposedVersion called with:', { approverId, comment });
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) throw new Error('Not authenticated');
+
+      const response = await fetch(`${API_URL}/content/submissions/${submissionId}/approve-proposed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({
+          approverId,
+          comment
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to approve proposed version: ${response.status} - ${errorText}`);
+      }
+
+      // Refresh the data after approval by refetching
+      window.location.reload();
+    } catch (err) {
+      console.error('Error approving proposed version:', err);
+    }
+  };
+
+  const handleRejectProposedVersion = async (rejecterId: string, comment?: string) => {
+    try {
+      console.log('TrackedChangesView: handleRejectProposedVersion called with:', { rejecterId, comment });
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) throw new Error('Not authenticated');
+
+      const response = await fetch(`${API_URL}/content/submissions/${submissionId}/reject-proposed`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({
+          rejecterId,
+          comment
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to reject proposed version: ${response.status} - ${errorText}`);
+      }
+
+      // Refresh the data after rejection by refetching
+      window.location.reload();
+    } catch (err) {
+      console.error('Error rejecting proposed version:', err);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-96">
@@ -757,6 +844,9 @@ export const TrackedChangesView: React.FC = () => {
           onApprove={handleApprove}
           onReject={handleReject}
           onSuggestion={handleSuggestion}
+          onUndo={handleUndo}
+          onApproveProposedVersion={handleApproveProposedVersion}
+          onRejectProposedVersion={handleRejectProposedVersion}
         />
       </div>
     </div>

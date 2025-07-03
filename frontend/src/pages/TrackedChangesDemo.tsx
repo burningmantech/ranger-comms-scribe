@@ -88,6 +88,7 @@ export const TrackedChangesDemo: React.FC = () => {
     const approval: Approval = {
       id: `approval-${Date.now()}`,
       approverId: demoUser.id,
+      approverEmail: demoUser.email,
       status: 'APPROVED',
       comment: 'Looks good',
       timestamp: new Date()
@@ -104,6 +105,7 @@ export const TrackedChangesDemo: React.FC = () => {
     const approval: Approval = {
       id: `approval-${Date.now()}`,
       approverId: demoUser.id,
+      approverEmail: demoUser.email,
       status: 'REJECTED',
       comment: 'Needs revision',
       timestamp: new Date()
@@ -124,6 +126,52 @@ export const TrackedChangesDemo: React.FC = () => {
     console.log('Added suggestion:', suggestion);
   };
 
+  const handleUndo = (changeId: string) => {
+    setSubmission(prev => ({
+      ...prev,
+      changes: prev.changes.map(change => 
+        change.id === changeId 
+          ? { ...change, status: 'pending', approvedBy: undefined, rejectedBy: undefined }
+          : change
+      )
+    }));
+    console.log('Undid change:', changeId);
+  };
+
+  const handleApproveProposedVersion = (approverId: string, comment?: string) => {
+    const approval: Approval = {
+      id: `approval-${Date.now()}`,
+      approverId,
+      approverEmail: demoUser.email,
+      status: 'APPROVED',
+      comment,
+      timestamp: new Date()
+    };
+
+    setSubmission(prev => ({
+      ...prev,
+      approvals: [...prev.approvals, approval]
+    }));
+    console.log('Approved proposed version:', { approverId, comment });
+  };
+
+  const handleRejectProposedVersion = (rejecterId: string, comment?: string) => {
+    const approval: Approval = {
+      id: `approval-${Date.now()}`,
+      approverId: rejecterId,
+      approverEmail: demoUser.email,
+      status: 'REJECTED',
+      comment,
+      timestamp: new Date()
+    };
+
+    setSubmission(prev => ({
+      ...prev,
+      approvals: [...prev.approvals, approval]
+    }));
+    console.log('Rejected proposed version:', { rejecterId, comment });
+  };
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <TrackedChangesEditor
@@ -134,6 +182,9 @@ export const TrackedChangesDemo: React.FC = () => {
         onApprove={handleApprove}
         onReject={handleReject}
         onSuggestion={handleSuggestion}
+        onUndo={handleUndo}
+        onApproveProposedVersion={handleApproveProposedVersion}
+        onRejectProposedVersion={handleRejectProposedVersion}
       />
     </div>
   );

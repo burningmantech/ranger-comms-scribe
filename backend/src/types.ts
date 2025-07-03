@@ -158,6 +158,7 @@ export interface ContentSubmission {
   finalApprovalDate?: string;
   announcementSent: boolean;
   assignedCouncilManagers: string[];
+  requiredApprovers?: string[]; // Array of email addresses of required approvers
 }
 
 export interface FormField {
@@ -188,6 +189,7 @@ export interface ContentApproval {
   id: string;
   submissionId: string;
   approverId: string;
+  approverEmail: string; // Add email field for easier matching
   approverName: string;
   approverType: UserType;
   status: 'approved' | 'rejected';

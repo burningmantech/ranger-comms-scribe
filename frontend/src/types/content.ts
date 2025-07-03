@@ -104,6 +104,7 @@ export interface Comment {
 export interface Approval {
   id: string;
   approverId: string;
+  approverEmail: string; // Add email field for easier matching
   status: 'APPROVED' | 'REJECTED' | 'PENDING';
   comment?: string;
   timestamp: Date;

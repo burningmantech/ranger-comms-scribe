@@ -13,6 +13,9 @@ interface TrackedChangesEditorProps {
   onApprove: (changeId: string) => void;
   onReject: (changeId: string) => void;
   onSuggestion: (suggestion: Change) => void;
+  onUndo: (changeId: string) => void;
+  onApproveProposedVersion: (approverId: string, comment?: string) => void;
+  onRejectProposedVersion: (rejecterId: string, comment?: string) => void;
 }
 
 interface TrackedChange extends Change {
@@ -32,6 +35,10 @@ interface TextSegment {
   status?: 'pending' | 'approved' | 'rejected';
 }
 
+interface CommentWithReplies extends Comment {
+  replies: CommentWithReplies[];
+}
+
 export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   submission,
   currentUser,
@@ -40,6 +47,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onApprove,
   onReject,
   onSuggestion,
+  onUndo,
+  onApproveProposedVersion,
+  onRejectProposedVersion,
 }) => {
   // Debug: Log the submission content
   console.log('TrackedChangesEditor received submission:', {
@@ -68,6 +78,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const editedProposedContentRef = useRef(editedProposedContent);
   const initialEditorContentRef = useRef<string>('');
   const [lastSavedProposedContent, setLastSavedProposedContent] = useState<string>('');
+  const [showProposedVersionApprovalDialog, setShowProposedVersionApprovalDialog] = useState(false);
+  const [proposedVersionApprovalComment, setProposedVersionApprovalComment] = useState('');
+  const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
+  const [replyToComment, setReplyToComment] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
 
   // Update ref when content changes
   useEffect(() => {
@@ -247,10 +262,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Initialize edited proposed content when component mounts or submission changes
   useEffect(() => {
     // Prioritize rich text content from proposed versions, then fall back to other sources
-    const content = submission.proposedVersions?.richTextContent || 
+    // Skip if the content looks like a comment (contains @change:)
+    let content = submission.proposedVersions?.richTextContent || 
                    submission.proposedVersions?.content || 
                    submission.richTextContent || 
                    submission.content || '';
+    
+    // If content looks like a comment, skip it and use empty content
+    if (typeof content === 'string' && content.includes('@change:')) {
+      console.log('TrackedChangesEditor: Skipping comment content for editor initialization');
+      content = '';
+    }
+    
     const richTextContent = getRichTextContent(content);
     setEditedProposedContent(richTextContent);
     
@@ -269,13 +292,36 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Convert changes to tracked changes with status
   const trackedChanges: TrackedChange[] = useMemo(() => {
     console.log('TrackedChangesEditor: Processing changes:', submission.changes);
-    const result = submission.changes.map(change => ({
-      ...change,
-      status: (change as any).status || 'pending', // Use status from tracked changes data
-      approvedBy: (change as any).approvedBy,
-      rejectedBy: (change as any).rejectedBy,
-      comments: submission.comments.filter((c: Comment) => c.content.includes(`@change:${change.id}`))
-    }));
+    const result = submission.changes.map(change => {
+      // Get all comments for this change (including replies)
+      const changeComments = submission.comments.filter((c: Comment) => {
+        // Direct comments to this change
+        if (c.content.includes(`@change:${change.id}`)) {
+          return true;
+        }
+        // Reply comments (check if this comment is a reply to a comment on this change)
+        if (c.content.includes('@reply:')) {
+          const replyMatch = c.content.match(/@reply:([a-f0-9-]+)/);
+          if (replyMatch) {
+            const replyToCommentId = replyMatch[1];
+            // Check if the comment being replied to is on this change
+            const parentComment = submission.comments.find(pc => 
+              pc.id === replyToCommentId && pc.content.includes(`@change:${change.id}`)
+            );
+            return !!parentComment;
+          }
+        }
+        return false;
+      });
+      
+      return {
+        ...change,
+        status: (change as any).status || 'pending', // Use status from tracked changes data
+        approvedBy: (change as any).approvedBy,
+        rejectedBy: (change as any).rejectedBy,
+        comments: changeComments
+      };
+    });
     console.log('TrackedChangesEditor: Processed tracked changes:', result);
     return result;
   }, [submission.changes, submission.comments]);
@@ -529,11 +575,183 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         type: 'COMMENT',
         resolved: false
       };
+      console.log('TrackedChangesEditor: Submitting comment:', comment);
       onComment(comment);
       setCommentText('');
       setShowCommentDialog(false);
     }
   }, [selectedChange, commentText, currentUser.id, onComment]);
+
+  // Handle undo change
+  const handleUndoChange = useCallback((changeId: string) => {
+    onUndo(changeId);
+  }, [onUndo]);
+
+  // Handle proposed version approval
+  const handleProposedVersionApproval = useCallback(() => {
+    onApproveProposedVersion(currentUser.id, proposedVersionApprovalComment);
+    setProposedVersionApprovalComment('');
+    setShowProposedVersionApprovalDialog(false);
+  }, [currentUser.id, proposedVersionApprovalComment, onApproveProposedVersion]);
+
+  // Handle proposed version rejection
+  const handleProposedVersionRejection = useCallback(() => {
+    onRejectProposedVersion(currentUser.id, proposedVersionApprovalComment);
+    setProposedVersionApprovalComment('');
+    setShowProposedVersionApprovalDialog(false);
+  }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
+
+  // Handle comment reply
+  const handleCommentReply = useCallback((commentId: string) => {
+    if (replyText.trim()) {
+      const reply: Comment = {
+        id: crypto.randomUUID(),
+        content: `@reply:${commentId} ${replyText}`,
+        authorId: currentUser.id,
+        createdAt: new Date(),
+        type: 'COMMENT',
+        resolved: false
+      };
+      console.log('TrackedChangesEditor: Submitting reply:', reply);
+      onComment(reply);
+      setReplyText('');
+      setReplyToComment(null);
+    }
+  }, [replyText, currentUser.id, onComment]);
+
+  // Toggle comment expansion
+  const toggleCommentExpansion = useCallback((changeId: string) => {
+    setExpandedComments(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(changeId)) {
+        newSet.delete(changeId);
+      } else {
+        newSet.add(changeId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Check if user can approve the proposed version
+  const canApproveProposedVersion = useCallback(() => {
+    return currentUser.roles.includes('CommsCadre') ||
+           currentUser.roles.includes('CouncilManager') ||
+           currentUser.roles.includes('REVIEWER');
+  }, [currentUser.roles]);
+
+  // Check if proposed version is already approved
+  const isProposedVersionApproved = useMemo(() => {
+    return submission.approvals?.some(approval => 
+      approval.status === 'APPROVED' && 
+      approval.approverId !== submission.submittedBy
+    ) || false;
+  }, [submission.approvals, submission.submittedBy]);
+
+  // Get proposed version approval info
+  const proposedVersionApprovalInfo = useMemo(() => {
+    const approval = submission.approvals?.find(a => 
+      a.status === 'APPROVED' && 
+      a.approverId !== submission.submittedBy
+    );
+    return approval;
+  }, [submission.approvals, submission.submittedBy]);
+
+  // Helper function to organize comments into a tree structure
+  const organizeCommentsIntoTree = useCallback((comments: Comment[]) => {
+    const commentMap = new Map<string, CommentWithReplies>();
+    const rootComments: CommentWithReplies[] = [];
+
+    // First pass: create map of all comments
+    comments.forEach(comment => {
+      commentMap.set(comment.id, { ...comment, replies: [] });
+    });
+
+    // Second pass: organize into tree
+    comments.forEach(comment => {
+      const replyMatch = comment.content.match(/@reply:([a-f0-9-]+)/);
+      if (replyMatch) {
+        const parentId = replyMatch[1];
+        const parent = commentMap.get(parentId);
+        if (parent) {
+          parent.replies.push({ ...comment, replies: [] });
+        }
+      } else {
+        // This is a root comment
+        const commentWithReplies = commentMap.get(comment.id);
+        if (commentWithReplies) {
+          rootComments.push(commentWithReplies);
+        }
+      }
+    });
+
+    return rootComments;
+  }, []);
+
+  // Helper function to render a comment and its replies recursively
+  const renderCommentTree = useCallback((comment: CommentWithReplies, changeId: string, depth: number = 0) => {
+    const isReply = comment.content.includes('@reply:');
+    const displayContent = comment.content
+      .replace(`@change:${changeId}`, '')
+      .replace(/@reply:[a-f0-9-]+/, '')
+      .trim();
+
+    return (
+      <div key={comment.id} className={`comment-item ${isReply ? 'comment-reply' : ''}`} style={{ marginLeft: `${depth * 20}px` }}>
+        <div className="comment-header">
+          <span className="comment-author">{comment.authorId}</span>
+          <span className="comment-time">
+            {new Date(comment.createdAt).toLocaleString()}
+          </span>
+        </div>
+        <div className="comment-content">
+          {displayContent}
+        </div>
+        <div className="comment-actions">
+          <button
+            className="reply-button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setReplyToComment(comment.id);
+            }}
+            title="Reply to this comment"
+          >
+            ↶ Reply
+          </button>
+        </div>
+        {replyToComment === comment.id && (
+          <div className="reply-form">
+            <textarea
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              placeholder="Write your reply..."
+              autoFocus
+            />
+            <div className="reply-actions">
+              <button
+                onClick={() => {
+                  setReplyToComment(null);
+                  setReplyText('');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleCommentReply(comment.id)}
+                className="primary"
+              >
+                Reply
+              </button>
+            </div>
+          </div>
+        )}
+        {comment.replies.length > 0 && (
+          <div className="comment-replies">
+            {comment.replies.map(reply => renderCommentTree(reply, changeId, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  }, [replyToComment, replyText, handleCommentReply]);
 
   return (
     <div className="tracked-changes-editor">
@@ -603,22 +821,44 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   <h2 className="section-title">Proposed Version</h2>
                   <div className="section-actions">
                     {!isEditingProposed ? (
-                      <button
-                        className="edit-button"
-                        onClick={() => {
-                          // Reset the initial content when starting to edit
-                          const content = submission.proposedVersions?.richTextContent || 
-                                         submission.proposedVersions?.content || 
-                                         submission.richTextContent || 
-                                         submission.content || '';
-                          initialEditorContentRef.current = getRichTextContent(content);
-                          setIsEditingProposed(true);
-                        }}
-                        title="Edit proposed version"
-                      >
-                        <i className="fas fa-edit"></i>
-                        Edit
-                      </button>
+                      <>
+                        <button
+                          className="edit-button"
+                          onClick={() => {
+                            // Reset the initial content when starting to edit
+                            const content = submission.proposedVersions?.richTextContent || 
+                                           submission.proposedVersions?.content || 
+                                           submission.richTextContent || 
+                                           submission.content || '';
+                            initialEditorContentRef.current = getRichTextContent(content);
+                            setIsEditingProposed(true);
+                          }}
+                          title="Edit proposed version"
+                        >
+                          ✏️ Edit
+                        </button>
+                        {canApproveProposedVersion() && !isProposedVersionApproved && (
+                          <button
+                            className="approve-button"
+                            onClick={() => setShowProposedVersionApprovalDialog(true)}
+                            title="Approve proposed version"
+                          >
+                            ✓ Approve
+                          </button>
+                        )}
+                        {isProposedVersionApproved && proposedVersionApprovalInfo && (
+                          <div className="approval-info">
+                            <span className="approved-badge">
+                              ✅ Approved by {proposedVersionApprovalInfo.approverId}
+                            </span>
+                            {proposedVersionApprovalInfo.comment && (
+                              <span className="approval-comment">
+                                "{proposedVersionApprovalInfo.comment}"
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <div className="edit-actions">
                         <button
@@ -626,8 +866,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           onClick={handleProposedEditSubmit}
                           title="Save changes"
                         >
-                          <i className="fas fa-save"></i>
-                          Save
+                          💾 Save
                         </button>
                         <button
                           className="cancel-button"
@@ -644,8 +883,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           }}
                           title="Cancel editing"
                         >
-                          <i className="fas fa-times"></i>
-                          Cancel
+                          ✕ Cancel
                         </button>
                       </div>
                     )}
@@ -693,6 +931,30 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       title={segment.author ? `Changed by ${segment.author}` : ''}
                     >
                       {segment.text}
+                      {segment.changeId && segment.status === 'pending' && canMakeEditorialDecisions() && (
+                        <div className="segment-actions">
+                          <button
+                            className="segment-action-button approve"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleChangeDecision(segment.changeId!, 'approve');
+                            }}
+                            title="Approve this change"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            className="segment-action-button reject"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleChangeDecision(segment.changeId!, 'reject');
+                            }}
+                            title="Reject this change"
+                          >
+                            ✗
+                          </button>
+                        </div>
+                      )}
                     </span>
                   ))}
                 </div>
@@ -778,38 +1040,57 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     )}
                   </div>
                 </div>
-                {canMakeEditorialDecisions() && change.status === 'pending' && (
-                  <div className="change-actions">
-                    <button
-                      className="action-button approve"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleChangeDecision(change.id, 'approve');
-                      }}
-                    >
-                      ✓ Approve
-                    </button>
-                    <button
-                      className="action-button reject"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleChangeDecision(change.id, 'reject');
-                      }}
-                    >
-                      ✗ Reject
-                    </button>
-                    <button
-                      className="action-button comment"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedChange(change.id);
-                        setShowCommentDialog(true);
-                      }}
-                    >
-                      💬 Comment
-                    </button>
-                  </div>
-                )}
+                <div className="change-actions">
+                  {canMakeEditorialDecisions() && (
+                    <>
+                      <button
+                        className="action-button approve"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleChangeDecision(change.id, 'approve');
+                        }}
+                        title="Approve this change"
+                        disabled={change.status !== 'pending'}
+                      >
+                        ✓
+                      </button>
+                      <button
+                        className="action-button reject"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleChangeDecision(change.id, 'reject');
+                        }}
+                        title="Reject this change"
+                        disabled={change.status !== 'pending'}
+                      >
+                        ✗
+                      </button>
+                      {(change.status === 'approved' || change.status === 'rejected') && (
+                        <button
+                          className="action-button undo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUndoChange(change.id);
+                          }}
+                          title="Undo this decision"
+                        >
+                          ↩
+                        </button>
+                      )}
+                    </>
+                  )}
+                  <button
+                    className="action-button comment"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedChange(change.id);
+                      setShowCommentDialog(true);
+                    }}
+                    title="Add comment"
+                  >
+                    💬
+                  </button>
+                </div>
                 {change.status !== 'pending' && (
                   <div className="change-status">
                     {change.status === 'approved' && (
@@ -826,14 +1107,25 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 )}
                 {change.comments.length > 0 && (
                   <div className="change-comments">
-                    {change.comments.map(comment => (
-                      <div key={comment.id} className="comment-item">
-                        <span className="comment-author">{comment.authorId}</span>
-                        <span className="comment-text">
-                          {comment.content.replace(`@change:${change.id}`, '').trim()}
-                        </span>
+                    <div className="comments-header">
+                      <span className="comments-count">{change.comments.length} comment{change.comments.length !== 1 ? 's' : ''}</span>
+                      <button
+                        className="expand-comments-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCommentExpansion(change.id);
+                        }}
+                      >
+                        {expandedComments.has(change.id) ? '▲' : '▼'}
+                      </button>
+                    </div>
+                    {expandedComments.has(change.id) && (
+                      <div className="comments-thread">
+                        {organizeCommentsIntoTree(change.comments).map(comment => 
+                          renderCommentTree(comment, change.id)
+                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
               </div>
@@ -882,6 +1174,33 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <button onClick={() => setShowSuggestionDialog(false)}>Cancel</button>
               <button onClick={handleSuggestionSubmit} className="primary">
                 Suggest Edit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Proposed Version Approval Dialog */}
+      {showProposedVersionApprovalDialog && (
+        <div className="dialog-overlay" onClick={() => setShowProposedVersionApprovalDialog(false)}>
+          <div className="dialog" onClick={e => e.stopPropagation()}>
+            <h3>Approve Proposed Version</h3>
+            <div className="approval-options">
+              <p>Are you sure you want to approve this proposed version?</p>
+              <textarea
+                value={proposedVersionApprovalComment}
+                onChange={(e) => setProposedVersionApprovalComment(e.target.value)}
+                placeholder="Add an optional comment about your approval..."
+                rows={3}
+              />
+            </div>
+            <div className="dialog-actions">
+              <button onClick={() => setShowProposedVersionApprovalDialog(false)}>Cancel</button>
+              <button onClick={handleProposedVersionRejection} className="reject">
+                Reject
+              </button>
+              <button onClick={handleProposedVersionApproval} className="primary">
+                Approve
               </button>
             </div>
           </div>

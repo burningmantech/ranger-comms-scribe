@@ -26,7 +26,8 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     commsCadreApprovals: 0,
     councilManagerApprovals: [],
     announcementSent: false,
-    assignedCouncilManagers: submission.assignedCouncilManagers || []
+    assignedCouncilManagers: submission.assignedCouncilManagers || [],
+    requiredApprovers: submission.requiredApprovers || []
   };
 
   // Store in cache with appropriate key
@@ -199,6 +200,7 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     id: crypto.randomUUID(),
     submissionId: id,
     approverId: user.id,
+    approverEmail: user.email,
     approverName: user.name,
     approverType: user.userType,
     status,
@@ -225,13 +227,24 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     a.approverType === UserType.CouncilManager && a.status === 'approved'
   );
 
+  // Check if all required approvers have approved
+  const allRequiredApproversApproved = submission.requiredApprovers?.every(approverEmail =>
+    submission.approvals.some(approval => 
+      approval.approverEmail === approverEmail && approval.status === 'approved'
+    ) ?? false
+  ) ?? true; // If no requiredApprovers specified, consider it approved
+
   // Get total required approvers
   const requiredCommsCadreApprovers = 2; // Minimum required CommsCadre approvers
   const requiredCouncilManagers = submission.assignedCouncilManagers?.length || 0;
 
-  // Update status if needed
-  if (commsCadreApprovals >= requiredCommsCadreApprovers && 
-      councilManagerApprovals.length >= requiredCouncilManagers) {
+  // Update status if needed - check both legacy logic and new requiredApprovers logic
+  const legacyApprovalMet = commsCadreApprovals >= requiredCommsCadreApprovers && 
+                           councilManagerApprovals.length >= requiredCouncilManagers;
+  
+  const newApprovalMet = allRequiredApproversApproved;
+
+  if (legacyApprovalMet && newApprovalMet) {
     submission.status = 'approved';
     submission.finalApprovalDate = new Date().toISOString();
     // Send announcement email

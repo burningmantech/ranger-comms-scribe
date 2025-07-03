@@ -210,7 +210,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   // Check if all required approvers have approved
   const allRequiredApproversApproved = submission.requiredApprovers?.every(approverEmail =>
     submission.approvals?.some(approval => 
-      approval.approverId === approverEmail && approval.status === 'APPROVED'
+      approval.approverEmail === approverEmail && approval.status === 'APPROVED'
     ) ?? false
   ) ?? false;
 
@@ -627,7 +627,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
           <h4 className="font-medium">Required Approvers:</h4>
           <ul className="list-disc list-inside">
             {submission.requiredApprovers?.map((approverEmail) => {
-              const approval = submission.approvals?.find(a => a.approverId === approverEmail);
+              const approval = submission.approvals?.find(a => a.approverEmail === approverEmail);
               return (
                 <li key={approverEmail} className="flex items-center">
                   <span>{approverEmail}</span>

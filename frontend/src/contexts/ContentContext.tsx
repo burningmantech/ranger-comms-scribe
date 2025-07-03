@@ -104,6 +104,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           })),
           approvals: submission.approvals.map((approval: any) => ({
             ...approval,
+            approverEmail: approval.approverEmail || approval.approverId, // Fallback for backward compatibility
             createdAt: new Date(approval.createdAt),
             updatedAt: new Date(approval.updatedAt)
           })),
