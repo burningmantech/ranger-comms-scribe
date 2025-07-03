@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User, SuggestedEdit } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { SuggestionsList } from './SuggestionsList';
+import SubmissionCollaborators from './SubmissionCollaborators';
+import { WebSocketMessage } from '../services/websocketService';
 import { API_URL } from '../config';
 
 interface ContentSubmissionComponentProps {
@@ -54,6 +56,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const [userPermissions, setUserPermissions] = useState<RolePermissions | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [proposedVersions, setProposedVersions] = useState<Record<string, string> | null>(null);
+  const [isEditingStarted, setIsEditingStarted] = useState(false);
+  const collaboratorsRef = useRef<any>(null);
 
   // Fetch user permissions when component mounts
   useEffect(() => {
@@ -273,6 +277,51 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
 
   const handleEditorChange = (editor: any, json: string) => {
     setEditedRichTextContent(json);
+    
+    // Notify collaboration about content changes
+    if (collaboratorsRef.current) {
+      collaboratorsRef.current.notifyContentUpdated({
+        field: 'richTextContent',
+        oldValue: editedRichTextContent,
+        newValue: json
+      });
+    }
+  };
+
+  // Handle incoming WebSocket messages
+  const handleWebSocketMessage = (message: WebSocketMessage) => {
+    console.log('Received WebSocket message:', message);
+    
+    switch (message.type) {
+      case 'content_updated':
+        if (message.userId !== effectiveUserId) {
+          // Refresh the submission data when someone else updates it
+          console.log('Content updated by another user, refreshing...');
+          // You might want to refresh the submission data here
+        }
+        break;
+      case 'comment_added':
+        if (message.userId !== effectiveUserId) {
+          // Refresh comments when someone else adds a comment
+          console.log('Comment added by another user, refreshing...');
+          // You might want to refresh the comments here
+        }
+        break;
+      case 'approval_added':
+        if (message.userId !== effectiveUserId) {
+          // Refresh approvals when someone else adds an approval
+          console.log('Approval added by another user, refreshing...');
+          // You might want to refresh the approvals here
+        }
+        break;
+      case 'status_changed':
+        if (message.userId !== effectiveUserId) {
+          // Refresh the submission when status changes
+          console.log('Status changed by another user, refreshing...');
+          // You might want to refresh the submission data here
+        }
+        break;
+    }
   };
 
   const handleSuggestionCreate = async (suggestion: SuggestedEdit) => {
@@ -344,7 +393,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     }
   };
 
-  const handleSave = () => {
+    const handleSave = () => {
     const changes: Change[] = [];
     if (editedContent !== submission.content) {
       changes.push({
@@ -372,9 +421,45 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       content: editedContent,
       richTextContent: editedRichTextContent,
       formFields: editedFormFields,
-              changes: [...(submission.changes || []), ...changes]
+      changes: [...(submission.changes || []), ...changes]
     });
+    
+    // Notify collaboration about editing stopped
+    if (collaboratorsRef.current) {
+      collaboratorsRef.current.notifyEditingStopped();
+    }
+    
     setIsEditing(false);
+    setIsEditingStarted(false);
+  };
+
+  // Handle editing start
+  const handleEditingStart = () => {
+    setIsEditing(true);
+    if (!isEditingStarted) {
+      setIsEditingStarted(true);
+      // Notify collaboration about editing started
+      if (collaboratorsRef.current) {
+        collaboratorsRef.current.notifyEditingStarted();
+      }
+    }
+  };
+
+  // Handle editing cancel
+  const handleEditingCancel = () => {
+    setIsEditing(false);
+    if (isEditingStarted) {
+      setIsEditingStarted(false);
+      // Notify collaboration about editing stopped
+      if (collaboratorsRef.current) {
+        collaboratorsRef.current.notifyEditingStopped();
+      }
+    }
+    
+    // Reset to original values
+    setEditedContent(submission.content);
+    setEditedRichTextContent(submission.richTextContent || submission.content || '');
+    setEditedFormFields(submission.formFields || []);
   };
 
   const handleAddComment = async () => {
@@ -419,6 +504,16 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         <p className="text-sm text-gray-600">Status: {submission.status}</p>
       </div>
 
+      {/* WebSocket Collaboration */}
+      <div className="mb-6">
+        <SubmissionCollaborators
+          ref={collaboratorsRef}
+          submissionId={submission.id}
+          currentUser={currentUser}
+          onWebSocketMessage={handleWebSocketMessage}
+        />
+      </div>
+
       {isEditing ? (
         <div className="mb-6 bg-white rounded-lg shadow-sm p-6">
           <div className="lexical-editor-container">
@@ -447,7 +542,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
               <span className="btn-text">Save Changes</span>
             </button>
             <button
-              onClick={() => setIsEditing(false)}
+              onClick={handleEditingCancel}
               className="btn btn-neutral btn-with-icon"
             >
               <i className="fas fa-times"></i>
@@ -502,10 +597,10 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
 
           <div className="mt-4 flex space-x-3">
             {canEdit && (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="btn btn-tertiary btn-with-icon"
-              >
+                          <button
+              onClick={handleEditingStart}
+              className="btn btn-tertiary btn-with-icon"
+            >
                 <i className="fas fa-edit"></i>
                 <span className="btn-text">Edit Content</span>
               </button>

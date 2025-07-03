@@ -21,6 +21,14 @@ binding = "D1"
 database_name = "vox-quietus-d1"
 database_id = "fbea1cb9-8a22-49c4-9c5f-d0e13c036f11"
 
+[[durable_objects.bindings]]
+name = "SUBMISSION_WEBSOCKET"
+class_name = "SubmissionWebSocketServer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SubmissionWebSocketServer"]
+
 [observability]
 enabled = true
 head_sampling_rate = 1

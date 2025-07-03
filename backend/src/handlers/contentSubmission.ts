@@ -4,6 +4,7 @@ import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User
 import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
+import { broadcastToSubmissionRoom } from './websocket';
 
 export const router = AutoRouter({ base: '/content' });
 
@@ -154,6 +155,19 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
 
+  // Broadcast the update to connected WebSocket clients
+  await broadcastToSubmissionRoom(id, {
+    type: 'content_updated',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: {
+      title: updatedSubmission.title,
+      status: updatedSubmission.status,
+      changes: updates
+    }
+  }, env);
+
   return json(updatedSubmission);
 });
 
@@ -191,6 +205,18 @@ router.post('/submissions/:id/comments', withAuth, async (request: Request, env:
   
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
+
+  // Broadcast the comment to connected WebSocket clients
+  await broadcastToSubmissionRoom(id, {
+    type: 'comment_added',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: {
+      comment: newComment,
+      title: submission.title
+    }
+  }, env);
 
   return json(newComment);
 });
@@ -275,6 +301,19 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
   
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
+
+  // Broadcast the approval to connected WebSocket clients
+  await broadcastToSubmissionRoom(id, {
+    type: 'approval_added',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: {
+      approval: approval,
+      submissionStatus: submission.status,
+      title: submission.title
+    }
+  }, env);
 
   return json(approval);
 });
