@@ -123,6 +123,7 @@ export interface Change {
   rejectedAt?: Date;
   isIncremental?: boolean;
   previousVersionId?: string;
+  completeProposedVersion?: string;
 }
 
 interface RolePermissions {

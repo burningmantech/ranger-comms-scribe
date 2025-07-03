@@ -56,6 +56,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [showDiffOnRight, setShowDiffOnRight] = useState(true);
 
   // Helper to get the latest version for editing
   const getLatestEditableContent = useCallback(() => {
@@ -148,192 +149,46 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const segments: TextSegment[] = [];
     let segmentId = 0;
 
-    // Get all changes that affect content
-    const contentChanges = trackedChanges.filter(change => change.field === 'content');
-    
-    if (contentChanges.length === 0) {
-      return [{
-        id: 'original',
-        text: getDisplayableText(currentContent),
-        type: 'unchanged'
-      }];
-    }
+    // Use the original and proposed version for diff
+    const originalText = getDisplayableText(submission.content);
+    const proposedText = submission.proposedVersions?.content || currentContent;
 
-    // For incremental changes, we need to show the complete proposed version
-    // with highlights for the incremental changes only
-    if (submission.proposedVersions?.content) {
-      const proposedText = submission.proposedVersions.content;
-      const originalText = getDisplayableText(submission.content);
-      
-      // Find incremental changes and highlight only those parts
-      const incrementalChanges = contentChanges.filter(change => change.isIncremental);
-      
-      if (incrementalChanges.length > 0) {
-        // Get the previous version by applying all changes except the latest incremental one
-        const sortedChanges = contentChanges
-          .filter(change => change.status !== 'rejected')
-          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        
-        // Find the latest incremental change
-        const latestIncrementalChange = sortedChanges
-          .filter(change => change.isIncremental)
-          .pop();
-        
-        if (latestIncrementalChange) {
-          // Calculate the previous version by applying all changes except the latest incremental one
-          const previousChanges = sortedChanges.filter(change => 
-            change.id !== latestIncrementalChange.id
-          );
-          
-          let previousVersion = originalText;
-          for (const change of previousChanges) {
-            if (change.isIncremental) {
-              const index = previousVersion.indexOf(change.oldValue);
-              if (index !== -1) {
-                previousVersion = previousVersion.substring(0, index) + 
-                                change.newValue + 
-                                previousVersion.substring(index + change.oldValue.length);
-              }
-            } else {
-              previousVersion = change.newValue;
-            }
-          }
-          
-          // Now calculate only the incremental changes from the previous version
-          const incrementalDiff = calculateIncrementalChanges(originalText, previousVersion, proposedText);
-          
-          // Apply the incremental diff to the previous version to show only the changes
-          let currentPos = 0;
-          let previousPos = 0;
-          
-          incrementalDiff.forEach((segment: WordDiff) => {
-            if (segment.type === 'equal') {
-              // Find this text in the previous version and add it as unchanged
-              const index = previousVersion.indexOf(segment.value, previousPos);
-              if (index !== -1) {
-                segments.push({
-                  id: `equal-${segmentId++}`,
-                  text: segment.value,
-                  type: 'unchanged'
-                });
-                previousPos = index + segment.value.length;
-                currentPos += segment.value.length;
-              }
-            } else if (segment.type === 'delete') {
-              segments.push({
-                id: `del-${latestIncrementalChange.id}-${segmentId++}`,
-                text: segment.value,
-                type: 'deletion',
-                changeId: latestIncrementalChange.id,
-                author: latestIncrementalChange.changedBy,
-                timestamp: latestIncrementalChange.timestamp,
-                status: latestIncrementalChange.status
-              });
-            } else if (segment.type === 'insert') {
-              segments.push({
-                id: `add-${latestIncrementalChange.id}-${segmentId++}`,
-                text: segment.value,
-                type: 'addition',
-                changeId: latestIncrementalChange.id,
-                author: latestIncrementalChange.changedBy,
-                timestamp: latestIncrementalChange.timestamp,
-                status: latestIncrementalChange.status
-              });
-            }
-          });
-        } else {
-          // No incremental changes found, show the complete proposed version
-          segments.push({
-            id: 'proposed',
-            text: proposedText,
-            type: 'unchanged'
-          });
-        }
-      } else {
-        // No incremental changes, show the proposed version as is
+    // Find the latest tracked change for status
+    const latestChange = trackedChanges
+      .filter(change => change.field === 'content')
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+
+    const status = latestChange?.status || 'pending';
+
+    // Use smartDiff to get word-level changes
+    const diff = smartDiff(originalText, proposedText);
+
+    diff.forEach((segment: WordDiff) => {
+      if (segment.type === 'equal') {
         segments.push({
-          id: 'proposed',
-          text: proposedText,
+          id: `equal-${segmentId++}`,
+          text: segment.value,
           type: 'unchanged'
         });
+      } else if (segment.type === 'delete') {
+        segments.push({
+          id: `del-${segmentId++}`,
+          text: segment.value,
+          type: 'deletion',
+          status
+        });
+      } else if (segment.type === 'insert') {
+        segments.push({
+          id: `add-${segmentId++}`,
+          text: segment.value,
+          type: 'addition',
+          status
+        });
       }
-    } else {
-      // Fallback to the old logic for non-incremental changes
-      let workingText = getDisplayableText(submission.content);
-      
-      contentChanges.forEach(change => {
-        // Extract text from change values if they're Lexical JSON
-        const oldValueText = getDisplayableText(change.oldValue);
-        const newValueText = getDisplayableText(change.newValue);
-        
-        const diff = smartDiff(oldValueText, newValueText);
-        
-        // Find where this change occurs in the working text
-        const changeIndex = workingText.indexOf(oldValueText);
-        
-        if (changeIndex !== -1) {
-          // Add text before the change
-          if (changeIndex > 0) {
-            segments.push({
-              id: `unchanged-${segmentId++}`,
-              text: workingText.substring(0, changeIndex),
-              type: 'unchanged'
-            });
-          }
-          
-          // Add the diff segments
-          diff.forEach((segment: WordDiff) => {
-            if (segment.type === 'equal') {
-              segments.push({
-                id: `equal-${segmentId++}`,
-                text: segment.value,
-                type: 'unchanged'
-              });
-            } else if (segment.type === 'delete') {
-              segments.push({
-                id: `del-${change.id}-${segmentId++}`,
-                text: segment.value,
-                type: 'deletion',
-                changeId: change.id,
-                author: change.changedBy,
-                timestamp: change.timestamp,
-                status: change.status
-              });
-            } else if (segment.type === 'insert') {
-              segments.push({
-                id: `add-${change.id}-${segmentId++}`,
-                text: segment.value,
-                type: 'addition',
-                changeId: change.id,
-                author: change.changedBy,
-                timestamp: change.timestamp,
-                status: change.status
-              });
-            }
-          });
-          
-          // Update working text for next iteration
-          workingText = workingText.substring(0, changeIndex) + 
-                       newValueText + 
-                       workingText.substring(changeIndex + oldValueText.length);
-        }
-      });
-
-      // Add any remaining text
-      if (workingText.length > 0) {
-        const remainingStart = segments.reduce((acc, seg) => acc + seg.text.length, 0);
-        if (remainingStart < workingText.length) {
-          segments.push({
-            id: `remaining-${segmentId++}`,
-            text: workingText.substring(remainingStart),
-            type: 'unchanged'
-          });
-        }
-      }
-    }
+    });
 
     return segments;
-  }, [showOriginal, submission.content, submission.proposedVersions, trackedChanges, currentContent]);
+  }, [showOriginal, submission.content, submission.proposedVersions, currentContent, trackedChanges]);
 
   // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
@@ -432,9 +287,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             {editMode ? 'Preview' : 'Edit'}
           </button>
           <div className="toolbar-separator" />
+          <button
+            className={`toolbar-button ${showDiffOnRight ? 'active' : ''}`}
+            onClick={() => setShowDiffOnRight(!showDiffOnRight)}
+            disabled={showOriginal || editMode}
+          >
+            {showDiffOnRight ? 'Show Full' : 'Show Diff'}
+          </button>
+          <div className="toolbar-separator" />
           <span className="toolbar-label">Viewing mode:</span>
           <span className="toolbar-value">
-            {showOriginal ? 'Original' : editMode ? 'Edit mode' : 'With tracked changes'}
+            {showOriginal ? 'Original' : editMode ? 'Edit mode' : showDiffOnRight ? 'With tracked changes' : 'Full proposed version'}
           </span>
         </div>
         <div className="toolbar-right">
@@ -486,16 +349,24 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               className="document-body"
               onMouseUp={handleTextSelection}
             >
-              {processedSegments.map(segment => (
-                <span
-                  key={segment.id}
-                  className={`text-segment ${segment.type} ${segment.status || ''}`}
-                  onClick={() => segment.changeId && setSelectedChange(segment.changeId)}
-                  title={segment.author ? `Changed by ${segment.author}` : ''}
-                >
-                  {segment.text}
+              {showDiffOnRight ? (
+                // Show diff with tracked changes
+                processedSegments.map(segment => (
+                  <span
+                    key={segment.id}
+                    className={`text-segment ${segment.type} ${segment.status || ''}`}
+                    onClick={() => segment.changeId && setSelectedChange(segment.changeId)}
+                    title={segment.author ? `Changed by ${segment.author}` : ''}
+                  >
+                    {segment.text}
+                  </span>
+                ))
+              ) : (
+                // Show full proposed version
+                <span className="text-segment unchanged">
+                  {getDisplayableText(submission.proposedVersions?.content || currentContent)}
                 </span>
-              ))}
+              )}
             </div>
           )}
         </div>

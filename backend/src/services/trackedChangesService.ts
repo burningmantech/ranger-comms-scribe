@@ -20,6 +20,7 @@ export interface TrackedChange {
   rejectedAt?: string;
   isIncremental?: boolean;
   previousVersionId?: string;
+  completeProposedVersion?: string; // Store the complete proposed version for incremental changes
 }
 
 export interface ChangeComment {
@@ -88,6 +89,11 @@ export const calculateIncrementalChange = (
   previousVersion: string,
   currentVersion: string
 ): { oldValue: string; newValue: string } => {
+  // If the texts are identical, return empty changes
+  if (previousVersion === currentVersion) {
+    return { oldValue: '', newValue: '' };
+  }
+  
   // Split into words for better diff calculation
   const previousWords = previousVersion.split(/\s+/);
   const currentWords = currentVersion.split(/\s+/);
@@ -114,6 +120,32 @@ export const calculateIncrementalChange = (
   
   const oldValue = oldWords.join(' ');
   const newValue = newWords.join(' ');
+  
+  // If we couldn't find meaningful differences, fall back to character-level diff
+  if (!oldValue && !newValue) {
+    // Find the first difference
+    let firstDiff = 0;
+    while (firstDiff < previousVersion.length && 
+           firstDiff < currentVersion.length && 
+           previousVersion[firstDiff] === currentVersion[firstDiff]) {
+      firstDiff++;
+    }
+    
+    // Find the last difference
+    let lastDiffPrev = previousVersion.length;
+    let lastDiffCurr = currentVersion.length;
+    while (lastDiffPrev > firstDiff && 
+           lastDiffCurr > firstDiff && 
+           previousVersion[lastDiffPrev - 1] === currentVersion[lastDiffCurr - 1]) {
+      lastDiffPrev--;
+      lastDiffCurr--;
+    }
+    
+    return {
+      oldValue: previousVersion.substring(firstDiff, lastDiffPrev),
+      newValue: currentVersion.substring(firstDiff, lastDiffCurr)
+    };
+  }
   
   return { oldValue, newValue };
 };
@@ -182,9 +214,17 @@ export const createTrackedChange = async (
       if (previousChange) {
         previousVersionId = previousChange.id;
       }
+    } else {
+      // For the first change or when there's no previous version, calculate diff from original
+      const incrementalChange = calculateIncrementalChange(oldValue, newValue);
+      incrementalOldValue = incrementalChange.oldValue;
+      incrementalNewValue = incrementalChange.newValue;
+      isIncremental = true;
     }
     
     // Create the tracked change object
+    // For incremental changes, store the incremental differences in oldValue/newValue
+    // and the complete proposed version in a separate field
     const newChange: TrackedChange = {
       id: changeId,
       submissionId,
@@ -196,7 +236,8 @@ export const createTrackedChange = async (
       timestamp,
       status: 'pending',
       isIncremental,
-      previousVersionId
+      previousVersionId,
+      completeProposedVersion: isIncremental ? newValue : undefined
     };
     
     // Store the change in R2 and cache
@@ -384,38 +425,22 @@ export const getCompleteProposedVersion = async (
     const changes = await getTrackedChanges(submissionId, env);
     
     // Get all approved and pending changes for this field, sorted by timestamp
-    const fieldChanges = changes
+    const latestChange = changes
       .filter(change => change.field === field && change.status !== 'rejected')
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .pop();
     
-    if (fieldChanges.length === 0) {
+    if (!latestChange) {
       return null;
     }
     
-    // Start with the original value (first change's oldValue if it's not incremental)
-    let currentVersion = fieldChanges[0].isIncremental ? '' : fieldChanges[0].oldValue;
-    
-    // Apply each change sequentially
-    for (const change of fieldChanges) {
-      if (change.isIncremental) {
-        // For incremental changes, we need to find where to apply the change
-        // This is a simplified approach - in practice, you might need more sophisticated logic
-        const changeIndex = currentVersion.indexOf(change.oldValue);
-        if (changeIndex !== -1) {
-          currentVersion = currentVersion.substring(0, changeIndex) + 
-                          change.newValue + 
-                          currentVersion.substring(changeIndex + change.oldValue.length);
-        } else {
-          // If we can't find the exact match, append the new value
-          currentVersion += change.newValue;
-        }
-      } else {
-        // For non-incremental changes, replace the entire value
-        currentVersion = change.newValue;
-      }
+    // If this is an incremental change, use the stored complete proposed version
+    if (latestChange.isIncremental && latestChange.completeProposedVersion) {
+      return latestChange.completeProposedVersion;
     }
     
-    return currentVersion;
+    // For non-incremental changes or fallback, return the newValue
+    return latestChange.newValue;
   } catch (error) {
     console.error('Error getting complete proposed version:', error);
     return null;

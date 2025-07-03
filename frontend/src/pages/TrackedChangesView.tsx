@@ -134,7 +134,8 @@ export const TrackedChangesView: React.FC = () => {
           approvedAt: change.approvedAt,
           rejectedAt: change.rejectedAt,
           isIncremental: change.isIncremental || false,
-          previousVersionId: change.previousVersionId
+          previousVersionId: change.previousVersionId,
+          completeProposedVersion: change.completeProposedVersion
         }));
         
         // Transform backend data to frontend format
@@ -411,7 +412,8 @@ export const TrackedChangesView: React.FC = () => {
           approvedAt: change.approvedAt,
           rejectedAt: change.rejectedAt,
           isIncremental: change.isIncremental || false,
-          previousVersionId: change.previousVersionId
+          previousVersionId: change.previousVersionId,
+          completeProposedVersion: change.completeProposedVersion
         }));
         
         // Transform backend data to frontend format
@@ -506,7 +508,8 @@ export const TrackedChangesView: React.FC = () => {
           approvedAt: change.approvedAt,
           rejectedAt: change.rejectedAt,
           isIncremental: change.isIncremental || false,
-          previousVersionId: change.previousVersionId
+          previousVersionId: change.previousVersionId,
+          completeProposedVersion: change.completeProposedVersion
         }));
         
         // Transform backend data to frontend format
@@ -620,7 +623,8 @@ export const TrackedChangesView: React.FC = () => {
           approvedAt: change.approvedAt,
           rejectedAt: change.rejectedAt,
           isIncremental: change.isIncremental || false,
-          previousVersionId: change.previousVersionId
+          previousVersionId: change.previousVersionId,
+          completeProposedVersion: change.completeProposedVersion
         }));
         
         // Transform backend data to frontend format
