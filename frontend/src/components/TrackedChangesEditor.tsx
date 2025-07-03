@@ -67,6 +67,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [editedProposedContent, setEditedProposedContent] = useState('');
   const editedProposedContentRef = useRef(editedProposedContent);
   const initialEditorContentRef = useRef<string>('');
+  const [lastSavedProposedContent, setLastSavedProposedContent] = useState<string>('');
 
   // Update ref when content changes
   useEffect(() => {
@@ -253,6 +254,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const richTextContent = getRichTextContent(content);
     setEditedProposedContent(richTextContent);
     
+    // Update last saved content when submission changes (from parent)
+    // Only update if we don't have local changes or if the submission has actually changed
+    if (!lastSavedProposedContent || lastSavedProposedContent !== richTextContent) {
+      setLastSavedProposedContent(richTextContent);
+    }
+    
     // Store the initial content for the editor (only set once)
     if (!initialEditorContentRef.current) {
       initialEditorContentRef.current = richTextContent;
@@ -289,15 +296,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Get the content to display in the proposed version section
   const proposedContentToDisplay = useMemo(() => {
     return isEditingProposed ? editedProposedContent : getDisplayableText(
+      lastSavedProposedContent || 
       submission.proposedVersions?.richTextContent || 
       submission.proposedVersions?.content || 
       currentContent
     );
-  }, [isEditingProposed, editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
+  }, [isEditingProposed, editedProposedContent, lastSavedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
 
   // Memoize the rich text content for the proposed version editor
   const proposedEditorContent = useMemo(() => {
     const content = getRichTextContent(
+      lastSavedProposedContent || 
       submission.proposedVersions?.richTextContent || 
       submission.proposedVersions?.content || 
       submission.richTextContent || 
@@ -310,18 +319,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent ? 'present' : 'not present'
     });
     return content;
-  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
+  }, [lastSavedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
   // Memoize the rich text content for the proposed version display
   const proposedDisplayContent = useMemo(() => {
-    return getRichTextContent(
-      submission.proposedVersions?.richTextContent || 
-      submission.proposedVersions?.content || 
-      submission.richTextContent || 
-      submission.content || 
-      ''
-    );
-  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
+    // Use last saved content if available, otherwise fall back to submission content
+    const content = lastSavedProposedContent || 
+                   submission.proposedVersions?.richTextContent || 
+                   submission.proposedVersions?.content || 
+                   submission.richTextContent || 
+                   submission.content || 
+                   '';
+    return getRichTextContent(content);
+  }, [lastSavedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
   // Memoize the rich text content for the original version
   const originalDisplayContent = useMemo(() => {
@@ -474,9 +484,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         richTextNewValue: editedProposedContent
       };
       onSuggestion(suggestion);
+      
+      // Update local state immediately for responsive UI
+      setLastSavedProposedContent(editedProposedContent);
     }
     setIsEditingProposed(false);
-  }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, currentUser.id, onSuggestion]);
+  }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, currentUser.id, onSuggestion, getDisplayableText]);
 
   // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -624,7 +637,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                            submission.proposedVersions?.content || 
                                            submission.richTextContent || 
                                            submission.content || '';
-                            setEditedProposedContent(getRichTextContent(content));
+                            const richTextContent = getRichTextContent(content);
+                            setEditedProposedContent(richTextContent);
+                            // Reset last saved content to the original submission content
+                            setLastSavedProposedContent(richTextContent);
                           }}
                           title="Cancel editing"
                         >
