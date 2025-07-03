@@ -33,6 +33,7 @@ interface TextSegment {
   author?: string;
   timestamp?: Date;
   status?: 'pending' | 'approved' | 'rejected';
+  showControls?: boolean;
 }
 
 interface CommentWithReplies extends Comment {
@@ -473,34 +474,87 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return undefined;
     };
 
+    // Group related deletion and addition segments
+    const groupedSegments: { deletions: WordDiff[], additions: WordDiff[] }[] = [];
+    let currentGroup = { deletions: [] as WordDiff[], additions: [] as WordDiff[] };
+    
+    diff.forEach((segment: WordDiff) => {
+      if (segment.type === 'equal') {
+        // If we have a group with content, save it and start a new one
+        if (currentGroup.deletions.length > 0 || currentGroup.additions.length > 0) {
+          groupedSegments.push({ ...currentGroup });
+          currentGroup = { deletions: [], additions: [] };
+        }
+      } else if (segment.type === 'delete') {
+        currentGroup.deletions.push(segment);
+      } else if (segment.type === 'insert') {
+        currentGroup.additions.push(segment);
+      }
+    });
+    
+    // Don't forget the last group
+    if (currentGroup.deletions.length > 0 || currentGroup.additions.length > 0) {
+      groupedSegments.push(currentGroup);
+    }
+
+    // Process grouped segments
+    groupedSegments.forEach((group, groupIndex) => {
+      // Find the change ID for this group (use the first deletion or addition)
+      let groupChangeId: string | undefined;
+      let groupAuthor: string | undefined;
+      let groupTimestamp: Date | undefined;
+      
+      if (group.deletions.length > 0) {
+        groupChangeId = findMostRecentChangeForText(group.deletions[0].value, 'deletion');
+      }
+      if (!groupChangeId && group.additions.length > 0) {
+        groupChangeId = findMostRecentChangeForText(group.additions[0].value, 'addition');
+      }
+      
+      if (groupChangeId) {
+        const change = trackedChanges.find(c => c.id === groupChangeId);
+        groupAuthor = change?.changedBy;
+        groupTimestamp = change?.timestamp;
+      }
+
+      // Add deletion segments
+      group.deletions.forEach((segment, index) => {
+        segments.push({
+          id: `del-${groupIndex}-${index}`,
+          text: segment.value,
+          type: 'deletion',
+          status,
+          changeId: groupChangeId,
+          author: groupAuthor,
+          timestamp: groupTimestamp,
+          // Show controls on the first deletion segment (whether it's part of a replacement or standalone deletion)
+          showControls: index === 0
+        });
+      });
+
+      // Add addition segments
+      group.additions.forEach((segment, index) => {
+        segments.push({
+          id: `add-${groupIndex}-${index}`,
+          text: segment.value,
+          type: 'addition',
+          status,
+          changeId: groupChangeId,
+          author: groupAuthor,
+          timestamp: groupTimestamp,
+          // Show controls on the first addition segment only if there are no deletions (standalone addition)
+          showControls: group.deletions.length === 0 && index === 0
+        });
+      });
+    });
+
+    // Add unchanged segments
     diff.forEach((segment: WordDiff) => {
       if (segment.type === 'equal') {
         segments.push({
           id: `equal-${segmentId++}`,
           text: segment.value,
           type: 'unchanged'
-        });
-      } else if (segment.type === 'delete') {
-        const changeId = findMostRecentChangeForText(segment.value, 'deletion');
-        segments.push({
-          id: `del-${segmentId++}`,
-          text: segment.value,
-          type: 'deletion',
-          status,
-          changeId,
-          author: changeId ? trackedChanges.find(c => c.id === changeId)?.changedBy : undefined,
-          timestamp: changeId ? trackedChanges.find(c => c.id === changeId)?.timestamp : undefined
-        });
-      } else if (segment.type === 'insert') {
-        const changeId = findMostRecentChangeForText(segment.value, 'addition');
-        segments.push({
-          id: `add-${segmentId++}`,
-          text: segment.value,
-          type: 'addition',
-          status,
-          changeId,
-          author: changeId ? trackedChanges.find(c => c.id === changeId)?.changedBy : undefined,
-          timestamp: changeId ? trackedChanges.find(c => c.id === changeId)?.timestamp : undefined
         });
       }
     });
@@ -971,7 +1025,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       title={segment.author ? `Changed by ${segment.author}` : ''}
                     >
                       {segment.text}
-                      {segment.changeId && segment.status === 'pending' && canMakeEditorialDecisions() && (
+                      {segment.showControls && segment.changeId && segment.status === 'pending' && canMakeEditorialDecisions() && (
                         <div className="segment-actions">
                           <button
                             className="segment-action-button approve"
