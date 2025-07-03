@@ -55,6 +55,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [isEditingProposed, setIsEditingProposed] = useState(false);
+  const [editedProposedContent, setEditedProposedContent] = useState('');
 
   // Helper to get the latest version for editing
   const getLatestEditableContent = useCallback(() => {
@@ -74,6 +76,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
     // Only run when editMode toggles or submission changes
   }, [editMode, getLatestEditableContent]);
+
+  // Initialize edited proposed content when component mounts or submission changes
+  useEffect(() => {
+    setEditedProposedContent(getDisplayableText(submission.proposedVersions?.content || submission.content));
+  }, [submission.proposedVersions?.content, submission.content]);
 
   const editorRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +123,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     return getDisplayableText(submission.proposedVersions?.content || submission.content);
   }, [submission.proposedVersions?.content, submission.content, getDisplayableText]);
 
+  // Get the content to display in the proposed version section
+  const proposedContentToDisplay = useMemo(() => {
+    return isEditingProposed ? editedProposedContent : getDisplayableText(submission.proposedVersions?.content || currentContent);
+  }, [isEditingProposed, editedProposedContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
+
   // Process text to show tracked changes using diff algorithm
   const processedSegments: TextSegment[] = useMemo(() => {
     const segments: TextSegment[] = [];
@@ -123,7 +135,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     // Use the original and proposed version for diff
     const originalText = getDisplayableText(submission.content);
-    const proposedText = submission.proposedVersions?.content || currentContent;
+    const proposedText = proposedContentToDisplay;
 
     // Find the latest tracked change for status
     const latestChange = trackedChanges
@@ -160,16 +172,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     });
 
     return segments;
-  }, [submission.content, submission.proposedVersions, currentContent, trackedChanges, getDisplayableText]);
+  }, [submission.content, proposedContentToDisplay, trackedChanges, getDisplayableText]);
 
   // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
     const selection = window.getSelection();
-    if (selection && selection.toString().trim() && !editMode) {
+    if (selection && selection.toString().trim() && !editMode && !isEditingProposed) {
       setSelectedText(selection.toString());
       setShowSuggestionDialog(true);
     }
-  }, [editMode]);
+  }, [editMode, isEditingProposed]);
 
   // Handle edit submission
   const handleEditSubmit = useCallback(() => {
@@ -187,6 +199,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
     setEditMode(false);
   }, [editedContent, currentContent, currentUser.id, onSuggestion]);
+
+  // Handle proposed version edit submission
+  const handleProposedEditSubmit = useCallback(() => {
+    if (editedProposedContent !== getDisplayableText(submission.proposedVersions?.content || submission.content)) {
+      const suggestion: Change = {
+        id: crypto.randomUUID(),
+        field: 'content',
+        oldValue: getDisplayableText(submission.proposedVersions?.content || submission.content),
+        newValue: editedProposedContent,
+        changedBy: currentUser.id,
+        timestamp: new Date(),
+        isIncremental: true
+      };
+      onSuggestion(suggestion);
+    }
+    setIsEditingProposed(false);
+  }, [editedProposedContent, submission.proposedVersions?.content, submission.content, currentUser.id, onSuggestion, getDisplayableText]);
 
   // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -296,11 +325,57 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             <div className="document-body">
               {/* Always show proposed version at the top */}
               <div className="proposed-version-section">
-                <h2 className="section-title">Proposed Version</h2>
+                <div className="section-header">
+                  <h2 className="section-title">Proposed Version</h2>
+                  <div className="section-actions">
+                    {!isEditingProposed ? (
+                      <button
+                        className="edit-button"
+                        onClick={() => setIsEditingProposed(true)}
+                        title="Edit proposed version"
+                      >
+                        <i className="fas fa-edit"></i>
+                        Edit
+                      </button>
+                    ) : (
+                      <div className="edit-actions">
+                        <button
+                          className="save-button"
+                          onClick={handleProposedEditSubmit}
+                          title="Save changes"
+                        >
+                          <i className="fas fa-save"></i>
+                          Save
+                        </button>
+                        <button
+                          className="cancel-button"
+                          onClick={() => {
+                            setIsEditingProposed(false);
+                            setEditedProposedContent(getDisplayableText(submission.proposedVersions?.content || submission.content));
+                          }}
+                          title="Cancel editing"
+                        >
+                          <i className="fas fa-times"></i>
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="proposed-content">
-                  <span className="text-segment unchanged">
-                    {getDisplayableText(submission.proposedVersions?.content || currentContent)}
-                  </span>
+                  {isEditingProposed ? (
+                    <textarea
+                      className="proposed-edit-textarea"
+                      value={editedProposedContent}
+                      onChange={(e) => setEditedProposedContent(e.target.value)}
+                      placeholder="Edit the proposed version..."
+                      autoFocus
+                    />
+                  ) : (
+                    <span className="text-segment unchanged">
+                      {proposedContentToDisplay}
+                    </span>
+                  )}
                 </div>
               </div>
 
