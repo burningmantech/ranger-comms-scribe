@@ -314,9 +314,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         return false;
       });
       
+      const status = (change as any).status || 'pending';
+      console.log(`🔍 Change ${change.id} status:`, status);
+      
       return {
         ...change,
-        status: (change as any).status || 'pending', // Use status from tracked changes data
+        status: status, // Use status from tracked changes data
         approvedBy: (change as any).approvedBy,
         rejectedBy: (change as any).rejectedBy,
         comments: changeComments
@@ -328,11 +331,48 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Check if user can make editorial decisions
   const canMakeEditorialDecisions = useCallback(() => {
-    return currentUser.roles.includes('CommsCadre') ||
-           currentUser.roles.includes('CouncilManager') ||
-           currentUser.roles.includes('REVIEWER') ||
-           currentUser.id === submission.submittedBy;
-  }, [currentUser, submission.submittedBy]);
+    // Check if user has admin, comms cadre, or council manager roles
+    const hasEditorialRole = currentUser.roles.includes('CommsCadre') ||
+                            currentUser.roles.includes('CouncilManager') ||
+                            currentUser.roles.includes('Admin');
+    
+    // Check if user is the submitter
+    const isSubmitter = currentUser.id === submission.submittedBy ||
+                       currentUser.email === submission.submittedBy;
+    
+    // Check if user is a required approver
+    const isRequiredApprover = submission.requiredApprovers?.includes(currentUser.email) || false;
+    
+    // Check if user is an assigned council manager
+    const isAssignedCouncilManager = submission.assignedCouncilManagers?.includes(currentUser.email) || false;
+    
+    // Check if user has already approved this submission
+    const hasApproved = submission.approvals?.some(approval => 
+      approval.approverEmail === currentUser.email || approval.approverId === currentUser.email
+    ) || false;
+    
+    const canMake = hasEditorialRole || isSubmitter || isRequiredApprover || isAssignedCouncilManager || hasApproved;
+    
+    console.log('🔍 canMakeEditorialDecisions check:', {
+      currentUserRoles: currentUser.roles,
+      currentUserId: currentUser.id,
+      currentUserEmail: currentUser.email,
+      submissionSubmittedBy: submission.submittedBy,
+      hasCommsCadre: currentUser.roles.includes('CommsCadre'),
+      hasCouncilManager: currentUser.roles.includes('CouncilManager'),
+      hasAdmin: currentUser.roles.includes('Admin'),
+      isSubmitter,
+      isRequiredApprover,
+      isAssignedCouncilManager,
+      hasApproved,
+      requiredApprovers: submission.requiredApprovers,
+      assignedCouncilManagers: submission.assignedCouncilManagers,
+      approvals: submission.approvals?.map(a => ({ approverEmail: a.approverEmail, approverId: a.approverId }))
+    });
+    
+    console.log('🔍 canMakeEditorialDecisions result:', canMake);
+    return canMake;
+  }, [currentUser, submission.submittedBy, submission.requiredApprovers, submission.assignedCouncilManagers, submission.approvals]);
 
   // Get current content (proposed version or original)
   const currentContent = useMemo(() => {
@@ -1051,6 +1091,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         }}
                         title="Approve this change"
                         disabled={change.status !== 'pending'}
+                        style={{ 
+                          opacity: change.status !== 'pending' ? 0.4 : 1,
+                          backgroundColor: change.status !== 'pending' ? '#f5f5f5' : '#fff'
+                        }}
                       >
                         ✓
                       </button>
@@ -1062,6 +1106,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         }}
                         title="Reject this change"
                         disabled={change.status !== 'pending'}
+                        style={{ 
+                          opacity: change.status !== 'pending' ? 0.4 : 1,
+                          backgroundColor: change.status !== 'pending' ? '#f5f5f5' : '#fff'
+                        }}
                       >
                         ✗
                       </button>
@@ -1090,6 +1138,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   >
                     💬
                   </button>
+                  {/* Debug info */}
+                  <div style={{ fontSize: '10px', color: '#666', marginLeft: '8px' }}>
+                    Status: {change.status} | CanEdit: {canMakeEditorialDecisions() ? 'Yes' : 'No'}
+                  </div>
                 </div>
                 {change.status !== 'pending' && (
                   <div className="change-status">

@@ -84,7 +84,8 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 
       sub.submittedBy === user.id || 
-      (sub.approvals && sub.approvals.some((a: ContentApproval) => a.approverId === user.id))
+      (sub.approvals && sub.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
+      (sub.requiredApprovers && sub.requiredApprovers.includes(user.email))
     );
   }
 
@@ -106,7 +107,8 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   // Check if user has access to this submission
   const hasAccess = user.userType === UserType.Admin ||
                    submission.submittedBy === user.id ||
-                   (submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id));
+                   (submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
+                   (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
   if (!hasAccess) {
     return json({ error: 'Access denied' }, { status: 403 });
@@ -130,7 +132,10 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
 
   // Check if user has permission to edit this submission
   const canEdit = user.userType === UserType.Admin ||
-                 submission.submittedBy === user.id;
+                 user.userType === UserType.CouncilManager ||
+                 user.userType === UserType.CommsCadre ||
+                 submission.submittedBy === user.id ||
+                 (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
   if (!canEdit) {
     return json({ error: 'Access denied' }, { status: 403 });
@@ -215,6 +220,16 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
+  // Check if user has permission to approve this submission
+  const canApprove = user.userType === UserType.Admin ||
+                    user.userType === UserType.CouncilManager ||
+                    user.userType === UserType.CommsCadre ||
+                    (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+  if (!canApprove) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
   // Add the approval
   submission.approvals.push(approval);
   
@@ -287,6 +302,17 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
+  // Check if user has permission to track changes on this submission
+  const canTrackChanges = user.userType === UserType.Admin ||
+                         user.userType === UserType.CouncilManager ||
+                         user.userType === UserType.CommsCadre ||
+                         submission.submittedBy === user.id ||
+                         (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+  if (!canTrackChanges) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
   // Add the change
   submission.changes.push(newChange);
 
@@ -313,6 +339,8 @@ router.delete('/submissions/:id', withAuth, async (request: Request, env: any) =
 
   // Check if user has permission to delete this submission
   const canDelete = user.userType === UserType.Admin ||
+                   user.userType === UserType.CouncilManager ||
+                   user.userType === UserType.CommsCadre ||
                    submission.submittedBy === user.id;
 
   if (!canDelete) {
