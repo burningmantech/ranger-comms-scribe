@@ -735,7 +735,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         </div>
                         {change.oldValue && (
                           <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>Removed:</strong> {getChangeDisplayText(change.oldValue)}
+                            <strong>Removed:</strong> <span>{getChangeDisplayText(change.oldValue)}</span>
                           </span>
                         )}
                         {change.newValue && (

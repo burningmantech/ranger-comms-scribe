@@ -483,10 +483,17 @@
 
 .diff-old {
   color: #d33b2c;
-  text-decoration: line-through;
   padding: 4px 8px;
   background-color: #fce8e6;
   border-radius: 4px;
+}
+
+.diff-old strong {
+  text-decoration: none;
+}
+
+.diff-old span {
+  text-decoration: line-through;
 }
 
 .diff-new {
