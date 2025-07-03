@@ -585,4 +585,68 @@ export function mergeTextIntoLexicalJson(originalLexical: string, newText: strin
   } catch (e) {
     return originalLexical;
   }
-} 
+}
+
+// Undo a change decision (reset status back to pending)
+export const undoChange = async (
+  changeId: string,
+  env: Env
+): Promise<TrackedChange | null> => {
+  try {
+    // Get all changes to find the one with the matching ID
+    const allChanges = await listObjects('tracked-changes/', env);
+    
+    // Find the specific change
+    let targetChange: TrackedChange | null = null;
+    let changeKey: string | null = null;
+    
+    for (const object of allChanges.objects) {
+      const change = await getObject<TrackedChange>(object.key, env);
+      if (change && change.id === changeId) {
+        targetChange = change;
+        changeKey = object.key;
+        break;
+      }
+    }
+    
+    if (!targetChange || !changeKey) {
+      console.error('Change not found:', changeId);
+      return null;
+    }
+    
+    // Only allow undoing if the change is currently approved or rejected
+    if (targetChange.status !== 'approved' && targetChange.status !== 'rejected') {
+      console.error('Cannot undo change that is not approved or rejected:', targetChange.status);
+      return null;
+    }
+    
+    // Reset the change status to pending and clear approval/rejection info
+    const updatedChange: TrackedChange = {
+      ...targetChange,
+      status: 'pending',
+      approvedBy: undefined,
+      approvedByName: undefined,
+      rejectedBy: undefined,
+      rejectedByName: undefined,
+      approvedAt: undefined,
+      rejectedAt: undefined
+    };
+    
+    // Save the updated change
+    await putObject(changeKey, updatedChange, env);
+    
+    // Clear cache for this change
+    const changeCacheKey = `change:${changeKey}`;
+    await deleteObject(changeCacheKey, env);
+    
+    // Clear cache for the submission's tracked changes
+    const submissionCacheKey = `tracked_changes:submission:${targetChange.submissionId}`;
+    await deleteObject(submissionCacheKey, env);
+    
+    console.log('Successfully undone change:', changeId);
+    return updatedChange;
+  } catch (error) {
+    console.error('Error undoing change:', error);
+    return null;
+  }
+}; 

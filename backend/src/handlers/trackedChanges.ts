@@ -10,6 +10,7 @@ import {
   getChangeHistory,
   getCompleteProposedVersion,
   getCompleteRichTextProposedVersion,
+  undoChange,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
@@ -249,10 +250,45 @@ export async function getChangeHistoryHandler(request: CustomRequest, env: any):
   }
 }
 
+// Undo a change decision
+export async function undoChangeHandler(request: CustomRequest, env: any): Promise<Response> {
+  const { changeId } = request.params!;
+  
+  if (!request.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    // Check permissions - same as approve/reject
+    const hasPermission = request.user.userType === 'Admin' ||
+                         request.user.userType === 'CommsCadre' ||
+                         request.user.userType === 'CouncilManager';
+
+    if (!hasPermission) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    // Undo the change
+    const updatedChange = await undoChange(changeId, env);
+
+    if (!updatedChange) {
+      return new Response('Change not found or cannot be undone', { status: 404 });
+    }
+
+    return new Response(JSON.stringify({ success: true, change: updatedChange }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Error undoing change:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
 // Create the router
 export const router = AutoRouter({ base: '/tracked-changes' })
   .get('/submission/:submissionId', getTrackedChangesHandler)
   .post('/submission/:submissionId', createTrackedChangeHandler)
   .put('/change/:changeId/status', updateChangeStatusHandler)
   .post('/change/:changeId/comment', addChangeCommentHandler)
+  .post('/:changeId/undo', undoChangeHandler)
   .get('/history', getChangeHistoryHandler);
