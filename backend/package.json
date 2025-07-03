@@ -29,6 +29,8 @@
     "aws4fetch": "^1.0.20",
     "google-auth-library": "^9.15.1",
     "itty-router": "^5.0.18",
-    "itty-router-extras": "^0.4.6"
+    "itty-router-extras": "^0.4.6",
+    "node-fetch": "^3.3.2",
+    "ws": "^8.18.3"
   }
 }

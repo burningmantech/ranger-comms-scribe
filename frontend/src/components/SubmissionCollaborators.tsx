@@ -28,17 +28,41 @@ export const SubmissionCollaborators = React.forwardRef<
   const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<string>('disconnected');
   const [notifications, setNotifications] = useState<WebSocketMessage[]>([]);
+  const [debugMessages, setDebugMessages] = useState<Array<{id: string, type: string, message: WebSocketMessage}>>([]);
   const wsClientRef = useRef<SubmissionWebSocketClient | null>(null);
 
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
+
+  // Helper function to log all received messages for debugging
+  const logDebugMessage = (type: string, message: WebSocketMessage) => {
+    const debugEntry = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      type,
+      message,
+      timestamp: new Date().toISOString()
+    };
+    
+    console.log(`📨 WebSocket message received:`, { type, message });
+    console.log(`📨 From user:`, message.userId, message.userName);
+    console.log(`📨 Current user:`, effectiveUserId);
+    console.log(`📨 Is from current user:`, message.userId === effectiveUserId);
+    
+    setDebugMessages(prev => [...prev.slice(-20), debugEntry]); // Keep last 20 messages
+  };
 
   useEffect(() => {
     let mounted = true;
 
     const connectToWebSocket = async () => {
       try {
-        console.log('Connecting to WebSocket for submission:', submissionId);
+        console.log('🔌 Starting WebSocket connection process...');
+        console.log('🔌 Connection details:', {
+          submissionId,
+          effectiveUserId,
+          currentUserName: currentUser.name,
+          currentUserEmail: currentUser.email
+        });
         
         const client = await webSocketManager.connectToSubmission(
           submissionId,
@@ -47,24 +71,41 @@ export const SubmissionCollaborators = React.forwardRef<
           currentUser.email
         );
         
-        if (!mounted) return;
+        if (!mounted) {
+          console.log('⚠️ Component unmounted, skipping WebSocket setup');
+          return;
+        }
         
+        console.log('✅ WebSocket client created:', client);
         wsClientRef.current = client;
         setConnectionStatus(client.connectionState);
 
         // Set up event handlers
         client.on('connected', (message) => {
-          console.log('Connected to submission room:', message);
+          logDebugMessage('connected', message);
+          console.log('🔗 Connected event received:', message);
           setConnectionStatus('connected');
         });
 
         client.on('room_state', (message) => {
+          logDebugMessage('room_state', message);
           console.log('🏠 Room state received:', message);
           console.log('👥 Users in room:', message.users);
           console.log('🔍 Current user ID:', effectiveUserId);
           console.log('🔍 Current user details:', { effectiveUserId, currentUser });
           
           if (message.users) {
+            // Log detailed user information
+            message.users.forEach((user, index) => {
+              console.log(`👤 User ${index + 1}:`, {
+                userId: user.userId,
+                userName: user.userName,
+                userEmail: user.userEmail,
+                connectedAt: user.connectedAt,
+                isCurrentUser: user.userId === effectiveUserId
+              });
+            });
+            
             // Deduplicate users by userId to prevent React key conflicts
             const uniqueUsers = message.users.reduce((acc, user) => {
               if (!acc.find(existing => existing.userId === user.userId)) {
@@ -80,23 +121,28 @@ export const SubmissionCollaborators = React.forwardRef<
               isEditing: false,
               lastActivity: new Date().toISOString()
             }));
-            console.log('👥 Deduplicated and mapped users:', mappedUsers);
+            
+            console.log('👥 Final mapped users being set:', mappedUsers);
             setConnectedUsers(mappedUsers);
+          } else {
+            console.log('⚠️ No users array in room_state message');
           }
         });
 
         client.on('user_joined', (message) => {
-          console.log('👋 User joined:', message);
+          logDebugMessage('user_joined', message);
+          console.log('👋 User joined event received:', message);
           console.log('🔍 Joining user ID:', message.userId, 'vs current user ID:', effectiveUserId);
           console.log('🔍 Is same user?', message.userId === effectiveUserId);
+          console.log('🔍 Current connected users before update:', connectedUsers);
           
           setConnectedUsers(prev => {
-            console.log('👥 Previous users:', prev);
+            console.log('👥 Previous users in state:', prev);
             const existing = prev.find(u => u.userId === message.userId);
-            console.log('🔍 User already exists?', !!existing);
+            console.log('🔍 User already exists in state?', !!existing);
             
             if (existing) {
-              console.log('👥 User already in room, not adding');
+              console.log('👥 User already in room, not adding duplicate');
               return prev;
             }
             
@@ -109,31 +155,34 @@ export const SubmissionCollaborators = React.forwardRef<
               lastActivity: message.timestamp
             };
             
-            console.log('👥 Adding new user:', newUser);
+            console.log('👥 Adding new user to state:', newUser);
             const updatedUsers = [...prev, newUser];
             
             // Deduplicate just in case (extra safety)
             const uniqueUsers = updatedUsers.reduce((acc, user) => {
               if (!acc.find(existing => existing.userId === user.userId)) {
                 acc.push(user);
+              } else {
+                console.log('⚠️ Removing duplicate user during addition:', user.userId);
               }
               return acc;
             }, [] as typeof updatedUsers);
             
-            console.log('👥 Final user list after deduplication:', uniqueUsers);
+            console.log('👥 Final user list after user_joined:', uniqueUsers);
             return uniqueUsers;
           });
           
           // Show notification
           if (message.userId !== effectiveUserId) {
-            console.log('🔔 Showing notification for other user');
+            console.log('🔔 Showing notification for other user joining');
             addNotification(message);
           } else {
-            console.log('🔕 Not showing notification for current user');
+            console.log('🔕 Not showing notification for current user joining');
           }
         });
 
         client.on('user_left', (message) => {
+          logDebugMessage('user_left', message);
           console.log('User left:', message);
           setConnectedUsers(prev => prev.filter(u => u.userId !== message.userId));
           
@@ -144,6 +193,7 @@ export const SubmissionCollaborators = React.forwardRef<
         });
 
         client.on('editing_started', (message) => {
+          logDebugMessage('editing_started', message);
           console.log('User started editing:', message);
           setConnectedUsers(prev => prev.map(u => 
             u.userId === message.userId 
@@ -158,6 +208,7 @@ export const SubmissionCollaborators = React.forwardRef<
         });
 
         client.on('editing_stopped', (message) => {
+          logDebugMessage('editing_stopped', message);
           console.log('User stopped editing:', message);
           setConnectedUsers(prev => prev.map(u => 
             u.userId === message.userId 
@@ -167,7 +218,12 @@ export const SubmissionCollaborators = React.forwardRef<
         });
 
         client.on('content_updated', (message) => {
-          console.log('Content updated:', message);
+          logDebugMessage('content_updated', message);
+          console.log('📝 Content updated event received:', message);
+          console.log('📝 Message userId:', message.userId, 'vs effective userId:', effectiveUserId);
+          console.log('📝 Is from current user?', message.userId === effectiveUserId);
+          console.log('📝 Message data:', message.data);
+          
           setConnectedUsers(prev => prev.map(u => 
             u.userId === message.userId 
               ? { ...u, lastActivity: message.timestamp }
@@ -176,16 +232,24 @@ export const SubmissionCollaborators = React.forwardRef<
           
           // Show notification
           if (message.userId !== effectiveUserId) {
+            console.log('🔔 Adding notification for content_updated from other user');
+            console.log('🔔 Notification will show:', formatMessageText(message));
             addNotification(message);
+          } else {
+            console.log('🔕 Not showing notification - message from current user');
           }
           
           // Call external message handler if provided
           if (onWebSocketMessage) {
+            console.log('📤 Calling external WebSocket message handler');
             onWebSocketMessage(message);
+          } else {
+            console.log('📤 No external WebSocket message handler provided');
           }
         });
 
         client.on('comment_added', (message) => {
+          logDebugMessage('comment_added', message);
           console.log('Comment added:', message);
           
           // Show notification
@@ -200,6 +264,7 @@ export const SubmissionCollaborators = React.forwardRef<
         });
 
         client.on('approval_added', (message) => {
+          logDebugMessage('approval_added', message);
           console.log('Approval added:', message);
           
           // Show notification
@@ -214,6 +279,7 @@ export const SubmissionCollaborators = React.forwardRef<
         });
 
         client.on('status_changed', (message) => {
+          logDebugMessage('status_changed', message);
           console.log('Status changed:', message);
           
           // Show notification
@@ -228,6 +294,7 @@ export const SubmissionCollaborators = React.forwardRef<
         });
 
         client.on('error', (message) => {
+          logDebugMessage('error', message);
           console.error('WebSocket error:', message);
           setConnectionStatus('error');
           addNotification(message);
@@ -255,9 +322,19 @@ export const SubmissionCollaborators = React.forwardRef<
     const notificationId = Date.now().toString();
     const notification = { ...message, id: notificationId } as WebSocketMessage & { id: string };
     
-    setNotifications(prev => [...prev, notification]);
+    console.log('🔔 Adding notification:', notification);
+    console.log('🔔 Notification type:', notification.type);
+    console.log('🔔 Notification will display as:', formatMessageText(notification));
+    
+    setNotifications(prev => {
+      const updated = [...prev, notification];
+      console.log('🔔 Updated notifications array:', updated);
+      console.log('🔔 Total notifications count:', updated.length);
+      return updated;
+    });
     
     setTimeout(() => {
+      console.log('🔔 Removing notification after 5 seconds:', notificationId);
       setNotifications(prev => prev.filter(n => (n as any).id !== notificationId));
     }, 5000);
   };
@@ -284,10 +361,97 @@ export const SubmissionCollaborators = React.forwardRef<
   // Debug function to send test message
   const sendTestMessage = () => {
     if (wsClientRef.current) {
+      // Send a comprehensive test message with current state
+      const testData = {
+        test: true, // Flag to identify test messages
+        message: `Test message from ${currentUser.name}`,
+        timestamp: new Date().toISOString(),
+        currentState: {
+          submissionId,
+          userId: effectiveUserId,
+          userName: currentUser.name,
+          userEmail: currentUser.email,
+          connectionStatus: wsClientRef.current.connectionState,
+          connectedUsersCount: connectedUsers.length,
+          connectedUserIds: connectedUsers.map(u => u.userId)
+        }
+      };
+      
+      const messageToSend = {
+        type: 'content_updated' as const,
+        data: testData
+      };
+      
+      console.log('🧪 Sending test message:', messageToSend);
+      console.log('🧪 Test data:', testData);
+      
+      wsClientRef.current.send(messageToSend);
+      
+      // Also add a local notification so the sender can see it worked
+      addNotification({
+        type: 'content_updated',
+        submissionId,
+        userId: effectiveUserId,
+        userName: currentUser.name,
+        userEmail: currentUser.email,
+        timestamp: new Date().toISOString(),
+        data: { message: 'Test message sent successfully!' }
+      } as WebSocketMessage);
+    } else {
+      console.error('❌ WebSocket client not available');
+      // Show an error notification
+      addNotification({
+        type: 'error',
+        submissionId,
+        userId: effectiveUserId,
+        userName: currentUser.name,
+        userEmail: currentUser.email,
+        timestamp: new Date().toISOString(),
+        data: { error: 'WebSocket connection not available' }
+      } as WebSocketMessage);
+    }
+  };
+
+  // Debug function to manually request room state
+  const requestRoomState = () => {
+    if (wsClientRef.current) {
       wsClientRef.current.send({
-        type: 'editing_started',
-        data: { test: true, message: 'Test message from ' + currentUser.name }
+        type: 'content_updated',
+        data: { 
+          requestRoomState: true,
+          message: 'Requesting room state update'
+        }
       });
+      console.log('🏠 Room state update requested');
+    }
+  };
+
+  // Debug function to reconnect WebSocket
+  const reconnectWebSocket = async () => {
+    if (wsClientRef.current) {
+      console.log('🔄 Manually reconnecting WebSocket...');
+      wsClientRef.current.disconnect();
+      wsClientRef.current = null;
+      setConnectionStatus('disconnected');
+      setConnectedUsers([]);
+      
+      // Wait a moment then reconnect
+      setTimeout(async () => {
+        try {
+          const client = await webSocketManager.connectToSubmission(
+            submissionId,
+            effectiveUserId,
+            currentUser.name,
+            currentUser.email
+          );
+          wsClientRef.current = client;
+          setConnectionStatus(client.connectionState);
+          console.log('🔄 Reconnection initiated');
+        } catch (error) {
+          console.error('❌ Reconnection failed:', error);
+          setConnectionStatus('error');
+        }
+      }, 1000);
     }
   };
 
@@ -376,13 +540,30 @@ export const SubmissionCollaborators = React.forwardRef<
             <div><strong>Submission ID:</strong> {submissionId}</div>
             <div><strong>Connected Users Count:</strong> {connectedUsers.length}</div>
             <div><strong>Connected User IDs:</strong> {connectedUsers.map(u => u.userId).join(', ')}</div>
+            <div><strong>Connection Status:</strong> {connectionStatus}</div>
+            <div><strong>WebSocket State:</strong> {wsClientRef.current?.connectionState || 'not initialized'}</div>
+            <div><strong>Is Connected:</strong> {wsClientRef.current?.isConnected ? 'Yes' : 'No'}</div>
           </div>
-          <button 
-            onClick={sendTestMessage}
-            className="mt-2 px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-white text-xs rounded"
-          >
-            Send Test Message
-          </button>
+          <div className="mt-2 space-x-2">
+            <button 
+              onClick={sendTestMessage}
+              className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded"
+            >
+              Send Test Message
+            </button>
+            <button 
+              onClick={requestRoomState}
+              className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white text-xs rounded"
+            >
+              Request Room State
+            </button>
+            <button 
+              onClick={reconnectWebSocket}
+              className="px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded"
+            >
+              Reconnect WebSocket
+            </button>
+          </div>
         </div>
       )}
 
@@ -429,21 +610,62 @@ export const SubmissionCollaborators = React.forwardRef<
       {/* Real-time Notifications */}
       {notifications.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-sm font-medium text-gray-700">Recent Activity</h4>
+          <h4 className="text-sm font-medium text-gray-700">Recent Activity ({notifications.length})</h4>
           <div className="space-y-1">
-            {notifications.slice(-5).map((notification, index) => (
-              <div
-                key={index}
-                className="flex items-center space-x-2 p-2 bg-blue-50 rounded-lg border-l-4 border-blue-400"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-gray-900">
-                    {formatMessageText(notification)}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {formatRelativeTime(notification.timestamp)}
+            {notifications.slice(-5).map((notification, index) => {
+              console.log('🎨 Rendering notification:', notification);
+              console.log('🎨 Notification text:', formatMessageText(notification));
+              return (
+                <div
+                  key={index}
+                  className="flex items-center space-x-2 p-2 bg-blue-50 rounded-lg border-l-4 border-blue-400"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-gray-900">
+                      {formatMessageText(notification)}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {formatRelativeTime(notification.timestamp)}
+                    </div>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Debug: Show all notifications in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs">
+          <div className="font-semibold text-gray-800 mb-2">All Notifications Debug:</div>
+          <div className="space-y-1 text-gray-700">
+            <div><strong>Total Notifications:</strong> {notifications.length}</div>
+            {notifications.map((notif, index) => (
+              <div key={index} className="border-b pb-1 mb-1">
+                <div><strong>#{index + 1}:</strong> {notif.type} from {notif.userName}</div>
+                <div><strong>Message:</strong> {formatMessageText(notif)}</div>
+                <div><strong>Time:</strong> {formatRelativeTime(notif.timestamp)}</div>
+                {notif.data && <div><strong>Data:</strong> {JSON.stringify(notif.data)}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Debug: Show all received WebSocket messages */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
+          <div className="font-semibold text-blue-800 mb-2">All WebSocket Messages Debug:</div>
+          <div className="space-y-1 text-blue-700 max-h-60 overflow-y-auto">
+            <div><strong>Total Messages Received:</strong> {debugMessages.length}</div>
+            {debugMessages.slice(-10).map((debugMsg, index) => (
+              <div key={debugMsg.id} className="border-b pb-1 mb-1">
+                <div><strong>#{debugMessages.length - 10 + index + 1}:</strong> {debugMsg.type} from {debugMsg.message.userName || 'Unknown'}</div>
+                <div><strong>User ID:</strong> {debugMsg.message.userId}</div>
+                <div><strong>Is Current User:</strong> {debugMsg.message.userId === effectiveUserId ? 'Yes' : 'No'}</div>
+                <div><strong>Timestamp:</strong> {debugMsg.message.timestamp}</div>
+                {debugMsg.message.data && <div><strong>Data:</strong> {JSON.stringify(debugMsg.message.data)}</div>}
               </div>
             ))}
           </div>
