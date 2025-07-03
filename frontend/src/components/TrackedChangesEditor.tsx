@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
 import { smartDiff, WordDiff, applyChanges } from '../utils/diffAlgorithm';
+import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import './TrackedChangesEditor.css';
 
 interface TrackedChangesEditorProps {
@@ -55,23 +56,39 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [editedContent, setEditedContent] = useState(submission.content);
+  const [editedContent, setEditedContent] = useState(() => {
+    // Extract text from submission content if it's Lexical JSON
+    return isLexicalJson(submission.content) 
+      ? extractTextFromLexical(submission.content) 
+      : submission.content;
+  });
   const editorRef = useRef<HTMLDivElement>(null);
+
+  // Helper function to get displayable text from content
+  const getDisplayableText = useCallback((content: string): string => {
+    if (!content) return '';
+    
+    // Check if content is Lexical JSON and extract text
+    if (isLexicalJson(content)) {
+      return extractTextFromLexical(content);
+    }
+    
+    return content;
+  }, []);
 
   // Convert changes to tracked changes with status
   const trackedChanges: TrackedChange[] = useMemo(() => {
-    return submission.changes.map(change => ({
+    console.log('TrackedChangesEditor: Processing changes:', submission.changes);
+    const result = submission.changes.map(change => ({
       ...change,
-      status: submission.approvals.find((a: Approval) => a.id === change.id)?.status === 'APPROVED' 
-        ? 'approved' 
-        : submission.approvals.find((a: Approval) => a.id === change.id)?.status === 'REJECTED'
-        ? 'rejected'
-        : 'pending',
-      approvedBy: submission.approvals.find((a: Approval) => a.id === change.id && a.status === 'APPROVED')?.approverId,
-      rejectedBy: submission.approvals.find((a: Approval) => a.id === change.id && a.status === 'REJECTED')?.approverId,
+      status: (change as any).status || 'pending', // Use status from tracked changes data
+      approvedBy: (change as any).approvedBy,
+      rejectedBy: (change as any).rejectedBy,
       comments: submission.comments.filter((c: Comment) => c.content.includes(`@change:${change.id}`))
     }));
-  }, [submission.changes, submission.approvals, submission.comments]);
+    console.log('TrackedChangesEditor: Processed tracked changes:', result);
+    return result;
+  }, [submission.changes, submission.comments]);
 
   // Check if user can make editorial decisions
   const canMakeEditorialDecisions = useCallback(() => {
@@ -91,7 +108,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         timestamp: change.timestamp
       }));
     
-    return applyChanges(submission.content, approvedChanges);
+    // Extract text from submission content if it's Lexical JSON
+    const baseContent = isLexicalJson(submission.content) 
+      ? extractTextFromLexical(submission.content) 
+      : submission.content;
+    
+    return applyChanges(baseContent, approvedChanges);
   }, [submission.content, trackedChanges]);
 
   // Process text to show tracked changes using diff algorithm
@@ -99,7 +121,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (showOriginal) {
       return [{
         id: 'original',
-        text: submission.content,
+        text: getDisplayableText(submission.content),
         type: 'unchanged'
       }];
     }
@@ -113,19 +135,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (contentChanges.length === 0) {
       return [{
         id: 'original',
-        text: currentContent,
+        text: getDisplayableText(currentContent),
         type: 'unchanged'
       }];
     }
 
     // For each change, create diff segments
-    let workingText = submission.content;
+    let workingText = getDisplayableText(submission.content);
     
     contentChanges.forEach(change => {
-      const diff = smartDiff(change.oldValue, change.newValue);
+      // Extract text from change values if they're Lexical JSON
+      const oldValueText = getDisplayableText(change.oldValue);
+      const newValueText = getDisplayableText(change.newValue);
+      
+      const diff = smartDiff(oldValueText, newValueText);
       
       // Find where this change occurs in the working text
-      const changeIndex = workingText.indexOf(change.oldValue);
+      const changeIndex = workingText.indexOf(oldValueText);
       
       if (changeIndex !== -1) {
         // Add text before the change
@@ -170,8 +196,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         
         // Update working text for next iteration
         workingText = workingText.substring(0, changeIndex) + 
-                     change.newValue + 
-                     workingText.substring(changeIndex + change.oldValue.length);
+                     newValueText + 
+                     workingText.substring(changeIndex + oldValueText.length);
       }
     });
 
@@ -188,7 +214,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
 
     return segments;
-  }, [submission.content, trackedChanges, showOriginal, currentContent]);
+  }, [submission.content, trackedChanges, showOriginal, currentContent, getDisplayableText]);
 
   // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
@@ -202,6 +228,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Handle suggestion submission
   const handleSuggestionSubmit = useCallback(() => {
     if (selectedText && suggestionText) {
+      console.log('TrackedChangesEditor: Submitting suggestion:', { selectedText, suggestionText });
       const newChange: Change = {
         id: crypto.randomUUID(),
         field: 'content',
@@ -210,6 +237,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         changedBy: currentUser.id,
         timestamp: new Date()
       };
+      console.log('TrackedChangesEditor: Created change object:', newChange);
       onSuggestion(newChange);
       setShowSuggestionDialog(false);
       setSuggestionText('');
@@ -220,6 +248,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Handle direct edit submission
   const handleEditSubmit = useCallback(() => {
     if (editedContent !== currentContent) {
+      console.log('TrackedChangesEditor: Submitting edit:', { 
+        oldContent: currentContent, 
+        newContent: editedContent 
+      });
       const newChange: Change = {
         id: crypto.randomUUID(),
         field: 'content',
@@ -228,6 +260,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         changedBy: currentUser.id,
         timestamp: new Date()
       };
+      console.log('TrackedChangesEditor: Created edit change object:', newChange);
       onSuggestion(newChange);
       setEditMode(false);
     }
@@ -366,10 +399,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 <div className="change-content">
                   <div className="change-diff">
                     {change.oldValue && (
-                      <span className="diff-old">{change.oldValue.substring(0, 50)}...</span>
+                      <span className="diff-old">
+                        {getDisplayableText(change.oldValue).substring(0, 50)}...
+                      </span>
                     )}
                     {change.newValue && (
-                      <span className="diff-new">{change.newValue.substring(0, 50)}...</span>
+                      <span className="diff-new">
+                        {getDisplayableText(change.newValue).substring(0, 50)}...
+                      </span>
                     )}
                   </div>
                 </div>

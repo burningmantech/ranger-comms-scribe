@@ -32,6 +32,7 @@ import { GetSession, Env } from '../utils/sessionManager';
 import { withAdminCheck } from '../authWrappers';
 import { getCouncilManagersForRole, addCouncilMember, removeCouncilMember } from '../services/councilManagerService';
 import { getObject, putObject, removeFromCache } from '../services/cacheService';
+import { withAuth } from '../authWrappers';
 
 interface RequestWithParams extends Request {
   params: {
@@ -670,3 +671,5 @@ router.put('/council-managers', withAdminCheck, async (request: Request, env: En
     return json({ error: 'Failed to update council manager' }, { status: 500 });
   }
 });
+
+
