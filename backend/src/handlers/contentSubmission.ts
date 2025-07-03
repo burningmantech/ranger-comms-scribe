@@ -26,7 +26,8 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     commsCadreApprovals: 0,
     councilManagerApprovals: [],
     announcementSent: false,
-    assignedCouncilManagers: submission.assignedCouncilManagers || []
+    assignedCouncilManagers: submission.assignedCouncilManagers || [],
+    requiredApprovers: submission.requiredApprovers || []
   };
 
   // Store in cache with appropriate key
@@ -83,11 +84,77 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 
       sub.submittedBy === user.id || 
-      (sub.approvals && sub.approvals.some((a: ContentApproval) => a.approverId === user.id))
+      (sub.approvals && sub.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
+      (sub.requiredApprovers && sub.requiredApprovers.includes(user.email))
     );
   }
 
   return json(submissions);
+});
+
+// Get a single submission by ID
+router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+
+  // Get the submission from cache
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Check if user has access to this submission
+  const hasAccess = user.userType === UserType.Admin ||
+                   submission.submittedBy === user.id ||
+                   (submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
+                   (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+  if (!hasAccess) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  return json(submission);
+});
+
+// Update a submission
+router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const updates = await request.json();
+
+  // Get the current submission
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Check if user has permission to edit this submission
+  const canEdit = user.userType === UserType.Admin ||
+                 user.userType === UserType.CouncilManager ||
+                 user.userType === UserType.CommsCadre ||
+                 submission.submittedBy === user.id ||
+                 (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+  if (!canEdit) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  // Update the submission
+  const updatedSubmission = {
+    ...submission,
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  // Store the updated submission
+  await putObject(`content_submissions/${id}`, updatedSubmission, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
+
+  return json(updatedSubmission);
 });
 
 // Add a comment to a submission
@@ -138,6 +205,7 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     id: crypto.randomUUID(),
     submissionId: id,
     approverId: user.id,
+    approverEmail: user.email,
     approverName: user.name,
     approverType: user.userType,
     status,
@@ -152,6 +220,16 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
+  // Check if user has permission to approve this submission
+  const canApprove = user.userType === UserType.Admin ||
+                    user.userType === UserType.CouncilManager ||
+                    user.userType === UserType.CommsCadre ||
+                    (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+  if (!canApprove) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
   // Add the approval
   submission.approvals.push(approval);
   
@@ -164,13 +242,24 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     a.approverType === UserType.CouncilManager && a.status === 'approved'
   );
 
+  // Check if all required approvers have approved
+  const allRequiredApproversApproved = submission.requiredApprovers?.every(approverEmail =>
+    submission.approvals.some(approval => 
+      approval.approverEmail === approverEmail && approval.status === 'approved'
+    ) ?? false
+  ) ?? true; // If no requiredApprovers specified, consider it approved
+
   // Get total required approvers
   const requiredCommsCadreApprovers = 2; // Minimum required CommsCadre approvers
   const requiredCouncilManagers = submission.assignedCouncilManagers?.length || 0;
 
-  // Update status if needed
-  if (commsCadreApprovals >= requiredCommsCadreApprovers && 
-      councilManagerApprovals.length >= requiredCouncilManagers) {
+  // Update status if needed - check both legacy logic and new requiredApprovers logic
+  const legacyApprovalMet = commsCadreApprovals >= requiredCommsCadreApprovers && 
+                           councilManagerApprovals.length >= requiredCouncilManagers;
+  
+  const newApprovalMet = allRequiredApproversApproved;
+
+  if (legacyApprovalMet && newApprovalMet) {
     submission.status = 'approved';
     submission.finalApprovalDate = new Date().toISOString();
     // Send announcement email
@@ -213,6 +302,17 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
+  // Check if user has permission to track changes on this submission
+  const canTrackChanges = user.userType === UserType.Admin ||
+                         user.userType === UserType.CouncilManager ||
+                         user.userType === UserType.CommsCadre ||
+                         submission.submittedBy === user.id ||
+                         (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+  if (!canTrackChanges) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
   // Add the change
   submission.changes.push(newChange);
 
@@ -223,4 +323,35 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
   await deleteObject('content_submissions/list', env);
 
   return json(newChange);
+});
+
+// Delete a submission
+router.delete('/submissions/:id', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+
+  // Get the submission from cache
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Check if user has permission to delete this submission
+  const canDelete = user.userType === UserType.Admin ||
+                   user.userType === UserType.CouncilManager ||
+                   user.userType === UserType.CommsCadre ||
+                   submission.submittedBy === user.id;
+
+  if (!canDelete) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  // Delete the submission from cache
+  await deleteObject(`content_submissions/${id}`, env);
+  
+  // Invalidate the submissions list cache
+  await deleteObject('content_submissions/list', env);
+
+  return json({ message: 'Submission deleted successfully' });
 }); 

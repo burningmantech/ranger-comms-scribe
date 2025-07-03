@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User, SuggestedEdit } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { SuggestionsList } from './SuggestionsList';
@@ -42,15 +43,17 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   onSuggestionReject,
   users = []
 }) => {
+  const navigate = useNavigate();
   const [newComment, setNewComment] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState(submission.content);
   const [editedRichTextContent, setEditedRichTextContent] = useState(submission.richTextContent || submission.content || '');
-  const [editedFormFields, setEditedFormFields] = useState(submission.formFields);
+  const [editedFormFields, setEditedFormFields] = useState(submission.formFields || []);
   const [localComments, setLocalComments] = useState(submission.comments || []);
   const [localSuggestions, setLocalSuggestions] = useState(submission.suggestedEdits || []);
   const [userPermissions, setUserPermissions] = useState<RolePermissions | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [proposedVersions, setProposedVersions] = useState<Record<string, string> | null>(null);
 
   // Fetch user permissions when component mounts
   useEffect(() => {
@@ -113,6 +116,37 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     fetchUserPermissions();
   }, [currentUser.roles]);
 
+  // Fetch proposedVersions data from tracked changes API
+  useEffect(() => {
+    const fetchProposedVersions = async () => {
+      try {
+        const sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) return;
+
+        const response = await fetch(`${API_URL}/tracked-changes/submission/${submission.id}`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log('📝 Fetched tracked changes data:', data);
+          console.log('📝 Fetched proposedVersions:', data.proposedVersionsRichText);
+          setProposedVersions(data.proposedVersionsRichText || {});
+        } else {
+          console.log('No tracked changes found for submission, using original content');
+          setProposedVersions({});
+        }
+      } catch (error) {
+        console.error('Error fetching proposed versions:', error);
+        setProposedVersions({});
+      }
+    };
+
+    fetchProposedVersions();
+  }, [submission.id]);
+
   // Update local state when submission changes
   React.useEffect(() => {
     setLocalComments(submission.comments || []);
@@ -174,11 +208,11 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   });
 
   // Check if all required approvers have approved
-  const allRequiredApproversApproved = submission.requiredApprovers.every(approverEmail =>
-    submission.approvals.some(approval => 
-      approval.approverId === approverEmail && approval.status === 'APPROVED'
-    )
-  );
+  const allRequiredApproversApproved = submission.requiredApprovers?.every(approverEmail =>
+    submission.approvals?.some(approval => 
+      approval.approverEmail === approverEmail && approval.status === 'APPROVED'
+    ) ?? false
+  ) ?? false;
 
   // Check if user is a Comms Cadre member
   const isCommsCadre = currentUser.roles.includes('CommsCadre');
@@ -338,7 +372,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       content: editedContent,
       richTextContent: editedRichTextContent,
       formFields: editedFormFields,
-      changes: [...submission.changes, ...changes]
+              changes: [...(submission.changes || []), ...changes]
     });
     setIsEditing(false);
   };
@@ -369,7 +403,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     }
   };
 
-  if (isLoading) {
+  if (isLoading || proposedVersions === null) {
     return <div className="flex justify-center items-center h-96">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
     </div>;
@@ -424,20 +458,32 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       ) : (
         <div className="mb-6 bg-white rounded-lg shadow-sm p-6">
           <div className="prose max-w-none">
-            <div className="lexical-editor-container read-only">
-              <LexicalEditorComponent
-                initialContent={submission.richTextContent || submission.content || ''}
-                readOnly={true}
-                showToolbar={false}
-                className="h-96"
-                currentUserId={effectiveUserId}
-                onSuggestionCreate={handleSuggestionCreate}
-                onSuggestionApprove={handleSuggestionApprove}
-                onSuggestionReject={handleSuggestionReject}
-                canCreateSuggestions={canCreateSuggestions}
-                canApproveSuggestions={canApproveSuggestions}
-              />
-            </div>
+                          <div className="lexical-editor-container read-only">
+                {(() => {
+                  const content = proposedVersions?.richTextContent || proposedVersions?.content || submission.richTextContent || submission.content || '';
+                  console.log('🎨 LexicalEditor content:', {
+                    proposedVersionsRichText: proposedVersions?.richTextContent,
+                    proposedVersionsContent: proposedVersions?.content,
+                    submissionRichTextContent: submission.richTextContent,
+                    submissionContent: submission.content,
+                    finalContent: content
+                  });
+                  return (
+                    <LexicalEditorComponent
+                      initialContent={content}
+                      readOnly={true}
+                      showToolbar={false}
+                      className="h-96"
+                      currentUserId={effectiveUserId}
+                      onSuggestionCreate={handleSuggestionCreate}
+                      onSuggestionApprove={handleSuggestionApprove}
+                      onSuggestionReject={handleSuggestionReject}
+                      canCreateSuggestions={canCreateSuggestions}
+                      canApproveSuggestions={canApproveSuggestions}
+                    />
+                  );
+                })()}
+              </div>
           </div>
           
           <div className="mt-6 bg-gray-50 rounded-lg p-4">
@@ -454,15 +500,24 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
             </table>
           </div>
 
-          {canEdit && (
+          <div className="mt-4 flex space-x-3">
+            {canEdit && (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="btn btn-tertiary btn-with-icon"
+              >
+                <i className="fas fa-edit"></i>
+                <span className="btn-text">Edit Content</span>
+              </button>
+            )}
             <button
-              onClick={() => setIsEditing(true)}
-              className="btn btn-tertiary btn-with-icon mt-4"
+              onClick={() => navigate(`/tracked-changes/${submission.id}`)}
+              className="btn btn-secondary btn-with-icon"
             >
-              <i className="fas fa-edit"></i>
-              <span className="btn-text">Edit Content</span>
+              <i className="fas fa-history"></i>
+              <span className="btn-text">Tracked Changes</span>
             </button>
-          )}
+          </div>
         </div>
       )}
 
@@ -571,8 +626,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         <div className="mt-2">
           <h4 className="font-medium">Required Approvers:</h4>
           <ul className="list-disc list-inside">
-            {submission.requiredApprovers.map((approverEmail) => {
-              const approval = submission.approvals.find(a => a.approverId === approverEmail);
+            {submission.requiredApprovers?.map((approverEmail) => {
+              const approval = submission.approvals?.find(a => a.approverEmail === approverEmail);
               return (
                 <li key={approverEmail} className="flex items-center">
                   <span>{approverEmail}</span>
@@ -583,7 +638,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
                   )}
                 </li>
               );
-            })}
+            }) || <li>No required approvers specified</li>}
           </ul>
         </div>
       </div>

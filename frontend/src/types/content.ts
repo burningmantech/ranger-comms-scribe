@@ -23,13 +23,13 @@ export interface CouncilManager {
 }
 
 export type CouncilRole =
-  | 'COMMUNICATIONS_MANAGER'
-  | 'INTAKE_MANAGER'
-  | 'LOGISTICS_MANAGER'
-  | 'OPERATIONS_MANAGER'
-  | 'PERSONNEL_MANAGER'
-  | 'DEPARTMENT_MANAGER'
-  | 'DEPUTY_DEPARTMENT_MANAGER';
+  | 'CommunicationsManager'
+  | 'IntakeManager'
+  | 'LogisticsManager'
+  | 'OperationsManager'
+  | 'PersonnelManager'
+  | 'DepartmentManager'
+  | 'DeputyDepartmentManager';
 
 export interface ContentSubmission {
   id: string;
@@ -50,6 +50,7 @@ export interface ContentSubmission {
   commsApprovedBy?: string;
   sentBy?: string;
   sentAt?: Date;
+  proposedVersions?: Record<string, string>;
 }
 
 export type SubmissionStatus =
@@ -103,6 +104,7 @@ export interface Comment {
 export interface Approval {
   id: string;
   approverId: string;
+  approverEmail: string; // Add email field for easier matching
   status: 'APPROVED' | 'REJECTED' | 'PENDING';
   comment?: string;
   timestamp: Date;
@@ -115,6 +117,16 @@ export interface Change {
   newValue: string;
   changedBy: string;
   timestamp: Date;
+  status?: 'pending' | 'approved' | 'rejected';
+  approvedBy?: string;
+  rejectedBy?: string;
+  approvedAt?: Date;
+  rejectedAt?: Date;
+  isIncremental?: boolean;
+  previousVersionId?: string;
+  completeProposedVersion?: string;
+  richTextOldValue?: string;
+  richTextNewValue?: string;
 }
 
 interface RolePermissions {

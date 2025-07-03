@@ -32,6 +32,7 @@ import { GetSession, Env } from '../utils/sessionManager';
 import { withAdminCheck } from '../authWrappers';
 import { getCouncilManagersForRole, addCouncilMember, removeCouncilMember } from '../services/councilManagerService';
 import { getObject, putObject, removeFromCache } from '../services/cacheService';
+import { withAuth } from '../authWrappers';
 
 interface RequestWithParams extends Request {
   params: {
@@ -593,6 +594,8 @@ router.get('/user-roles', async (request: Request, env: Env) => {
 // Get all council managers
 router.get('/council-managers', withAdminCheck, async (request: Request, env: Env) => {
   try {
+    console.log('🔍 Fetching council managers...');
+    
     // Get managers for each role
     const commsManagers = await getCouncilManagersForRole(CouncilRole.CommunicationsManager, env);
     const intakeManagers = await getCouncilManagersForRole(CouncilRole.IntakeManager, env);
@@ -601,6 +604,15 @@ router.get('/council-managers', withAdminCheck, async (request: Request, env: En
     const personnelManagers = await getCouncilManagersForRole(CouncilRole.PersonnelManager, env);
     const departmentManagers = await getCouncilManagersForRole(CouncilRole.DepartmentManager, env);
     const deputyManagers = await getCouncilManagersForRole(CouncilRole.DeputyDepartmentManager, env);
+
+    console.log('📊 Role breakdown:');
+    console.log('  CommunicationsManager:', commsManagers.length);
+    console.log('  IntakeManager:', intakeManagers.length);
+    console.log('  LogisticsManager:', logisticsManagers.length);
+    console.log('  OperationsManager:', operationsManagers.length);
+    console.log('  PersonnelManager:', personnelManagers.length);
+    console.log('  DepartmentManager:', departmentManagers.length);
+    console.log('  DeputyDepartmentManager:', deputyManagers.length);
 
     // Combine all managers
     const allManagers = [
@@ -612,6 +624,9 @@ router.get('/council-managers', withAdminCheck, async (request: Request, env: En
       ...departmentManagers,
       ...deputyManagers
     ];
+
+    console.log('🔍 Backend council managers response:', allManagers);
+    console.log('🔍 Backend council managers count:', allManagers.length);
 
     return json(allManagers);
   } catch (error) {
@@ -626,21 +641,29 @@ router.put('/council-managers', withAdminCheck, async (request: Request, env: En
     const body = await request.json() as { email: string; role: CouncilRole; action: 'add' | 'remove' };
     const { email, role, action } = body;
 
+    console.log('🔄 Council manager update request:', { email, role, action });
+
     if (!email || !role || !action) {
       return json({ error: 'Email, role, and action are required' }, { status: 400 });
     }
 
     if (action === 'add') {
+      console.log('➕ Adding council member...');
       const newMember = await addCouncilMember(email, role, env);
       if (!newMember) {
+        console.log('❌ Failed to add council member');
         return json({ error: 'Failed to add council member' }, { status: 500 });
       }
+      console.log('✅ Council member added successfully');
       return json({ message: 'Council member added successfully', member: newMember });
     } else {
+      console.log('➖ Removing council member...');
       const success = await removeCouncilMember(email, role, env);
       if (!success) {
+        console.log('❌ Failed to remove council member');
         return json({ error: 'Failed to remove council member' }, { status: 500 });
       }
+      console.log('✅ Council member removed successfully');
       return json({ message: 'Council member removed successfully' });
     }
   } catch (error) {
@@ -648,3 +671,5 @@ router.put('/council-managers', withAdminCheck, async (request: Request, env: En
     return json({ error: 'Failed to update council manager' }, { status: 500 });
   }
 });
+
+

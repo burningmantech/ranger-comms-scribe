@@ -16,7 +16,7 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
   const [newManager, setNewManager] = useState<Partial<CouncilManager>>({
     email: '',
     name: '',
-    role: 'COMMUNICATIONS_MANAGER'
+    role: 'CommunicationsManager'
   });
 
   const handleAddManager = () => {
@@ -27,7 +27,7 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
         role: newManager.role as CouncilRole
       };
       setManagers([...managers, manager as CouncilManager]);
-      setNewManager({ email: '', name: '', role: 'COMMUNICATIONS_MANAGER' });
+      setNewManager({ email: '', name: '', role: 'CommunicationsManager' });
     }
   };
 
@@ -71,13 +71,13 @@ export const CouncilManagerManagement: React.FC<CouncilManagerManagementProps> =
             onChange={(e) => setNewManager({ ...newManager, role: e.target.value as CouncilRole })}
             className="form-select"
           >
-            <option value="COMMUNICATIONS_MANAGER">Communications Manager</option>
-            <option value="INTAKE_MANAGER">Intake Manager</option>
-            <option value="LOGISTICS_MANAGER">Logistics Manager</option>
-            <option value="OPERATIONS_MANAGER">Operations Manager</option>
-            <option value="PERSONNEL_MANAGER">Personnel Manager</option>
-            <option value="DEPARTMENT_MANAGER">Department Manager</option>
-            <option value="DEPUTY_DEPARTMENT_MANAGER">Deputy Department Manager</option>
+            <option value="CommunicationsManager">Communications Manager</option>
+            <option value="IntakeManager">Intake Manager</option>
+            <option value="LogisticsManager">Logistics Manager</option>
+            <option value="OperationsManager">Operations Manager</option>
+            <option value="PersonnelManager">Personnel Manager</option>
+            <option value="DepartmentManager">Department Manager</option>
+            <option value="DeputyDepartmentManager">Deputy Department Manager</option>
           </select>
         </div>
         <div className="mt-3">

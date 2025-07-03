@@ -9,6 +9,7 @@ import { router as contentSubmissionRouter } from './handlers/contentSubmission'
 import { router as councilMemberRouter } from './handlers/councilMembers';
 import reminderRouter from './handlers/reminders';
 import { router as commsCadreRouter } from './handlers/commsCadre';
+import { router as trackedChangesRouter } from './handlers/trackedChanges';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin, getUser } from './services/userService';
@@ -152,6 +153,8 @@ router
     .all('/reminders/*', reminderRouter.fetch) // Handle all reminder routes
     .all('/comms-cadre/*', withValidSession) // Middleware to check session for Comms Cadre routes
     .all('/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
+    .all('/tracked-changes/*', withValidSession) // Middleware to check session for tracked changes routes
+    .all('/tracked-changes/*', trackedChangesRouter.fetch) // Handle all tracked changes routes
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);
         return new Response('Not Found', { status: 404 });

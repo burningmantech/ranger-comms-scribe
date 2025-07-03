@@ -12,6 +12,7 @@ interface ContentContextType {
   approveSubmission: (submission: ContentSubmission) => Promise<void>;
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
   addComment: (submission: ContentSubmission, comment: Comment) => Promise<void>;
+  deleteSubmission: (submissionId: string) => Promise<void>;
   saveCouncilManagers: (managers: CouncilManager[]) => Promise<void>;
   removeCouncilManager: (managerId: string) => Promise<void>;
   addCommsCadreMember: (member: User) => Promise<void>;
@@ -103,6 +104,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           })),
           approvals: submission.approvals.map((approval: any) => ({
             ...approval,
+            approverEmail: approval.approverEmail || approval.approverId, // Fallback for backward compatibility
             createdAt: new Date(approval.createdAt),
             updatedAt: new Date(approval.updatedAt)
           })),
@@ -152,10 +154,14 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const saveSubmission = async (submission: ContentSubmission) => {
     try {
+      console.log('💾 saveSubmission called with:', submission);
       const isNewSubmission = !submissions.some(s => s.id === submission.id);
       const url = isNewSubmission 
         ? `${API_URL}/content/submissions`
         : `${API_URL}/content/submissions/${submission.id}`;
+      
+      console.log('🌐 Making request to:', url);
+      console.log('📤 Request body:', JSON.stringify(submission, null, 2));
       
       const response = await fetch(url, {
         method: isNewSubmission ? 'POST' : 'PUT',
@@ -166,8 +172,12 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         body: JSON.stringify(submission),
       });
       
+      console.log('📥 Response status:', response.status);
+      console.log('📥 Response headers:', Object.fromEntries(response.headers.entries()));
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('📥 Response data:', data);
         // Convert date strings to Date objects
         const updatedSubmission = {
           ...data,
@@ -195,9 +205,14 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
             prev.map(s => s.id === submission.id ? updatedSubmission : s)
           );
         }
+      } else {
+        console.error('❌ Response not ok:', response.status, response.statusText);
+        const errorText = await response.text();
+        console.error('❌ Error response body:', errorText);
+        throw new Error(`Failed to save submission: ${response.status} ${response.statusText}`);
       }
     } catch (err) {
-      console.error('Error saving submission:', err);
+      console.error('❌ Error saving submission:', err);
       throw err;
     }
   };
@@ -272,6 +287,28 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       });
     } catch (err) {
       console.error('Error adding comment:', err);
+      throw err;
+    }
+  };
+
+  const deleteSubmission = async (submissionId: string) => {
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submissionId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+      });
+      
+      if (response.ok) {
+        // Remove the submission from local state
+        setSubmissions(prev => prev.filter(s => s.id !== submissionId));
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete submission');
+      }
+    } catch (err) {
+      console.error('Error deleting submission:', err);
       throw err;
     }
   };
@@ -715,6 +752,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     approveSubmission,
     rejectSubmission,
     addComment,
+    deleteSubmission,
     saveCouncilManagers,
     removeCouncilManager,
     addCommsCadreMember,

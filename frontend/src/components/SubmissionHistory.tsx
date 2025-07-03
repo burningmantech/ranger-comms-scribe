@@ -1,18 +1,25 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ContentSubmission, Change, SubmissionStatus } from '../types/content';
 
 interface SubmissionHistoryProps {
   submissions: ContentSubmission[];
   onSelectSubmission: (submission: ContentSubmission) => void;
+  onDeleteSubmission: (submissionId: string) => Promise<void>;
   canViewFilteredSubmissions?: boolean;
 }
 
 export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
   submissions,
   onSelectSubmission,
+  onDeleteSubmission,
   canViewFilteredSubmissions = false
 }) => {
+  const navigate = useNavigate();
   const [selectedStatuses, setSelectedStatuses] = useState<Set<SubmissionStatus | 'all'>>(new Set(['all']));
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [submissionToDelete, setSubmissionToDelete] = useState<ContentSubmission | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const allStatuses: (SubmissionStatus | 'all')[] = ['all', 'draft', 'submitted', 'in_review', 'approved', 'rejected', 'sent'];
 
@@ -50,6 +57,33 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
     </div>
   );
 
+  const handleDeleteClick = (submission: ContentSubmission, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSubmissionToDelete(submission);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!submissionToDelete) return;
+    
+    setIsDeleting(true);
+    try {
+      await onDeleteSubmission(submissionToDelete.id);
+      setShowDeleteModal(false);
+      setSubmissionToDelete(null);
+    } catch (error) {
+      console.error('Error deleting submission:', error);
+      // You could add a toast notification here
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteModal(false);
+    setSubmissionToDelete(null);
+  };
+
   return (
     <div className="p-4">
       <h2 className="text-2xl font-bold mb-4">Submission History</h2>
@@ -78,26 +112,55 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
       <div className="space-y-4">
         {filteredSubmissions.map((submission) => (
           <div key={submission.id} className="border rounded-lg overflow-hidden">
-            <div 
-              className="p-4 cursor-pointer hover:bg-gray-50"
-              onClick={() => onSelectSubmission(submission)}
-            >
-              <h3 className="text-lg font-semibold">{submission.title}</h3>
-              <p className="text-sm text-gray-600">
-                Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
-              </p>
-              <p className="text-sm text-gray-600">Status: {submission.status}</p>
+            <div className="p-4">
+              <div 
+                className="cursor-pointer hover:bg-gray-50"
+                onClick={() => onSelectSubmission(submission)}
+              >
+                <h3 className="text-lg font-semibold">{submission.title}</h3>
+                <p className="text-sm text-gray-600">
+                  Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
+                </p>
+                <p className="text-sm text-gray-600">Status: {submission.status}</p>
+                
+                <div className="mt-2 flex">
+                  <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
+                    {`${submission.comments?.length || 0} Comments `}
+                  </span>
+                  <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
+                    {`${submission.approvals?.length || 0} Approvals `}
+                  </span>
+                  <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
+                    {`${submission.changes?.length || 0} Changes`}
+                  </span>
+                </div>
+              </div>
               
-              <div className="mt-2 flex">
-                <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
-                  {`${submission.comments?.length || 0} Comments `}
-                </span>
-                <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
-                  {`${submission.approvals?.length || 0} Approvals `}
-                </span>
-                <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
-                  {`${submission.changes?.length || 0} Changes`}
-                </span>
+              <div className="mt-3 flex space-x-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectSubmission(submission);
+                  }}
+                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  View Details
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/tracked-changes/${submission.id}`);
+                  }}
+                  className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700"
+                >
+                  Tracked Changes
+                </button>
+                <button
+                  onClick={(e) => handleDeleteClick(submission, e)}
+                  className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Delete
+                </button>
               </div>
             </div>
 
@@ -112,6 +175,47 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
           </div>
         ))}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && submissionToDelete && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>Delete Request</h3>
+              <button 
+                className="modal-close"
+                onClick={handleDeleteCancel}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                Are you sure you want to delete the request "{submissionToDelete.title}"?
+              </p>
+              <p className="text-sm text-gray-600 mt-2">
+                This action cannot be undone. All comments, approvals, and changes associated with this request will be permanently deleted.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button 
+                className="btn btn-danger"
+                onClick={handleDeleteConfirm}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Request'}
+              </button>
+              <button 
+                className="btn btn-neutral"
+                onClick={handleDeleteCancel}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }; 
