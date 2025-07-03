@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
+import LexicalEditorComponent from './editor/LexicalEditor';
 import './TrackedChangesEditor.css';
 
 interface TrackedChangesEditorProps {
@@ -45,8 +46,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     id: submission.id,
     title: submission.title,
     content: submission.content,
+    richTextContent: submission.richTextContent,
+    richTextContentType: typeof submission.richTextContent,
+    richTextContentLength: submission.richTextContent?.length,
     contentLength: submission.content?.length,
-    contentPreview: submission.content?.substring(0, 100)
+    contentPreview: submission.content?.substring(0, 100),
+    isContentLexical: isLexicalJson(submission.content),
+    isRichTextContentLexical: submission.richTextContent ? isLexicalJson(submission.richTextContent) : false,
+    proposedVersions: submission.proposedVersions,
+    proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent
   });
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
@@ -77,11 +85,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Only run when editMode toggles or submission changes
   }, [editMode, getLatestEditableContent]);
 
-  // Initialize edited proposed content when component mounts or submission changes
-  useEffect(() => {
-    setEditedProposedContent(getDisplayableText(submission.proposedVersions?.content || submission.content));
-  }, [submission.proposedVersions?.content, submission.content]);
-
   const editorRef = useRef<HTMLDivElement>(null);
 
   // Helper function to get displayable text from content
@@ -95,6 +98,78 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     
     return content;
   }, []);
+
+  // Helper function to get the correct rich text content for display/editing
+  const getRichTextContent = useCallback((content: string): string => {
+    console.log('getRichTextContent called with:', {
+      content,
+      contentType: typeof content,
+      contentLength: content?.length,
+      isLexical: isLexicalJson(content)
+    });
+
+    if (!content) {
+      console.log('getRichTextContent: No content provided');
+      return '';
+    }
+    
+    // If it's already Lexical JSON, return as is
+    if (isLexicalJson(content)) {
+      console.log('getRichTextContent: Content is already Lexical JSON');
+      return content;
+    }
+    
+    // If it's plain text, create a basic Lexical structure
+    if (typeof content === 'string' && content.trim()) {
+      console.log('getRichTextContent: Creating Lexical structure for plain text');
+      // Create a basic Lexical JSON structure for plain text
+      const basicLexicalStructure = {
+        root: {
+          children: [
+            {
+              children: [
+                {
+                  detail: 0,
+                  format: 0,
+                  mode: "normal",
+                  style: "",
+                  text: content,
+                  type: "text",
+                  version: 1
+                }
+              ],
+              direction: "ltr",
+              format: "",
+              indent: 0,
+              type: "paragraph",
+              version: 1
+            }
+          ],
+          direction: "ltr",
+          format: "",
+          indent: 0,
+          type: "root",
+          version: 1
+        }
+      };
+      const result = JSON.stringify(basicLexicalStructure);
+      console.log('getRichTextContent: Created Lexical structure:', result.substring(0, 200) + '...');
+      return result;
+    }
+    
+    console.log('getRichTextContent: Returning empty string');
+    return '';
+  }, []);
+
+  // Initialize edited proposed content when component mounts or submission changes
+  useEffect(() => {
+    // Prioritize rich text content from proposed versions, then fall back to other sources
+    const content = submission.proposedVersions?.richTextContent || 
+                   submission.proposedVersions?.content || 
+                   submission.richTextContent || 
+                   submission.content || '';
+    setEditedProposedContent(getRichTextContent(content));
+  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
   // Convert changes to tracked changes with status
   const trackedChanges: TrackedChange[] = useMemo(() => {
@@ -125,8 +200,49 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Get the content to display in the proposed version section
   const proposedContentToDisplay = useMemo(() => {
-    return isEditingProposed ? editedProposedContent : getDisplayableText(submission.proposedVersions?.content || currentContent);
-  }, [isEditingProposed, editedProposedContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
+    return isEditingProposed ? editedProposedContent : getDisplayableText(
+      submission.proposedVersions?.richTextContent || 
+      submission.proposedVersions?.content || 
+      currentContent
+    );
+  }, [isEditingProposed, editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
+
+  // Memoize the rich text content for the proposed version editor
+  const proposedEditorContent = useMemo(() => {
+    const content = getRichTextContent(
+      submission.proposedVersions?.richTextContent || 
+      submission.proposedVersions?.content || 
+      submission.richTextContent || 
+      submission.content || 
+      ''
+    );
+    console.log('proposedEditorContent memoized:', {
+      contentLength: content?.length,
+      isLexical: isLexicalJson(content),
+      proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent ? 'present' : 'not present'
+    });
+    return content;
+  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
+
+  // Memoize the rich text content for the proposed version display
+  const proposedDisplayContent = useMemo(() => {
+    return getRichTextContent(
+      submission.proposedVersions?.richTextContent || 
+      submission.proposedVersions?.content || 
+      submission.richTextContent || 
+      submission.content || 
+      ''
+    );
+  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
+
+  // Memoize the rich text content for the original version
+  const originalDisplayContent = useMemo(() => {
+    return getRichTextContent(
+      submission.richTextContent || 
+      submission.content || 
+      ''
+    );
+  }, [submission.richTextContent, submission.content, getRichTextContent]);
 
   // Process text to show tracked changes using diff algorithm
   const processedSegments: TextSegment[] = useMemo(() => {
@@ -134,8 +250,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     let segmentId = 0;
 
     // Use the original and proposed version for diff
+    // Extract plain text for diff comparison while preserving rich text structure
     const originalText = getDisplayableText(submission.content);
-    const proposedText = proposedContentToDisplay;
+    const proposedText = getDisplayableText(
+      submission.proposedVersions?.richTextContent || 
+      submission.proposedVersions?.content || 
+      submission.content
+    );
 
     // Find the latest tracked change for status
     const latestChange = trackedChanges
@@ -147,6 +268,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Use smartDiff to get word-level changes
     const diff = smartDiff(originalText, proposedText);
 
+    // Helper function to find the most recent change that affects this text
+    const findMostRecentChangeForText = (text: string, type: 'addition' | 'deletion'): string | undefined => {
+      const relevantChanges = trackedChanges
+        .filter(change => change.field === 'content')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+      for (const change of relevantChanges) {
+        // Compare plain text versions for matching
+        const changeOldText = getDisplayableText(change.oldValue || '');
+        const changeNewText = getDisplayableText(change.newValue || '');
+        
+        if (type === 'addition' && changeNewText && changeNewText.includes(text)) {
+          return change.id;
+        }
+        if (type === 'deletion' && changeOldText && changeOldText.includes(text)) {
+          return change.id;
+        }
+      }
+      return undefined;
+    };
+
     diff.forEach((segment: WordDiff) => {
       if (segment.type === 'equal') {
         segments.push({
@@ -155,24 +297,44 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           type: 'unchanged'
         });
       } else if (segment.type === 'delete') {
+        const changeId = findMostRecentChangeForText(segment.value, 'deletion');
         segments.push({
           id: `del-${segmentId++}`,
           text: segment.value,
           type: 'deletion',
-          status
+          status,
+          changeId,
+          author: changeId ? trackedChanges.find(c => c.id === changeId)?.changedBy : undefined,
+          timestamp: changeId ? trackedChanges.find(c => c.id === changeId)?.timestamp : undefined
         });
       } else if (segment.type === 'insert') {
+        const changeId = findMostRecentChangeForText(segment.value, 'addition');
         segments.push({
           id: `add-${segmentId++}`,
           text: segment.value,
           type: 'addition',
-          status
+          status,
+          changeId,
+          author: changeId ? trackedChanges.find(c => c.id === changeId)?.changedBy : undefined,
+          timestamp: changeId ? trackedChanges.find(c => c.id === changeId)?.timestamp : undefined
         });
       }
     });
 
     return segments;
-  }, [submission.content, proposedContentToDisplay, trackedChanges, getDisplayableText]);
+  }, [submission.content, submission.proposedVersions?.content, trackedChanges, getDisplayableText]);
+
+  // Handle clicking on a changed segment
+  const handleSegmentClick = useCallback((segment: TextSegment) => {
+    if (segment.changeId) {
+      setSelectedChange(segment.changeId);
+      // Scroll the sidebar to show the selected change
+      const changeElement = document.querySelector(`[data-change-id="${segment.changeId}"]`);
+      if (changeElement) {
+        changeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, []);
 
   // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
@@ -202,11 +364,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Handle proposed version edit submission
   const handleProposedEditSubmit = useCallback(() => {
-    if (editedProposedContent !== getDisplayableText(submission.proposedVersions?.content || submission.content)) {
+    const currentProposedContent = submission.proposedVersions?.richTextContent || 
+                                   submission.proposedVersions?.content || 
+                                   submission.richTextContent || 
+                                   submission.content || '';
+    if (editedProposedContent !== currentProposedContent) {
       const suggestion: Change = {
         id: crypto.randomUUID(),
         field: 'content',
-        oldValue: getDisplayableText(submission.proposedVersions?.content || submission.content),
+        oldValue: currentProposedContent,
         newValue: editedProposedContent,
         changedBy: currentUser.id,
         timestamp: new Date(),
@@ -215,7 +381,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onSuggestion(suggestion);
     }
     setIsEditingProposed(false);
-  }, [editedProposedContent, submission.proposedVersions?.content, submission.content, currentUser.id, onSuggestion, getDisplayableText]);
+  }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, currentUser.id, onSuggestion]);
 
   // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -351,7 +517,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           className="cancel-button"
                           onClick={() => {
                             setIsEditingProposed(false);
-                            setEditedProposedContent(getDisplayableText(submission.proposedVersions?.content || submission.content));
+                            const content = submission.proposedVersions?.richTextContent || 
+                                           submission.proposedVersions?.content || 
+                                           submission.richTextContent || 
+                                           submission.content || '';
+                            setEditedProposedContent(getRichTextContent(content));
                           }}
                           title="Cancel editing"
                         >
@@ -364,17 +534,32 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 </div>
                 <div className="proposed-content">
                   {isEditingProposed ? (
-                    <textarea
-                      className="proposed-edit-textarea"
-                      value={editedProposedContent}
-                      onChange={(e) => setEditedProposedContent(e.target.value)}
-                      placeholder="Edit the proposed version..."
-                      autoFocus
-                    />
+                    <div className="rich-text-editor-container">
+                      <LexicalEditorComponent
+                        key="proposed-edit-editor"
+                        initialContent={proposedEditorContent}
+                        onChange={(editor, json) => {
+                          // Only update if the content has actually changed
+                          if (json !== editedProposedContent) {
+                            setEditedProposedContent(json);
+                          }
+                        }}
+                        placeholder="Edit the proposed version..."
+                        readOnly={false}
+                        showToolbar={true}
+                        className="proposed-edit-editor"
+                      />
+                    </div>
                   ) : (
-                    <span className="text-segment unchanged">
-                      {proposedContentToDisplay}
-                    </span>
+                    <div className="rich-text-display">
+                      <LexicalEditorComponent
+                        key="proposed-display-editor"
+                        initialContent={proposedDisplayContent}
+                        readOnly={true}
+                        showToolbar={false}
+                        className="proposed-display-editor"
+                      />
+                    </div>
                   )}
                 </div>
               </div>
@@ -390,7 +575,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     <span
                       key={segment.id}
                       className={`text-segment ${segment.type} ${segment.status || ''}`}
-                      onClick={() => segment.changeId && setSelectedChange(segment.changeId)}
+                      onClick={() => handleSegmentClick(segment)}
                       title={segment.author ? `Changed by ${segment.author}` : ''}
                     >
                       {segment.text}
@@ -403,9 +588,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <div className="original-version-section">
                 <h2 className="section-title">Original Version</h2>
                 <div className="original-content">
-                  <span className="text-segment unchanged">
-                    {getDisplayableText(submission.content)}
-                  </span>
+                  <div className="rich-text-display">
+                    <LexicalEditorComponent
+                      key="original-display-editor"
+                      initialContent={originalDisplayContent}
+                      readOnly={true}
+                      showToolbar={false}
+                      className="original-display-editor"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -420,6 +611,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 key={change.id} 
                 className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
                 onClick={() => setSelectedChange(change.id)}
+                data-change-id={change.id}
               >
                 <div className="change-header">
                   <span className="change-author">{change.changedBy}</span>

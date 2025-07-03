@@ -269,14 +269,52 @@
   resize: vertical;
   background-color: #fff;
   border: 2px solid #1a73e8;
-  white-space: pre-wrap;
-  word-wrap: break-word;
 }
 
 .proposed-edit-textarea:focus {
   outline: none;
   border-color: #1a73e8;
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+/* Rich Text Editor Containers */
+.rich-text-editor-container {
+  width: 100%;
+  min-height: 200px;
+}
+
+.rich-text-display {
+  width: 100%;
+  min-height: 100px;
+}
+
+.proposed-edit-editor {
+  border: 2px solid #1a73e8;
+  border-radius: 4px;
+  background-color: #fff;
+}
+
+.proposed-edit-editor:focus-within {
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.proposed-display-editor,
+.original-display-editor {
+  border: none;
+  background-color: transparent;
+  min-height: 100px;
+}
+
+.proposed-display-editor .lexical-editor-container,
+.original-display-editor .lexical-editor-container {
+  border: none;
+  background-color: transparent;
+  margin-bottom: 0;
+}
+
+.proposed-display-editor .editor-content-wrapper,
+.original-display-editor .editor-content-wrapper {
+  background-color: transparent;
 }
 
 /* Diff Section */
@@ -398,6 +436,9 @@
 .change-item.selected {
   border-color: #1a73e8;
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+  background-color: #f8f9fa;
+  transform: translateX(4px);
+  transition: all 0.3s ease;
 }
 
 .change-item.pending {
@@ -761,4 +802,18 @@
   border-radius: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+/* Text segment clickable styling */
+.text-segment.addition,
+.text-segment.deletion {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.text-segment.addition:hover,
+.text-segment.deletion:hover {
+  filter: brightness(1.1);
+  transform: scale(1.02);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }

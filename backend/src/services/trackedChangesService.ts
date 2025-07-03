@@ -522,4 +522,27 @@ export const getChangeHistory = async (
     console.error('Error fetching change history:', error);
     return { changes: [], stats: { totalChanges: 0, pendingChanges: 0, approvedChanges: 0, rejectedChanges: 0, uniqueContributors: 0 } };
   }
-}; 
+};
+
+// Helper: Merge plain text into Lexical JSON (replaces text in first paragraph/heading node)
+export function mergeTextIntoLexicalJson(originalLexical: string, newText: string): string {
+  try {
+    const json = JSON.parse(originalLexical);
+    if (!json.root || !Array.isArray(json.root.children)) return originalLexical;
+
+    // Find the first paragraph or heading node
+    const node = json.root.children.find(
+      (child: any) => child.type === 'paragraph' || child.type === 'heading'
+    );
+    if (node && Array.isArray(node.children) && node.children.length > 0) {
+      // Replace the text of the first text node
+      const textNode = node.children.find((n: any) => n.type === 'text');
+      if (textNode) {
+        textNode.text = newText;
+      }
+    }
+    return JSON.stringify(json);
+  } catch (e) {
+    return originalLexical;
+  }
+} 

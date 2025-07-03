@@ -12,6 +12,8 @@ import {
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
+import { getObject } from '../services/cacheService';
+import { mergeTextIntoLexicalJson } from '../services/trackedChangesService';
 
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
@@ -38,6 +40,9 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     // Get all changes for the submission
     const changes = await getTrackedChanges(submissionId, env);
 
+    // Get the original submission (for richTextContent)
+    const submission = await getObject(`content_submissions/${submissionId}`, env) as import('../types').ContentSubmission | null;
+
     // Get comments for each change
     const changesWithComments = await Promise.all(
       changes.map(async (change: TrackedChange) => {
@@ -52,17 +57,23 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     // Get complete proposed versions for each field
     const fields = [...new Set(changes.map(change => change.field))];
     const proposedVersions: Record<string, string> = {};
+    const proposedVersionsRichText: Record<string, string> = {};
     
     for (const field of fields) {
       const completeVersion = await getCompleteProposedVersion(submissionId, field, env);
       if (completeVersion) {
         proposedVersions[field] = completeVersion;
+        // If the original is Lexical JSON, merge the new text into it
+        if (submission && submission.richTextContent && submission.richTextContent.trim().startsWith('{')) {
+          proposedVersionsRichText[field] = mergeTextIntoLexicalJson(submission.richTextContent, completeVersion);
+        }
       }
     }
 
     return new Response(JSON.stringify({
       changes: changesWithComments,
-      proposedVersions
+      proposedVersions,
+      proposedVersionsRichText
     }), {
       headers: { 'Content-Type': 'application/json' }
     });

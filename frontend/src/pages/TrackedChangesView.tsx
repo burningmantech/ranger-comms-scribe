@@ -68,25 +68,31 @@ export const TrackedChangesView: React.FC = () => {
         console.log('Content type:', typeof content);
         
         // Handle different content formats
+        let richTextContent = data.richTextContent;
+        
         if (content) {
           // If content is an object, it might be Lexical JSON
           if (typeof content === 'object') {
             console.log('Content is an object, checking if it\'s Lexical JSON...');
             if (isLexicalJson(content)) {
+              // Preserve the Lexical JSON for rich text display
+              richTextContent = content;
               const extractedText = extractTextFromLexical(content);
               if (extractedText) {
                 content = extractedText;
-                console.log('Using extracted text from object content:', content);
+                console.log('Using extracted text from object content for plain text fallback:', content);
               }
             }
           }
           // If content is a string that looks like JSON
           else if (typeof content === 'string' && content.trim().startsWith('{') && isLexicalJson(content)) {
-            console.log('Content field contains Lexical JSON string, extracting text...');
+            console.log('Content field contains Lexical JSON string, preserving for rich text...');
+            // Preserve the Lexical JSON for rich text display
+            richTextContent = content;
             const extractedText = extractTextFromLexical(content);
             if (extractedText) {
               content = extractedText;
-              console.log('Using extracted text from content field:', content);
+              console.log('Using extracted text from content field for plain text fallback:', content);
             }
           }
         }
@@ -143,7 +149,7 @@ export const TrackedChangesView: React.FC = () => {
           id: data.id,
           title: data.title,
           content: content,
-          richTextContent: data.richTextContent,
+          richTextContent: richTextContent,
           status: data.status,
           submittedBy: data.submittedBy,
           submittedAt: new Date(data.submittedAt),
@@ -171,8 +177,14 @@ export const TrackedChangesView: React.FC = () => {
           commsApprovedBy: data.commsApprovedBy,
           sentBy: data.sentBy,
           sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
-          // Add proposed versions
-          proposedVersions: trackedChanges.proposedVersions || {}
+          // Add proposed versions with rich text support
+          proposedVersions: {
+            ...trackedChanges.proposedVersions,
+            // If we have rich text proposed versions, use them
+            ...(trackedChanges.proposedVersionsRichText && {
+              richTextContent: trackedChanges.proposedVersionsRichText.content
+            })
+          }
         };
         console.log('Final transformed submission:', {
           id: transformedSubmission.id,
@@ -180,6 +192,8 @@ export const TrackedChangesView: React.FC = () => {
           content: transformedSubmission.content,
           contentLength: transformedSubmission.content?.length,
           contentPreview: transformedSubmission.content?.substring(0, 100),
+          richTextContent: transformedSubmission.richTextContent ? 'present' : 'undefined',
+          richTextContentLength: transformedSubmission.richTextContent?.length,
           changesCount: transformedSubmission.changes.length
         });
         setSubmission(transformedSubmission);
