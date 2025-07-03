@@ -53,6 +53,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const [localSuggestions, setLocalSuggestions] = useState(submission.suggestedEdits || []);
   const [userPermissions, setUserPermissions] = useState<RolePermissions | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [proposedVersions, setProposedVersions] = useState<Record<string, string> | null>(null);
 
   // Fetch user permissions when component mounts
   useEffect(() => {
@@ -114,6 +115,37 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
 
     fetchUserPermissions();
   }, [currentUser.roles]);
+
+  // Fetch proposedVersions data from tracked changes API
+  useEffect(() => {
+    const fetchProposedVersions = async () => {
+      try {
+        const sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) return;
+
+        const response = await fetch(`${API_URL}/tracked-changes/submission/${submission.id}`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log('📝 Fetched tracked changes data:', data);
+          console.log('📝 Fetched proposedVersions:', data.proposedVersionsRichText);
+          setProposedVersions(data.proposedVersionsRichText || {});
+        } else {
+          console.log('No tracked changes found for submission, using original content');
+          setProposedVersions({});
+        }
+      } catch (error) {
+        console.error('Error fetching proposed versions:', error);
+        setProposedVersions({});
+      }
+    };
+
+    fetchProposedVersions();
+  }, [submission.id]);
 
   // Update local state when submission changes
   React.useEffect(() => {
@@ -371,7 +403,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     }
   };
 
-  if (isLoading) {
+  if (isLoading || proposedVersions === null) {
     return <div className="flex justify-center items-center h-96">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
     </div>;
@@ -426,20 +458,32 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       ) : (
         <div className="mb-6 bg-white rounded-lg shadow-sm p-6">
           <div className="prose max-w-none">
-            <div className="lexical-editor-container read-only">
-              <LexicalEditorComponent
-                initialContent={submission.richTextContent || submission.content || ''}
-                readOnly={true}
-                showToolbar={false}
-                className="h-96"
-                currentUserId={effectiveUserId}
-                onSuggestionCreate={handleSuggestionCreate}
-                onSuggestionApprove={handleSuggestionApprove}
-                onSuggestionReject={handleSuggestionReject}
-                canCreateSuggestions={canCreateSuggestions}
-                canApproveSuggestions={canApproveSuggestions}
-              />
-            </div>
+                          <div className="lexical-editor-container read-only">
+                {(() => {
+                  const content = proposedVersions?.richTextContent || proposedVersions?.content || submission.richTextContent || submission.content || '';
+                  console.log('🎨 LexicalEditor content:', {
+                    proposedVersionsRichText: proposedVersions?.richTextContent,
+                    proposedVersionsContent: proposedVersions?.content,
+                    submissionRichTextContent: submission.richTextContent,
+                    submissionContent: submission.content,
+                    finalContent: content
+                  });
+                  return (
+                    <LexicalEditorComponent
+                      initialContent={content}
+                      readOnly={true}
+                      showToolbar={false}
+                      className="h-96"
+                      currentUserId={effectiveUserId}
+                      onSuggestionCreate={handleSuggestionCreate}
+                      onSuggestionApprove={handleSuggestionApprove}
+                      onSuggestionReject={handleSuggestionReject}
+                      canCreateSuggestions={canCreateSuggestions}
+                      canApproveSuggestions={canApproveSuggestions}
+                    />
+                  );
+                })()}
+              </div>
           </div>
           
           <div className="mt-6 bg-gray-50 rounded-lg p-4">
