@@ -168,8 +168,14 @@ export const getLatestProposedVersion = async (
       return null;
     }
     
-    // Return the newValue of the most recent change
-    return fieldChanges[0].newValue;
+    // For incremental changes, return the complete proposed version
+    // For non-incremental changes, return the newValue
+    const latestChange = fieldChanges[0];
+    if (latestChange.isIncremental && latestChange.completeProposedVersion) {
+      return latestChange.completeProposedVersion;
+    } else {
+      return latestChange.newValue;
+    }
   } catch (error) {
     console.error('Error getting latest proposed version:', error);
     return null;

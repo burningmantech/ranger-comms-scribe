@@ -391,31 +391,42 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     {change.isIncremental ? (
                       <>
                         <div className="change-type-indicator">
-                          <span className="incremental-badge">Incremental Change</span>
+                          <span className="incremental-badge" style={{
+                            backgroundColor: '#e3f2fd',
+                            color: '#1976d2',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontWeight: '500'
+                          }}>
+                            Incremental Change
+                          </span>
                         </div>
                         {change.oldValue && (
-                          <span className="diff-old">
-                            {getDisplayableText(change.oldValue).substring(0, 50)}...
+                          <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                            <strong>Removed:</strong> {getDisplayableText(change.oldValue)}
                           </span>
                         )}
                         {change.newValue && (
-                          <span className="diff-new">
-                            {getDisplayableText(change.newValue).substring(0, 50)}...
+                          <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                            <strong>Added:</strong> {getDisplayableText(change.newValue)}
                           </span>
                         )}
+
                       </>
                     ) : (
                       <>
                         {change.oldValue && (
-                          <span className="diff-old">
-                            {getDisplayableText(change.oldValue).substring(0, 50)}...
+                          <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                            <strong>Previous:</strong> {getDisplayableText(change.oldValue).substring(0, 100)}...
                           </span>
                         )}
                         {change.newValue && (
-                          <span className="diff-new">
-                            {getDisplayableText(change.newValue).substring(0, 50)}...
+                          <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                            <strong>New:</strong> {getDisplayableText(change.newValue).substring(0, 100)}...
                           </span>
                         )}
+
                       </>
                     )}
                   </div>
