@@ -19,7 +19,7 @@ declare global {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response';
   submissionId: string;
   userId: string;
   userName: string;
@@ -265,6 +265,30 @@ export class SubmissionWebSocketServer {
       parsedMessage.userEmail = metadata.userEmail;
       parsedMessage.submissionId = metadata.submissionId;
       parsedMessage.timestamp = new Date().toISOString();
+
+      // Handle heartbeat messages
+      if (parsedMessage.type === 'heartbeat') {
+        console.log('💓 Heartbeat received from user:', metadata.userId);
+        
+        // Send heartbeat response directly to the sender
+        const heartbeatResponse: WebSocketMessage = {
+          type: 'heartbeat_response',
+          submissionId: metadata.submissionId,
+          userId: metadata.userId,
+          userName: metadata.userName,
+          userEmail: metadata.userEmail,
+          timestamp: new Date().toISOString()
+        };
+        
+        try {
+          ws.send(JSON.stringify(heartbeatResponse));
+          console.log('💓 Heartbeat response sent to user:', metadata.userId);
+        } catch (error) {
+          console.error('❌ Failed to send heartbeat response:', error);
+        }
+        
+        return; // Don't broadcast heartbeat messages to other users
+      }
 
       // Special debugging for test messages
       if (parsedMessage.type === 'content_updated' && parsedMessage.data?.test) {

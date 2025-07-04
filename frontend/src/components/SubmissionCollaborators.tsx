@@ -29,6 +29,12 @@ export const SubmissionCollaborators = React.forwardRef<
   const [connectionStatus, setConnectionStatus] = useState<string>('disconnected');
   const [notifications, setNotifications] = useState<WebSocketMessage[]>([]);
   const [debugMessages, setDebugMessages] = useState<Array<{id: string, type: string, message: WebSocketMessage}>>([]);
+  const [connectionHealth, setConnectionHealth] = useState<{
+    isHealthy: boolean;
+    lastHeartbeat: number;
+    missedHeartbeats: number;
+    timeSinceLastHeartbeat: number;
+  }>({ isHealthy: false, lastHeartbeat: 0, missedHeartbeats: 0, timeSinceLastHeartbeat: 0 });
   const wsClientRef = useRef<SubmissionWebSocketClient | null>(null);
 
   // Get effective user ID (fallback to email if id is not available)
@@ -300,6 +306,16 @@ export const SubmissionCollaborators = React.forwardRef<
           addNotification(message);
         });
 
+        client.on('session_expired', (message) => {
+          logDebugMessage('session_expired', message);
+          console.error('Session expired:', message);
+          setConnectionStatus('session_expired');
+          addNotification({
+            ...message,
+            data: { ...message.data, displayMessage: 'Your session has expired. Please refresh the page to reconnect.' }
+          });
+        });
+
       } catch (error) {
         console.error('Failed to connect to WebSocket:', error);
         setConnectionStatus('error');
@@ -308,8 +324,24 @@ export const SubmissionCollaborators = React.forwardRef<
 
     connectToWebSocket();
 
+    // Set up periodic health check
+    const healthCheckInterval = setInterval(() => {
+      if (wsClientRef.current && mounted) {
+        const health = wsClientRef.current.connectionHealth;
+        setConnectionHealth(health);
+        
+        if (!health.isHealthy && wsClientRef.current.isConnected) {
+          console.log('⚠️ Connection health degraded:', health);
+          setConnectionStatus('unhealthy');
+        } else if (health.isHealthy && wsClientRef.current.isConnected) {
+          setConnectionStatus('connected');
+        }
+      }
+    }, 5000); // Check every 5 seconds
+
     return () => {
       mounted = false;
+      clearInterval(healthCheckInterval);
       if (wsClientRef.current) {
         webSocketManager.disconnectFromSubmission(submissionId, effectiveUserId);
         wsClientRef.current = null;
@@ -466,6 +498,8 @@ export const SubmissionCollaborators = React.forwardRef<
     switch (connectionStatus) {
       case 'connected': return 'text-green-600';
       case 'connecting': return 'text-yellow-600';
+      case 'unhealthy': return 'text-orange-600';
+      case 'session_expired': return 'text-purple-600';
       case 'error': return 'text-red-600';
       default: return 'text-gray-600';
     }
@@ -475,8 +509,21 @@ export const SubmissionCollaborators = React.forwardRef<
     switch (connectionStatus) {
       case 'connected': return '🟢';
       case 'connecting': return '🟡';
+      case 'unhealthy': return '🟠';
+      case 'session_expired': return '🟣';
       case 'error': return '🔴';
       default: return '⚪';
+    }
+  };
+
+  const getConnectionStatusText = () => {
+    switch (connectionStatus) {
+      case 'connected': return 'Connected';
+      case 'connecting': return 'Connecting...';
+      case 'unhealthy': return 'Connection Unstable';
+      case 'session_expired': return 'Session Expired';
+      case 'error': return 'Connection Error';
+      default: return 'Disconnected';
     }
   };
 
@@ -511,6 +558,9 @@ export const SubmissionCollaborators = React.forwardRef<
       case 'status_changed':
         return `${message.userName} changed the status`;
       case 'error':
+        if (message.data?.displayMessage) {
+          return message.data.displayMessage;
+        }
         return `Error: ${message.data?.error || 'Unknown error'}`;
       default:
         return `${message.userName} performed an action`;
@@ -522,11 +572,24 @@ export const SubmissionCollaborators = React.forwardRef<
       {/* Connection Status */}
       <div className="flex items-center space-x-2 mb-4">
         <span className={`text-sm ${getConnectionStatusColor()}`}>
-          {getConnectionStatusIcon()} {connectionStatus}
+          {getConnectionStatusIcon()} {getConnectionStatusText()}
         </span>
         <span className="text-sm text-gray-500">
           ({connectedUsers.length} user{connectedUsers.length !== 1 ? 's' : ''} connected)
         </span>
+        {connectionHealth.isHealthy === false && wsClientRef.current?.isConnected && (
+          <span className="text-xs text-orange-600" title={`${connectionHealth.missedHeartbeats} missed heartbeats`}>
+            ⚠️ Health: {connectionHealth.missedHeartbeats}/3
+          </span>
+        )}
+        {connectionStatus === 'session_expired' && (
+          <button 
+            onClick={() => window.location.reload()}
+            className="px-3 py-1 bg-purple-500 hover:bg-purple-600 text-white text-xs rounded"
+          >
+            Refresh Page
+          </button>
+        )}
       </div>
 
       {/* Debug Information - Remove this block when no longer needed */}
@@ -543,6 +606,10 @@ export const SubmissionCollaborators = React.forwardRef<
             <div><strong>Connection Status:</strong> {connectionStatus}</div>
             <div><strong>WebSocket State:</strong> {wsClientRef.current?.connectionState || 'not initialized'}</div>
             <div><strong>Is Connected:</strong> {wsClientRef.current?.isConnected ? 'Yes' : 'No'}</div>
+            <div><strong>Health Status:</strong> {connectionHealth.isHealthy ? 'Healthy' : 'Unhealthy'}</div>
+            <div><strong>Missed Heartbeats:</strong> {connectionHealth.missedHeartbeats}/3</div>
+            <div><strong>Last Heartbeat:</strong> {connectionHealth.lastHeartbeat > 0 ? new Date(connectionHealth.lastHeartbeat).toLocaleTimeString() : 'Never'}</div>
+            <div><strong>Time Since Last Heartbeat:</strong> {connectionHealth.timeSinceLastHeartbeat > 0 ? `${Math.round(connectionHealth.timeSinceLastHeartbeat / 1000)}s` : 'N/A'}</div>
           </div>
           <div className="mt-2 space-x-2">
             <button 
@@ -562,6 +629,18 @@ export const SubmissionCollaborators = React.forwardRef<
               className="px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded"
             >
               Reconnect WebSocket
+            </button>
+            <button 
+              onClick={() => {
+                if (wsClientRef.current) {
+                  const health = wsClientRef.current.connectionHealth;
+                  console.log('📊 Connection Health Check:', health);
+                  alert(`Connection Health:\n- Healthy: ${health.isHealthy}\n- Missed Heartbeats: ${health.missedHeartbeats}/3\n- Time Since Last: ${Math.round(health.timeSinceLastHeartbeat / 1000)}s`);
+                }
+              }}
+              className="px-3 py-1 bg-purple-500 hover:bg-purple-600 text-white text-xs rounded"
+            >
+              Check Health
             </button>
           </div>
         </div>

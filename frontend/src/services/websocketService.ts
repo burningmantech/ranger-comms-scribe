@@ -1,7 +1,7 @@
 import { API_URL } from '../config';
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response';
   submissionId: string;
   userId: string;
   userName: string;
@@ -24,6 +24,13 @@ export class SubmissionWebSocketClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private isIntentionallyClosed = false;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private heartbeatTimeoutId: NodeJS.Timeout | null = null;
+  private lastHeartbeatResponse: number = 0;
+  private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
+  private readonly HEARTBEAT_TIMEOUT = 10000; // 10 seconds to wait for response
+  private connectionHealthChecks = 0;
+  private readonly MAX_MISSED_HEARTBEATS = 3;
 
   constructor(
     submissionId: string,
@@ -45,37 +52,39 @@ export class SubmissionWebSocketClient {
     this.isIntentionallyClosed = false;
     
     try {
-      // Create WebSocket URL
-      const wsUrl = new URL(`${API_URL}/ws/submissions/${this.submissionId}`);
-      
-      // Convert HTTP/HTTPS to WS/WSS
-      if (wsUrl.protocol === 'https:') {
-        wsUrl.protocol = 'wss:';
-      } else {
-        wsUrl.protocol = 'ws:';
-      }
-      
-      // Get session token for authentication
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) {
         throw new Error('No session ID found');
       }
 
-      // Add user information and authentication as query parameters
+      const sessionValid = await this.validateSession(sessionId);
+      if (!sessionValid) {
+        throw new Error('Session expired or invalid');
+      }
+
+      const wsUrl = new URL(`${API_URL}/ws/submissions/${this.submissionId}`);
+      
+      if (wsUrl.protocol === 'https:') {
+        wsUrl.protocol = 'wss:';
+      } else {
+        wsUrl.protocol = 'ws:';
+      }
+
       wsUrl.searchParams.set('submissionId', this.submissionId);
       wsUrl.searchParams.set('userId', this.userId);
       wsUrl.searchParams.set('userName', this.userName);
       wsUrl.searchParams.set('userEmail', this.userEmail);
       wsUrl.searchParams.set('sessionId', sessionId);
 
-      // Create WebSocket connection
       console.log('🔌 Attempting WebSocket connection to:', wsUrl.toString());
       this.ws = new WebSocket(wsUrl.toString());
 
-      // Set up event handlers
       this.ws.onopen = () => {
         console.log('✅ WebSocket connected to submission room:', this.submissionId);
         this.reconnectAttempts = 0;
+        this.connectionHealthChecks = 0;
+        this.lastHeartbeatResponse = Date.now();
+        this.startHeartbeat();
         this.emit('connected', {
           type: 'connected',
           submissionId: this.submissionId,
@@ -89,6 +98,12 @@ export class SubmissionWebSocketClient {
       this.ws.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
+          
+          if (message.type === 'heartbeat_response') {
+            this.handleHeartbeatResponse();
+            return;
+          }
+          
           this.emit(message.type, message);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -102,6 +117,8 @@ export class SubmissionWebSocketClient {
           wasClean: event.wasClean,
           submissionId: this.submissionId
         });
+        
+        this.stopHeartbeat();
         this.ws = null;
         
         if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
@@ -135,12 +152,130 @@ export class SubmissionWebSocketClient {
 
     } catch (error) {
       console.error('Failed to connect to WebSocket:', error);
+      
+      if (error instanceof Error && error.message.includes('Session')) {
+        console.log('🔄 Session issue detected, attempting to refresh...');
+        this.emit('session_expired', {
+          type: 'error',
+          submissionId: this.submissionId,
+          userId: this.userId,
+          userName: this.userName,
+          userEmail: this.userEmail,
+          data: { error: 'Session expired', needsRefresh: true },
+          timestamp: new Date().toISOString()
+        } as WebSocketMessage);
+      }
+      
       throw error;
     }
   }
 
+  private async validateSession(sessionId: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${API_URL}/auth/session`, {
+        headers: {
+          'Authorization': `Bearer ${sessionId}`
+        }
+      });
+      return response.ok;
+    } catch (error) {
+      console.error('Session validation failed:', error);
+      return false;
+    }
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    
+    this.heartbeatInterval = setInterval(() => {
+      this.sendHeartbeat();
+    }, this.HEARTBEAT_INTERVAL);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    
+    if (this.heartbeatTimeoutId) {
+      clearTimeout(this.heartbeatTimeoutId);
+      this.heartbeatTimeoutId = null;
+    }
+  }
+
+  private sendHeartbeat(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.log('⚠️ Cannot send heartbeat - WebSocket not open');
+      return;
+    }
+
+    const heartbeatMessage = {
+      type: 'heartbeat',
+      submissionId: this.submissionId,
+      userId: this.userId,
+      userName: this.userName,
+      userEmail: this.userEmail,
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      this.ws.send(JSON.stringify(heartbeatMessage));
+      console.log('💓 Heartbeat sent');
+      
+      this.heartbeatTimeoutId = setTimeout(() => {
+        this.handleHeartbeatTimeout();
+      }, this.HEARTBEAT_TIMEOUT);
+      
+    } catch (error) {
+      console.error('❌ Failed to send heartbeat:', error);
+      this.handleHeartbeatTimeout();
+    }
+  }
+
+  private handleHeartbeatResponse(): void {
+    console.log('💓 Heartbeat response received');
+    this.lastHeartbeatResponse = Date.now();
+    this.connectionHealthChecks = 0;
+    
+    if (this.heartbeatTimeoutId) {
+      clearTimeout(this.heartbeatTimeoutId);
+      this.heartbeatTimeoutId = null;
+    }
+  }
+
+  private handleHeartbeatTimeout(): void {
+    this.connectionHealthChecks++;
+    console.log(`⚠️ Heartbeat timeout (${this.connectionHealthChecks}/${this.MAX_MISSED_HEARTBEATS})`);
+    
+    if (this.connectionHealthChecks >= this.MAX_MISSED_HEARTBEATS) {
+      console.log('💔 Connection appears stale, forcing reconnection');
+      this.forceReconnect();
+    }
+  }
+
+  private forceReconnect(): void {
+    console.log('🔄 Forcing WebSocket reconnection due to stale connection');
+    this.stopHeartbeat();
+    
+    if (this.ws) {
+      this.ws.close(1000, 'Stale connection detected');
+    }
+    
+    this.ws = null;
+    this.connectionHealthChecks = 0;
+    
+    setTimeout(() => {
+      if (!this.isIntentionallyClosed) {
+        this.connect();
+      }
+    }, 1000);
+  }
+
   disconnect(): void {
     this.isIntentionallyClosed = true;
+    this.stopHeartbeat();
+    
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -149,7 +284,7 @@ export class SubmissionWebSocketClient {
 
   send(message: Omit<WebSocketMessage, 'submissionId' | 'userId' | 'userName' | 'userEmail' | 'timestamp'>): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('WebSocket is not connected');
+      console.warn('WebSocket is not connected, cannot send message');
       return;
     }
 
@@ -165,7 +300,6 @@ export class SubmissionWebSocketClient {
     this.ws.send(JSON.stringify(fullMessage));
   }
 
-  // Event handling methods
   on(event: string, handler: WebSocketEventHandler): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set());
@@ -196,7 +330,6 @@ export class SubmissionWebSocketClient {
     }
   }
 
-  // Convenience methods for common actions
   notifyEditingStarted(): void {
     this.send({ type: 'editing_started', data: { field: 'content' } });
   }
@@ -206,10 +339,9 @@ export class SubmissionWebSocketClient {
   }
 
   notifyContentUpdated(changes: any): void {
-    this.send({ type: 'content_updated', data: { changes } });
+    this.send({ type: 'content_updated', data: changes });
   }
 
-  // Get current connection status
   get isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
@@ -224,9 +356,27 @@ export class SubmissionWebSocketClient {
       default: return 'unknown';
     }
   }
+
+  get connectionHealth(): { 
+    isHealthy: boolean; 
+    lastHeartbeat: number; 
+    missedHeartbeats: number;
+    timeSinceLastHeartbeat: number;
+  } {
+    const now = Date.now();
+    const timeSinceLastHeartbeat = now - this.lastHeartbeatResponse;
+    const isHealthy = this.connectionHealthChecks < this.MAX_MISSED_HEARTBEATS && 
+                     timeSinceLastHeartbeat < this.HEARTBEAT_INTERVAL * 2;
+    
+    return {
+      isHealthy,
+      lastHeartbeat: this.lastHeartbeatResponse,
+      missedHeartbeats: this.connectionHealthChecks,
+      timeSinceLastHeartbeat
+    };
+  }
 }
 
-// Global WebSocket client manager
 export class WebSocketManager {
   private clients: Map<string, SubmissionWebSocketClient> = new Map();
 
@@ -267,5 +417,4 @@ export class WebSocketManager {
   }
 }
 
-// Export singleton instance
 export const webSocketManager = new WebSocketManager(); 

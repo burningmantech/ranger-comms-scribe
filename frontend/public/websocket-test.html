@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, button {
+            padding: 8px;
+            margin-right: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #005a87;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .log {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background: #f8f9fa;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .users {
+            margin-top: 20px;
+        }
+        .user {
+            padding: 8px;
+            margin: 5px 0;
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+        .user.current {
+            background: #d1ecf1;
+            border-left: 4px solid #0c5460;
+        }
+        .debug-info {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebSocket Connection Test</h1>
+        <p>This page helps test WebSocket connections for submission collaboration.</p>
+        
+        <div class="input-group">
+            <label for="submissionId">Submission ID:</label>
+            <input type="text" id="submissionId" placeholder="Enter submission ID" value="test-submission-123">
+        </div>
+        
+        <div class="input-group">
+            <label for="userId">User ID:</label>
+            <input type="text" id="userId" placeholder="Enter user ID" value="">
+        </div>
+        
+        <div class="input-group">
+            <label for="userName">User Name:</label>
+            <input type="text" id="userName" placeholder="Enter user name" value="">
+        </div>
+        
+        <div class="input-group">
+            <label for="userEmail">User Email:</label>
+            <input type="text" id="userEmail" placeholder="Enter user email" value="">
+        </div>
+        
+        <div class="input-group">
+            <label for="backendUrl">Backend URL:</label>
+            <input type="text" id="backendUrl" placeholder="Backend URL" value="localhost:8787">
+        </div>
+        
+        <div class="input-group">
+            <button onclick="connect()" id="connectBtn">Connect</button>
+            <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
+            <button onclick="sendTestMessage()" id="sendTestBtn" disabled>Send Test Message</button>
+            <button onclick="requestRoomState()" id="roomStateBtn" disabled>Request Room State</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div id="status" class="status disconnected">Disconnected</div>
+        
+        <div class="debug-info">
+            <div><strong>Connection URL:</strong> <span id="connectionUrl">-</span></div>
+            <div><strong>WebSocket State:</strong> <span id="wsState">-</span></div>
+            <div><strong>Last Message:</strong> <span id="lastMessage">-</span></div>
+        </div>
+        
+        <div class="users">
+            <h3>Connected Users (<span id="userCount">0</span>)</h3>
+            <div id="connectedUsers"></div>
+        </div>
+        
+        <div>
+            <h3>Log</h3>
+            <div id="log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let connectedUsers = [];
+        let currentUserId = null;
+        let reconnectAttempts = 0;
+        let maxReconnectAttempts = 5;
+        
+        // Generate random user data if not provided
+        function generateUserData() {
+            const names = ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve', 'Frank', 'Grace', 'Henry'];
+            const randomName = names[Math.floor(Math.random() * names.length)];
+            const randomId = Math.floor(Math.random() * 10000);
+            
+            if (!document.getElementById('userId').value) {
+                document.getElementById('userId').value = `user-${randomId}`;
+            }
+            if (!document.getElementById('userName').value) {
+                document.getElementById('userName').value = `${randomName} ${randomId}`;
+            }
+            if (!document.getElementById('userEmail').value) {
+                document.getElementById('userEmail').value = `${randomName.toLowerCase()}${randomId}@example.com`;
+            }
+        }
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toISOString();
+            logDiv.textContent += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(status, state) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = status;
+            statusDiv.className = `status ${state}`;
+            
+            // Update debug info
+            document.getElementById('wsState').textContent = ws ? ws.readyState : 'null';
+            
+            // Update button states
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const sendTestBtn = document.getElementById('sendTestBtn');
+            const roomStateBtn = document.getElementById('roomStateBtn');
+            
+            if (state === 'connected') {
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                sendTestBtn.disabled = false;
+                roomStateBtn.disabled = false;
+            } else if (state === 'connecting') {
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = true;
+                sendTestBtn.disabled = true;
+                roomStateBtn.disabled = true;
+            } else {
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                sendTestBtn.disabled = true;
+                roomStateBtn.disabled = true;
+            }
+        }
+        
+        function updateConnectedUsers() {
+            const usersDiv = document.getElementById('connectedUsers');
+            const userCountSpan = document.getElementById('userCount');
+            
+            usersDiv.innerHTML = '';
+            userCountSpan.textContent = connectedUsers.length;
+            
+            connectedUsers.forEach(user => {
+                const userDiv = document.createElement('div');
+                userDiv.className = 'user' + (user.userId === currentUserId ? ' current' : '');
+                userDiv.innerHTML = `
+                    <strong>${user.userName}</strong> (${user.userId})${user.userId === currentUserId ? ' <em>(you)</em>' : ''}<br>
+                    <small>${user.userEmail} - Connected: ${new Date(user.connectedAt).toLocaleTimeString()}</small>
+                `;
+                usersDiv.appendChild(userDiv);
+            });
+        }
+        
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Already connected');
+                return;
+            }
+            
+            generateUserData();
+            
+            const submissionId = document.getElementById('submissionId').value;
+            const userId = document.getElementById('userId').value;
+            const userName = document.getElementById('userName').value;
+            const userEmail = document.getElementById('userEmail').value;
+            const backendUrl = document.getElementById('backendUrl').value;
+            
+            if (!submissionId || !userId || !userName || !userEmail) {
+                log('ERROR: Please fill in all fields');
+                return;
+            }
+            
+            currentUserId = userId;
+            
+            // Get session ID from localStorage (if available)
+            const sessionId = localStorage.getItem('sessionId') || 'test-session-id';
+            
+            // Construct WebSocket URL
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${backendUrl}/ws/submissions/${submissionId}?` +
+                `submissionId=${encodeURIComponent(submissionId)}&` +
+                `userId=${encodeURIComponent(userId)}&` +
+                `userName=${encodeURIComponent(userName)}&` +
+                `userEmail=${encodeURIComponent(userEmail)}&` +
+                `sessionId=${encodeURIComponent(sessionId)}`;
+            
+            document.getElementById('connectionUrl').textContent = wsUrl;
+            
+            log(`Connecting to: ${wsUrl}`);
+            updateStatus('Connecting...', 'connecting');
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function(event) {
+                log('✅ WebSocket connection opened');
+                updateStatus('Connected', 'connected');
+                reconnectAttempts = 0;
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    document.getElementById('lastMessage').textContent = message.type;
+                    
+                    log(`📨 Received: ${message.type}`);
+                    log(`📝 Message data: ${JSON.stringify(message, null, 2)}`);
+                    
+                    if (message.type === 'room_state' && message.users) {
+                        connectedUsers = message.users;
+                        updateConnectedUsers();
+                        log(`🏠 Room state updated: ${connectedUsers.length} users connected`);
+                    } else if (message.type === 'user_joined') {
+                        const existingUser = connectedUsers.find(u => u.userId === message.userId);
+                        if (!existingUser) {
+                            connectedUsers.push({
+                                userId: message.userId,
+                                userName: message.userName,
+                                userEmail: message.userEmail,
+                                connectedAt: message.timestamp
+                            });
+                            updateConnectedUsers();
+                            log(`👋 User joined: ${message.userName} (${message.userId})`);
+                        } else {
+                            log(`⚠️ User already exists: ${message.userName} (${message.userId})`);
+                        }
+                    } else if (message.type === 'user_left') {
+                        connectedUsers = connectedUsers.filter(u => u.userId !== message.userId);
+                        updateConnectedUsers();
+                        log(`👋 User left: ${message.userName} (${message.userId})`);
+                    } else if (message.type === 'connected') {
+                        log(`✅ Connected confirmation received`);
+                    } else if (message.type === 'content_updated') {
+                        log(`📝 Content updated by: ${message.userName}`);
+                        if (message.data) {
+                            log(`📄 Update data: ${JSON.stringify(message.data)}`);
+                        }
+                    } else if (message.type === 'error') {
+                        log(`❌ Error: ${message.message || 'Unknown error'}`);
+                    }
+                } catch (error) {
+                    log(`❌ Error parsing message: ${error.message}`);
+                    log(`📄 Raw message: ${event.data}`);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                log(`🔌 WebSocket connection closed: ${event.code} - ${event.reason}`);
+                updateStatus('Disconnected', 'disconnected');
+                
+                // Auto-reconnect if not intentionally closed
+                if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                    log(`🔄 Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+                    setTimeout(connect, delay);
+                } else if (reconnectAttempts >= maxReconnectAttempts) {
+                    log(`❌ Max reconnection attempts reached`);
+                }
+                
+                ws = null;
+                connectedUsers = [];
+                updateConnectedUsers();
+            };
+            
+            ws.onerror = function(error) {
+                log(`❌ WebSocket error: ${error}`);
+                updateStatus('Error', 'disconnected');
+            };
+        }
+        
+        function disconnect() {
+            if (ws) {
+                reconnectAttempts = maxReconnectAttempts; // Prevent auto-reconnect
+                ws.close(1000, 'User disconnected');
+                ws = null;
+                updateStatus('Disconnected', 'disconnected');
+                connectedUsers = [];
+                updateConnectedUsers();
+                log('👋 Disconnected by user');
+            }
+        }
+        
+        function sendTestMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected');
+                return;
+            }
+            
+            const testMessage = {
+                type: 'content_updated',
+                data: {
+                    message: 'Test message from WebSocket test page',
+                    timestamp: new Date().toISOString(),
+                    sender: currentUserId,
+                    test: true
+                }
+            };
+            
+            ws.send(JSON.stringify(testMessage));
+            log('📤 Test message sent');
+        }
+        
+        function requestRoomState() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ Not connected');
+                return;
+            }
+            
+            const stateRequest = {
+                type: 'content_updated',
+                data: {
+                    requestRoomState: true,
+                    message: 'Requesting room state update'
+                }
+            };
+            
+            ws.send(JSON.stringify(stateRequest));
+            log('🏠 Room state request sent');
+        }
+        
+        function clearLog() {
+            document.getElementById('log').textContent = '';
+        }
+        
+        // Initialize with random user data
+        generateUserData();
+        
+        // Update debug info periodically
+        setInterval(() => {
+            if (ws) {
+                document.getElementById('wsState').textContent = ws.readyState;
+            }
+        }, 1000);
+    </script>
+</body>
+</html> 
