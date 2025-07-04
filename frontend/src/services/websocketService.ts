@@ -27,10 +27,12 @@ export class SubmissionWebSocketClient {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private heartbeatTimeoutId: NodeJS.Timeout | null = null;
   private lastHeartbeatResponse: number = 0;
-  private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
-  private readonly HEARTBEAT_TIMEOUT = 10000; // 10 seconds to wait for response
+  private readonly HEARTBEAT_INTERVAL = 15000; // 15 seconds (more frequent)
+  private readonly HEARTBEAT_TIMEOUT = 5000; // 5 seconds to wait for response
   private connectionHealthChecks = 0;
-  private readonly MAX_MISSED_HEARTBEATS = 3;
+  private readonly MAX_MISSED_HEARTBEATS = 2; // Fail faster
+  private messageQueue: Array<Omit<WebSocketMessage, 'submissionId' | 'userId' | 'userName' | 'userEmail' | 'timestamp'>> = [];
+  private isConnecting = false;
 
   constructor(
     submissionId: string,
@@ -49,7 +51,13 @@ export class SubmissionWebSocketClient {
       return;
     }
 
+    if (this.isConnecting) {
+      console.log('⏳ WebSocket connection already in progress');
+      return;
+    }
+
     this.isIntentionallyClosed = false;
+    this.isConnecting = true;
     
     try {
       const sessionId = localStorage.getItem('sessionId');
@@ -81,10 +89,15 @@ export class SubmissionWebSocketClient {
 
       this.ws.onopen = () => {
         console.log('✅ WebSocket connected to submission room:', this.submissionId);
+        this.isConnecting = false;
         this.reconnectAttempts = 0;
         this.connectionHealthChecks = 0;
         this.lastHeartbeatResponse = Date.now();
         this.startHeartbeat();
+        
+        // Process queued messages
+        this.processMessageQueue();
+        
         this.emit('connected', {
           type: 'connected',
           submissionId: this.submissionId,
@@ -120,10 +133,11 @@ export class SubmissionWebSocketClient {
         
         this.stopHeartbeat();
         this.ws = null;
+        this.isConnecting = false;
         
         if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
-          const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+          const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000); // Cap at 10 seconds
           console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
           setTimeout(() => this.connect(), delay);
         } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
@@ -152,6 +166,7 @@ export class SubmissionWebSocketClient {
 
     } catch (error) {
       console.error('Failed to connect to WebSocket:', error);
+      this.isConnecting = false;
       
       if (error instanceof Error && error.message.includes('Session')) {
         console.log('🔄 Session issue detected, attempting to refresh...');
@@ -168,6 +183,25 @@ export class SubmissionWebSocketClient {
       
       throw error;
     }
+  }
+
+  private processMessageQueue(): void {
+    if (this.messageQueue.length === 0) return;
+    
+    console.log(`📤 Processing ${this.messageQueue.length} queued messages`);
+    
+    const messages = [...this.messageQueue];
+    this.messageQueue = [];
+    
+    messages.forEach(message => {
+      try {
+        this.send(message);
+      } catch (error) {
+        console.error('Failed to send queued message:', error);
+        // Re-queue the message if it fails
+        this.messageQueue.push(message);
+      }
+    });
   }
 
   private async validateSession(sessionId: string): Promise<boolean> {
@@ -263,28 +297,43 @@ export class SubmissionWebSocketClient {
     }
     
     this.ws = null;
+    this.isConnecting = false;
     this.connectionHealthChecks = 0;
     
+    // Add jitter to prevent thundering herd
+    const jitter = Math.random() * 1000;
     setTimeout(() => {
       if (!this.isIntentionallyClosed) {
         this.connect();
       }
-    }, 1000);
+    }, 1000 + jitter);
   }
 
   disconnect(): void {
     this.isIntentionallyClosed = true;
+    this.isConnecting = false;
     this.stopHeartbeat();
     
     if (this.ws) {
-      this.ws.close();
+      this.ws.close(1000, 'Intentional disconnect');
       this.ws = null;
     }
+    
+    // Clear message queue on intentional disconnect
+    this.messageQueue = [];
   }
 
   send(message: Omit<WebSocketMessage, 'submissionId' | 'userId' | 'userName' | 'userEmail' | 'timestamp'>): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('WebSocket is not connected, cannot send message');
+      console.warn('WebSocket is not connected, queuing message');
+      this.messageQueue.push(message);
+      
+      // Try to reconnect if not already connecting
+      if (!this.isConnecting && !this.isIntentionallyClosed) {
+        this.connect().catch(error => {
+          console.error('Failed to reconnect for message sending:', error);
+        });
+      }
       return;
     }
 
@@ -297,7 +346,13 @@ export class SubmissionWebSocketClient {
       timestamp: new Date().toISOString()
     };
 
-    this.ws.send(JSON.stringify(fullMessage));
+    try {
+      this.ws.send(JSON.stringify(fullMessage));
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      // Queue the message for retry
+      this.messageQueue.push(message);
+    }
   }
 
   on(event: string, handler: WebSocketEventHandler): void {
@@ -362,17 +417,24 @@ export class SubmissionWebSocketClient {
     lastHeartbeat: number; 
     missedHeartbeats: number;
     timeSinceLastHeartbeat: number;
+    queuedMessages: number;
+    reconnectAttempts: number;
+    isConnecting: boolean;
   } {
     const now = Date.now();
     const timeSinceLastHeartbeat = now - this.lastHeartbeatResponse;
     const isHealthy = this.connectionHealthChecks < this.MAX_MISSED_HEARTBEATS && 
-                     timeSinceLastHeartbeat < this.HEARTBEAT_INTERVAL * 2;
+                     timeSinceLastHeartbeat < this.HEARTBEAT_INTERVAL * 2 &&
+                     this.isConnected;
     
     return {
       isHealthy,
       lastHeartbeat: this.lastHeartbeatResponse,
       missedHeartbeats: this.connectionHealthChecks,
-      timeSinceLastHeartbeat
+      timeSinceLastHeartbeat,
+      queuedMessages: this.messageQueue.length,
+      reconnectAttempts: this.reconnectAttempts,
+      isConnecting: this.isConnecting
     };
   }
 }

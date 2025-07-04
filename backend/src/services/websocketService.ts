@@ -145,10 +145,6 @@ export class SubmissionWebSocketServer {
       users: Array.from(room).map(ws => this.connections.get(ws)?.userId).filter(Boolean)
     })));
 
-    // Get current room state BEFORE broadcasting
-    const roomUsers = this.getRoomUsers(submissionId);
-    console.log('👥 Room users before broadcast:', roomUsers);
-
     // Notify other users in the room that someone joined
     const joinMessage = {
       type: 'user_joined' as const,
@@ -162,22 +158,23 @@ export class SubmissionWebSocketServer {
     console.log('📢 Broadcasting user_joined message:', joinMessage);
     this.broadcastToRoom(submissionId, joinMessage, server);
 
-    // Send current room state to the new user
-    const roomStateMessage = {
+    // Get current room state AFTER adding the user
+    const roomUsers = this.getRoomUsers(submissionId);
+    console.log('👥 Room users after adding new user:', roomUsers);
+
+    // Send updated room state to ALL users in the room (including the new user)
+    const roomStateMessage: WebSocketMessage = {
       type: 'room_state' as const,
       submissionId,
+      userId: 'system', // System message
+      userName: 'System',
+      userEmail: 'system@websocket',
       users: roomUsers,
       timestamp: new Date().toISOString()
     };
 
-    console.log('📤 Sending room state to new user:', roomStateMessage);
-    
-    try {
-      server.send(JSON.stringify(roomStateMessage));
-      console.log('✅ Room state sent successfully');
-    } catch (error) {
-      console.error('❌ Error sending room state:', error);
-    }
+    console.log('📤 Broadcasting updated room state to all users:', roomStateMessage);
+    this.broadcastToRoom(submissionId, roomStateMessage); // Send to everyone
 
     // Also send a connected confirmation
     const connectedMessage = {
@@ -355,6 +352,23 @@ export class SubmissionWebSocketServer {
 
       console.log('📢 Broadcasting user_left message:', leaveMessage);
       this.broadcastToRoom(metadata.submissionId, leaveMessage);
+
+      // Send updated room state to remaining users
+      const updatedRoomUsers = this.getRoomUsers(metadata.submissionId);
+      console.log('👥 Updated room users after user left:', updatedRoomUsers);
+
+      const roomStateMessage: WebSocketMessage = {
+        type: 'room_state' as const,
+        submissionId: metadata.submissionId,
+        userId: 'system', // System message
+        userName: 'System',
+        userEmail: 'system@websocket',
+        users: updatedRoomUsers,
+        timestamp: new Date().toISOString()
+      };
+
+      console.log('📤 Broadcasting updated room state after user left:', roomStateMessage);
+      this.broadcastToRoom(metadata.submissionId, roomStateMessage);
     } else {
       console.log('⚠️ No metadata found for closing WebSocket connection');
     }

@@ -3,7 +3,10 @@ import { ContentSubmission, User, Comment, Change, Approval } from '../types/con
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import LexicalEditorComponent from './editor/LexicalEditor';
+import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '../services/websocketService';
 import './TrackedChangesEditor.css';
+
+const webSocketManager = new WebSocketManager();
 
 interface TrackedChangesEditorProps {
   submission: ContentSubmission;
@@ -16,6 +19,15 @@ interface TrackedChangesEditorProps {
   onUndo: (changeId: string) => void;
   onApproveProposedVersion: (approverId: string, comment?: string) => void;
   onRejectProposedVersion: (rejecterId: string, comment?: string) => void;
+}
+
+interface ConnectedUser {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  connectedAt: string;
+  lastActivity?: string;
+  isEditing?: boolean;
 }
 
 interface TrackedChange extends Change {
@@ -38,6 +50,16 @@ interface TextSegment {
 
 interface CommentWithReplies extends Comment {
   replies: CommentWithReplies[];
+}
+
+interface RealtimeNotification {
+  id: string;
+  type: string;
+  message: string;
+  userId: string;
+  userName: string;
+  timestamp: Date;
+  changeId?: string;
 }
 
 export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
@@ -67,6 +89,32 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     proposedVersions: submission.proposedVersions,
     proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent
   });
+  
+  // WebSocket state
+  const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<string>('disconnected');
+  const [connectionHealth, setConnectionHealth] = useState<{
+    isHealthy: boolean;
+    lastHeartbeat: number;
+    missedHeartbeats: number;
+    timeSinceLastHeartbeat: number;
+    queuedMessages: number;
+    reconnectAttempts: number;
+    isConnecting: boolean;
+  }>({ 
+    isHealthy: false, 
+    lastHeartbeat: 0, 
+    missedHeartbeats: 0, 
+    timeSinceLastHeartbeat: 0,
+    queuedMessages: 0,
+    reconnectAttempts: 0,
+    isConnecting: false
+  });
+  const [realtimeNotifications, setRealtimeNotifications] = useState<RealtimeNotification[]>([]);
+  const [userActivityMap, setUserActivityMap] = useState<Map<string, string>>(new Map());
+  const wsClientRef = useRef<SubmissionWebSocketClient | null>(null);
+  
+  // Existing state
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
   const [showCommentDialog, setShowCommentDialog] = useState(false);
@@ -84,6 +132,243 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [replyToComment, setReplyToComment] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
+
+  // Get effective user ID (fallback to email if id is not available)
+  const effectiveUserId = currentUser.id || currentUser.email;
+
+  // Helper function to add realtime notifications with debouncing
+  const addRealtimeNotification = useCallback((notification: Omit<RealtimeNotification, 'id'>) => {
+    const id = crypto.randomUUID();
+    const newNotification: RealtimeNotification = { ...notification, id };
+    
+    // Prevent duplicate notifications from the same user within 2 seconds
+    const now = Date.now();
+    const recentThreshold = 2000; // 2 seconds
+    
+    setRealtimeNotifications(prev => {
+      const filtered = prev.filter(n => 
+        !(n.userId === notification.userId && 
+          n.type === notification.type && 
+          (now - n.timestamp.getTime()) < recentThreshold)
+      );
+      // Limit to max 5 notifications at once
+      const withNew = [...filtered, newNotification];
+      return withNew.slice(-5);
+    });
+    
+    // Auto-remove notification after 4 seconds
+    setTimeout(() => {
+      setRealtimeNotifications(prev => prev.filter(n => n.id !== id));
+    }, 4000);
+  }, []);
+
+  // WebSocket connection setup
+  useEffect(() => {
+    let mounted = true;
+
+    const connectToWebSocket = async () => {
+      try {
+        console.log('🔌 TrackedChangesEditor: Connecting to WebSocket for submission:', submission.id);
+        
+        const client = await webSocketManager.connectToSubmission(
+          submission.id,
+          effectiveUserId,
+          currentUser.name,
+          currentUser.email
+        );
+        
+        if (!mounted) return;
+        
+        wsClientRef.current = client;
+        setConnectionStatus(client.connectionState);
+
+        // Set up event handlers
+        client.on('connected', (message) => {
+          console.log('🔗 TrackedChangesEditor: WebSocket connected');
+          setConnectionStatus('connected');
+        });
+
+        client.on('user_joined', (message) => {
+          console.log('👋 User joined:', message);
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            addRealtimeNotification({
+              type: 'user_joined',
+              message: `${message.userName} joined the document`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date()
+            });
+          }
+        });
+
+        client.on('user_left', (message) => {
+          console.log('👋 User left:', message);
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            addRealtimeNotification({
+              type: 'user_left',
+              message: `${message.userName} left the document`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date()
+            });
+          }
+        });
+
+        client.on('room_state', (message) => {
+          console.log('🏠 Room state updated:', message);
+          if (message.users) {
+            // Filter out system users from the connected users list
+            const realUsers = message.users.filter(user => user.userId !== 'system');
+            setConnectedUsers(realUsers.map(user => ({
+              userId: user.userId,
+              userName: user.userName,
+              userEmail: user.userEmail,
+              connectedAt: user.connectedAt,
+              lastActivity: userActivityMap.get(user.userId) || user.connectedAt,
+              isEditing: false
+            })));
+          }
+        });
+
+        client.on('editing_started', (message) => {
+          console.log('✏️ User started editing:', message);
+          setConnectedUsers(prev => prev.map(user => 
+            user.userId === message.userId 
+              ? { ...user, isEditing: true, lastActivity: message.timestamp }
+              : user
+          ));
+          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
+          
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            addRealtimeNotification({
+              type: 'editing_started',
+              message: `${message.userName} started editing`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date()
+            });
+          }
+        });
+
+        client.on('editing_stopped', (message) => {
+          console.log('✏️ User stopped editing:', message);
+          setConnectedUsers(prev => prev.map(user => 
+            user.userId === message.userId 
+              ? { ...user, isEditing: false, lastActivity: message.timestamp }
+              : user
+          ));
+          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
+          
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            addRealtimeNotification({
+              type: 'editing_stopped',
+              message: `${message.userName} stopped editing`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date()
+            });
+          }
+        });
+
+        client.on('content_updated', (message) => {
+          console.log('📝 Content updated:', message);
+          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
+          
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            addRealtimeNotification({
+              type: 'content_updated',
+              message: `${message.userName} updated the content`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date()
+            });
+          }
+        });
+
+        client.on('comment_added', (message) => {
+          console.log('💬 Comment added:', message);
+          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
+          
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            addRealtimeNotification({
+              type: 'comment_added',
+              message: `${message.userName} added a comment`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date(),
+              changeId: message.data?.changeId
+            });
+          }
+        });
+
+        client.on('approval_added', (message) => {
+          console.log('✅ Approval added:', message);
+          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
+          
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            const action = message.data?.action || 'approved';
+            addRealtimeNotification({
+              type: 'approval_added',
+              message: `${message.userName} ${action} a change`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date(),
+              changeId: message.data?.changeId
+            });
+          }
+        });
+
+        client.on('status_changed', (message) => {
+          console.log('🔄 Status changed:', message);
+          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
+          
+          if (message.userId !== effectiveUserId && message.userId !== 'system') {
+            addRealtimeNotification({
+              type: 'status_changed',
+              message: `${message.userName} changed status to ${message.data?.status}`,
+              userId: message.userId,
+              userName: message.userName,
+              timestamp: new Date()
+            });
+          }
+        });
+
+        client.on('error', (message) => {
+          console.error('❌ WebSocket error:', message);
+          setConnectionStatus('error');
+        });
+
+      } catch (error) {
+        console.error('Failed to connect to WebSocket:', error);
+        setConnectionStatus('error');
+      }
+    };
+
+    connectToWebSocket();
+
+    // Set up periodic health check
+    const healthCheckInterval = setInterval(() => {
+      if (wsClientRef.current && mounted) {
+        const health = wsClientRef.current.connectionHealth;
+        setConnectionHealth(health);
+        
+        if (!health.isHealthy && wsClientRef.current.isConnected) {
+          setConnectionStatus('unhealthy');
+        } else if (health.isHealthy && wsClientRef.current.isConnected) {
+          setConnectionStatus('connected');
+        }
+      }
+    }, 10000); // Check every 10 seconds (less frequent)
+
+    return () => {
+      mounted = false;
+      clearInterval(healthCheckInterval);
+      if (wsClientRef.current) {
+        webSocketManager.disconnectFromSubmission(submission.id, effectiveUserId);
+        wsClientRef.current = null;
+      }
+    };
+  }, [submission.id, effectiveUserId, currentUser.name, currentUser.email]);
 
   // Update ref when content changes
   useEffect(() => {
@@ -583,6 +868,38 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [editMode, isEditingProposed]);
 
+  // Handle edit mode changes
+  const handleEditModeChange = useCallback((newEditMode: boolean) => {
+    setEditMode(newEditMode);
+    
+    // Broadcast editing status via WebSocket
+    if (wsClientRef.current) {
+      wsClientRef.current.send({
+        type: newEditMode ? 'editing_started' : 'editing_stopped',
+        data: { 
+          editType: 'content',
+          editMode: newEditMode
+        }
+      });
+    }
+  }, []);
+
+  // Handle proposed edit mode changes
+  const handleProposedEditModeChange = useCallback((newEditMode: boolean) => {
+    setIsEditingProposed(newEditMode);
+    
+    // Broadcast editing status via WebSocket
+    if (wsClientRef.current) {
+      wsClientRef.current.send({
+        type: newEditMode ? 'editing_started' : 'editing_stopped',
+        data: { 
+          editType: 'proposed_version',
+          editMode: newEditMode
+        }
+      });
+    }
+  }, []);
+
   // Handle edit submission
   const handleEditSubmit = useCallback(() => {
     if (editedContent !== currentContent) {
@@ -596,6 +913,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         isIncremental: true
       };
       onSuggestion(suggestion);
+      
+      // Broadcast content update via WebSocket
+      if (wsClientRef.current) {
+        wsClientRef.current.send({
+          type: 'content_updated',
+          data: { 
+            changeId: suggestion.id,
+            action: 'suggestion_submitted',
+            field: 'content'
+          }
+        });
+      }
     }
     setEditMode(false);
   }, [editedContent, currentContent, currentUser.id, onSuggestion]);
@@ -627,6 +956,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       
       // Update local state immediately for responsive UI
       setLastSavedProposedContent(editedProposedContent);
+      
+      // Broadcast content update via WebSocket
+      if (wsClientRef.current) {
+        wsClientRef.current.send({
+          type: 'content_updated',
+          data: { 
+            changeId: suggestion.id,
+            action: 'proposed_version_updated',
+            field: 'content'
+          }
+        });
+      }
     }
     setIsEditingProposed(false);
   }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, currentUser.id, onSuggestion, getDisplayableText]);
@@ -637,6 +978,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onApprove(changeId);
     } else {
       onReject(changeId);
+    }
+    
+    // Broadcast approval/rejection via WebSocket
+    if (wsClientRef.current) {
+      wsClientRef.current.send({
+        type: 'approval_added',
+        data: { 
+          changeId: changeId,
+          action: decision,
+          status: decision === 'approve' ? 'approved' : 'rejected'
+        }
+      });
     }
   }, [onApprove, onReject]);
 
@@ -673,6 +1026,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onComment(comment);
       setCommentText('');
       setShowCommentDialog(false);
+      
+      // Broadcast comment via WebSocket
+      if (wsClientRef.current) {
+        wsClientRef.current.send({
+          type: 'comment_added',
+          data: { 
+            changeId: selectedChange,
+            commentId: comment.id,
+            comment: commentText
+          }
+        });
+      }
     }
   }, [selectedChange, commentText, currentUser.id, onComment]);
 
@@ -686,6 +1051,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onApproveProposedVersion(currentUser.id, proposedVersionApprovalComment);
     setProposedVersionApprovalComment('');
     setShowProposedVersionApprovalDialog(false);
+    
+    // Broadcast approval via WebSocket
+    if (wsClientRef.current) {
+      wsClientRef.current.send({
+        type: 'status_changed',
+        data: { 
+          status: 'approved',
+          action: 'proposed_version_approved',
+          comment: proposedVersionApprovalComment
+        }
+      });
+    }
   }, [currentUser.id, proposedVersionApprovalComment, onApproveProposedVersion]);
 
   // Handle proposed version rejection
@@ -693,6 +1070,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onRejectProposedVersion(currentUser.id, proposedVersionApprovalComment);
     setProposedVersionApprovalComment('');
     setShowProposedVersionApprovalDialog(false);
+    
+    // Broadcast rejection via WebSocket
+    if (wsClientRef.current) {
+      wsClientRef.current.send({
+        type: 'status_changed',
+        data: { 
+          status: 'rejected',
+          action: 'proposed_version_rejected',
+          comment: proposedVersionApprovalComment
+        }
+      });
+    }
   }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
 
   // Handle comment reply
@@ -710,6 +1099,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onComment(reply);
       setReplyText('');
       setReplyToComment(null);
+      
+      // Broadcast reply via WebSocket
+      if (wsClientRef.current) {
+        wsClientRef.current.send({
+          type: 'comment_added',
+          data: { 
+            parentCommentId: commentId,
+            commentId: reply.id,
+            comment: replyText,
+            isReply: true
+          }
+        });
+      }
     }
   }, [replyText, currentUser.id, onComment]);
 
@@ -849,11 +1251,91 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   return (
     <div className="tracked-changes-editor">
+      {/* WebSocket Status Bar */}
+      <div className="websocket-status-bar">
+        <div className="status-left">
+          <div className={`connection-status ${connectionStatus}`}>
+            <span className="connection-indicator"></span>
+            <span className="connection-text">
+              {connectionStatus === 'connected' ? 'Connected' : 
+               connectionStatus === 'connecting' ? 'Connecting...' : 
+               connectionStatus === 'unhealthy' ? 'Connection Issues' : 
+               connectionStatus === 'error' ? 'Connection Error' : 'Disconnected'}
+            </span>
+            {connectionHealth.isHealthy && (
+              <span className="health-info">
+                (Last heartbeat: {Math.floor(connectionHealth.timeSinceLastHeartbeat / 1000)}s ago)
+              </span>
+            )}
+            {!connectionHealth.isHealthy && connectionHealth.queuedMessages > 0 && (
+              <span className="queue-info">
+                ({connectionHealth.queuedMessages} queued)
+              </span>
+            )}
+            {connectionHealth.reconnectAttempts > 0 && (
+              <span className="reconnect-info">
+                (Attempt {connectionHealth.reconnectAttempts})
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="status-center">
+          <div className="connected-users">
+            <span className="users-label">Connected users ({connectedUsers.length}):</span>
+            <div className="users-list">
+              {connectedUsers.map(user => (
+                <div key={user.userId} className={`user-indicator ${user.isEditing ? 'editing' : ''}`}>
+                  <span className="user-avatar" title={user.userEmail}>
+                    {user.userName.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="user-name">{user.userName}</span>
+                  {user.isEditing && <span className="editing-indicator">✏️</span>}
+                  <span className="user-activity" title={`Last activity: ${user.lastActivity}`}>
+                    {user.lastActivity && new Date(user.lastActivity).toLocaleTimeString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="status-right">
+          <div className="notification-count">
+            {realtimeNotifications.length > 0 && (
+              <span className="notification-badge">{realtimeNotifications.length}</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Real-time Notifications */}
+      {realtimeNotifications.length > 0 && (
+        <div className="realtime-notifications">
+          {realtimeNotifications.map(notification => (
+            <div key={notification.id} className={`notification ${notification.type}`}>
+              <span className="notification-icon">
+                {notification.type === 'user_joined' ? '👋' :
+                 notification.type === 'user_left' ? '👋' :
+                 notification.type === 'editing_started' ? '✏️' :
+                 notification.type === 'editing_stopped' ? '⏹️' :
+                 notification.type === 'content_updated' ? '📝' :
+                 notification.type === 'comment_added' ? '💬' :
+                 notification.type === 'approval_added' ? '✅' :
+                 notification.type === 'status_changed' ? '🔄' : '🔔'}
+              </span>
+              <span className="notification-message">{notification.message}</span>
+              <span className="notification-time">
+                {notification.timestamp.toLocaleTimeString()}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="editor-toolbar">
         <div className="toolbar-left">
           <button
             className={`toolbar-button ${editMode ? 'active' : ''}`}
-            onClick={() => setEditMode(!editMode)}
+            onClick={() => handleEditModeChange(!editMode)}
           >
             {editMode ? 'Preview' : 'Edit'}
           </button>
@@ -925,7 +1407,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                            submission.richTextContent || 
                                            submission.content || '';
                             initialEditorContentRef.current = getRichTextContent(content);
-                            setIsEditingProposed(true);
+                            handleProposedEditModeChange(true);
                           }}
                           title="Edit proposed version"
                         >
@@ -965,7 +1447,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         <button
                           className="cancel-button"
                           onClick={() => {
-                            setIsEditingProposed(false);
+                            handleProposedEditModeChange(false);
                             const content = submission.proposedVersions?.richTextContent || 
                                            submission.proposedVersions?.content || 
                                            submission.richTextContent || 
