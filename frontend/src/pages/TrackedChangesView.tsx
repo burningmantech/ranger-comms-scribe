@@ -14,21 +14,20 @@ export const TrackedChangesView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchSubmission = async () => {
-      if (!submissionId) {
-        setError('No submission ID provided');
+  const fetchSubmission = async () => {
+    if (!submissionId) {
+      setError('No submission ID provided');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) {
+        setError('Not authenticated');
         setLoading(false);
         return;
       }
-
-      try {
-        const sessionId = localStorage.getItem('sessionId');
-        if (!sessionId) {
-          setError('Not authenticated');
-          setLoading(false);
-          return;
-        }
 
         // Fetch both submission data and tracked changes
         const [submissionResponse, trackedChangesResponse] = await Promise.all([
@@ -205,8 +204,15 @@ export const TrackedChangesView: React.FC = () => {
       }
     };
 
+  useEffect(() => {
     fetchSubmission();
   }, [submissionId]);
+
+  // Refresh function for WebSocket-triggered updates
+  const handleRefreshNeeded = async () => {
+    console.log('🔄 Refresh requested by WebSocket');
+    await fetchSubmission();
+  };
 
   const handleSave = async (updatedSubmission: ContentSubmission) => {
     try {
@@ -847,6 +853,7 @@ export const TrackedChangesView: React.FC = () => {
           onUndo={handleUndo}
           onApproveProposedVersion={handleApproveProposedVersion}
           onRejectProposedVersion={handleRejectProposedVersion}
+          onRefreshNeeded={handleRefreshNeeded}
         />
       </div>
     </div>

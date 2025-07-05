@@ -19,6 +19,7 @@ interface TrackedChangesEditorProps {
   onUndo: (changeId: string) => void;
   onApproveProposedVersion: (approverId: string, comment?: string) => void;
   onRejectProposedVersion: (rejecterId: string, comment?: string) => void;
+  onRefreshNeeded?: () => void;
 }
 
 interface ConnectedUser {
@@ -73,6 +74,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onUndo,
   onApproveProposedVersion,
   onRejectProposedVersion,
+  onRefreshNeeded,
 }) => {
   // Debug: Log the submission content
   console.log('TrackedChangesEditor received submission:', {
@@ -121,7 +123,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [selectedText, setSelectedText] = useState('');
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
-  const [editMode, setEditMode] = useState(false);
   const [isEditingProposed, setIsEditingProposed] = useState(false);
   const [editedProposedContent, setEditedProposedContent] = useState('');
   const editedProposedContentRef = useRef(editedProposedContent);
@@ -161,6 +162,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       setRealtimeNotifications(prev => prev.filter(n => n.id !== id));
     }, 4000);
   }, []);
+
+  // Helper function to request refresh from parent
+  const requestRefresh = useCallback(() => {
+    if (onRefreshNeeded) {
+      onRefreshNeeded();
+    } else {
+      // TODO: Add refresh mechanism - parent component needs to refetch data
+      console.log('🔄 Refresh needed but no refresh callback provided');
+    }
+  }, [onRefreshNeeded]);
 
   // WebSocket connection setup
   useEffect(() => {
@@ -267,6 +278,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               userName: message.userName,
               timestamp: new Date()
             });
+            
+            // Reload the proposed version when another user stops editing
+            console.log('🔄 Another user stopped editing, requesting refresh');
+            requestRefresh();
           }
         });
 
@@ -282,6 +297,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               userName: message.userName,
               timestamp: new Date()
             });
+            
+            // Reload the proposed version when another user updates content
+            console.log('🔄 Another user updated content, requesting refresh');
+            requestRefresh();
           }
         });
 
@@ -298,6 +317,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               timestamp: new Date(),
               changeId: message.data?.changeId
             });
+            
+            // Reload comments when another user adds a comment
+            console.log('🔄 Another user added a comment, requesting refresh');
+            requestRefresh();
           }
         });
 
@@ -315,6 +338,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               timestamp: new Date(),
               changeId: message.data?.changeId
             });
+            
+            // Reload changes when another user approves/rejects
+            console.log('🔄 Another user approved/rejected a change, requesting refresh');
+            requestRefresh();
           }
         });
 
@@ -330,6 +357,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               userName: message.userName,
               timestamp: new Date()
             });
+            
+            // Reload when another user changes status
+            console.log('🔄 Another user changed status, requesting refresh');
+            requestRefresh();
           }
         });
 
@@ -368,7 +399,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         wsClientRef.current = null;
       }
     };
-  }, [submission.id, effectiveUserId, currentUser.name, currentUser.email]);
+  }, [submission.id, effectiveUserId, currentUser.name, currentUser.email, requestRefresh]);
 
   // Update ref when content changes
   useEffect(() => {
@@ -383,24 +414,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, []);
 
-  // Helper to get the latest version for editing
-  const getLatestEditableContent = useCallback(() => {
-    return submission.proposedVersions?.content
-      ?? (isLexicalJson(submission.content)
-          ? extractTextFromLexical(submission.content)
-          : submission.content);
-  }, [submission]);
-
-  // State for edit mode content
-  const [editedContent, setEditedContent] = useState(() => getLatestEditableContent());
-
-  // When toggling edit mode on, reset editedContent to latest version
-  useEffect(() => {
-    if (editMode) {
-      setEditedContent(getLatestEditableContent());
-    }
-    // Only run when editMode toggles or submission changes
-  }, [editMode, getLatestEditableContent]);
+  // Removed edit mode content state since we only have proposed version editing now
 
   const editorRef = useRef<HTMLDivElement>(null);
 
@@ -862,27 +876,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
     const selection = window.getSelection();
-    if (selection && selection.toString().trim() && !editMode && !isEditingProposed) {
+    if (selection && selection.toString().trim() && !isEditingProposed) {
       setSelectedText(selection.toString());
       setShowSuggestionDialog(true);
     }
-  }, [editMode, isEditingProposed]);
-
-  // Handle edit mode changes
-  const handleEditModeChange = useCallback((newEditMode: boolean) => {
-    setEditMode(newEditMode);
-    
-    // Broadcast editing status via WebSocket
-    if (wsClientRef.current) {
-      wsClientRef.current.send({
-        type: newEditMode ? 'editing_started' : 'editing_stopped',
-        data: { 
-          editType: 'content',
-          editMode: newEditMode
-        }
-      });
-    }
-  }, []);
+  }, [isEditingProposed]);
 
   // Handle proposed edit mode changes
   const handleProposedEditModeChange = useCallback((newEditMode: boolean) => {
@@ -899,35 +897,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       });
     }
   }, []);
-
-  // Handle edit submission
-  const handleEditSubmit = useCallback(() => {
-    if (editedContent !== currentContent) {
-      const suggestion: Change = {
-        id: crypto.randomUUID(),
-        field: 'content',
-        oldValue: currentContent,
-        newValue: editedContent,
-        changedBy: currentUser.id,
-        timestamp: new Date(),
-        isIncremental: true
-      };
-      onSuggestion(suggestion);
-      
-      // Broadcast content update via WebSocket
-      if (wsClientRef.current) {
-        wsClientRef.current.send({
-          type: 'content_updated',
-          data: { 
-            changeId: suggestion.id,
-            action: 'suggestion_submitted',
-            field: 'content'
-          }
-        });
-      }
-    }
-    setEditMode(false);
-  }, [editedContent, currentContent, currentUser.id, onSuggestion]);
 
   // Handle proposed version edit submission
   const handleProposedEditSubmit = useCallback(() => {
@@ -1333,16 +1302,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       <div className="editor-toolbar">
         <div className="toolbar-left">
-          <button
-            className={`toolbar-button ${editMode ? 'active' : ''}`}
-            onClick={() => handleEditModeChange(!editMode)}
-          >
-            {editMode ? 'Preview' : 'Edit'}
-          </button>
-          <div className="toolbar-separator" />
-          <span className="toolbar-label">Viewing mode:</span>
+          <span className="toolbar-label">Viewing:</span>
           <span className="toolbar-value">
-            {editMode ? 'Edit mode' : 'Proposed version with tracked changes'}
+            Proposed version with tracked changes
           </span>
         </div>
         <div className="toolbar-right">
@@ -1369,190 +1331,168 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             <span>{new Date(submission.submittedAt).toLocaleDateString()}</span>
           </div>
           
-          {editMode ? (
-            <div className="edit-mode-container">
-              <textarea
-                className="edit-textarea"
-                value={editedContent}
-                onChange={(e) => setEditedContent(e.target.value)}
-                placeholder="Enter your content..."
-              />
-              <div className="edit-actions">
-                <button onClick={handleEditSubmit} className="primary">
-                  Submit Changes
-                </button>
-                <button onClick={() => {
-                  setEditMode(false);
-                  setEditedContent(currentContent);
-                }}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="document-body">
-              {/* Always show proposed version at the top */}
-              <div className="proposed-version-section">
-                <div className="section-header">
-                  <h2 className="section-title">Proposed Version</h2>
-                  <div className="section-actions">
-                    {!isEditingProposed ? (
-                      <>
+          <div className="document-body">
+            {/* Always show proposed version at the top */}
+            <div className="proposed-version-section">
+              <div className="section-header">
+                <h2 className="section-title">Proposed Version</h2>
+                <div className="section-actions">
+                  {!isEditingProposed ? (
+                    <>
+                      <button
+                        className="edit-button"
+                        onClick={() => {
+                          // Reset the initial content when starting to edit
+                          const content = submission.proposedVersions?.richTextContent || 
+                                         submission.proposedVersions?.content || 
+                                         submission.richTextContent || 
+                                         submission.content || '';
+                          initialEditorContentRef.current = getRichTextContent(content);
+                          handleProposedEditModeChange(true);
+                        }}
+                        title="Edit proposed version"
+                      >
+                        ✏️ Edit
+                      </button>
+                      {canApproveProposedVersion() && !isProposedVersionApproved && (
                         <button
-                          className="edit-button"
-                          onClick={() => {
-                            // Reset the initial content when starting to edit
-                            const content = submission.proposedVersions?.richTextContent || 
-                                           submission.proposedVersions?.content || 
-                                           submission.richTextContent || 
-                                           submission.content || '';
-                            initialEditorContentRef.current = getRichTextContent(content);
-                            handleProposedEditModeChange(true);
-                          }}
-                          title="Edit proposed version"
+                          className="approve-button"
+                          onClick={() => setShowProposedVersionApprovalDialog(true)}
+                          title="Approve proposed version"
                         >
-                          ✏️ Edit
+                          ✓ Approve
                         </button>
-                        {canApproveProposedVersion() && !isProposedVersionApproved && (
-                          <button
-                            className="approve-button"
-                            onClick={() => setShowProposedVersionApprovalDialog(true)}
-                            title="Approve proposed version"
-                          >
-                            ✓ Approve
-                          </button>
-                        )}
-                        {isProposedVersionApproved && proposedVersionApprovalInfo && (
-                          <div className="approval-info">
-                            <span className="approved-badge">
-                              ✅ Approved by {proposedVersionApprovalInfo.approverId}
+                      )}
+                      {isProposedVersionApproved && proposedVersionApprovalInfo && (
+                        <div className="approval-info">
+                          <span className="approved-badge">
+                            ✅ Approved by {proposedVersionApprovalInfo.approverId}
+                          </span>
+                          {proposedVersionApprovalInfo.comment && (
+                            <span className="approval-comment">
+                              "{proposedVersionApprovalInfo.comment}"
                             </span>
-                            {proposedVersionApprovalInfo.comment && (
-                              <span className="approval-comment">
-                                "{proposedVersionApprovalInfo.comment}"
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="edit-actions">
-                        <button
-                          className="save-button"
-                          onClick={handleProposedEditSubmit}
-                          title="Save changes"
-                        >
-                          💾 Save
-                        </button>
-                        <button
-                          className="cancel-button"
-                          onClick={() => {
-                            handleProposedEditModeChange(false);
-                            const content = submission.proposedVersions?.richTextContent || 
-                                           submission.proposedVersions?.content || 
-                                           submission.richTextContent || 
-                                           submission.content || '';
-                            const richTextContent = getRichTextContent(content);
-                            setEditedProposedContent(richTextContent);
-                            // Reset last saved content to the original submission content
-                            setLastSavedProposedContent(richTextContent);
-                          }}
-                          title="Cancel editing"
-                        >
-                          ✕ Cancel
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="proposed-content">
-                  {isEditingProposed ? (
-                    <div className="rich-text-editor-container">
-                      <LexicalEditorComponent
-                        key="proposed-edit-editor"
-                        initialContent={initialEditorContentRef.current}
-                        onChange={handleEditorChange}
-                        placeholder="Edit the proposed version..."
-                        readOnly={false}
-                        showToolbar={true}
-                        className="proposed-edit-editor"
-                      />
-                    </div>
+                          )}
+                        </div>
+                      )}
+                    </>
                   ) : (
-                    <div className="rich-text-display">
-                      <LexicalEditorComponent
-                        key="proposed-display-editor"
-                        initialContent={proposedDisplayContent}
-                        readOnly={true}
-                        showToolbar={false}
-                        className="proposed-display-editor"
-                      />
+                    <div className="edit-actions">
+                      <button
+                        className="save-button"
+                        onClick={handleProposedEditSubmit}
+                        title="Save changes"
+                      >
+                        💾 Save
+                      </button>
+                      <button
+                        className="cancel-button"
+                        onClick={() => {
+                          handleProposedEditModeChange(false);
+                          const content = submission.proposedVersions?.richTextContent || 
+                                         submission.proposedVersions?.content || 
+                                         submission.richTextContent || 
+                                         submission.content || '';
+                          const richTextContent = getRichTextContent(content);
+                          setEditedProposedContent(richTextContent);
+                          // Reset last saved content to the original submission content
+                          setLastSavedProposedContent(richTextContent);
+                        }}
+                        title="Cancel editing"
+                      >
+                        ✕ Cancel
+                      </button>
                     </div>
                   )}
                 </div>
               </div>
-
-              {/* Always show diff with tracked changes below */}
-              <div className="diff-section">
-                <h2 className="section-title">Tracked Changes</h2>
-                <div 
-                  className="diff-content"
-                  onMouseUp={handleTextSelection}
-                >
-                  {processedSegments.map(segment => (
-                    <span
-                      key={segment.id}
-                      className={`text-segment ${segment.type} ${segment.status || ''}`}
-                      onClick={() => handleSegmentClick(segment)}
-                      title={segment.author ? `Changed by ${segment.author}` : ''}
-                    >
-                      {segment.text}
-                      {segment.showControls && segment.changeId && segment.status === 'pending' && canMakeEditorialDecisions() && (
-                        <div className="segment-actions">
-                          <button
-                            className="segment-action-button approve"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleChangeDecision(segment.changeId!, 'approve');
-                            }}
-                            title="Approve this change"
-                          >
-                            ✓
-                          </button>
-                          <button
-                            className="segment-action-button reject"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleChangeDecision(segment.changeId!, 'reject');
-                            }}
-                            title="Reject this change"
-                          >
-                            ✗
-                          </button>
-                        </div>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Always show original version at the bottom */}
-              <div className="original-version-section">
-                <h2 className="section-title">Original Version</h2>
-                <div className="original-content">
-                  <div className="rich-text-display">
+              <div className="proposed-content">
+                {isEditingProposed ? (
+                  <div className="rich-text-editor-container">
                     <LexicalEditorComponent
-                      key="original-display-editor"
-                      initialContent={originalDisplayContent}
-                      readOnly={true}
-                      showToolbar={false}
-                      className="original-display-editor"
+                      key="proposed-edit-editor"
+                      initialContent={initialEditorContentRef.current}
+                      onChange={handleEditorChange}
+                      placeholder="Edit the proposed version..."
+                      readOnly={false}
+                      showToolbar={true}
+                      className="proposed-edit-editor"
                     />
                   </div>
+                ) : (
+                  <div className="rich-text-display">
+                    <LexicalEditorComponent
+                      key="proposed-display-editor"
+                      initialContent={proposedDisplayContent}
+                      readOnly={true}
+                      showToolbar={false}
+                      className="proposed-display-editor"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Always show diff with tracked changes below */}
+            <div className="diff-section">
+              <h2 className="section-title">Tracked Changes</h2>
+              <div 
+                className="diff-content"
+                onMouseUp={handleTextSelection}
+              >
+                {processedSegments.map(segment => (
+                  <span
+                    key={segment.id}
+                    className={`text-segment ${segment.type} ${segment.status || ''}`}
+                    onClick={() => handleSegmentClick(segment)}
+                    title={segment.author ? `Changed by ${segment.author}` : ''}
+                  >
+                    {segment.text}
+                    {segment.showControls && segment.changeId && segment.status === 'pending' && canMakeEditorialDecisions() && (
+                      <div className="segment-actions">
+                        <button
+                          className="segment-action-button approve"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeDecision(segment.changeId!, 'approve');
+                          }}
+                          title="Approve this change"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          className="segment-action-button reject"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeDecision(segment.changeId!, 'reject');
+                          }}
+                          title="Reject this change"
+                        >
+                          ✗
+                        </button>
+                      </div>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Always show original version at the bottom */}
+            <div className="original-version-section">
+              <h2 className="section-title">Original Version</h2>
+              <div className="original-content">
+                <div className="rich-text-display">
+                  <LexicalEditorComponent
+                    key="original-display-editor"
+                    initialContent={originalDisplayContent}
+                    readOnly={true}
+                    showToolbar={false}
+                    className="original-display-editor"
+                  />
                 </div>
               </div>
             </div>
-          )}
+          </div>
         </div>
 
         <div className="editor-sidebar">

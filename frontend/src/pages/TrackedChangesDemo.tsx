@@ -172,6 +172,10 @@ export const TrackedChangesDemo: React.FC = () => {
     console.log('Rejected proposed version:', { rejecterId, comment });
   };
 
+  const handleRefreshNeeded = () => {
+    console.log('🔄 Demo: Refresh requested by WebSocket (no-op in demo)');
+  };
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <TrackedChangesEditor
@@ -185,6 +189,7 @@ export const TrackedChangesDemo: React.FC = () => {
         onUndo={handleUndo}
         onApproveProposedVersion={handleApproveProposedVersion}
         onRejectProposedVersion={handleRejectProposedVersion}
+        onRefreshNeeded={handleRefreshNeeded}
       />
     </div>
   );
