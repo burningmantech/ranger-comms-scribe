@@ -18,9 +18,39 @@ declare global {
   };
 }
 
+export interface CursorPosition {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  position: {
+    key: string;
+    offset: number;
+    type: 'cursor' | 'selection';
+    anchor?: { key: string; offset: number };
+    focus?: { key: string; offset: number };
+  };
+  timestamp: string;
+}
+
+export interface TextOperation {
+  type: 'insert' | 'delete' | 'format' | 'retain';
+  position: number;
+  content?: string;
+  length?: number;
+  attributes?: Record<string, any>;
+  version: number; // For operational transforms
+}
+
+export interface CollaborativeDocumentState {
+  content: string;
+  version: number;
+  users: Array<{ userId: string; userName: string; userEmail: string; connectedAt: string; cursor?: CursorPosition }>;
+}
+
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response';
-  submissionId: string;
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop';
+  submissionId?: string; // Made optional to support document-level collaboration
+  documentId?: string; // Added for document-level collaboration
   userId: string;
   userName: string;
   userEmail: string;
@@ -30,11 +60,13 @@ export interface WebSocketMessage {
 }
 
 export interface ConnectionMetadata {
-  submissionId: string;
+  submissionId?: string;
+  documentId?: string;
   userId: string;
   userName: string;
   userEmail: string;
   connectedAt: string;
+  cursor?: CursorPosition;
 }
 
 export class SubmissionWebSocketServer {
@@ -77,21 +109,27 @@ export class SubmissionWebSocketServer {
   private async handleWebSocketUpgrade(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const submissionId = url.searchParams.get("submissionId");
+    const documentId = url.searchParams.get("documentId");
     const userId = url.searchParams.get("userId");
     const userName = url.searchParams.get("userName");
     const userEmail = url.searchParams.get("userEmail");
 
     console.log('🔌 WebSocket upgrade parameters:', {
       submissionId,
+      documentId,
       userId,
       userName,
       userEmail
     });
 
-    if (!submissionId || !userId || !userName || !userEmail) {
+    if ((!submissionId && !documentId) || !userId || !userName || !userEmail) {
       console.log('❌ Missing required parameters for WebSocket upgrade');
       return new Response("Missing required parameters", { status: 400 });
     }
+
+    // Determine the room ID based on whether it's a submission or document
+    const roomId = submissionId || documentId!;
+    const roomType = submissionId ? 'submission' : 'document';
 
     // Create WebSocket pair
     const webSocketPair = new WebSocketPair();
@@ -105,7 +143,8 @@ export class SubmissionWebSocketServer {
 
     // Store connection metadata
     const metadata: ConnectionMetadata = {
-      submissionId,
+      submissionId: submissionId || undefined,
+      documentId: documentId || undefined,
       userId,
       userName,
       userEmail,
@@ -115,7 +154,7 @@ export class SubmissionWebSocketServer {
     console.log('👤 Storing connection metadata:', metadata);
     
     // Check if user is already in the room
-    const room = this.submissionRooms.get(submissionId);
+    const room = this.submissionRooms.get(roomId);
     let existingUserConnections = 0;
     if (room) {
       for (const ws of room) {
@@ -125,30 +164,31 @@ export class SubmissionWebSocketServer {
         }
       }
     }
-    console.log('🔍 Existing connections for user', userId, 'in room', submissionId, ':', existingUserConnections);
+    console.log('🔍 Existing connections for user', userId, 'in room', roomId, ':', existingUserConnections);
     
     this.connections.set(server, metadata);
     console.log('💾 Connection metadata stored. Total connections:', this.connections.size);
 
-    // Add to submission room
-    if (!this.submissionRooms.has(submissionId)) {
-      this.submissionRooms.set(submissionId, new Set());
-      console.log('🏠 Created new room for submission:', submissionId);
+    // Add to room
+    if (!this.submissionRooms.has(roomId)) {
+      this.submissionRooms.set(roomId, new Set());
+      console.log('🏠 Created new room for', roomType, ':', roomId);
     }
-    this.submissionRooms.get(submissionId)!.add(server);
+    this.submissionRooms.get(roomId)!.add(server);
     
-    const roomSize = this.submissionRooms.get(submissionId)!.size;
+    const roomSize = this.submissionRooms.get(roomId)!.size;
     console.log('👥 Room size after adding user:', roomSize);
     console.log('🏠 Current room states:', Array.from(this.submissionRooms.entries()).map(([id, room]) => ({
-      submissionId: id,
+      roomId: id,
       connectionCount: room.size,
       users: Array.from(room).map(ws => this.connections.get(ws)?.userId).filter(Boolean)
     })));
 
     // Notify other users in the room that someone joined
-    const joinMessage = {
+    const joinMessage: WebSocketMessage = {
       type: 'user_joined' as const,
-      submissionId,
+      submissionId: submissionId || undefined,
+      documentId: documentId || undefined,
       userId,
       userName,
       userEmail,
@@ -156,16 +196,17 @@ export class SubmissionWebSocketServer {
     };
 
     console.log('📢 Broadcasting user_joined message:', joinMessage);
-    this.broadcastToRoom(submissionId, joinMessage, server);
+    this.broadcastToRoom(roomId, joinMessage, server);
 
     // Get current room state AFTER adding the user
-    const roomUsers = this.getRoomUsers(submissionId);
+    const roomUsers = this.getRoomUsers(roomId);
     console.log('👥 Room users after adding new user:', roomUsers);
 
     // Send updated room state to ALL users in the room (including the new user)
     const roomStateMessage: WebSocketMessage = {
       type: 'room_state' as const,
-      submissionId,
+      submissionId: submissionId || undefined,
+      documentId: documentId || undefined,
       userId: 'system', // System message
       userName: 'System',
       userEmail: 'system@websocket',
@@ -174,12 +215,13 @@ export class SubmissionWebSocketServer {
     };
 
     console.log('📤 Broadcasting updated room state to all users:', roomStateMessage);
-    this.broadcastToRoom(submissionId, roomStateMessage); // Send to everyone
+    this.broadcastToRoom(roomId, roomStateMessage); // Send to everyone
 
     // Also send a connected confirmation
-    const connectedMessage = {
+    const connectedMessage: WebSocketMessage = {
       type: 'connected' as const,
-      submissionId,
+      submissionId: submissionId || undefined,
+      documentId: documentId || undefined,
       userId,
       userName,
       userEmail,
@@ -203,23 +245,23 @@ export class SubmissionWebSocketServer {
   private async handleRoomAPI(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const pathParts = url.pathname.split('/');
-    const submissionId = pathParts[3]; // /api/rooms/{submissionId}
+    const roomId = pathParts[3]; // /api/rooms/{roomId}
     
-    console.log('🏠 Room API request for submission:', submissionId);
+    console.log('🏠 Room API request for room:', roomId);
     console.log('🏠 Method:', request.method);
     
-    if (!submissionId) {
-      console.log('❌ Missing submission ID in room API request');
-      return new Response("Missing submission ID", { status: 400 });
+    if (!roomId) {
+      console.log('❌ Missing room ID in room API request');
+      return new Response("Missing room ID", { status: 400 });
     }
 
     if (request.method === 'GET') {
       // Get room information
-      const roomUsers = this.getRoomUsers(submissionId);
-      console.log('🏠 Room API GET response:', { submissionId, users: roomUsers, userCount: roomUsers.length });
+      const roomUsers = this.getRoomUsers(roomId);
+      console.log('🏠 Room API GET response:', { roomId, users: roomUsers, userCount: roomUsers.length });
       
       return new Response(JSON.stringify({
-        submissionId,
+        roomId,
         users: roomUsers,
         userCount: roomUsers.length
       }), {
@@ -232,7 +274,7 @@ export class SubmissionWebSocketServer {
       const message = await request.json();
       console.log('🏠 Room API POST - broadcasting message:', message);
       
-      this.broadcastToRoom(submissionId, message);
+      this.broadcastToRoom(roomId, message);
       return new Response(JSON.stringify({ success: true }));
     }
 
@@ -261,7 +303,11 @@ export class SubmissionWebSocketServer {
       parsedMessage.userName = metadata.userName;
       parsedMessage.userEmail = metadata.userEmail;
       parsedMessage.submissionId = metadata.submissionId;
+      parsedMessage.documentId = metadata.documentId;
       parsedMessage.timestamp = new Date().toISOString();
+      
+      // Get room ID for broadcasting
+      const roomId = metadata.submissionId || metadata.documentId!;
 
       // Handle heartbeat messages
       if (parsedMessage.type === 'heartbeat') {
@@ -291,14 +337,14 @@ export class SubmissionWebSocketServer {
       if (parsedMessage.type === 'content_updated' && parsedMessage.data?.test) {
         console.log('🧪 TEST MESSAGE DETECTED!');
         console.log('🧪 Test message data:', parsedMessage.data);
-        console.log('🧪 Will broadcast to room:', metadata.submissionId);
+        console.log('🧪 Will broadcast to room:', roomId);
         console.log('🧪 Sender will be excluded:', metadata.userId);
       }
 
       console.log('📤 Broadcasting message to room:', parsedMessage);
       
       // Broadcast to room (excluding sender)
-      this.broadcastToRoom(metadata.submissionId, parsedMessage, ws);
+      this.broadcastToRoom(roomId, parsedMessage, ws);
 
       console.log('✅ Message broadcast completed');
 
@@ -321,29 +367,33 @@ export class SubmissionWebSocketServer {
     
     const metadata = this.connections.get(ws);
     if (metadata) {
-      console.log('👤 User disconnected:', metadata.userId, 'from submission:', metadata.submissionId);
+      const roomId = metadata.submissionId || metadata.documentId!;
+      const roomType = metadata.submissionId ? 'submission' : 'document';
+      
+      console.log('👤 User disconnected:', metadata.userId, 'from', roomType, ':', roomId);
       
       // Remove from connections
       this.connections.delete(ws);
       console.log('💾 Connection removed. Total connections:', this.connections.size);
       
       // Remove from room
-      const room = this.submissionRooms.get(metadata.submissionId);
+      const room = this.submissionRooms.get(roomId);
       if (room) {
         room.delete(ws);
         const newRoomSize = room.size;
         console.log('🏠 Room size after removal:', newRoomSize);
         
         if (newRoomSize === 0) {
-          this.submissionRooms.delete(metadata.submissionId);
-          console.log('🏠 Room deleted (empty):', metadata.submissionId);
+          this.submissionRooms.delete(roomId);
+          console.log('🏠 Room deleted (empty):', roomId);
         }
       }
 
       // Notify other users in the room
-      const leaveMessage = {
+      const leaveMessage: WebSocketMessage = {
         type: 'user_left' as const,
         submissionId: metadata.submissionId,
+        documentId: metadata.documentId,
         userId: metadata.userId,
         userName: metadata.userName,
         userEmail: metadata.userEmail,
@@ -351,15 +401,16 @@ export class SubmissionWebSocketServer {
       };
 
       console.log('📢 Broadcasting user_left message:', leaveMessage);
-      this.broadcastToRoom(metadata.submissionId, leaveMessage);
+      this.broadcastToRoom(roomId, leaveMessage);
 
       // Send updated room state to remaining users
-      const updatedRoomUsers = this.getRoomUsers(metadata.submissionId);
+      const updatedRoomUsers = this.getRoomUsers(roomId);
       console.log('👥 Updated room users after user left:', updatedRoomUsers);
 
       const roomStateMessage: WebSocketMessage = {
         type: 'room_state' as const,
         submissionId: metadata.submissionId,
+        documentId: metadata.documentId,
         userId: 'system', // System message
         userName: 'System',
         userEmail: 'system@websocket',
@@ -368,7 +419,7 @@ export class SubmissionWebSocketServer {
       };
 
       console.log('📤 Broadcasting updated room state after user left:', roomStateMessage);
-      this.broadcastToRoom(metadata.submissionId, roomStateMessage);
+      this.broadcastToRoom(roomId, roomStateMessage);
     } else {
       console.log('⚠️ No metadata found for closing WebSocket connection');
     }
@@ -379,7 +430,10 @@ export class SubmissionWebSocketServer {
     
     const metadata = this.connections.get(ws);
     if (metadata) {
-      console.log('👤 WebSocket error for user:', metadata.userId, 'in submission:', metadata.submissionId);
+      const roomId = metadata.submissionId || metadata.documentId!;
+      const roomType = metadata.submissionId ? 'submission' : 'document';
+      
+      console.log('👤 WebSocket error for user:', metadata.userId, 'in', roomType, ':', roomId);
       
       try {
         ws.send(JSON.stringify({
@@ -394,15 +448,15 @@ export class SubmissionWebSocketServer {
   }
 
   // Helper methods
-  private broadcastToRoom(submissionId: string, message: WebSocketMessage, excludeWs?: WebSocket): void {
-    const room = this.submissionRooms.get(submissionId);
+  private broadcastToRoom(roomId: string, message: WebSocketMessage, excludeWs?: WebSocket): void {
+    const room = this.submissionRooms.get(roomId);
     if (!room) {
-      console.log('⚠️ No room found for submission:', submissionId);
+      console.log('⚠️ No room found for room ID:', roomId);
       return;
     }
 
     const messageStr = JSON.stringify(message);
-    console.log('📢 Broadcasting to room', submissionId, 'with', room.size, 'connections');
+    console.log('📢 Broadcasting to room', roomId, 'with', room.size, 'connections');
     console.log('📢 Message being broadcast:', message);
     
     let successCount = 0;
@@ -443,14 +497,14 @@ export class SubmissionWebSocketServer {
     console.log('📊 Broadcast results:', { successCount, errorCount, totalConnections: room.size });
   }
 
-  private getRoomUsers(submissionId: string): Array<{ userId: string; userName: string; userEmail: string; connectedAt: string }> {
-    const room = this.submissionRooms.get(submissionId);
+  private getRoomUsers(roomId: string): Array<{ userId: string; userName: string; userEmail: string; connectedAt: string }> {
+    const room = this.submissionRooms.get(roomId);
     if (!room) {
-      console.log('🏠 No room found for submission:', submissionId);
+      console.log('🏠 No room found for room ID:', roomId);
       return [];
     }
 
-    console.log('🏠 Room has', room.size, 'connections for submission:', submissionId);
+    console.log('🏠 Room has', room.size, 'connections for room:', roomId);
     const users: Array<{ userId: string; userName: string; userEmail: string; connectedAt: string }> = [];
     
     for (const ws of room) {
@@ -483,10 +537,10 @@ export class SubmissionWebSocketServer {
   }
 
   // Public method to broadcast messages from external sources
-  async broadcastMessage(submissionId: string, message: WebSocketMessage): Promise<void> {
-    console.log('📢 External broadcast request for submission:', submissionId);
+  async broadcastMessage(roomId: string, message: WebSocketMessage): Promise<void> {
+    console.log('📢 External broadcast request for room:', roomId);
     console.log('📢 External message:', message);
     
-    this.broadcastToRoom(submissionId, message);
+    this.broadcastToRoom(roomId, message);
   }
 } 

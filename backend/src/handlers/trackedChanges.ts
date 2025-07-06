@@ -62,19 +62,36 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     const proposedVersions: Record<string, string> = {};
     const proposedVersionsRichText: Record<string, string> = {};
     
+    // First, try to get saved proposed versions from cache
+    const savedProposedVersions = await getObject(`proposed_versions/${submissionId}`, env) as any;
+    
+    if (savedProposedVersions) {
+      console.log('📋 Found saved proposed versions for submission:', submissionId);
+      if (savedProposedVersions.proposedVersionsRichText) {
+        proposedVersionsRichText['content'] = savedProposedVersions.proposedVersionsRichText;
+      }
+      if (savedProposedVersions.proposedVersionsContent) {
+        proposedVersions['content'] = savedProposedVersions.proposedVersionsContent;
+      }
+    }
+    
+    // Fall back to calculating from changes if no saved versions
     for (const field of fields) {
-      const completeVersion = await getCompleteProposedVersion(submissionId, field, env);
-      const completeRichTextVersion = await getCompleteRichTextProposedVersion(submissionId, field, env);
-      
-      if (completeVersion) {
-        proposedVersions[field] = completeVersion;
+      if (!proposedVersions[field]) {
+        const completeVersion = await getCompleteProposedVersion(submissionId, field, env);
+        if (completeVersion) {
+          proposedVersions[field] = completeVersion;
+        }
       }
       
-      if (completeRichTextVersion) {
-        proposedVersionsRichText[field] = completeRichTextVersion;
-      } else if (submission && submission.richTextContent && submission.richTextContent.trim().startsWith('{')) {
-        // Fallback: merge the plain text into the original rich text structure
-        proposedVersionsRichText[field] = mergeTextIntoLexicalJson(submission.richTextContent, completeVersion || '');
+      if (!proposedVersionsRichText[field]) {
+        const completeRichTextVersion = await getCompleteRichTextProposedVersion(submissionId, field, env);
+        if (completeRichTextVersion) {
+          proposedVersionsRichText[field] = completeRichTextVersion;
+        } else if (submission && submission.richTextContent && submission.richTextContent.trim().startsWith('{')) {
+          // Fallback: merge the plain text into the original rich text structure
+          proposedVersionsRichText[field] = mergeTextIntoLexicalJson(submission.richTextContent, proposedVersions[field] || '');
+        }
       }
     }
 
@@ -284,10 +301,56 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
   }
 }
 
+// Update proposed versions for a submission
+export async function updateProposedVersionsHandler(request: CustomRequest, env: any): Promise<Response> {
+  const { submissionId } = request.params!;
+  
+  if (!request.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    const { proposedVersionsRichText, proposedVersionsContent } = await request.json();
+
+    // Check permissions
+    const hasPermission = request.user.userType === 'Admin' ||
+                         request.user.userType === 'CommsCadre' ||
+                         request.user.userType === 'CouncilManager' ||
+                         true; // TODO: Check if user is the submitter
+
+    if (!hasPermission) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    // Store the proposed versions
+    const proposedVersionsData = {
+      submissionId,
+      proposedVersionsRichText,
+      proposedVersionsContent,
+      lastUpdatedBy: request.user.id,
+      lastUpdatedAt: new Date().toISOString()
+    };
+
+    // Store in cache (you can also store this in D1 database if needed)
+    const { putObject } = await import('../services/cacheService');
+    await putObject(`proposed_versions/${submissionId}`, proposedVersionsData, env);
+
+    console.log('✅ Proposed versions saved successfully for submission:', submissionId);
+
+    return new Response(JSON.stringify({ success: true, data: proposedVersionsData }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Error updating proposed versions:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
 // Create the router
 export const router = AutoRouter({ base: '/tracked-changes' })
   .get('/submission/:submissionId', getTrackedChangesHandler)
   .post('/submission/:submissionId', createTrackedChangeHandler)
+  .put('/submission/:submissionId', updateProposedVersionsHandler)
   .put('/change/:changeId/status', updateChangeStatusHandler)
   .post('/change/:changeId/comment', addChangeCommentHandler)
   .post('/:changeId/undo', undoChangeHandler)

@@ -41,6 +41,9 @@ import './styles/IndentationStyles.css';
 import './styles/SuggestionStyles.css';
 import './styles/ContextMenuStyles.css';
 
+import { CursorPosition } from '../../services/websocketService';
+import CollaborativeCursorPlugin, { RemoteCursor } from './plugins/CollaborativeCursorPlugin';
+
 // Define EditorProps interface
 interface EditorProps {
   initialContent?: string;
@@ -58,6 +61,10 @@ interface EditorProps {
   onSuggestionReject?: (suggestionId: string, reason?: string) => void;
   canCreateSuggestions?: boolean;
   canApproveSuggestions?: boolean;
+  // Collaboration props
+  isCollaborative?: boolean;
+  remoteCursors?: RemoteCursor[];
+  onCursorUpdate?: (position: CursorPosition) => void;
 }
 
 const LexicalEditorComponent: React.FC<EditorProps> = ({
@@ -76,6 +83,10 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   onSuggestionReject,
   canCreateSuggestions = true,
   canApproveSuggestions = false,
+  // Collaboration props
+  isCollaborative = false,
+  remoteCursors = [],
+  onCursorUpdate,
 }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -382,6 +393,13 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
               onSuggestionReject={onSuggestionReject}
               canCreateSuggestions={canCreateSuggestions}
               canApproveSuggestions={canApproveSuggestions}
+            />
+          )}
+          {isCollaborative && currentUserId && (
+            <CollaborativeCursorPlugin
+              remoteCursors={remoteCursors}
+              currentUserId={currentUserId}
+              onCursorUpdate={onCursorUpdate}
             />
           )}
         </LexicalComposer>

@@ -3,6 +3,7 @@ import { ContentSubmission, User, Comment, Change, Approval } from '../types/con
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import LexicalEditorComponent from './editor/LexicalEditor';
+import { CollaborativeEditor } from './CollaborativeEditor';
 import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '../services/websocketService';
 import './TrackedChangesEditor.css';
 
@@ -92,29 +93,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent
   });
   
-  // WebSocket state
-  const [connectedUsers, setConnectedUsers] = useState<ConnectedUser[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<string>('disconnected');
-  const [connectionHealth, setConnectionHealth] = useState<{
-    isHealthy: boolean;
-    lastHeartbeat: number;
-    missedHeartbeats: number;
-    timeSinceLastHeartbeat: number;
-    queuedMessages: number;
-    reconnectAttempts: number;
-    isConnecting: boolean;
-  }>({ 
-    isHealthy: false, 
-    lastHeartbeat: 0, 
-    missedHeartbeats: 0, 
-    timeSinceLastHeartbeat: 0,
-    queuedMessages: 0,
-    reconnectAttempts: 0,
-    isConnecting: false
-  });
-  const [realtimeNotifications, setRealtimeNotifications] = useState<RealtimeNotification[]>([]);
-  const [userActivityMap, setUserActivityMap] = useState<Map<string, string>>(new Map());
-  const wsClientRef = useRef<SubmissionWebSocketClient | null>(null);
+  // WebSocket state is now managed by CollaborativeEditor
   
   // Existing state
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
@@ -123,7 +102,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [selectedText, setSelectedText] = useState('');
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
-  const [isEditingProposed, setIsEditingProposed] = useState(false);
+  // Always-on collaborative editing - no edit mode toggle needed
   const [editedProposedContent, setEditedProposedContent] = useState('');
   const editedProposedContentRef = useRef(editedProposedContent);
   const initialEditorContentRef = useRef<string>('');
@@ -137,269 +116,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
 
-  // Helper function to add realtime notifications with debouncing
-  const addRealtimeNotification = useCallback((notification: Omit<RealtimeNotification, 'id'>) => {
-    const id = crypto.randomUUID();
-    const newNotification: RealtimeNotification = { ...notification, id };
-    
-    // Prevent duplicate notifications from the same user within 2 seconds
-    const now = Date.now();
-    const recentThreshold = 2000; // 2 seconds
-    
-    setRealtimeNotifications(prev => {
-      const filtered = prev.filter(n => 
-        !(n.userId === notification.userId && 
-          n.type === notification.type && 
-          (now - n.timestamp.getTime()) < recentThreshold)
-      );
-      // Limit to max 5 notifications at once
-      const withNew = [...filtered, newNotification];
-      return withNew.slice(-5);
-    });
-    
-    // Auto-remove notification after 4 seconds
-    setTimeout(() => {
-      setRealtimeNotifications(prev => prev.filter(n => n.id !== id));
-    }, 4000);
-  }, []);
+  // Real-time notifications are now handled by CollaborativeEditor
 
   // Helper function to request refresh from parent
   const requestRefresh = useCallback(() => {
+    console.log('🔄 TrackedChangesEditor: requestRefresh called', {
+      hasRefreshCallback: !!onRefreshNeeded,
+      submissionId: submission.id
+    });
+    
     if (onRefreshNeeded) {
       onRefreshNeeded();
     } else {
       // TODO: Add refresh mechanism - parent component needs to refetch data
       console.log('🔄 Refresh needed but no refresh callback provided');
     }
-  }, [onRefreshNeeded]);
+  }, [onRefreshNeeded, submission.id]);
 
-  // WebSocket connection setup
-  useEffect(() => {
-    let mounted = true;
+  // WebSocket connection is now handled by CollaborativeEditor
+  // Removed WebSocket connection setup
 
-    const connectToWebSocket = async () => {
-      try {
-        console.log('🔌 TrackedChangesEditor: Connecting to WebSocket for submission:', submission.id);
-        
-        const client = await webSocketManager.connectToSubmission(
-          submission.id,
-          effectiveUserId,
-          currentUser.name,
-          currentUser.email
-        );
-        
-        if (!mounted) return;
-        
-        wsClientRef.current = client;
-        setConnectionStatus(client.connectionState);
-
-        // Set up event handlers
-        client.on('connected', (message) => {
-          console.log('🔗 TrackedChangesEditor: WebSocket connected');
-          setConnectionStatus('connected');
-        });
-
-        client.on('user_joined', (message) => {
-          console.log('👋 User joined:', message);
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            addRealtimeNotification({
-              type: 'user_joined',
-              message: `${message.userName} joined the document`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date()
-            });
-          }
-        });
-
-        client.on('user_left', (message) => {
-          console.log('👋 User left:', message);
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            addRealtimeNotification({
-              type: 'user_left',
-              message: `${message.userName} left the document`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date()
-            });
-          }
-        });
-
-        client.on('room_state', (message) => {
-          console.log('🏠 Room state updated:', message);
-          if (message.users) {
-            // Filter out system users from the connected users list
-            const realUsers = message.users.filter(user => user.userId !== 'system');
-            setConnectedUsers(realUsers.map(user => ({
-              userId: user.userId,
-              userName: user.userName,
-              userEmail: user.userEmail,
-              connectedAt: user.connectedAt,
-              lastActivity: userActivityMap.get(user.userId) || user.connectedAt,
-              isEditing: false
-            })));
-          }
-        });
-
-        client.on('editing_started', (message) => {
-          console.log('✏️ User started editing:', message);
-          setConnectedUsers(prev => prev.map(user => 
-            user.userId === message.userId 
-              ? { ...user, isEditing: true, lastActivity: message.timestamp }
-              : user
-          ));
-          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
-          
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            addRealtimeNotification({
-              type: 'editing_started',
-              message: `${message.userName} started editing`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date()
-            });
-          }
-        });
-
-        client.on('editing_stopped', (message) => {
-          console.log('✏️ User stopped editing:', message);
-          setConnectedUsers(prev => prev.map(user => 
-            user.userId === message.userId 
-              ? { ...user, isEditing: false, lastActivity: message.timestamp }
-              : user
-          ));
-          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
-          
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            addRealtimeNotification({
-              type: 'editing_stopped',
-              message: `${message.userName} stopped editing`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date()
-            });
-            
-            // Reload the proposed version when another user stops editing
-            console.log('🔄 Another user stopped editing, requesting refresh');
-            requestRefresh();
-          }
-        });
-
-        client.on('content_updated', (message) => {
-          console.log('📝 Content updated:', message);
-          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
-          
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            addRealtimeNotification({
-              type: 'content_updated',
-              message: `${message.userName} updated the content`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date()
-            });
-            
-            // Reload the proposed version when another user updates content
-            console.log('🔄 Another user updated content, requesting refresh');
-            requestRefresh();
-          }
-        });
-
-        client.on('comment_added', (message) => {
-          console.log('💬 Comment added:', message);
-          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
-          
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            addRealtimeNotification({
-              type: 'comment_added',
-              message: `${message.userName} added a comment`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date(),
-              changeId: message.data?.changeId
-            });
-            
-            // Reload comments when another user adds a comment
-            console.log('🔄 Another user added a comment, requesting refresh');
-            requestRefresh();
-          }
-        });
-
-        client.on('approval_added', (message) => {
-          console.log('✅ Approval added:', message);
-          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
-          
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            const action = message.data?.action || 'approved';
-            addRealtimeNotification({
-              type: 'approval_added',
-              message: `${message.userName} ${action} a change`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date(),
-              changeId: message.data?.changeId
-            });
-            
-            // Reload changes when another user approves/rejects
-            console.log('🔄 Another user approved/rejected a change, requesting refresh');
-            requestRefresh();
-          }
-        });
-
-        client.on('status_changed', (message) => {
-          console.log('🔄 Status changed:', message);
-          setUserActivityMap(prev => new Map(prev).set(message.userId, message.timestamp));
-          
-          if (message.userId !== effectiveUserId && message.userId !== 'system') {
-            addRealtimeNotification({
-              type: 'status_changed',
-              message: `${message.userName} changed status to ${message.data?.status}`,
-              userId: message.userId,
-              userName: message.userName,
-              timestamp: new Date()
-            });
-            
-            // Reload when another user changes status
-            console.log('🔄 Another user changed status, requesting refresh');
-            requestRefresh();
-          }
-        });
-
-        client.on('error', (message) => {
-          console.error('❌ WebSocket error:', message);
-          setConnectionStatus('error');
-        });
-
-      } catch (error) {
-        console.error('Failed to connect to WebSocket:', error);
-        setConnectionStatus('error');
-      }
-    };
-
-    connectToWebSocket();
-
-    // Set up periodic health check
-    const healthCheckInterval = setInterval(() => {
-      if (wsClientRef.current && mounted) {
-        const health = wsClientRef.current.connectionHealth;
-        setConnectionHealth(health);
-        
-        if (!health.isHealthy && wsClientRef.current.isConnected) {
-          setConnectionStatus('unhealthy');
-        } else if (health.isHealthy && wsClientRef.current.isConnected) {
-          setConnectionStatus('connected');
-        }
-      }
-    }, 10000); // Check every 10 seconds (less frequent)
-
-    return () => {
-      mounted = false;
-      clearInterval(healthCheckInterval);
-      if (wsClientRef.current) {
-        webSocketManager.disconnectFromSubmission(submission.id, effectiveUserId);
-        wsClientRef.current = null;
-      }
-    };
-  }, [submission.id, effectiveUserId, currentUser.name, currentUser.email, requestRefresh]);
+  // WebSocket connection logic removed - now handled by CollaborativeEditor
 
   // Update ref when content changes
   useEffect(() => {
@@ -575,18 +312,33 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
     
     const richTextContent = getRichTextContent(content);
-    setEditedProposedContent(richTextContent);
+    
+    console.log('🔄 TrackedChangesEditor: useEffect triggered with content update:', {
+      isEditingProposed: false,
+      richTextContentLength: richTextContent?.length,
+      richTextContentPreview: richTextContent?.substring(0, 100),
+      willUpdateEditedContent: false,
+      lastSavedLength: lastSavedProposedContent?.length,
+      contentChanged: lastSavedProposedContent !== richTextContent
+    });
+    
+    // Only update the edited content if we're not currently editing
+    // This prevents overwriting user's changes while they're editing
+    if (!false) {
+      setEditedProposedContent(richTextContent);
+      console.log('🔄 Updated editedProposedContent due to submission change');
+    }
     
     // Update last saved content when submission changes (from parent)
     // Only update if we don't have local changes or if the submission has actually changed
     if (!lastSavedProposedContent || lastSavedProposedContent !== richTextContent) {
       setLastSavedProposedContent(richTextContent);
+      console.log('🔄 Updated lastSavedProposedContent due to submission change');
     }
     
-    // Store the initial content for the editor (only set once)
-    if (!initialEditorContentRef.current) {
-      initialEditorContentRef.current = richTextContent;
-    }
+    // Always update the initial content reference for fresh data
+    // This ensures the editor gets the latest content when entering edit mode
+    initialEditorContentRef.current = richTextContent;
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
   // Convert changes to tracked changes with status
@@ -679,267 +431,69 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     return getDisplayableText(submission.proposedVersions?.content || submission.content);
   }, [submission.proposedVersions?.content, submission.content, getDisplayableText]);
 
-  // Get the content to display in the proposed version section
+  // Memoize the proposedContentToDisplay to avoid unnecessary re-renders
   const proposedContentToDisplay = useMemo(() => {
-    return isEditingProposed ? editedProposedContent : getDisplayableText(
-      lastSavedProposedContent || 
+    // Always return the edited content for collaborative editing
+    return editedProposedContent || getDisplayableText(
       submission.proposedVersions?.richTextContent || 
       submission.proposedVersions?.content || 
       currentContent
     );
-  }, [isEditingProposed, editedProposedContent, lastSavedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
+  }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
 
-  // Memoize the rich text content for the proposed version editor
-  const proposedEditorContent = useMemo(() => {
-    const content = getRichTextContent(
-      lastSavedProposedContent || 
-      submission.proposedVersions?.richTextContent || 
-      submission.proposedVersions?.content || 
-      submission.richTextContent || 
-      submission.content || 
-      ''
-    );
-    console.log('proposedEditorContent memoized:', {
-      contentLength: content?.length,
-      isLexical: isLexicalJson(content),
-      proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent ? 'present' : 'not present'
-    });
-    return content;
-  }, [lastSavedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
-
-  // Memoize the rich text content for the proposed version display
-  const proposedDisplayContent = useMemo(() => {
-    // Use last saved content if available, otherwise fall back to submission content
-    const content = lastSavedProposedContent || 
-                   submission.proposedVersions?.richTextContent || 
-                   submission.proposedVersions?.content || 
-                   submission.richTextContent || 
-                   submission.content || 
-                   '';
-    return getRichTextContent(content);
-  }, [lastSavedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
-
-  // Memoize the rich text content for the original version
-  const originalDisplayContent = useMemo(() => {
-    return getRichTextContent(
-      submission.richTextContent || 
-      submission.content || 
-      ''
-    );
-  }, [submission.richTextContent, submission.content, getRichTextContent]);
-
-  // Process text to show tracked changes using diff algorithm
-  const processedSegments: TextSegment[] = useMemo(() => {
-    const segments: TextSegment[] = [];
-    let segmentId = 0;
-
-    // Use the original and proposed version for diff
-    // Extract plain text for diff comparison while preserving rich text structure
-    const originalText = getDisplayableText(submission.content);
-    const proposedText = getDisplayableText(
-      submission.proposedVersions?.richTextContent || 
-      submission.proposedVersions?.content || 
-      submission.content
-    );
-
-    // Find the latest tracked change for status
-    const latestChange = trackedChanges
-      .filter(change => change.field === 'content')
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
-
-    const status = latestChange?.status || 'pending';
-
-    // Use smartDiff to get word-level changes
-    const diff = smartDiff(originalText, proposedText);
-
-    // Helper function to find the most recent change that affects this text
-    const findMostRecentChangeForText = (text: string, type: 'addition' | 'deletion'): string | undefined => {
-      const relevantChanges = trackedChanges
-        .filter(change => change.field === 'content')
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-      for (const change of relevantChanges) {
-        // Compare plain text versions for matching
-        const changeOldText = getChangeDisplayText(change.oldValue || '');
-        const changeNewText = getChangeDisplayText(change.newValue || '');
-        
-        if (type === 'addition' && changeNewText && changeNewText.includes(text)) {
-          return change.id;
-        }
-        if (type === 'deletion' && changeOldText && changeOldText.includes(text)) {
-          return change.id;
-        }
-      }
-      return undefined;
-    };
-
-    // Group related deletion and addition segments
-    const groupedSegments: { deletions: WordDiff[], additions: WordDiff[] }[] = [];
-    let currentGroup = { deletions: [] as WordDiff[], additions: [] as WordDiff[] };
-    
-    diff.forEach((segment: WordDiff) => {
-      if (segment.type === 'equal') {
-        // If we have a group with content, save it and start a new one
-        if (currentGroup.deletions.length > 0 || currentGroup.additions.length > 0) {
-          groupedSegments.push({ ...currentGroup });
-          currentGroup = { deletions: [], additions: [] };
-        }
-      } else if (segment.type === 'delete') {
-        currentGroup.deletions.push(segment);
-      } else if (segment.type === 'insert') {
-        currentGroup.additions.push(segment);
-      }
-    });
-    
-    // Don't forget the last group
-    if (currentGroup.deletions.length > 0 || currentGroup.additions.length > 0) {
-      groupedSegments.push(currentGroup);
-    }
-
-    // Process grouped segments
-    groupedSegments.forEach((group, groupIndex) => {
-      // Find the change ID for this group (use the first deletion or addition)
-      let groupChangeId: string | undefined;
-      let groupAuthor: string | undefined;
-      let groupTimestamp: Date | undefined;
-      
-      if (group.deletions.length > 0) {
-        groupChangeId = findMostRecentChangeForText(group.deletions[0].value, 'deletion');
-      }
-      if (!groupChangeId && group.additions.length > 0) {
-        groupChangeId = findMostRecentChangeForText(group.additions[0].value, 'addition');
-      }
-      
-      if (groupChangeId) {
-        const change = trackedChanges.find(c => c.id === groupChangeId);
-        groupAuthor = change?.changedBy;
-        groupTimestamp = change?.timestamp;
-      }
-
-      // Add deletion segments
-      group.deletions.forEach((segment, index) => {
-        segments.push({
-          id: `del-${groupIndex}-${index}`,
-          text: segment.value,
-          type: 'deletion',
-          status,
-          changeId: groupChangeId,
-          author: groupAuthor,
-          timestamp: groupTimestamp,
-          // Show controls on the first deletion segment (whether it's part of a replacement or standalone deletion)
-          showControls: index === 0
-        });
-      });
-
-      // Add addition segments
-      group.additions.forEach((segment, index) => {
-        segments.push({
-          id: `add-${groupIndex}-${index}`,
-          text: segment.value,
-          type: 'addition',
-          status,
-          changeId: groupChangeId,
-          author: groupAuthor,
-          timestamp: groupTimestamp,
-          // Show controls on the first addition segment only if there are no deletions (standalone addition)
-          showControls: group.deletions.length === 0 && index === 0
-        });
-      });
-    });
-
-    // Add unchanged segments
-    diff.forEach((segment: WordDiff) => {
-      if (segment.type === 'equal') {
-        segments.push({
-          id: `equal-${segmentId++}`,
-          text: segment.value,
-          type: 'unchanged'
-        });
-      }
-    });
-
-    return segments;
-  }, [submission.content, submission.proposedVersions?.content, trackedChanges, getDisplayableText]);
-
-  // Handle clicking on a changed segment
-  const handleSegmentClick = useCallback((segment: TextSegment) => {
-    if (segment.changeId) {
-      setSelectedChange(segment.changeId);
-      // Scroll the sidebar to show the selected change
-      const changeElement = document.querySelector(`[data-change-id="${segment.changeId}"]`);
-      if (changeElement) {
-        changeElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-    }
-  }, []);
-
-  // Handle text selection for suggestions
   const handleTextSelection = useCallback(() => {
     const selection = window.getSelection();
-    if (selection && selection.toString().trim() && !isEditingProposed) {
-      setSelectedText(selection.toString());
-      setShowSuggestionDialog(true);
-    }
-  }, [isEditingProposed]);
-
-  // Handle proposed edit mode changes
-  const handleProposedEditModeChange = useCallback((newEditMode: boolean) => {
-    setIsEditingProposed(newEditMode);
-    
-    // Broadcast editing status via WebSocket
-    if (wsClientRef.current) {
-      wsClientRef.current.send({
-        type: newEditMode ? 'editing_started' : 'editing_stopped',
-        data: { 
-          editType: 'proposed_version',
-          editMode: newEditMode
-        }
-      });
+    if (selection && selection.toString().trim()) {
+      console.log('🔤 Text selected:', selection.toString());
     }
   }, []);
 
-  // Handle proposed version edit submission
+  const handleProposedEditModeChange = useCallback((newEditMode: boolean) => {
+    // Remove edit mode toggle - always collaborative
+    console.log('Edit mode change requested but collaborative editing is always on');
+  }, []);
+
   const handleProposedEditSubmit = useCallback(() => {
-    const currentProposedContent = submission.proposedVersions?.richTextContent || 
-                                   submission.proposedVersions?.content || 
-                                   submission.richTextContent || 
-                                   submission.content || '';
-    if (editedProposedContent !== currentProposedContent) {
-      // Extract plain text for the backend to calculate incremental changes
-      const currentText = getDisplayableText(currentProposedContent);
-      const editedText = getDisplayableText(editedProposedContent);
-      
-      const suggestion: Change = {
-        id: crypto.randomUUID(),
-        field: 'content',
-        oldValue: currentText,  // Send plain text for diff calculation
-        newValue: editedText,   // Send plain text for diff calculation
-        changedBy: currentUser.id,
-        timestamp: new Date(),
-        isIncremental: true,
-        // Store the rich text content separately for preservation
-        richTextOldValue: currentProposedContent,
-        richTextNewValue: editedProposedContent
-      };
-      onSuggestion(suggestion);
-      
-      // Update local state immediately for responsive UI
-      setLastSavedProposedContent(editedProposedContent);
-      
-      // Broadcast content update via WebSocket
-      if (wsClientRef.current) {
-        wsClientRef.current.send({
-          type: 'content_updated',
-          data: { 
-            changeId: suggestion.id,
-            action: 'proposed_version_updated',
-            field: 'content'
-          }
-        });
-      }
+    console.log('📝 Submitting proposed edit:', {
+      editedProposedContentLength: editedProposedContent?.length,
+      editedProposedContentPreview: editedProposedContent?.substring(0, 100)
+    });
+    
+    const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
+    const hasActualChanges = editedProposedContent !== currentContent;
+    
+    console.log('📝 Checking for changes:', {
+      hasActualChanges,
+      currentContentLength: currentContent?.length,
+      editedContentLength: editedProposedContent?.length,
+      currentContentPreview: currentContent?.substring(0, 100),
+      editedContentPreview: editedProposedContent?.substring(0, 100)
+    });
+    
+    if (!hasActualChanges) {
+      console.log('No changes to submit');
+      return;
     }
-    setIsEditingProposed(false);
-  }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, currentUser.id, onSuggestion, getDisplayableText]);
+
+    // Update the submission with the changes
+    const updatedSubmission = {
+      ...submission,
+      proposedVersions: {
+        ...submission.proposedVersions,
+        richTextContent: editedProposedContent
+      }
+    };
+    
+    console.log('📝 Calling onSave with updated submission:', {
+      submissionId: updatedSubmission.id,
+      proposedVersionsRichTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length
+    });
+    
+    onSave(updatedSubmission);
+    
+    // Update the last saved content after successful save
+    setLastSavedProposedContent(editedProposedContent);
+  }, [editedProposedContent, submission, onSave]);
 
   // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -949,17 +503,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onReject(changeId);
     }
     
-    // Broadcast approval/rejection via WebSocket
-    if (wsClientRef.current) {
-      wsClientRef.current.send({
-        type: 'approval_added',
-        data: { 
-          changeId: changeId,
-          action: decision,
-          status: decision === 'approve' ? 'approved' : 'rejected'
-        }
-      });
-    }
+    // Real-time approvals are now handled by CollaborativeEditor
   }, [onApprove, onReject]);
 
   // Handle suggestion submission
@@ -996,17 +540,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       setCommentText('');
       setShowCommentDialog(false);
       
-      // Broadcast comment via WebSocket
-      if (wsClientRef.current) {
-        wsClientRef.current.send({
-          type: 'comment_added',
-          data: { 
-            changeId: selectedChange,
-            commentId: comment.id,
-            comment: commentText
-          }
-        });
-      }
+      // Real-time comments are now handled by CollaborativeEditor
     }
   }, [selectedChange, commentText, currentUser.id, onComment]);
 
@@ -1021,17 +555,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     setProposedVersionApprovalComment('');
     setShowProposedVersionApprovalDialog(false);
     
-    // Broadcast approval via WebSocket
-    if (wsClientRef.current) {
-      wsClientRef.current.send({
-        type: 'status_changed',
-        data: { 
-          status: 'approved',
-          action: 'proposed_version_approved',
-          comment: proposedVersionApprovalComment
-        }
-      });
-    }
+    // Real-time status changes are now handled by CollaborativeEditor
   }, [currentUser.id, proposedVersionApprovalComment, onApproveProposedVersion]);
 
   // Handle proposed version rejection
@@ -1040,17 +564,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     setProposedVersionApprovalComment('');
     setShowProposedVersionApprovalDialog(false);
     
-    // Broadcast rejection via WebSocket
-    if (wsClientRef.current) {
-      wsClientRef.current.send({
-        type: 'status_changed',
-        data: { 
-          status: 'rejected',
-          action: 'proposed_version_rejected',
-          comment: proposedVersionApprovalComment
-        }
-      });
-    }
+    // Real-time status changes are now handled by CollaborativeEditor
   }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
 
   // Handle comment reply
@@ -1069,18 +583,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       setReplyText('');
       setReplyToComment(null);
       
-      // Broadcast reply via WebSocket
-      if (wsClientRef.current) {
-        wsClientRef.current.send({
-          type: 'comment_added',
-          data: { 
-            parentCommentId: commentId,
-            commentId: reply.id,
-            comment: replyText,
-            isReply: true
-          }
-        });
-      }
+      // Real-time comment replies are now handled by CollaborativeEditor
     }
   }, [replyText, currentUser.id, onComment]);
 
@@ -1218,87 +721,71 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     );
   }, [replyToComment, replyText, handleCommentReply]);
 
+  const createTrackedChangeWithContext = useCallback((
+    oldValue: string,
+    newValue: string,
+    changeType: 'add' | 'remove' | 'modify',
+    context: string
+  ) => {
+    const trackedChange = {
+      id: Date.now().toString(),
+      oldValue,
+      newValue,
+      changeType,
+      isIncremental: false,
+      willUpdateEditedContent: true,
+      context
+    };
+
+    console.log('📋 Creating tracked change:', trackedChange);
+
+    // Always update the edited content for collaborative editing
+    if (trackedChange.willUpdateEditedContent) {
+      setEditedProposedContent(newValue);
+    }
+
+    return trackedChange;
+  }, []);
+
+  const proposedEditorContent = useMemo(() => {
+    const content = submission.proposedVersions?.richTextContent || 
+                   submission.proposedVersions?.content || 
+                   submission.richTextContent || 
+                   submission.content || '';
+    
+    console.log('📝 proposedEditorContent calculation:', {
+      proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent,
+      proposedVersionsContent: submission.proposedVersions?.content, 
+      richTextContent: submission.richTextContent,
+      content: submission.content,
+      selectedContent: content,
+      contentLength: content?.length,
+      contentType: typeof content,
+      contentPreview: content?.substring(0, 200)
+    });
+    
+    // For now, let's simplify by just passing the content directly
+    // If it's already Lexical JSON, use it as-is
+    // If it's plain text, pass it as plain text and let the editor handle it
+    let result = content;
+    
+    // If content is empty, provide a default
+    if (!result || result.trim() === '') {
+      result = 'Start typing your content here...';
+    }
+    
+    console.log('📝 Simplified proposedEditorContent result:', {
+      resultLength: result?.length,
+      resultType: typeof result,
+      resultPreview: result?.substring(0, 200)
+    });
+    
+    return result;
+  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content]);
+
   return (
     <div className="tracked-changes-editor">
-      {/* WebSocket Status Bar */}
-      <div className="websocket-status-bar">
-        <div className="status-left">
-          <div className={`connection-status ${connectionStatus}`}>
-            <span className="connection-indicator"></span>
-            <span className="connection-text">
-              {connectionStatus === 'connected' ? 'Connected' : 
-               connectionStatus === 'connecting' ? 'Connecting...' : 
-               connectionStatus === 'unhealthy' ? 'Connection Issues' : 
-               connectionStatus === 'error' ? 'Connection Error' : 'Disconnected'}
-            </span>
-            {connectionHealth.isHealthy && (
-              <span className="health-info">
-                (Last heartbeat: {Math.floor(connectionHealth.timeSinceLastHeartbeat / 1000)}s ago)
-              </span>
-            )}
-            {!connectionHealth.isHealthy && connectionHealth.queuedMessages > 0 && (
-              <span className="queue-info">
-                ({connectionHealth.queuedMessages} queued)
-              </span>
-            )}
-            {connectionHealth.reconnectAttempts > 0 && (
-              <span className="reconnect-info">
-                (Attempt {connectionHealth.reconnectAttempts})
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="status-center">
-          <div className="connected-users">
-            <span className="users-label">Connected users ({connectedUsers.length}):</span>
-            <div className="users-list">
-              {connectedUsers.map(user => (
-                <div key={user.userId} className={`user-indicator ${user.isEditing ? 'editing' : ''}`}>
-                  <span className="user-avatar" title={user.userEmail}>
-                    {user.userName.charAt(0).toUpperCase()}
-                  </span>
-                  <span className="user-name">{user.userName}</span>
-                  {user.isEditing && <span className="editing-indicator">✏️</span>}
-                  <span className="user-activity" title={`Last activity: ${user.lastActivity}`}>
-                    {user.lastActivity && new Date(user.lastActivity).toLocaleTimeString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="status-right">
-          <div className="notification-count">
-            {realtimeNotifications.length > 0 && (
-              <span className="notification-badge">{realtimeNotifications.length}</span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Real-time Notifications */}
-      {realtimeNotifications.length > 0 && (
-        <div className="realtime-notifications">
-          {realtimeNotifications.map(notification => (
-            <div key={notification.id} className={`notification ${notification.type}`}>
-              <span className="notification-icon">
-                {notification.type === 'user_joined' ? '👋' :
-                 notification.type === 'user_left' ? '👋' :
-                 notification.type === 'editing_started' ? '✏️' :
-                 notification.type === 'editing_stopped' ? '⏹️' :
-                 notification.type === 'content_updated' ? '📝' :
-                 notification.type === 'comment_added' ? '💬' :
-                 notification.type === 'approval_added' ? '✅' :
-                 notification.type === 'status_changed' ? '🔄' : '🔔'}
-              </span>
-              <span className="notification-message">{notification.message}</span>
-              <span className="notification-time">
-                {notification.timestamp.toLocaleTimeString()}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Collaborative Editor handles its own WebSocket status and user presence */}
 
       <div className="editor-toolbar">
         <div className="toolbar-left">
@@ -1337,143 +824,181 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <div className="section-header">
                 <h2 className="section-title">Proposed Version</h2>
                 <div className="section-actions">
-                  {!isEditingProposed ? (
-                    <>
-                      <button
-                        className="edit-button"
-                        onClick={() => {
-                          // Reset the initial content when starting to edit
-                          const content = submission.proposedVersions?.richTextContent || 
-                                         submission.proposedVersions?.content || 
-                                         submission.richTextContent || 
-                                         submission.content || '';
-                          initialEditorContentRef.current = getRichTextContent(content);
-                          handleProposedEditModeChange(true);
-                        }}
-                        title="Edit proposed version"
-                      >
-                        ✏️ Edit
-                      </button>
-                      {canApproveProposedVersion() && !isProposedVersionApproved && (
-                        <button
-                          className="approve-button"
-                          onClick={() => setShowProposedVersionApprovalDialog(true)}
-                          title="Approve proposed version"
-                        >
-                          ✓ Approve
-                        </button>
+                  {canApproveProposedVersion() && !isProposedVersionApproved && (
+                    <button
+                      className="approve-button"
+                      onClick={() => setShowProposedVersionApprovalDialog(true)}
+                      title="Approve proposed version"
+                    >
+                      ✓ Approve
+                    </button>
+                  )}
+                  {isProposedVersionApproved && proposedVersionApprovalInfo && (
+                    <div className="approval-info">
+                      <span className="approved-badge">
+                        ✅ Approved by {proposedVersionApprovalInfo.approverId}
+                      </span>
+                      {proposedVersionApprovalInfo.comment && (
+                        <span className="approval-comment">
+                          "{proposedVersionApprovalInfo.comment}"
+                        </span>
                       )}
-                      {isProposedVersionApproved && proposedVersionApprovalInfo && (
-                        <div className="approval-info">
-                          <span className="approved-badge">
-                            ✅ Approved by {proposedVersionApprovalInfo.approverId}
-                          </span>
-                          {proposedVersionApprovalInfo.comment && (
-                            <span className="approval-comment">
-                              "{proposedVersionApprovalInfo.comment}"
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="edit-actions">
-                      <button
-                        className="save-button"
-                        onClick={handleProposedEditSubmit}
-                        title="Save changes"
-                      >
-                        💾 Save
-                      </button>
-                      <button
-                        className="cancel-button"
-                        onClick={() => {
-                          handleProposedEditModeChange(false);
-                          const content = submission.proposedVersions?.richTextContent || 
-                                         submission.proposedVersions?.content || 
-                                         submission.richTextContent || 
-                                         submission.content || '';
-                          const richTextContent = getRichTextContent(content);
-                          setEditedProposedContent(richTextContent);
-                          // Reset last saved content to the original submission content
-                          setLastSavedProposedContent(richTextContent);
-                        }}
-                        title="Cancel editing"
-                      >
-                        ✕ Cancel
-                      </button>
                     </div>
                   )}
                 </div>
               </div>
               <div className="proposed-content">
-                {isEditingProposed ? (
-                  <div className="rich-text-editor-container">
-                    <LexicalEditorComponent
-                      key="proposed-edit-editor"
-                      initialContent={initialEditorContentRef.current}
-                      onChange={handleEditorChange}
-                      placeholder="Edit the proposed version..."
-                      readOnly={false}
-                      showToolbar={true}
-                      className="proposed-edit-editor"
-                    />
-                  </div>
-                ) : (
-                  <div className="rich-text-display">
-                    <LexicalEditorComponent
-                      key="proposed-display-editor"
-                      initialContent={proposedDisplayContent}
-                      readOnly={true}
-                      showToolbar={false}
-                      className="proposed-display-editor"
-                    />
-                  </div>
-                )}
+                <div className="rich-text-editor-container">
+                  <CollaborativeEditor
+                    key="proposed-collaborative-editor"
+                    documentId={submission.id}
+                    currentUser={currentUser}
+                    initialContent={proposedEditorContent}
+                    onContentChange={(json) => {
+                      setEditedProposedContent(json);
+                      console.log('📝 Proposed editor content changed:', {
+                        contentLength: json.length,
+                        isLexical: isLexicalJson(json)
+                      });
+                      
+                      // Auto-track changes as user types (debounced)
+                      const hasChanges = json !== (submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '');
+                      if (hasChanges) {
+                        console.log('📝 Content has changes, will save on next blur/save');
+                        
+                        // Create a tracked change for real-time collaboration
+                        const currentText = getDisplayableText(submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '');
+                        const newText = getDisplayableText(json);
+                        
+                        if (currentText !== newText) {
+                          // Create incremental change for real-time tracking
+                          const newChange = {
+                            id: `change-${Date.now()}`,
+                            field: 'content' as const,
+                            oldValue: currentText,
+                            newValue: newText,
+                            changedBy: currentUser.id,
+                            timestamp: new Date(),
+                            isIncremental: true,
+                            richTextOldValue: submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '',
+                            richTextNewValue: json
+                          };
+                          
+                          console.log('📝 Created tracked change:', newChange);
+                          // Note: In a real implementation, this would be sent to other users via WebSocket
+                        }
+                      }
+                    }}
+                    onSave={(content) => {
+                      console.log('💾 Save button clicked with content:', content);
+                      // Update the edited content with the saved content
+                      setEditedProposedContent(content);
+                      handleProposedEditSubmit();
+                    }}
+                    placeholder="Edit the proposed version..."
+                    readOnly={false}
+                    showToolbar={true}
+                    className="proposed-collaborative-editor"
+                    useSubmissionWebSocket={true}
+                  />
+                </div>
               </div>
             </div>
 
             {/* Always show diff with tracked changes below */}
             <div className="diff-section">
-              <h2 className="section-title">Tracked Changes</h2>
-              <div 
-                className="diff-content"
-                onMouseUp={handleTextSelection}
-              >
-                {processedSegments.map(segment => (
-                  <span
-                    key={segment.id}
-                    className={`text-segment ${segment.type} ${segment.status || ''}`}
-                    onClick={() => handleSegmentClick(segment)}
-                    title={segment.author ? `Changed by ${segment.author}` : ''}
-                  >
-                    {segment.text}
-                    {segment.showControls && segment.changeId && segment.status === 'pending' && canMakeEditorialDecisions() && (
-                      <div className="segment-actions">
-                        <button
-                          className="segment-action-button approve"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleChangeDecision(segment.changeId!, 'approve');
-                          }}
-                          title="Approve this change"
-                        >
-                          ✓
-                        </button>
-                        <button
-                          className="segment-action-button reject"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleChangeDecision(segment.changeId!, 'reject');
-                          }}
-                          title="Reject this change"
-                        >
-                          ✗
-                        </button>
+              <h2 className="section-title">Content Comparison</h2>
+              <div className="diff-content">
+                {(() => {
+                  // Get the original and proposed content for comparison
+                  const originalText = getDisplayableText(submission.richTextContent || submission.content || '');
+                  const proposedText = getDisplayableText(editedProposedContent || submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '');
+                  
+                  // If content is the same, show no changes message
+                  if (originalText === proposedText) {
+                    return (
+                      <div className="no-changes">
+                        <p>No changes detected between original and proposed versions.</p>
                       </div>
-                    )}
-                  </span>
-                ))}
+                    );
+                  }
+                  
+                  // Generate word-level diff
+                  const diff = smartDiff(originalText, proposedText);
+                  
+                  return (
+                    <div className="diff-comparison">
+                      <div className="diff-legend">
+                        <span className="legend-item">
+                          <span className="legend-color unchanged"></span> Unchanged
+                        </span>
+                        <span className="legend-item">
+                          <span className="legend-color added"></span> Added
+                        </span>
+                        <span className="legend-item">
+                          <span className="legend-color removed"></span> Removed
+                        </span>
+                      </div>
+                      
+                      <div className="diff-view">
+                        <div className="diff-column">
+                          <h4>Original Version</h4>
+                          <div className="diff-text">
+                            {diff.map((segment, index) => {
+                              if (segment.type === 'delete' || segment.type === 'equal') {
+                                return (
+                                  <span
+                                    key={index}
+                                    className={`diff-segment ${segment.type === 'delete' ? 'removed' : 'unchanged'}`}
+                                  >
+                                    {segment.value}
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })}
+                          </div>
+                        </div>
+                        
+                        <div className="diff-column">
+                          <h4>Proposed Version</h4>
+                          <div className="diff-text">
+                            {diff.map((segment, index) => {
+                              if (segment.type === 'insert' || segment.type === 'equal') {
+                                return (
+                                  <span
+                                    key={index}
+                                    className={`diff-segment ${segment.type === 'insert' ? 'added' : 'unchanged'}`}
+                                  >
+                                    {segment.value}
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Unified diff view */}
+                      <div className="unified-diff">
+                        <h4>Unified Diff View</h4>
+                        <div className="unified-diff-content">
+                          {diff.map((segment, index) => (
+                            <span
+                              key={index}
+                              className={`diff-segment ${segment.type}`}
+                            >
+                              {segment.type === 'delete' && <span className="diff-marker">-</span>}
+                              {segment.type === 'insert' && <span className="diff-marker">+</span>}
+                              {segment.value}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -1484,7 +1009,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 <div className="rich-text-display">
                   <LexicalEditorComponent
                     key="original-display-editor"
-                    initialContent={originalDisplayContent}
+                    initialContent={getRichTextContent(submission.richTextContent || submission.content || '')}
                     readOnly={true}
                     showToolbar={false}
                     className="original-display-editor"
@@ -1537,7 +1062,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                             <strong>Added:</strong> {getChangeDisplayText(change.newValue)}
                           </span>
                         )}
-
                       </>
                     ) : (
                       <>
@@ -1551,7 +1075,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                             <strong>New:</strong> {getChangeDisplayText(change.newValue).substring(0, 100)}...
                           </span>
                         )}
-
                       </>
                     )}
                   </div>

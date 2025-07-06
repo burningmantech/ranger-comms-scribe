@@ -136,4 +136,126 @@ interface RolePermissions {
   canApproveSuggestions: boolean;
   canReviewSuggestions: boolean;
   canViewFilteredSubmissions: boolean;
+}
+
+// === COLLABORATIVE DOCUMENT TYPES ===
+
+export interface CollaborativeDocument {
+  id: string;
+  title: string;
+  content: string;
+  richTextContent: string;
+  createdBy: string;
+  createdAt: string;
+  lastModifiedBy: string;
+  lastModifiedAt: string;
+  version: number;
+  permissions: DocumentPermissions;
+  collaborators: DocumentCollaborator[];
+  isPublic: boolean;
+  groupId?: string;
+  tags: string[];
+  metadata: Record<string, any>;
+  status: 'draft' | 'published' | 'archived';
+  parentDocumentId?: string;
+  forkFromDocumentId?: string;
+}
+
+export interface DocumentPermissions {
+  owner: string;
+  editors: string[];
+  viewers: string[];
+  commenters: string[];
+  isPublic: boolean;
+  allowFork: boolean;
+  allowComments: boolean;
+}
+
+export interface DocumentCollaborator {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  role: 'owner' | 'editor' | 'viewer' | 'commenter';
+  joinedAt: string;
+  lastActiveAt: string;
+  cursor?: CursorPosition;
+  isOnline: boolean;
+}
+
+export interface DocumentVersion {
+  id: string;
+  documentId: string;
+  version: number;
+  content: string;
+  richTextContent: string;
+  createdBy: string;
+  createdAt: string;
+  changeDescription?: string;
+  operations: TextOperation[];
+  parentVersionId?: string;
+}
+
+export interface DocumentComment {
+  id: string;
+  documentId: string;
+  content: string;
+  authorId: string;
+  authorName: string;
+  authorEmail: string;
+  createdAt: string;
+  updatedAt: string;
+  resolved: boolean;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  position?: CommentPosition;
+  threadId?: string;
+  parentCommentId?: string;
+}
+
+export interface CommentPosition {
+  startOffset: number;
+  endOffset: number;
+  startKey: string;
+  endKey: string;
+}
+
+export interface DocumentOperation {
+  id: string;
+  documentId: string;
+  version: number;
+  operations: TextOperation[];
+  createdBy: string;
+  createdAt: string;
+  applied: boolean;
+  transformedAgainst: string[];
+}
+
+export interface TextOperation {
+  type: 'insert' | 'delete' | 'retain' | 'format';
+  position: number;
+  content?: string;
+  length?: number;
+  attributes?: Record<string, any>;
+  version: number;
+}
+
+export interface CursorPosition {
+  userId: string;
+  userName: string;
+  position: number;
+  selectionStart?: number;
+  selectionEnd?: number;
+  timestamp: string;
+}
+
+export interface CollaborativeDocumentState {
+  content: string;
+  richTextContent: string;
+  version: number;
+  collaborators: Array<{
+    userId: string;
+    userName: string;
+    isOnline: boolean;
+    cursor?: CursorPosition;
+  }>;
 } 

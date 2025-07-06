@@ -98,8 +98,10 @@
 /* Editor Container */
 .editor-container {
   display: flex;
-  flex: 1;
-  overflow: hidden;
+  gap: 20px;
+  flex-direction: row;
+  height: calc(100vh - 180px);
+  min-height: 600px;
 }
 
 /* Editor Content */
@@ -319,19 +321,180 @@
 
 /* Diff Section */
 .diff-section {
-  margin-bottom: 48px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid #e0e0e0;
+  margin: 2rem 0;
+  border: 1px solid #e1e5e9;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.diff-section .section-title {
+  background: #f6f8fa;
+  padding: 1rem 1.5rem;
+  margin: 0;
+  border-bottom: 1px solid #e1e5e9;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #24292f;
 }
 
 .diff-content {
-  background-color: #fff;
-  padding: 24px;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
+  padding: 1.5rem;
+}
+
+.no-changes {
+  text-align: center;
+  padding: 2rem;
+  color: #656d76;
+  font-style: italic;
+}
+
+.diff-comparison {
+  font-family: 'SFMono-Regular', Menlo, 'Liberation Mono', Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.diff-legend {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #f6f8fa;
+  border-radius: 6px;
+  border: 1px solid #e1e5e9;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+  color: #656d76;
+}
+
+.legend-color {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid #d1d9e0;
+}
+
+.legend-color.unchanged {
+  background: transparent;
+}
+
+.legend-color.added {
+  background: #acf2bd;
+}
+
+.legend-color.removed {
+  background: #ffdce0;
+}
+
+.diff-view {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin-bottom: 2rem;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.diff-column {
+  background: #ffffff;
+}
+
+.diff-column h4 {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: #f6f8fa;
+  border-bottom: 1px solid #d1d9e0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #24292f;
+}
+
+.diff-text {
+  padding: 1rem;
   white-space: pre-wrap;
   word-wrap: break-word;
-  line-height: 1.75;
+  min-height: 200px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.diff-segment {
+  position: relative;
+}
+
+.diff-segment.unchanged {
+  color: #24292f;
+}
+
+.diff-segment.added {
+  background: #acf2bd;
+  color: #1a7f37;
+}
+
+.diff-segment.removed {
+  background: #ffdce0;
+  color: #cf222e;
+  text-decoration: line-through;
+}
+
+/* Unified diff styles */
+.unified-diff {
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.unified-diff h4 {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: #f6f8fa;
+  border-bottom: 1px solid #d1d9e0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #24292f;
+}
+
+.unified-diff-content {
+  padding: 1rem;
+  background: #ffffff;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.unified-diff .diff-segment {
+  display: block;
+  padding: 2px 0;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.unified-diff .diff-segment.equal {
+  color: #24292f;
+}
+
+.unified-diff .diff-segment.insert {
+  background: #dafbe1;
+  color: #1a7f37;
+}
+
+.unified-diff .diff-segment.delete {
+  background: #ffebe9;
+  color: #cf222e;
+}
+
+.diff-marker {
+  display: inline-block;
+  width: 20px;
+  font-weight: bold;
+  margin-right: 0.5rem;
 }
 
 /* Original Version Section */
@@ -739,6 +902,26 @@
   
   .toolbar-left {
     flex-wrap: wrap;
+  }
+  
+  .diff-view {
+    grid-template-columns: 1fr;
+    gap: 1px;
+  }
+  
+  .diff-column h4 {
+    font-size: 13px;
+    padding: 0.5rem 0.75rem;
+  }
+  
+  .diff-text {
+    padding: 0.75rem;
+    font-size: 13px;
+  }
+  
+  .diff-legend {
+    flex-direction: column;
+    gap: 0.75rem;
   }
 }
 
@@ -1541,4 +1724,153 @@
   .notification-message {
     font-size: 13px;
   }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .diff-section .section-title {
+    background: #21262d;
+    color: #f0f6fc;
+    border-bottom-color: #30363d;
+  }
+  
+  .diff-content {
+    background: #0d1117;
+  }
+  
+  .diff-legend {
+    background: #21262d;
+    border-color: #30363d;
+    color: #8b949e;
+  }
+  
+  .legend-color {
+    border-color: #30363d;
+  }
+  
+  .legend-color.added {
+    background: #2ea043;
+  }
+  
+  .legend-color.removed {
+    background: #da3633;
+  }
+  
+  .diff-column {
+    background: #0d1117;
+  }
+  
+  .diff-column h4 {
+    background: #21262d;
+    border-bottom-color: #30363d;
+    color: #f0f6fc;
+  }
+  
+  .diff-text {
+    color: #f0f6fc;
+  }
+  
+  .diff-segment.unchanged {
+    color: #f0f6fc;
+  }
+  
+  .diff-segment.added {
+    background: #033a16;
+    color: #7ee787;
+  }
+  
+  .diff-segment.removed {
+    background: #67060c;
+    color: #f85149;
+  }
+  
+  .unified-diff {
+    border-color: #30363d;
+  }
+  
+  .unified-diff h4 {
+    background: #21262d;
+    border-bottom-color: #30363d;
+    color: #f0f6fc;
+  }
+  
+  .unified-diff-content {
+    background: #0d1117;
+  }
+  
+  .unified-diff .diff-segment.equal {
+    color: #f0f6fc;
+  }
+  
+  .unified-diff .diff-segment.insert {
+    background: #033a16;
+    color: #7ee787;
+  }
+  
+  .unified-diff .diff-segment.delete {
+    background: #67060c;
+    color: #f85149;
+  }
+}
+
+/* Ensure the proposed version section has proper collaborative editor styling */
+.proposed-version-section .collaborative-editor-container {
+  border: 1px solid #e0e7ff;
+  border-radius: 8px;
+  background: #fff;
+  min-height: 200px;
+}
+
+.proposed-version-section .collaborative-editor-status {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+.proposed-version-section .typing-indicators {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 10;
+}
+
+/* Improve the editor container layout */
+.editor-container {
+  display: flex;
+  gap: 20px;
+  flex-direction: row;
+  height: calc(100vh - 180px);
+  min-height: 600px;
+}
+
+/* Ensure the collaborative editor takes up proper space */
+.proposed-content .rich-text-editor-container {
+  position: relative;
+  min-height: 300px;
+}
+
+.proposed-content .collaborative-editor-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Style the presence panel when it appears */
+.collaborative-editor-status .user-presence {
+  position: relative;
+}
+
+.user-presence .presence-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 100;
+  background: white;
+  border: 1px solid #e3e6ea;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 250px;
+  max-width: 300px;
+  margin-top: 5px;
 }

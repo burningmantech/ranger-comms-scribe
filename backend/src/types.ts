@@ -230,3 +230,113 @@ export interface CustomRequest extends Request {
 }
 
 export type CustomRequestHandler = (request: CustomRequest, env: any) => Promise<Response>;
+
+// === COLLABORATIVE DOCUMENT TYPES ===
+
+export interface CollaborativeDocument {
+  id: string;
+  title: string;
+  content: string;
+  richTextContent: string; // Lexical editor state as JSON
+  createdBy: string;
+  createdAt: string;
+  lastModifiedBy: string;
+  lastModifiedAt: string;
+  version: number;
+  permissions: DocumentPermissions;
+  collaborators: DocumentCollaborator[];
+  isPublic: boolean;
+  groupId?: string; // Optional group access
+  tags: string[];
+  metadata: Record<string, any>;
+  status: 'draft' | 'published' | 'archived';
+  parentDocumentId?: string; // For document hierarchies
+  forkFromDocumentId?: string; // For document forking
+}
+
+export interface DocumentPermissions {
+  owner: string;
+  editors: string[]; // Can edit content
+  viewers: string[]; // Can view content
+  commenters: string[]; // Can add comments
+  isPublic: boolean;
+  allowFork: boolean;
+  allowComments: boolean;
+}
+
+export interface DocumentCollaborator {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  role: 'owner' | 'editor' | 'viewer' | 'commenter';
+  joinedAt: string;
+  lastActiveAt: string;
+  cursor?: CursorPosition;
+  isOnline: boolean;
+}
+
+export interface DocumentVersion {
+  id: string;
+  documentId: string;
+  version: number;
+  content: string;
+  richTextContent: string;
+  createdBy: string;
+  createdAt: string;
+  changeDescription?: string;
+  operations: TextOperation[];
+  parentVersionId?: string;
+}
+
+export interface DocumentComment {
+  id: string;
+  documentId: string;
+  content: string;
+  authorId: string;
+  authorName: string;
+  authorEmail: string;
+  createdAt: string;
+  updatedAt: string;
+  resolved: boolean;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  position?: CommentPosition;
+  threadId?: string;
+  parentCommentId?: string;
+}
+
+export interface CommentPosition {
+  startOffset: number;
+  endOffset: number;
+  startKey: string;
+  endKey: string;
+}
+
+export interface DocumentOperation {
+  id: string;
+  documentId: string;
+  version: number;
+  operations: TextOperation[];
+  createdBy: string;
+  createdAt: string;
+  applied: boolean;
+  transformedAgainst: string[]; // IDs of operations this was transformed against
+}
+
+export interface TextOperation {
+  type: 'insert' | 'delete' | 'retain' | 'format';
+  position: number;
+  content?: string;
+  length?: number;
+  attributes?: Record<string, any>;
+  version: number;
+}
+
+export interface CursorPosition {
+  userId: string;
+  userName: string;
+  position: number;
+  selectionStart?: number;
+  selectionEnd?: number;
+  timestamp: string;
+}

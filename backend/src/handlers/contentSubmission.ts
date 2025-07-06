@@ -149,6 +149,24 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     updatedAt: new Date().toISOString()
   };
 
+  // If proposedVersions are included, also save them to the tracked changes system
+  if (updates.proposedVersions) {
+    try {
+      const { putObject } = await import('../services/cacheService');
+      const proposedVersionsData = {
+        submissionId: id,
+        proposedVersionsRichText: updates.proposedVersions.richTextContent,
+        proposedVersionsContent: updates.proposedVersions.content,
+        lastUpdatedBy: user.id,
+        lastUpdatedAt: new Date().toISOString()
+      };
+      await putObject(`proposed_versions/${id}`, proposedVersionsData, env);
+      console.log('✅ Proposed versions saved from content submission update');
+    } catch (error) {
+      console.warn('Failed to save proposed versions:', error);
+    }
+  }
+
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);
   

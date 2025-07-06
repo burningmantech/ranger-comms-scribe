@@ -193,7 +193,10 @@ export const TrackedChangesView: React.FC = () => {
           contentPreview: transformedSubmission.content?.substring(0, 100),
           richTextContent: transformedSubmission.richTextContent ? 'present' : 'undefined',
           richTextContentLength: transformedSubmission.richTextContent?.length,
-          changesCount: transformedSubmission.changes.length
+          changesCount: transformedSubmission.changes.length,
+          proposedVersionsRichTextContent: transformedSubmission.proposedVersions?.richTextContent ? 'present' : 'undefined',
+          proposedVersionsRichTextContentLength: transformedSubmission.proposedVersions?.richTextContent?.length,
+          timestamp: new Date().toISOString()
         });
         setSubmission(transformedSubmission);
       } catch (err) {
@@ -210,8 +213,18 @@ export const TrackedChangesView: React.FC = () => {
 
   // Refresh function for WebSocket-triggered updates
   const handleRefreshNeeded = async () => {
-    console.log('🔄 Refresh requested by WebSocket');
-    await fetchSubmission();
+    console.log('🔄 TrackedChangesView: Refresh requested by WebSocket', {
+      submissionId,
+      currentSubmissionId: submission?.id,
+      timestamp: new Date().toISOString()
+    });
+    
+    try {
+      await fetchSubmission();
+      console.log('🔄 TrackedChangesView: Refresh completed successfully');
+    } catch (error) {
+      console.error('🔄 TrackedChangesView: Refresh failed:', error);
+    }
   };
 
   const handleSave = async (updatedSubmission: ContentSubmission) => {
@@ -255,24 +268,47 @@ export const TrackedChangesView: React.FC = () => {
         assignedCouncilManagers: updatedSubmission.assignedCouncilManagers,
         commsApprovedBy: updatedSubmission.commsApprovedBy,
         sentBy: updatedSubmission.sentBy,
-        sentAt: updatedSubmission.sentAt?.toISOString()
+        sentAt: updatedSubmission.sentAt?.toISOString(),
+        // Include the proposed versions data
+        proposedVersions: updatedSubmission.proposedVersions
       };
 
-      const response = await fetch(`${API_URL}/content/submissions/${submissionId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify(backendSubmission),
-      });
+      // Save to both submission and tracked changes APIs
+      const [submissionResponse, trackedChangesResponse] = await Promise.all([
+        fetch(`${API_URL}/content/submissions/${submissionId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${sessionId}`,
+          },
+          body: JSON.stringify(backendSubmission),
+        }),
+        // Save proposed versions to tracked changes API
+        updatedSubmission.proposedVersions ? fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${sessionId}`,
+          },
+          body: JSON.stringify({
+            proposedVersionsRichText: updatedSubmission.proposedVersions.richTextContent,
+            proposedVersionsContent: updatedSubmission.proposedVersions.content
+          }),
+        }) : Promise.resolve({ ok: true })
+      ]);
 
-      if (!response.ok) {
-        throw new Error(`Failed to save submission: ${response.status}`);
+      if (!submissionResponse.ok) {
+        throw new Error(`Failed to save submission: ${submissionResponse.status}`);
       }
 
-      const savedSubmission = await response.json();
+      if (!trackedChangesResponse.ok) {
+        console.warn('Failed to save tracked changes, but submission was saved');
+      }
+
+      const savedSubmission = await submissionResponse.json();
       setSubmission(savedSubmission);
+      
+      console.log('✅ Successfully saved submission and tracked changes');
     } catch (err) {
       console.error('Error saving submission:', err);
       // You might want to show an error message to the user here
