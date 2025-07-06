@@ -560,3 +560,35 @@
   align-items: center;
   gap: 12px;
 } 
+
+/* Selection highlight styles */
+.lexical-remote-cursor .selection-highlight {
+  position: absolute;
+  background-color: rgba(66, 133, 244, 0.25);
+  border: 1px solid rgba(66, 133, 244, 0.5);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 99;
+  transition: all 0.1s ease;
+}
+
+/* Different colors for different users */
+.lexical-remote-cursor:nth-child(2n) .selection-highlight {
+  background-color: rgba(244, 67, 54, 0.25);
+  border-color: rgba(244, 67, 54, 0.5);
+}
+
+.lexical-remote-cursor:nth-child(3n) .selection-highlight {
+  background-color: rgba(76, 175, 80, 0.25);
+  border-color: rgba(76, 175, 80, 0.5);
+}
+
+.lexical-remote-cursor:nth-child(4n) .selection-highlight {
+  background-color: rgba(255, 152, 0, 0.25);
+  border-color: rgba(255, 152, 0, 0.5);
+}
+
+.lexical-remote-cursor:nth-child(5n) .selection-highlight {
+  background-color: rgba(156, 39, 176, 0.25);
+  border-color: rgba(156, 39, 176, 0.5);
+}

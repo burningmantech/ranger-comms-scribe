@@ -51,7 +51,8 @@ const getUserColor = (userId: string): string => {
 const RemoteCursorPlugin: React.FC<{
   remoteCursors: Map<string, CursorPosition>;
   currentUserId: string;
-}> = ({ remoteCursors, currentUserId }) => {
+  needsRepositioning?: boolean;
+}> = ({ remoteCursors, currentUserId, needsRepositioning }) => {
   const [editor] = useLexicalComposerContext();
   const cursorsRef = useRef<Map<string, HTMLElement>>(new Map());
   const overlayRef = useRef<HTMLElement | null>(null);
@@ -138,9 +139,32 @@ const RemoteCursorPlugin: React.FC<{
     
   }, [remoteCursors, currentUserId, editor]);
   
+  // Force repositioning when needed
+  useEffect(() => {
+    if (needsRepositioning && overlayRef.current) {
+      console.log('🔄 RemoteCursorPlugin: Force repositioning all cursors');
+      
+      const overlay = overlayRef.current;
+      const editorElement = editor.getRootElement();
+      if (!editorElement) return;
+      
+      // Reposition all existing cursors
+      remoteCursors.forEach((cursor, userId) => {
+        if (userId === currentUserId) return;
+        
+        const cursorElement = cursorsRef.current.get(userId);
+        if (cursorElement) {
+          console.log('🔄 RemoteCursorPlugin: Repositioning cursor for user:', userId);
+          positionCursor(cursorElement, cursor, editorElement, overlay);
+        }
+      });
+    }
+  }, [needsRepositioning, remoteCursors, currentUserId, editor]);
+  
   // Create cursor element with nice design
   const createCursorElement = (cursor: CursorPosition): HTMLElement => {
     const userColor = getUserColor(cursor.userId);
+    const isSelection = cursor.position.type === 'selection';
     
     const cursorEl = document.createElement('div');
     cursorEl.className = 'lexical-remote-cursor';
@@ -153,11 +177,30 @@ const RemoteCursorPlugin: React.FC<{
       width: 2px;
       height: 20px;
       background-color: ${userColor};
-      position: relative;
+      position: absolute;
       border-radius: 1px;
       animation: cursor-blink 1.5s infinite;
       box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8), 0 0 4px rgba(0, 0, 0, 0.3);
+      z-index: 101;
     `;
+    
+    // Selection highlight for selections
+    if (isSelection) {
+      const selection = document.createElement('div');
+      selection.className = 'selection-highlight';
+      selection.style.cssText = `
+        background-color: ${userColor}30;
+        border: 1px solid ${userColor}80;
+        border-radius: 2px;
+        position: absolute;
+        pointer-events: none;
+        z-index: 99;
+        display: none;
+        min-width: 1px;
+        min-height: 16px;
+      `;
+      cursorEl.appendChild(selection);
+    }
     
     // User label
     const label = document.createElement('div');
@@ -220,12 +263,83 @@ const RemoteCursorPlugin: React.FC<{
     try {
       const nodeKey = cursor.position.key;
       const nodeOffset = cursor.position.offset;
-      console.log('🎯 RemoteCursorPlugin: Positioning cursor for', cursor.userName, 'at node', nodeKey, 'offset', nodeOffset);
+      const isSelection = cursor.position.type === 'selection';
+      console.log('🎯 RemoteCursorPlugin: Positioning cursor for', cursor.userName, 'at node', nodeKey, 'offset', nodeOffset, 'isSelection:', isSelection);
       
       // Use Lexical node keys directly - much simpler and more accurate!
       editor.getEditorState().read(() => {
         try {
-          // Get the Lexical node by its key
+          // Handle selections differently
+          if (isSelection && cursor.position.focus && cursor.position.anchor) {
+            const anchorKey = cursor.position.anchor.key;
+            const anchorOffset = cursor.position.anchor.offset;
+            const focusKey = cursor.position.focus.key;
+            const focusOffset = cursor.position.focus.offset;
+            
+            console.log('🎯 RemoteCursorPlugin: Positioning selection:', {
+              anchorKey, anchorOffset, focusKey, focusOffset
+            });
+            
+            // Check if it's a collapsed selection (just a cursor)
+            const isCollapsed = anchorKey === focusKey && anchorOffset === focusOffset;
+            
+            if (!isCollapsed) {
+              // Handle actual selection
+              try {
+                const anchorNode = editor.getEditorState()._nodeMap.get(anchorKey);
+                const focusNode = editor.getEditorState()._nodeMap.get(focusKey);
+                
+                if (anchorNode && focusNode) {
+                  const anchorDomElement = editor.getElementByKey(anchorKey);
+                  const focusDomElement = editor.getElementByKey(focusKey);
+                  
+                  if (anchorDomElement && focusDomElement) {
+                    const anchorTextNode = findTextNodeInElement(anchorDomElement, anchorOffset);
+                    const focusTextNode = findTextNodeInElement(focusDomElement, focusOffset);
+                    
+                    if (anchorTextNode && focusTextNode) {
+                      const range = document.createRange();
+                      range.setStart(anchorTextNode.textNode, anchorTextNode.offset);
+                      range.setEnd(focusTextNode.textNode, focusTextNode.offset);
+                      
+                      const rect = range.getBoundingClientRect();
+                      const overlayRect = overlay.getBoundingClientRect();
+                      
+                      if (rect.width > 0 && rect.height > 0) {
+                        const left = rect.left - overlayRect.left;
+                        const top = rect.top - overlayRect.top;
+                        
+                        // Position cursor element
+                        cursorElement.style.left = `${left}px`;
+                        cursorElement.style.top = `${top}px`;
+                        cursorElement.style.opacity = '1';
+                        
+                        // Show selection highlight
+                        const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+                        if (selection) {
+                          selection.style.width = `${rect.width}px`;
+                          selection.style.height = `${rect.height}px`;
+                          selection.style.display = 'block';
+                        }
+                        
+                        positionLabel(cursorElement, left, top, overlay, cursor);
+                        
+                        console.log('✅ RemoteCursorPlugin: Positioned selection:', {
+                          left, top, width: rect.width, height: rect.height
+                        });
+                        
+                        return;
+                      }
+                    }
+                  }
+                }
+              } catch (error) {
+                console.log('⚠️ RemoteCursorPlugin: Selection positioning error:', error);
+              }
+            }
+          }
+          
+          // Handle regular cursor positioning (or fallback for selections)
           const lexicalNode = editor.getEditorState()._nodeMap.get(nodeKey);
           
           if (lexicalNode) {
@@ -261,6 +375,12 @@ const RemoteCursorPlugin: React.FC<{
                     cursorElement.style.left = `${left}px`;
                     cursorElement.style.top = `${top}px`;
                     cursorElement.style.opacity = '1';
+                    
+                    // Hide selection highlight for regular cursor
+                    const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+                    if (selection) {
+                      selection.style.display = 'none';
+                    }
                     
                     // Smart label positioning
                     positionLabel(cursorElement, left, top, overlay, cursor);
@@ -551,6 +671,8 @@ export interface CollaborativeEditorProps {
   initialContent: string;
   onContentChange: (content: string) => void;
   onSave?: (content: string) => void;
+  onWebSocketClientReady?: (client: any) => void;
+  onRemoteContentUpdate?: (updateFn: (content: string) => void) => void;
   currentUser: User;
   placeholder?: string;
   useSubmissionWebSocket?: boolean;
@@ -564,6 +686,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   initialContent,
   onContentChange,
   onSave,
+  onWebSocketClientReady,
+  onRemoteContentUpdate,
   currentUser,
   placeholder = 'Start typing...',
   useSubmissionWebSocket = false,
@@ -590,6 +714,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const [showPresencePanel, setShowPresencePanel] = useState(false);
   const [remoteCursors, setRemoteCursors] = useState<Map<string, CursorPosition>>(new Map());
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const [needsCursorRepositioning, setNeedsCursorRepositioning] = useState(false);
   
   const editorRef = useRef<LexicalEditor | null>(null);
   const contentChangedRef = useRef(false);
@@ -598,6 +723,60 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const lastCursorPositionRef = useRef<CursorPosition | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isTypingRef = useRef(false);
+  
+  // Callback when content is updated (for cursor repositioning)
+  const handleContentUpdated = useCallback(() => {
+    console.log('🔄 CollaborativeEditor: Content updated, forcing cursor repositioning');
+    
+    // Force multiple repositioning attempts
+    const triggerRepositioning = () => {
+      setNeedsCursorRepositioning(true);
+      setTimeout(() => setNeedsCursorRepositioning(false), 100);
+    };
+    
+    triggerRepositioning();
+    setTimeout(triggerRepositioning, 200);
+    setTimeout(triggerRepositioning, 500);
+    
+    console.log('🔄 CollaborativeEditor: Scheduled cursor repositioning');
+  }, []);
+  
+  // Remote content update function
+  const applyRemoteContentUpdate = useCallback((content: string) => {
+    console.log('🔄 CollaborativeEditor: Applying remote content update:', content.length);
+    
+    if (editorRef.current) {
+      try {
+        editorRef.current.update(() => {
+          const root = $getRoot();
+          root.clear();
+          
+          if (isLexicalJson(content)) {
+            const parsedContent = JSON.parse(content);
+            if (parsedContent.root) {
+              // Import the content into the editor
+              const importedState = editorRef.current!.parseEditorState(content);
+              editorRef.current!.setEditorState(importedState);
+              console.log('✅ CollaborativeEditor: Applied remote Lexical content');
+            }
+          } else {
+            // Handle plain text
+            const paragraph = $createParagraphNode();
+            paragraph.append($createTextNode(content));
+            root.append(paragraph);
+            console.log('✅ CollaborativeEditor: Applied remote plain text content');
+          }
+          
+          // Trigger cursor repositioning after content update
+          setTimeout(() => {
+            handleContentUpdated();
+          }, 50);
+        });
+      } catch (error) {
+        console.error('❌ CollaborativeEditor: Failed to apply remote content:', error);
+      }
+    }
+  }, [handleContentUpdated]);
   
   // Handle cursor updates
   const handleCursorUpdate = useCallback((position: CursorPosition) => {
@@ -841,6 +1020,17 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           webSocketClientRef.current = client;
           setConnectionStatus('connected');
+          
+          // Notify parent that WebSocket client is ready
+          if (onWebSocketClientReady) {
+            onWebSocketClientReady(client);
+          }
+          
+          // Register remote content update function
+          if (onRemoteContentUpdate) {
+            onRemoteContentUpdate(applyRemoteContentUpdate);
+          }
+          
           console.log('✅ Submission WebSocket fully configured');
           
         } else {
@@ -871,6 +1061,17 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           webSocketClientRef.current = client;
           setConnectionStatus('connected');
+          
+          // Notify parent that WebSocket client is ready
+          if (onWebSocketClientReady) {
+            onWebSocketClientReady(client);
+          }
+          
+          // Register remote content update function
+          if (onRemoteContentUpdate) {
+            onRemoteContentUpdate(applyRemoteContentUpdate);
+          }
+          
           console.log('✅ Document WebSocket fully configured');
         }
       } catch (error) {
@@ -893,7 +1094,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       }
       console.log('✅ WebSocket cleanup completed');
     };
-  }, [documentId, currentUser.id, currentUser.email, currentUser.name, useSubmissionWebSocket, handleRemoteCursorUpdate, handleTypingStart, handleTypingStop]);
+  }, [documentId, currentUser.id, currentUser.email, currentUser.name, useSubmissionWebSocket, handleRemoteCursorUpdate, handleTypingStart, handleTypingStop, onWebSocketClientReady, onRemoteContentUpdate, applyRemoteContentUpdate]);
   
   // Handle content changes
   const handleEditorChange = useCallback((editorState: EditorState) => {
@@ -1197,6 +1398,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <RemoteCursorPlugin
                 remoteCursors={remoteCursors}
                 currentUserId={currentUser.id || currentUser.email}
+                needsRepositioning={needsCursorRepositioning}
               />
             </div>
           </div>

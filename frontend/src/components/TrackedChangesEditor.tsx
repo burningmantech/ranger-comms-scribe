@@ -97,6 +97,20 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [replyToComment, setReplyToComment] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
+  
+  // Auto-save state
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
+  const [lastAutoSaveTime, setLastAutoSaveTime] = useState<Date | null>(null);
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isAutoSaveEnabledRef = useRef(true);
+  
+  // Remote update state
+  const [remoteUpdateStatus, setRemoteUpdateStatus] = useState<'none' | 'applying' | 'applied'>('none');
+  
+  // WebSocket client for sending updates
+  const webSocketClientRef = useRef<any>(null);
+  const lastCursorPositionRef = useRef<any>(null);
+  const remoteUpdateFunctionRef = useRef<((content: string) => void) | null>(null);
 
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
@@ -374,7 +388,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     console.log('Edit mode change requested but collaborative editing is always on');
   }, []);
 
-  const handleProposedEditSubmit = useCallback(() => {
+  const handleProposedEditSubmit = useCallback(async () => {
     console.log('📝 Submitting proposed edit:', {
       editedProposedContentLength: editedProposedContent?.length,
       editedProposedContentPreview: editedProposedContent?.substring(0, 100)
@@ -393,28 +407,49 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     
     if (!hasActualChanges) {
       console.log('No changes to submit');
+      setAutoSaveStatus('idle');
       return;
     }
 
-    // Update the submission with the changes
-    const updatedSubmission = {
-      ...submission,
-      proposedVersions: {
-        ...submission.proposedVersions,
-        richTextContent: editedProposedContent
-      }
-    };
-    
-    console.log('📝 Calling onSave with updated submission:', {
-      submissionId: updatedSubmission.id,
-      proposedVersionsRichTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length
-    });
-    
-    onSave(updatedSubmission);
-    
-    // Update the last saved content after successful save
-    setLastSavedProposedContent(editedProposedContent);
-  }, [editedProposedContent, submission, onSave]);
+    try {
+      // Update the submission with the changes
+      const updatedSubmission = {
+        ...submission,
+        proposedVersions: {
+          ...submission.proposedVersions,
+          richTextContent: editedProposedContent,
+          lastModified: new Date().toISOString(),
+          lastModifiedBy: currentUser.id || currentUser.email
+        }
+      };
+      
+      console.log('📝 Calling onSave with updated submission:', {
+        submissionId: updatedSubmission.id,
+        proposedVersionsRichTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length
+      });
+      
+      await onSave(updatedSubmission);
+      
+      // Update the last saved content after successful save
+      setLastSavedProposedContent(editedProposedContent);
+      setAutoSaveStatus('saved');
+      setLastAutoSaveTime(new Date());
+      
+      // Reset to idle after 3 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 3000);
+      
+    } catch (error) {
+      console.error('❌ Save failed:', error);
+      setAutoSaveStatus('error');
+      
+      // Reset to idle after 5 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 5000);
+    }
+  }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email]);
 
   // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -487,6 +522,275 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     
     // Real-time status changes are now handled by CollaborativeEditor
   }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
+
+  // Auto-save functionality
+  const performAutoSave = useCallback(async () => {
+    if (!isAutoSaveEnabledRef.current) {
+      console.log('🚫 Auto-save disabled, skipping');
+      return;
+    }
+
+    // Get the most current content from the editor state
+    const currentEditorContent = editedProposedContentRef.current || editedProposedContent;
+    const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
+    const hasActualChanges = currentEditorContent !== currentContent;
+    
+    console.log('💾 Auto-save check:', {
+      currentEditorContentLength: currentEditorContent?.length || 0,
+      currentContentLength: currentContent?.length || 0,
+      hasActualChanges,
+      editedProposedContentLength: editedProposedContent?.length || 0
+    });
+    
+    if (!hasActualChanges) {
+      console.log('🔄 No changes detected, skipping auto-save');
+      setAutoSaveStatus('idle');
+      return;
+    }
+
+    console.log('💾 Performing auto-save with current content...');
+    setAutoSaveStatus('saving');
+    
+    try {
+      // Create the updated submission using the current editor content
+      const updatedSubmission = {
+        ...submission,
+        proposedVersions: {
+          ...submission.proposedVersions,
+          richTextContent: currentEditorContent,
+          lastModified: new Date().toISOString(),
+          lastModifiedBy: currentUser.id || currentUser.email
+        }
+      };
+      
+      // Send WebSocket notification with lexical updates
+      if (webSocketClientRef.current) {
+        const updateMessage = {
+          type: 'content_updated' as const,
+          data: {
+            field: 'proposedVersions.richTextContent',
+            oldValue: currentContent,
+            newValue: currentEditorContent,
+            lexicalContent: currentEditorContent,
+            isAutoSave: true,
+            timestamp: new Date().toISOString(),
+            changeSummary: generateChangeSummary(currentContent, currentEditorContent),
+            // Include current cursor/selection position for other users
+            cursorPosition: lastCursorPositionRef.current,
+            preserveEditingState: true // Flag to help other users maintain their editing state
+          }
+        };
+        
+        console.log('📡 Sending WebSocket update for auto-save:', updateMessage);
+        webSocketClientRef.current.send(updateMessage);
+      }
+      
+      // Call the save function
+      await onSave(updatedSubmission);
+      
+      // Update state with the content that was actually saved
+      setLastSavedProposedContent(currentEditorContent);
+      setEditedProposedContent(currentEditorContent); // Ensure state is in sync
+      setAutoSaveStatus('saved');
+      setLastAutoSaveTime(new Date());
+      
+      console.log('✅ Auto-save completed successfully');
+      
+      // Reset to idle after 3 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 3000);
+      
+    } catch (error) {
+      console.error('❌ Auto-save failed:', error);
+      setAutoSaveStatus('error');
+      
+      // Reset to idle after 5 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 5000);
+    }
+  }, [editedProposedContent, submission, currentUser.id, currentUser.email, onSave]);
+
+  // Generate a summary of changes for WebSocket notifications
+  const generateChangeSummary = useCallback((oldContent: string, newContent: string) => {
+    const oldText = getDisplayableText(oldContent);
+    const newText = getDisplayableText(newContent);
+    
+    if (oldText === newText) {
+      return 'No text changes';
+    }
+    
+    const wordDiff = smartDiff(oldText, newText);
+    const additions = wordDiff.filter(d => d.type === 'insert').length;
+    const deletions = wordDiff.filter(d => d.type === 'delete').length;
+    
+    if (additions > 0 && deletions > 0) {
+      return `Modified content (+${additions} additions, -${deletions} deletions)`;
+    } else if (additions > 0) {
+      return `Added content (+${additions} additions)`;
+    } else if (deletions > 0) {
+      return `Removed content (-${deletions} deletions)`;
+    } else {
+      return 'Content updated';
+    }
+  }, [getDisplayableText]);
+
+  // Debounced auto-save (5 seconds after typing stops)
+  const scheduleAutoSave = useCallback(() => {
+    if (!isAutoSaveEnabledRef.current) {
+      console.log('🚫 Auto-save disabled, not scheduling');
+      return;
+    }
+
+    // Clear existing timeout
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+      console.log('🔄 Cleared previous auto-save timeout');
+    }
+    
+    // Set status to pending
+    setAutoSaveStatus('pending');
+    
+    // Schedule auto-save for 7 seconds later (increased to ensure last character is captured)
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      console.log('⏰ Auto-save timeout triggered');
+      performAutoSave();
+    }, 7000);
+    
+    console.log('⏰ Auto-save scheduled for 7 seconds...');
+  }, [performAutoSave]);
+
+  // Fallback auto-save check - ensures auto-save happens even if scheduling is missed
+  useEffect(() => {
+    if (!isAutoSaveEnabledRef.current) return;
+    
+    const fallbackInterval = setInterval(() => {
+      const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
+      const hasChanges = editedProposedContent !== currentContent;
+      const hasUnsavedChanges = editedProposedContent !== lastSavedProposedContent;
+      
+      // Only auto-save if there are changes and we're not already saving
+      if (hasChanges && hasUnsavedChanges && autoSaveStatus === 'idle') {
+        console.log('🔍 Fallback auto-save check detected unsaved changes');
+        performAutoSave();
+      }
+    }, 10000); // Check every 10 seconds as fallback
+    
+    return () => clearInterval(fallbackInterval);
+  }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.richTextContent, submission.content, lastSavedProposedContent, autoSaveStatus, performAutoSave]);
+
+  // Handle incoming WebSocket updates
+  const handleWebSocketUpdate = useCallback((message: WebSocketMessage) => {
+    // Don't process our own updates
+    if (message.userId === (currentUser.id || currentUser.email)) {
+      return;
+    }
+    
+    console.log('📨 Received WebSocket update:', message);
+    
+    if (message.type === 'content_updated' && message.data) {
+      const { field, newValue, lexicalContent, isAutoSave, cursorPosition, preserveEditingState } = message.data;
+      
+      if (field === 'proposedVersions.richTextContent' && lexicalContent) {
+        console.log('🔄 Processing remote lexical update...', {
+          isAutoSave,
+          preserveEditingState,
+          hasCursorPosition: !!cursorPosition
+        });
+        
+        // More intelligent handling of when to apply updates
+        const now = Date.now();
+        const timeSinceLastAutoSave = lastAutoSaveTime ? now - lastAutoSaveTime.getTime() : Infinity;
+        const timeSinceLastEdit = now - (Date.now()); // This will be updated with actual edit timestamp
+        
+        // Determine if the user is actively editing
+        const isActivelyEditing = timeSinceLastAutoSave < 15000; // 15 seconds since last auto-save
+        const shouldPreserveEditing = preserveEditingState && isActivelyEditing;
+        
+                 if (!shouldPreserveEditing) {
+           console.log('🔄 Applying remote update (user not actively editing)');
+           
+           // Show visual feedback that a remote update is being applied
+           setRemoteUpdateStatus('applying');
+           
+           // Store current cursor position before update
+           const currentCursor = lastCursorPositionRef.current;
+           
+           // Apply the content update through the CollaborativeEditor
+           if (remoteUpdateFunctionRef.current) {
+             console.log('🔄 Triggering editor update via remote update function');
+             remoteUpdateFunctionRef.current(lexicalContent);
+           } else {
+             console.log('⚠️ No remote update function available, falling back to state update');
+             setEditedProposedContent(lexicalContent);
+           }
+           
+           // Also update our state
+           setEditedProposedContent(lexicalContent);
+           setLastSavedProposedContent(lexicalContent);
+           
+           // If the update included cursor position information, we can use it
+           // to better position other users' cursors
+           if (cursorPosition) {
+             console.log('📍 Remote update includes cursor position:', cursorPosition);
+             // The CollaborativeEditor will handle cursor positioning
+           }
+           
+           // Show applied status briefly
+           setRemoteUpdateStatus('applied');
+           setTimeout(() => {
+             setRemoteUpdateStatus('none');
+           }, 2000);
+           
+           // Show a notification about the update
+           if (onRefreshNeeded) {
+             onRefreshNeeded();
+           }
+         } else {
+          console.log('⚠️ User is actively editing, deferring remote update');
+          
+          // In a production system, you would:
+          // 1. Queue this update for later application
+          // 2. Use operational transforms to merge changes
+          // 3. Show a notification that updates are pending
+          
+          // For now, we'll just log and potentially show a warning
+          console.log('💾 Remote changes available but deferred due to active editing');
+        }
+      }
+    }
+  }, [currentUser.id, currentUser.email, lastAutoSaveTime, onRefreshNeeded]);
+
+  // Store WebSocket client reference
+  const handleWebSocketClientRef = useCallback((client: any) => {
+    webSocketClientRef.current = client;
+    
+    if (client) {
+      // Listen for content updates
+      client.on('content_updated', handleWebSocketUpdate);
+      
+      // Listen for cursor position updates to track current user's position
+      client.on('cursor_position', (message: any) => {
+        if (message.userId === (currentUser.id || currentUser.email)) {
+          // Store our own cursor position for use in auto-save messages
+          lastCursorPositionRef.current = message.data;
+          console.log('📍 Updated current user cursor position:', message.data);
+        }
+      });
+      
+      console.log('🔌 WebSocket client connected for auto-save and cursor tracking');
+    }
+  }, [handleWebSocketUpdate, currentUser.id, currentUser.email]);
+
+  // Cleanup auto-save timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Handle comment reply
   const handleCommentReply = useCallback((commentId: string) => {
@@ -705,6 +1009,60 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           </span>
         </div>
         <div className="toolbar-right">
+          <div className="auto-save-status">
+            {/* Remote update status */}
+            {remoteUpdateStatus === 'applying' && (
+              <span className="save-status applying">
+                🔄 Applying remote changes...
+              </span>
+            )}
+            {remoteUpdateStatus === 'applied' && (
+              <span className="save-status applied">
+                ✅ Remote changes applied
+              </span>
+            )}
+            
+            {/* Auto-save status */}
+            {autoSaveStatus === 'pending' && remoteUpdateStatus === 'none' && (
+              <span className="save-status pending">
+                ⏰ Auto-save in 7s...
+              </span>
+            )}
+            {autoSaveStatus === 'saving' && (
+              <span className="save-status saving">
+                💾 Saving...
+              </span>
+            )}
+            {autoSaveStatus === 'saved' && remoteUpdateStatus === 'none' && (
+              <span className="save-status saved">
+                ✅ Saved{lastAutoSaveTime && ` at ${lastAutoSaveTime.toLocaleTimeString()}`}
+              </span>
+            )}
+            {autoSaveStatus === 'error' && (
+              <span className="save-status error">
+                ❌ Save failed
+              </span>
+            )}
+            
+            {/* Manual save button */}
+            <button
+              className="manual-save-button"
+              onClick={() => {
+                console.log('💾 Manual save requested');
+                
+                // Cancel auto-save and perform immediate save
+                if (autoSaveTimeoutRef.current) {
+                  clearTimeout(autoSaveTimeoutRef.current);
+                }
+                
+                performAutoSave();
+              }}
+              disabled={autoSaveStatus === 'saving' || editedProposedContent === lastSavedProposedContent}
+              title="Save changes now"
+            >
+              💾 Save Now
+            </button>
+          </div>
           <div className="change-stats">
             <span className="stat pending">
               {trackedChanges.filter(c => c.status === 'pending').length} pending
@@ -772,12 +1130,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       });
                       
                       // Auto-track changes as user types (debounced)
-                      const hasChanges = json !== (submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '');
-                      if (hasChanges) {
-                        console.log('📝 Content has changes, will save on next blur/save');
+                      const originalContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
+                      const hasChanges = json !== originalContent;
+                      const hasChangesFromLastSaved = json !== lastSavedProposedContent;
+                      
+                      console.log('📝 Content change analysis:', {
+                        hasChanges,
+                        hasChangesFromLastSaved,
+                        jsonLength: json?.length || 0,
+                        originalContentLength: originalContent?.length || 0,
+                        lastSavedLength: lastSavedProposedContent?.length || 0,
+                        autoSaveStatus
+                      });
+                      
+                      if (hasChanges && hasChangesFromLastSaved) {
+                        console.log('📝 Content has changes, scheduling auto-save');
+                        
+                        // Schedule auto-save (7 seconds after typing stops)
+                        scheduleAutoSave();
                         
                         // Create a tracked change for real-time collaboration
-                        const currentText = getDisplayableText(submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '');
+                        const currentText = getDisplayableText(originalContent);
                         const newText = getDisplayableText(json);
                         
                         if (currentText !== newText) {
@@ -790,20 +1163,36 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                             changedBy: currentUser.id,
                             timestamp: new Date(),
                             isIncremental: true,
-                            richTextOldValue: submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '',
+                            richTextOldValue: originalContent,
                             richTextNewValue: json
                           };
                           
                           console.log('📝 Created tracked change:', newChange);
                           // Note: In a real implementation, this would be sent to other users via WebSocket
                         }
+                      } else if (!hasChangesFromLastSaved) {
+                        console.log('📝 Content matches last saved version, no auto-save needed');
+                      } else {
+                        console.log('📝 Content change detected but no action needed');
                       }
                     }}
                     onSave={(content) => {
                       console.log('💾 Save button clicked with content:', content);
                       // Update the edited content with the saved content
                       setEditedProposedContent(content);
+                      
+                      // Cancel auto-save since user is manually saving
+                      if (autoSaveTimeoutRef.current) {
+                        clearTimeout(autoSaveTimeoutRef.current);
+                      }
+                      setAutoSaveStatus('saving');
+                      
                       handleProposedEditSubmit();
+                    }}
+                    onWebSocketClientReady={handleWebSocketClientRef}
+                    onRemoteContentUpdate={(updateFn) => {
+                      remoteUpdateFunctionRef.current = updateFn;
+                      console.log('🔗 Remote update function registered');
                     }}
                     placeholder="Edit the proposed version..."
                     readOnly={false}
