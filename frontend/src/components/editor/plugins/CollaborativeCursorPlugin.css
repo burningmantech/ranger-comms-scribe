@@ -1,0 +1,250 @@
+/* Remote cursor markers */
+.remote-cursor-marker {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  transform: translateX(-1px);
+}
+
+.remote-cursor-marker .cursor-line {
+  width: 2px;
+  background-color: #1a73e8;
+  position: relative;
+  animation: cursor-pulse 1.5s infinite;
+  border-radius: 1px;
+}
+
+.remote-cursor-marker .cursor-line::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 10px;
+  height: 8px;
+  background-color: inherit;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+.remote-cursor-marker .cursor-label {
+  position: absolute;
+  top: -32px;
+  left: -8px;
+  background-color: #1a73e8;
+  color: white;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.remote-cursor-marker .cursor-label::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid inherit;
+}
+
+/* Show label on hover or when cursor is active */
+.remote-cursor-marker:hover .cursor-label,
+.remote-cursor-marker.active .cursor-label {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Cursor pulse animation */
+@keyframes cursor-pulse {
+  0%, 50% { 
+    opacity: 1; 
+    transform: scaleY(1);
+  }
+  51%, 100% { 
+    opacity: 0.4; 
+    transform: scaleY(0.95);
+  }
+}
+
+/* Selection highlights */
+.selection-highlight {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+  border-radius: 2px;
+}
+
+.selection-highlight .selection-rect {
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+
+/* User-specific cursor colors */
+.remote-cursor-marker[data-user-id*="1"] .cursor-line,
+.remote-cursor-marker[data-user-id*="1"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="1"] .cursor-label {
+  background-color: #1a73e8;
+}
+
+.remote-cursor-marker[data-user-id*="2"] .cursor-line,
+.remote-cursor-marker[data-user-id*="2"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="2"] .cursor-label {
+  background-color: #f5576c;
+}
+
+.remote-cursor-marker[data-user-id*="3"] .cursor-line,
+.remote-cursor-marker[data-user-id*="3"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="3"] .cursor-label {
+  background-color: #00f2fe;
+}
+
+.remote-cursor-marker[data-user-id*="4"] .cursor-line,
+.remote-cursor-marker[data-user-id*="4"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="4"] .cursor-label {
+  background-color: #9c27b0;
+}
+
+.remote-cursor-marker[data-user-id*="5"] .cursor-line,
+.remote-cursor-marker[data-user-id*="5"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="5"] .cursor-label {
+  background-color: #ff9800;
+}
+
+.remote-cursor-marker[data-user-id*="6"] .cursor-line,
+.remote-cursor-marker[data-user-id*="6"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="6"] .cursor-label {
+  background-color: #4caf50;
+}
+
+.remote-cursor-marker[data-user-id*="7"] .cursor-line,
+.remote-cursor-marker[data-user-id*="7"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="7"] .cursor-label {
+  background-color: #ff5722;
+}
+
+.remote-cursor-marker[data-user-id*="8"] .cursor-line,
+.remote-cursor-marker[data-user-id*="8"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="8"] .cursor-label {
+  background-color: #3f51b5;
+}
+
+.remote-cursor-marker[data-user-id*="9"] .cursor-line,
+.remote-cursor-marker[data-user-id*="9"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="9"] .cursor-label {
+  background-color: #e91e63;
+}
+
+.remote-cursor-marker[data-user-id*="0"] .cursor-line,
+.remote-cursor-marker[data-user-id*="0"] .cursor-line::before,
+.remote-cursor-marker[data-user-id*="0"] .cursor-label {
+  background-color: #009688;
+}
+
+/* Selection highlight animations */
+.selection-highlight {
+  animation: selection-appear 0.3s ease-out;
+}
+
+@keyframes selection-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Typing indicator */
+.typing-indicator {
+  position: absolute;
+  background: rgba(26, 115, 232, 0.1);
+  border: 1px dashed #1a73e8;
+  border-radius: 2px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: #1a73e8;
+  pointer-events: none;
+  z-index: 15;
+  animation: typing-pulse 1.5s infinite;
+}
+
+@keyframes typing-pulse {
+  0%, 100% { 
+    opacity: 0.7; 
+    transform: scale(1);
+  }
+  50% { 
+    opacity: 1; 
+    transform: scale(1.02);
+  }
+}
+
+/* Enhanced hover effects */
+.remote-cursor-marker:hover {
+  z-index: 25;
+}
+
+.remote-cursor-marker:hover .cursor-line {
+  transform: scaleX(1.5);
+  animation: cursor-highlight 0.3s ease-out;
+}
+
+@keyframes cursor-highlight {
+  0% { 
+    box-shadow: 0 0 0 0 currentColor; 
+  }
+  50% { 
+    box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.3); 
+  }
+  100% { 
+    box-shadow: 0 0 0 0 currentColor; 
+  }
+}
+
+/* Multi-line selection support */
+.selection-highlight.multi-line .selection-rect:first-child {
+  border-top-left-radius: 3px;
+  border-top-right-radius: 3px;
+}
+
+.selection-highlight.multi-line .selection-rect:last-child {
+  border-bottom-left-radius: 3px;
+  border-bottom-right-radius: 3px;
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .remote-cursor-marker .cursor-line,
+  .typing-indicator,
+  .selection-highlight {
+    animation: none;
+  }
+  
+  .remote-cursor-marker .cursor-label {
+    transition: none;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .remote-cursor-marker .cursor-line {
+    border: 1px solid #000;
+  }
+  
+  .remote-cursor-marker .cursor-label {
+    border: 1px solid #fff;
+  }
+  
+  .selection-highlight .selection-rect {
+    border: 1px solid currentColor;
+  }
+} 
