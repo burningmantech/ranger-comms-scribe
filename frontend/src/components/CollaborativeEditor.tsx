@@ -166,11 +166,21 @@ const RemoteCursorPlugin: React.FC<{
     const userColor = getUserColor(cursor.userId);
     const isSelection = cursor.position.type === 'selection';
     
+    console.log('🎨 CreateCursorElement DEBUG:', {
+      userId: cursor.userId,
+      positionType: cursor.position.type,
+      isSelection,
+      hasAnchor: !!cursor.position.anchor,
+      hasFocus: !!cursor.position.focus,
+      anchor: cursor.position.anchor,
+      focus: cursor.position.focus
+    });
+    
     const cursorEl = document.createElement('div');
     cursorEl.className = 'lexical-remote-cursor';
     cursorEl.id = `cursor-${cursor.userId.replace(/[^a-zA-Z0-9]/g, '-')}`;
     
-    // Cursor line
+    // Cursor line - always create
     const line = document.createElement('div');
     line.className = 'cursor-line';
     line.style.cssText = `
@@ -183,24 +193,29 @@ const RemoteCursorPlugin: React.FC<{
       box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8), 0 0 4px rgba(0, 0, 0, 0.3);
       z-index: 101;
     `;
+    cursorEl.appendChild(line);
     
-    // Selection highlight for selections
-    if (isSelection) {
-      const selection = document.createElement('div');
-      selection.className = 'selection-highlight';
-      selection.style.cssText = `
-        background-color: ${userColor}30;
-        border: 1px solid ${userColor}80;
-        border-radius: 2px;
-        position: absolute;
-        pointer-events: none;
-        z-index: 99;
-        display: none;
-        min-width: 1px;
-        min-height: 16px;
-      `;
-      cursorEl.appendChild(selection);
-    }
+    // Selection highlight for selections - always create it, hide by default
+    const selection = document.createElement('div');
+    selection.className = 'selection-highlight';
+    selection.style.cssText = `
+      background-color: ${userColor}30;
+      border: 1px solid ${userColor}80;
+      border-radius: 2px;
+      position: absolute;
+      pointer-events: none;
+      z-index: 99;
+      display: none;
+      min-width: 1px;
+      min-height: 16px;
+    `;
+    cursorEl.appendChild(selection);
+    
+    console.log('🎨 Created cursor element:', {
+      isSelection,
+      hasSelectionElement: !!cursorEl.querySelector('.selection-highlight'),
+      hasLineElement: !!cursorEl.querySelector('.cursor-line')
+    });
     
     // User label
     const label = document.createElement('div');
@@ -276,34 +291,89 @@ const RemoteCursorPlugin: React.FC<{
             const focusKey = cursor.position.focus.key;
             const focusOffset = cursor.position.focus.offset;
             
-            console.log('🎯 RemoteCursorPlugin: Positioning selection:', {
-              anchorKey, anchorOffset, focusKey, focusOffset
+            console.log('🎯 RemoteCursorPlugin: SELECTION DETECTED:', {
+              anchorKey, anchorOffset, focusKey, focusOffset,
+              hasAnchorKey: !!anchorKey,
+              hasFocusKey: !!focusKey
             });
             
             // Check if it's a collapsed selection (just a cursor)
             const isCollapsed = anchorKey === focusKey && anchorOffset === focusOffset;
             
+            console.log('🎯 RemoteCursorPlugin: Selection analysis:', {
+              isCollapsed,
+              anchorOffset,
+              focusOffset,
+              sameKey: anchorKey === focusKey
+            });
+            
             if (!isCollapsed) {
+              console.log('🎯 RemoteCursorPlugin: Processing REAL selection...');
               // Handle actual selection
               try {
                 const anchorNode = editor.getEditorState()._nodeMap.get(anchorKey);
                 const focusNode = editor.getEditorState()._nodeMap.get(focusKey);
                 
+                console.log('🎯 RemoteCursorPlugin: Found nodes:', {
+                  hasAnchorNode: !!anchorNode,
+                  hasFocusNode: !!focusNode,
+                  anchorNodeType: anchorNode?.getType(),
+                  focusNodeType: focusNode?.getType()
+                });
+                
                 if (anchorNode && focusNode) {
                   const anchorDomElement = editor.getElementByKey(anchorKey);
                   const focusDomElement = editor.getElementByKey(focusKey);
+                  
+                  console.log('🎯 RemoteCursorPlugin: Found DOM elements:', {
+                    hasAnchorDOM: !!anchorDomElement,
+                    hasFocusDOM: !!focusDomElement,
+                    anchorDOMTag: anchorDomElement?.tagName,
+                    focusDOMTag: focusDomElement?.tagName
+                  });
                   
                   if (anchorDomElement && focusDomElement) {
                     const anchorTextNode = findTextNodeInElement(anchorDomElement, anchorOffset);
                     const focusTextNode = findTextNodeInElement(focusDomElement, focusOffset);
                     
+                    console.log('🎯 RemoteCursorPlugin: Found text nodes:', {
+                      hasAnchorText: !!anchorTextNode,
+                      hasFocusText: !!focusTextNode,
+                      anchorTextContent: anchorTextNode?.textNode.textContent?.substring(0, 50),
+                      focusTextContent: focusTextNode?.textNode.textContent?.substring(0, 50),
+                      anchorOffset: anchorTextNode?.offset,
+                      focusOffset: focusTextNode?.offset
+                    });
+                    
                     if (anchorTextNode && focusTextNode) {
                       const range = document.createRange();
-                      range.setStart(anchorTextNode.textNode, anchorTextNode.offset);
-                      range.setEnd(focusTextNode.textNode, focusTextNode.offset);
+                      
+                      // Ensure proper range direction
+                      let startNode = anchorTextNode;
+                      let endNode = focusTextNode;
+                      
+                      // For same text node, ensure start < end
+                      if (anchorTextNode.textNode === focusTextNode.textNode) {
+                        if (anchorTextNode.offset > focusTextNode.offset) {
+                          startNode = focusTextNode;
+                          endNode = anchorTextNode;
+                        }
+                      }
+                      
+                      range.setStart(startNode.textNode, startNode.offset);
+                      range.setEnd(endNode.textNode, endNode.offset);
                       
                       const rect = range.getBoundingClientRect();
                       const overlayRect = overlay.getBoundingClientRect();
+                      
+                      console.log('🎯 RemoteCursorPlugin: Range rect:', {
+                        width: rect.width,
+                        height: rect.height,
+                        left: rect.left,
+                        top: rect.top,
+                        overlayLeft: overlayRect.left,
+                        overlayTop: overlayRect.top
+                      });
                       
                       if (rect.width > 0 && rect.height > 0) {
                         const left = rect.left - overlayRect.left;
@@ -316,26 +386,54 @@ const RemoteCursorPlugin: React.FC<{
                         
                         // Show selection highlight
                         const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+                        console.log('🎯 RemoteCursorPlugin: Selection element found:', !!selection);
+                        
                         if (selection) {
                           selection.style.width = `${rect.width}px`;
                           selection.style.height = `${rect.height}px`;
+                          selection.style.left = '0px';
+                          selection.style.top = '0px';
                           selection.style.display = 'block';
+                          
+                          console.log('🎨 SELECTION HIGHLIGHT APPLIED:', {
+                            width: selection.style.width,
+                            height: selection.style.height,
+                            display: selection.style.display,
+                            backgroundColor: selection.style.backgroundColor
+                          });
+                        }
+                        
+                        // Hide cursor line for selections
+                        const line = cursorElement.querySelector('.cursor-line') as HTMLElement;
+                        if (line) {
+                          line.style.display = 'none';
                         }
                         
                         positionLabel(cursorElement, left, top, overlay, cursor);
                         
-                        console.log('✅ RemoteCursorPlugin: Positioned selection:', {
-                          left, top, width: rect.width, height: rect.height
+                        console.log('✅ RemoteCursorPlugin: SELECTION POSITIONED SUCCESSFULLY:', {
+                          left, top, width: rect.width, height: rect.height,
+                          selectionVisible: selection?.style.display === 'block'
                         });
                         
                         return;
+                      } else {
+                        console.log('⚠️ RemoteCursorPlugin: Invalid selection rect:', rect);
                       }
+                    } else {
+                      console.log('⚠️ RemoteCursorPlugin: Could not find text nodes for selection');
                     }
+                  } else {
+                    console.log('⚠️ RemoteCursorPlugin: Could not find DOM elements for selection');
                   }
+                } else {
+                  console.log('⚠️ RemoteCursorPlugin: Could not find Lexical nodes for selection');
                 }
               } catch (error) {
                 console.log('⚠️ RemoteCursorPlugin: Selection positioning error:', error);
               }
+            } else {
+              console.log('🎯 RemoteCursorPlugin: Collapsed selection, treating as cursor');
             }
           }
           
@@ -376,10 +474,15 @@ const RemoteCursorPlugin: React.FC<{
                     cursorElement.style.top = `${top}px`;
                     cursorElement.style.opacity = '1';
                     
-                    // Hide selection highlight for regular cursor
+                    // Hide selection highlight for regular cursor and show cursor line
                     const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
                     if (selection) {
                       selection.style.display = 'none';
+                    }
+                    
+                    const line = cursorElement.querySelector('.cursor-line') as HTMLElement;
+                    if (line) {
+                      line.style.display = 'block';
                     }
                     
                     // Smart label positioning
@@ -412,11 +515,22 @@ const RemoteCursorPlugin: React.FC<{
           }
           
           // Fallback positioning - place at start of editor
-          console.log('🎯 RemoteCursorPlugin: Using fallback positioning');
+          console.log('🎯 RemoteCursorPlugin: Using fallback positioning for', cursor.userName);
           
           cursorElement.style.left = '10px';
           cursorElement.style.top = '10px';
           cursorElement.style.opacity = '0.7';
+          
+          // For fallback, show cursor line and hide selection
+          const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+          if (selection) {
+            selection.style.display = 'none';
+          }
+          
+          const line = cursorElement.querySelector('.cursor-line') as HTMLElement;
+          if (line) {
+            line.style.display = 'block';
+          }
           
           positionLabel(cursorElement, 10, 10, overlay, cursor);
           
