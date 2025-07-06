@@ -82,6 +82,7 @@ const RemoteCursorPlugin: React.FC<{
         }
         container.appendChild(overlay);
         overlayRef.current = overlay;
+        console.log('✅ RemoteCursorPlugin: Created overlay container');
       }
     }
     
@@ -101,10 +102,16 @@ const RemoteCursorPlugin: React.FC<{
     const editorElement = editor.getRootElement();
     if (!editorElement) return;
     
+    console.log('🎯 RemoteCursorPlugin: Updating cursors:', {
+      totalCursors: remoteCursors.size,
+      cursorIds: Array.from(remoteCursors.keys())
+    });
+    
     // Remove cursors that no longer exist
     const currentCursorIds = new Set(remoteCursors.keys());
     for (const [userId, cursorElement] of cursorsRef.current) {
       if (!currentCursorIds.has(userId) || userId === currentUserId) {
+        console.log('🧹 RemoteCursorPlugin: Removing cursor for user:', userId);
         cursorElement.remove();
         cursorsRef.current.delete(userId);
       }
@@ -114,12 +121,15 @@ const RemoteCursorPlugin: React.FC<{
     remoteCursors.forEach((cursor, userId) => {
       if (userId === currentUserId) return; // Skip own cursor
       
+      console.log('🎯 RemoteCursorPlugin: Processing cursor for user:', userId, cursor);
+      
       // Get or create cursor element
       let cursorElement = cursorsRef.current.get(userId);
       if (!cursorElement) {
         cursorElement = createCursorElement(cursor);
         overlay.appendChild(cursorElement);
         cursorsRef.current.set(userId, cursorElement);
+        console.log('✅ RemoteCursorPlugin: Created new cursor for user:', userId);
       }
       
       // Position the cursor
@@ -210,6 +220,7 @@ const RemoteCursorPlugin: React.FC<{
     try {
       const nodeKey = cursor.position.key;
       const nodeOffset = cursor.position.offset;
+      console.log('🎯 RemoteCursorPlugin: Positioning cursor for', cursor.userName, 'at node', nodeKey, 'offset', nodeOffset);
       
       // Use Lexical node keys directly - much simpler and more accurate!
       editor.getEditorState().read(() => {
@@ -218,10 +229,18 @@ const RemoteCursorPlugin: React.FC<{
           const lexicalNode = editor.getEditorState()._nodeMap.get(nodeKey);
           
           if (lexicalNode) {
+            console.log('🎯 RemoteCursorPlugin: Found Lexical node:', {
+              nodeKey,
+              nodeType: lexicalNode.getType(),
+              nodeTextContent: lexicalNode.getTextContent ? lexicalNode.getTextContent() : '[no text content]'
+            });
+            
             // Get the DOM element for this Lexical node
             const domElement = editor.getElementByKey(nodeKey);
             
             if (domElement) {
+              console.log('🎯 RemoteCursorPlugin: Found DOM element:', domElement);
+              
               // Find the text node within this DOM element at the correct offset
               const textNodeResult = findTextNodeInElement(domElement, nodeOffset);
               
@@ -246,6 +265,15 @@ const RemoteCursorPlugin: React.FC<{
                     // Smart label positioning
                     positionLabel(cursorElement, left, top, overlay, cursor);
                     
+                    console.log('✅ RemoteCursorPlugin: Positioned cursor using node key:', { 
+                      left, 
+                      top, 
+                      nodeKey,
+                      nodeOffset,
+                      domTextNodeOffset: textNodeResult.offset,
+                      targetChar: textNodeResult.textNode.textContent?.charAt(textNodeResult.offset) || '',
+                    });
+                    
                     return; // Successfully positioned
                   } else {
                     console.log('⚠️ RemoteCursorPlugin: Invalid rect dimensions:', rect);
@@ -264,6 +292,8 @@ const RemoteCursorPlugin: React.FC<{
           }
           
           // Fallback positioning - place at start of editor
+          console.log('🎯 RemoteCursorPlugin: Using fallback positioning');
+          
           cursorElement.style.left = '10px';
           cursorElement.style.top = '10px';
           cursorElement.style.opacity = '0.7';
@@ -363,6 +393,17 @@ const RemoteCursorPlugin: React.FC<{
       label.style.transform = 'translateX(-50%)';
     }
     
+    console.log('🎯 RemoteCursorPlugin: Positioned label:', {
+      cursorLeft,
+      cursorTop,
+      labelWidth,
+      overlayWidth: overlayRect.width,
+      labelLeftEdge,
+      labelRightEdge,
+      finalTransform: label.style.transform,
+      finalLeft: label.style.left,
+      finalTop: label.style.top
+    });
   };
   
   // Add CSS animation for cursor blinking
@@ -427,18 +468,35 @@ const CursorTrackingPlugin: React.FC<{
   const [editor] = useLexicalComposerContext();
   
   useEffect(() => {
+    console.log('🎯 CursorTrackingPlugin initialized:', {
+      hasWebSocketClient: !!webSocketClient,
+      documentId,
+      userId: currentUser.id || currentUser.email
+    });
+    
     if (!webSocketClient) {
       console.log('⚠️ CursorTrackingPlugin: No WebSocket client provided');
       return;
     }
     
     const handleSelectionChange = () => {
+      console.log('🎯 Selection change detected');
       editor.getEditorState().read(() => {
         const selection = $getSelection();
+        console.log('🎯 Current selection:', selection);
         
         if ($isRangeSelection(selection)) {
+          console.log('🎯 Range selection detected');
           const anchorNode = selection.anchor.getNode();
           const focusNode = selection.focus.getNode();
+          
+          console.log('🎯 Selection details:', {
+            anchorKey: anchorNode.getKey(),
+            anchorOffset: selection.anchor.offset,
+            focusKey: focusNode.getKey(),
+            focusOffset: selection.focus.offset,
+            isCollapsed: selection.isCollapsed()
+          });
           
           // Use Lexical node keys directly - much simpler!
           const position: CursorPosition = {
@@ -461,6 +519,7 @@ const CursorTrackingPlugin: React.FC<{
             timestamp: new Date().toISOString()
           };
           
+          console.log('🎯 Calling onCursorUpdate with node-based position:', position);
           onCursorUpdate(position);
         } else {
           console.log('🎯 Non-range selection, ignoring');
@@ -468,13 +527,18 @@ const CursorTrackingPlugin: React.FC<{
       });
     };
     
+    console.log('🎯 Registering update listener...');
     const removeSelectionListener = editor.registerUpdateListener(({ editorState }) => {
+      console.log('🎯 Editor update listener triggered');
       editorState.read(() => {
         handleSelectionChange();
       });
     });
     
+    console.log('✅ CursorTrackingPlugin setup complete');
+    
     return () => {
+      console.log('🧹 CursorTrackingPlugin cleanup');
       removeSelectionListener();
     };
   }, [editor, webSocketClient, currentUser, documentId, onCursorUpdate]);
@@ -537,11 +601,24 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   
   // Handle cursor updates
   const handleCursorUpdate = useCallback((position: CursorPosition) => {
+    console.log('🎯 handleCursorUpdate called with position:', position);
+    
     if (webSocketClientRef.current) {
+      console.log('🎯 Sending cursor position via WebSocket:', {
+        hasWebSocketClient: !!webSocketClientRef.current,
+        position: position,
+        positionKey: position.position.key,
+        positionOffset: position.position.offset,
+        userId: position.userId
+      });
+      
+      // Send cursor position to other users
       webSocketClientRef.current.send({
         type: 'cursor_position',
         data: position
       });
+      
+      console.log('✅ Cursor position sent successfully');
     } else {
       console.log('❌ No WebSocket client available for cursor update');
     }
@@ -549,17 +626,27 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   
   // Handle remote cursor position updates
   const handleRemoteCursorUpdate = useCallback((message: WebSocketMessage) => {
+    console.log('🖱️ handleRemoteCursorUpdate called with message:', message);
+    
     if (message.data && message.data.position) {
       const cursorPosition: CursorPosition = message.data;
+      console.log('🖱️ Processing cursor position:', cursorPosition);
       
       // Don't show our own cursor
       if (cursorPosition.userId === currentUser.id || cursorPosition.userId === currentUser.email) {
+        console.log('🖱️ Ignoring own cursor position');
         return;
       }
       
       setRemoteCursors(prev => {
         const newCursors = new Map(prev);
         newCursors.set(cursorPosition.userId, cursorPosition);
+        console.log('🖱️ Updated remote cursors map:', {
+          userId: cursorPosition.userId,
+          userName: cursorPosition.userName,
+          totalCursors: newCursors.size,
+          allCursorIds: Array.from(newCursors.keys())
+        });
         return newCursors;
       });
     } else {
@@ -569,20 +656,26 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   
   // Handle typing indicators
   const handleTypingStart = useCallback((message: any) => {
+    console.log('⌨️ User started typing:', message);
     if (message.data && message.userId !== currentUser.id && message.userId !== currentUser.email) {
+      console.log('⌨️ Adding user to typing list:', message.userId);
       setTypingUsers(prev => {
         const newTypingUsers = new Set(prev);
         newTypingUsers.add(message.userId);
+        console.log('⌨️ Current typing users:', Array.from(newTypingUsers));
         return newTypingUsers;
       });
     }
   }, [currentUser.id, currentUser.email]);
   
   const handleTypingStop = useCallback((message: any) => {
+    console.log('⌨️ User stopped typing:', message);
     if (message.data && message.userId !== currentUser.id && message.userId !== currentUser.email) {
+      console.log('⌨️ Removing user from typing list:', message.userId);
       setTypingUsers(prev => {
         const newTypingUsers = new Set(prev);
         newTypingUsers.delete(message.userId);
+        console.log('⌨️ Current typing users:', Array.from(newTypingUsers));
         return newTypingUsers;
       });
     }
@@ -645,147 +738,162 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       console.log('✅ WebSocketManager initialized');
     }
     
-    // WebSocket connection setup
     const connectWebSocket = async () => {
-      if (webSocketClientRef.current) {
-        console.log('⚠️ WebSocket already exists, not creating new connection');
-        return;
-      }
-
       try {
         setConnectionStatus('connecting');
+        console.log('🔄 Attempting WebSocket connection...');
+        console.log('📋 Connection parameters:', {
+          documentId,
+          userId: currentUser.id || currentUser.email,
+          userName: currentUser.name || currentUser.email,
+          userEmail: currentUser.email,
+          useSubmissionWebSocket
+        });
         
         if (useSubmissionWebSocket) {
-          // Use SubmissionWebSocketClient for submission-specific functionality
-          const submissionClient = new SubmissionWebSocketClient({
-            url: WS_URL,
-            submissionId: documentId,
-            userId: currentUser.id || currentUser.email,
-            userName: currentUser.name || currentUser.email,
-            userEmail: currentUser.email
+          console.log('📡 Connecting to submission WebSocket...');
+          // Connect to submission WebSocket
+          const client = await webSocketManagerRef.current!.connectToSubmission(
+            documentId,
+            currentUser.id || currentUser.email,
+            currentUser.name || currentUser.email,
+            currentUser.email
+          );
+          
+          console.log('✅ Submission WebSocket client created');
+          
+          // Add raw message listener for debugging
+          client.on('message', (rawMessage) => {
+            console.log('📨 RAW MESSAGE RECEIVED:', rawMessage);
           });
-
-          // Event handlers without debug logging
+          
+          // Add debugging for each specific event handler
           const debugHandleRemoteCursorUpdate = (message: WebSocketMessage) => {
+            console.log('🖱️ CURSOR_POSITION EVENT RECEIVED:', message);
             handleRemoteCursorUpdate(message);
           };
-
+          
           const debugHandleTypingStart = (message: WebSocketMessage) => {
+            console.log('⌨️ TYPING_START EVENT RECEIVED:', message);
             handleTypingStart(message);
           };
-
+          
           const debugHandleTypingStop = (message: WebSocketMessage) => {
+            console.log('⌨️ TYPING_STOP EVENT RECEIVED:', message);
             handleTypingStop(message);
           };
-
-          submissionClient.on('cursor_position', debugHandleRemoteCursorUpdate);
-          submissionClient.on('typing_start', debugHandleTypingStart);
-          submissionClient.on('typing_stop', debugHandleTypingStop);
           
-          // Handle user presence
-          submissionClient.on('user_joined', (message) => {
-            if (message.data && message.data.user) {
-              const user: UserPresenceData = {
-                userId: message.data.user.userId,
-                userName: message.data.user.userName,
-                userEmail: message.data.user.userEmail,
-                status: 'online',
-                lastSeen: new Date().toISOString()
-              };
-              
-              setUsers(prev => {
-                const existing = prev.find(u => u.userId === user.userId);
-                if (existing) {
-                  return prev.map(u => u.userId === user.userId ? user : u);
-                }
-                return [...prev, user];
-              });
-            }
-          });
-
-          submissionClient.on('user_left', (message) => {
-            if (message.data && message.data.userId) {
-              setUsers(prev => prev.filter(u => u.userId !== message.data.userId));
-            }
-          });
-
-          submissionClient.on('room_state', (message) => {
-            if (message.data && message.data.users) {
-              const users: UserPresenceData[] = message.data.users.map((u: any) => ({
-                userId: u.userId,
-                userName: u.userName,
-                userEmail: u.userEmail,
-                status: 'online',
-                lastSeen: new Date().toISOString()
-              }));
-              setUsers(users);
-            }
-          });
-
-          // Handle connection status
-          submissionClient.on('connected', () => {
+          client.on('connected', () => {
             setConnectionStatus('connected');
+            console.log('✅ WebSocket connected successfully');
           });
-
-          submissionClient.on('error', (error) => {
-            console.error('WebSocket error:', error);
-            setConnectionStatus('error');
+          
+          client.on('cursor_position', debugHandleRemoteCursorUpdate);
+          client.on('typing_start', debugHandleTypingStart);
+          client.on('typing_stop', debugHandleTypingStop);
+          
+          client.on('user_joined', (message) => {
+            console.log('👤 User joined:', message.userName);
+            setUsers(prev => {
+              const existingUser = prev.find(u => u.userId === message.userId);
+              if (!existingUser) {
+                return [...prev, {
+                  userId: message.userId,
+                  userName: message.userName,
+                  userEmail: message.userEmail,
+                  status: 'online' as const,
+                  lastSeen: message.timestamp,
+                  currentActivity: 'viewing' as const
+                }];
+              }
+              return prev;
+            });
           });
-
-          submissionClient.on('disconnected', () => {
-            setConnectionStatus('disconnected');
-            webSocketClientRef.current = null;
+          
+          client.on('user_left', (message) => {
+            console.log('👤 User left:', message.userName);
+            setUsers(prev => prev.filter(u => u.userId !== message.userId));
           });
-
-          await submissionClient.connect();
-          webSocketClientRef.current = submissionClient;
+          
+          client.on('room_state', (message) => {
+            console.log('📊 Room state update:', message);
+            if (message.users) {
+              setUsers(message.users.map(user => ({
+                userId: user.userId,
+                userName: user.userName,
+                userEmail: user.userEmail,
+                status: 'online' as const,
+                lastSeen: user.connectedAt,
+                currentActivity: 'viewing' as const
+              })));
+            }
+          });
+          
+          client.on('content_updated', (message) => {
+            console.log('📝 Content updated by remote user:', message);
+            // Don't update our own content to avoid infinite loops
+            if (message.userId !== (currentUser.id || currentUser.email)) {
+              console.log('📝 Updating content from remote user');
+              // Note: We might want to implement operational transforms here
+              // For now, just log that we received an update
+            }
+          });
+          
+          webSocketClientRef.current = client;
+          setConnectionStatus('connected');
+          console.log('✅ Submission WebSocket fully configured');
+          
         } else {
-          // Use regular WebSocketManager for document-specific functionality
-          const client = await webSocketManagerRef.current!.connect({
+          console.log('📡 Connecting to document WebSocket...');
+          // Connect to document WebSocket
+          const client = await webSocketManagerRef.current!.connectToDocument(
             documentId,
-            userId: currentUser.id || currentUser.email,
-            userName: currentUser.name || currentUser.email,
-            userEmail: currentUser.email
+            currentUser.id || currentUser.email,
+            currentUser.name || currentUser.email,
+            currentUser.email
+          );
+          
+          console.log('✅ Document WebSocket client created');
+          
+          client.on('connected', () => {
+            setConnectionStatus('connected');
+            console.log('✅ Document WebSocket connected successfully');
           });
-
+          
           client.on('cursor_position', handleRemoteCursorUpdate);
           client.on('typing_start', handleTypingStart);
           client.on('typing_stop', handleTypingStop);
           
-          client.on('connected', () => {
-            setConnectionStatus('connected');
-          });
-
-          client.on('error', (error) => {
-            console.error('WebSocket error:', error);
+          client.on('error', () => {
             setConnectionStatus('error');
+            console.error('❌ Document WebSocket connection error');
           });
-
-          client.on('disconnected', () => {
-            setConnectionStatus('disconnected');
-            webSocketClientRef.current = null;
-          });
-
+          
           webSocketClientRef.current = client;
           setConnectionStatus('connected');
+          console.log('✅ Document WebSocket fully configured');
         }
-
       } catch (error) {
-        console.error('Failed to connect WebSocket:', error);
+        console.error('❌ Failed to connect WebSocket:', error);
         setConnectionStatus('error');
       }
     };
-
+    
     connectWebSocket();
-
+    
     return () => {
-      if (webSocketClientRef.current) {
-        webSocketClientRef.current.disconnect();
-        webSocketClientRef.current = null;
+      // Cleanup WebSocket connection
+      console.log('🧹 Cleaning up WebSocket connection...');
+      if (webSocketManagerRef.current) {
+        if (useSubmissionWebSocket) {
+          webSocketManagerRef.current.disconnectFromSubmission(documentId, currentUser.id || currentUser.email);
+        } else {
+          webSocketManagerRef.current.disconnectFromDocument(documentId, currentUser.id || currentUser.email);
+        }
       }
-      setConnectionStatus('disconnected');
+      console.log('✅ WebSocket cleanup completed');
     };
-  }, [documentId, currentUser, useSubmissionWebSocket, handleRemoteCursorUpdate, handleTypingStart, handleTypingStop]);
+  }, [documentId, currentUser.id, currentUser.email, currentUser.name, useSubmissionWebSocket, handleRemoteCursorUpdate, handleTypingStart, handleTypingStop]);
   
   // Handle content changes
   const handleEditorChange = useCallback((editorState: EditorState) => {
@@ -793,11 +901,20 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       const root = $getRoot();
       const textContent = root.getTextContent();
       
+      console.log('📝 Editor content changed:', textContent.length, 'chars');
+      
       // Get the full JSON representation for rich text
       const jsonContent = JSON.stringify(editorState);
       
       // Only update if content actually changed
       if (jsonContent !== currentContent) {
+        console.log('🔄 Content changed, updating state');
+        console.log('📊 Content comparison:', {
+          oldContentLength: currentContent?.length || 0,
+          newContentLength: jsonContent?.length || 0,
+          textContentLength: textContent.length
+        });
+        
         setCurrentContent(jsonContent);
         contentChangedRef.current = true;
         
@@ -806,6 +923,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         
         // Notify other users of content changes via WebSocket
         if (webSocketClientRef.current) {
+          console.log('📤 Sending content update to WebSocket...');
           webSocketClientRef.current.send({
             type: 'content_updated',
             documentId: documentId,
@@ -814,10 +932,12 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               timestamp: new Date().toISOString()
             }
           });
+          console.log('✅ Content update sent');
           
           // Handle typing indicators
           if (!isTypingRef.current) {
             isTypingRef.current = true;
+            console.log('⌨️ Sending typing_start indicator...');
             webSocketClientRef.current.send({
               type: 'typing_start',
               documentId: documentId,
@@ -827,6 +947,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                 timestamp: new Date().toISOString()
               }
             });
+            console.log('✅ Typing start sent');
           }
           
           // Clear previous timeout
@@ -838,6 +959,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           typingTimeoutRef.current = setTimeout(() => {
             if (isTypingRef.current) {
               isTypingRef.current = false;
+              console.log('⌨️ Sending typing_stop indicator...');
               webSocketClientRef.current?.send({
                 type: 'typing_stop',
                 documentId: documentId,
@@ -847,6 +969,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   timestamp: new Date().toISOString()
                 }
               });
+              console.log('✅ Typing stop sent');
             }
           }, 2000); // Stop typing indicator after 2 seconds of inactivity
         } else {
@@ -872,14 +995,29 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   
   // Initialize editor content when it becomes available
   useEffect(() => {
+    console.log('🔧 Editor initialization effect triggered:', {
+      hasEditorRef: !!editorRef.current,
+      hasInitialContent: !!initialContent,
+      initialContentLength: initialContent?.length,
+      isInitialized: isInitializedRef.current,
+      initialContentPreview: initialContent?.substring(0, 100)
+    });
+    
     if (editorRef.current && initialContent && !isInitializedRef.current) {
+      console.log('🔄 Initializing editor with content:', initialContent.length, 'chars');
+      
+      // Set flag to prevent re-initialization
+      isInitializedRef.current = true;
+      
       const editor = editorRef.current;
       
       // Check if the initialContent is a Lexical JSON state
       if (isLexicalJson(initialContent)) {
         try {
+          console.log('🔄 Setting Lexical JSON state');
           const editorState = editor.parseEditorState(initialContent);
           editor.setEditorState(editorState);
+          console.log('🔄 Successfully set editor state');
           
           // Update current content state with JSON representation
           setCurrentContent(initialContent);
@@ -895,17 +1033,27 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         const root = $getRoot();
         root.clear();
         
+        console.log('🔄 Editor update callback started, root cleared');
+        
         if (initialContent.trim()) {
+          console.log('🔄 Processing plain text content:', {
+            contentType: typeof initialContent,
+            contentLength: initialContent.length,
+            contentPreview: initialContent.substring(0, 100)
+          });
+          
           // Create a paragraph with the text content
           const paragraph = $createParagraphNode();
           const textNode = $createTextNode(initialContent);
           paragraph.append(textNode);
           root.append(paragraph);
+          console.log('🔄 Added paragraph with text node to root');
           
           // Update current content state with JSON representation
           const jsonContent = JSON.stringify(editor.getEditorState());
           setCurrentContent(jsonContent);
           setLastSavedContent(jsonContent);
+          console.log('🔄 Updated content state');
         } else {
           console.log('🔄 Initial content is empty, no content to load');
         }

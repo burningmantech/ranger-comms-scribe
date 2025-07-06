@@ -77,21 +77,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onRejectProposedVersion,
   onRefreshNeeded,
 }) => {
-  // Debug: Log the submission content
-  console.log('TrackedChangesEditor received submission:', {
-    id: submission.id,
-    title: submission.title,
-    content: submission.content,
-    richTextContent: submission.richTextContent,
-    richTextContentType: typeof submission.richTextContent,
-    richTextContentLength: submission.richTextContent?.length,
-    contentLength: submission.content?.length,
-    contentPreview: submission.content?.substring(0, 100),
-    isContentLexical: isLexicalJson(submission.content),
-    isRichTextContentLexical: submission.richTextContent ? isLexicalJson(submission.richTextContent) : false,
-    proposedVersions: submission.proposedVersions,
-    proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent
-  });
   
   // WebSocket state is now managed by CollaborativeEditor
   
@@ -120,11 +105,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Helper function to request refresh from parent
   const requestRefresh = useCallback(() => {
-    console.log('🔄 TrackedChangesEditor: requestRefresh called', {
-      hasRefreshCallback: !!onRefreshNeeded,
-      submissionId: submission.id
-    });
-    
     if (onRefreshNeeded) {
       onRefreshNeeded();
     } else {
@@ -169,26 +149,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Helper function to get displayable text from change values (with debugging)
   const getChangeDisplayText = useCallback((content: string): string => {
-    console.log('getChangeDisplayText called with:', {
-      content,
-      contentType: typeof content,
-      contentLength: content?.length,
-      contentPreview: content?.substring(0, 100),
-      isLexical: isLexicalJson(content)
-    });
     
     if (!content) return '';
     
     // Check if content is Lexical JSON and extract text
     if (isLexicalJson(content)) {
       const extracted = extractTextFromLexical(content);
-      console.log('getChangeDisplayText: Extracted from Lexical JSON:', extracted);
       return extracted;
     }
     
     // Handle partial JSON fragments (like the ones you're seeing)
     if (typeof content === 'string' && content.includes('"text":"')) {
-      console.log('getChangeDisplayText: Detected partial JSON with text field');
       
       // Extract text values from JSON fragments using regex
       const textMatches = content.match(/"text":"([^"]*)"/g);
@@ -200,7 +171,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         
         if (extractedTexts.length > 0) {
           const result = extractedTexts.join(' ');
-          console.log('getChangeDisplayText: Extracted text from JSON fragments:', result);
           return result;
         }
       }
@@ -213,16 +183,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // If it's an object with text-like properties, try to extract text
         if (typeof parsed === 'object' && parsed !== null) {
           if (parsed.text) {
-            console.log('getChangeDisplayText: Found text property in JSON:', parsed.text);
             return parsed.text;
           }
           if (parsed.content) {
-            console.log('getChangeDisplayText: Found content property in JSON:', parsed.content);
             return parsed.content;
           }
           // If it's a complex object, stringify it for display
           const stringified = JSON.stringify(parsed, null, 2);
-          console.log('getChangeDisplayText: Stringified complex JSON:', stringified.substring(0, 100));
           return stringified.substring(0, 200) + (stringified.length > 200 ? '...' : '');
         }
       } catch (e) {
@@ -230,33 +197,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
     }
     
-    console.log('getChangeDisplayText: Returning as plain text:', content);
     return content;
   }, []);
 
   // Helper function to get the correct rich text content for display/editing
   const getRichTextContent = useCallback((content: string): string => {
-    console.log('getRichTextContent called with:', {
-      content,
-      contentType: typeof content,
-      contentLength: content?.length,
-      isLexical: isLexicalJson(content)
-    });
 
     if (!content) {
-      console.log('getRichTextContent: No content provided');
       return '';
     }
     
     // If it's already Lexical JSON, return as is
     if (isLexicalJson(content)) {
-      console.log('getRichTextContent: Content is already Lexical JSON');
       return content;
     }
     
     // If it's plain text, create a basic Lexical structure
     if (typeof content === 'string' && content.trim()) {
-      console.log('getRichTextContent: Creating Lexical structure for plain text');
       // Create a basic Lexical JSON structure for plain text
       const basicLexicalStructure = {
         root: {
@@ -288,11 +245,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
       };
       const result = JSON.stringify(basicLexicalStructure);
-      console.log('getRichTextContent: Created Lexical structure:', result.substring(0, 200) + '...');
       return result;
     }
     
-    console.log('getRichTextContent: Returning empty string');
     return '';
   }, []);
 
@@ -307,33 +262,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     
     // If content looks like a comment, skip it and use empty content
     if (typeof content === 'string' && content.includes('@change:')) {
-      console.log('TrackedChangesEditor: Skipping comment content for editor initialization');
       content = '';
     }
     
     const richTextContent = getRichTextContent(content);
     
-    console.log('🔄 TrackedChangesEditor: useEffect triggered with content update:', {
-      isEditingProposed: false,
-      richTextContentLength: richTextContent?.length,
-      richTextContentPreview: richTextContent?.substring(0, 100),
-      willUpdateEditedContent: false,
-      lastSavedLength: lastSavedProposedContent?.length,
-      contentChanged: lastSavedProposedContent !== richTextContent
-    });
-    
     // Only update the edited content if we're not currently editing
     // This prevents overwriting user's changes while they're editing
     if (!false) {
       setEditedProposedContent(richTextContent);
-      console.log('🔄 Updated editedProposedContent due to submission change');
     }
     
     // Update last saved content when submission changes (from parent)
     // Only update if we don't have local changes or if the submission has actually changed
     if (!lastSavedProposedContent || lastSavedProposedContent !== richTextContent) {
       setLastSavedProposedContent(richTextContent);
-      console.log('🔄 Updated lastSavedProposedContent due to submission change');
     }
     
     // Always update the initial content reference for fresh data
@@ -343,7 +286,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Convert changes to tracked changes with status
   const trackedChanges: TrackedChange[] = useMemo(() => {
-    console.log('TrackedChangesEditor: Processing changes:', submission.changes);
     const result = submission.changes.map(change => {
       // Get all comments for this change (including replies)
       const changeComments = submission.comments.filter((c: Comment) => {
@@ -367,7 +309,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       });
       
       const status = (change as any).status || 'pending';
-      console.log(`🔍 Change ${change.id} status:`, status);
       
       return {
         ...change,
@@ -377,7 +318,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         comments: changeComments
       };
     });
-    console.log('TrackedChangesEditor: Processed tracked changes:', result);
     return result;
   }, [submission.changes, submission.comments]);
 
@@ -405,24 +345,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     
     const canMake = hasEditorialRole || isSubmitter || isRequiredApprover || isAssignedCouncilManager || hasApproved;
     
-    console.log('🔍 canMakeEditorialDecisions check:', {
-      currentUserRoles: currentUser.roles,
-      currentUserId: currentUser.id,
-      currentUserEmail: currentUser.email,
-      submissionSubmittedBy: submission.submittedBy,
-      hasCommsCadre: currentUser.roles.includes('CommsCadre'),
-      hasCouncilManager: currentUser.roles.includes('CouncilManager'),
-      hasAdmin: currentUser.roles.includes('Admin'),
-      isSubmitter,
-      isRequiredApprover,
-      isAssignedCouncilManager,
-      hasApproved,
-      requiredApprovers: submission.requiredApprovers,
-      assignedCouncilManagers: submission.assignedCouncilManagers,
-      approvals: submission.approvals?.map(a => ({ approverEmail: a.approverEmail, approverId: a.approverId }))
-    });
-    
-    console.log('🔍 canMakeEditorialDecisions result:', canMake);
     return canMake;
   }, [currentUser, submission.submittedBy, submission.requiredApprovers, submission.assignedCouncilManagers, submission.approvals]);
 
@@ -444,7 +366,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleTextSelection = useCallback(() => {
     const selection = window.getSelection();
     if (selection && selection.toString().trim()) {
-      console.log('🔤 Text selected:', selection.toString());
     }
   }, []);
 
@@ -752,17 +673,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                    submission.proposedVersions?.content || 
                    submission.richTextContent || 
                    submission.content || '';
-    
-    console.log('📝 proposedEditorContent calculation:', {
-      proposedVersionsRichTextContent: submission.proposedVersions?.richTextContent,
-      proposedVersionsContent: submission.proposedVersions?.content, 
-      richTextContent: submission.richTextContent,
-      content: submission.content,
-      selectedContent: content,
-      contentLength: content?.length,
-      contentType: typeof content,
-      contentPreview: content?.substring(0, 200)
-    });
     
     // For now, let's simplify by just passing the content directly
     // If it's already Lexical JSON, use it as-is
