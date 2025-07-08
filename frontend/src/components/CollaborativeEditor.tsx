@@ -20,7 +20,7 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import { UserPresence, UserPresenceData } from './UserPresence';
 import { User } from '../types/content';
 import { WebSocketManager, CursorPosition, WebSocketMessage } from '../services/websocketService';
-import { isLexicalJson } from '../utils/lexicalUtils';
+import { isLexicalJson, extractTextFromLexical } from '../utils/lexicalUtils';
 import './CollaborativeEditor.css';
 
 // User color assignment function
@@ -142,22 +142,34 @@ const RemoteCursorPlugin: React.FC<{
   // Force repositioning when needed
   useEffect(() => {
     if (needsRepositioning && overlayRef.current) {
-      console.log('🔄 RemoteCursorPlugin: Force repositioning all cursors');
+      console.log('🔄 RemoteCursorPlugin: Force repositioning all cursors, total cursors:', remoteCursors.size);
       
       const overlay = overlayRef.current;
       const editorElement = editor.getRootElement();
-      if (!editorElement) return;
+      if (!editorElement) {
+        console.log('❌ RemoteCursorPlugin: No editor element found for repositioning');
+        return;
+      }
       
-      // Reposition all existing cursors
-      remoteCursors.forEach((cursor, userId) => {
-        if (userId === currentUserId) return;
+      // Small delay to ensure DOM is fully updated after content changes
+      setTimeout(() => {
+        console.log('🔄 RemoteCursorPlugin: Starting delayed repositioning...');
         
-        const cursorElement = cursorsRef.current.get(userId);
-        if (cursorElement) {
-          console.log('🔄 RemoteCursorPlugin: Repositioning cursor for user:', userId);
-          positionCursor(cursorElement, cursor, editorElement, overlay);
-        }
-      });
+        // Reposition all existing cursors
+        remoteCursors.forEach((cursor, userId) => {
+          if (userId === currentUserId) return;
+          
+          const cursorElement = cursorsRef.current.get(userId);
+          if (cursorElement) {
+            console.log('🔄 RemoteCursorPlugin: Repositioning cursor for user:', userId, cursor.position);
+            positionCursor(cursorElement, cursor, editorElement, overlay);
+          } else {
+            console.log('⚠️ RemoteCursorPlugin: No cursor element found for user:', userId);
+          }
+        });
+        
+        console.log('✅ RemoteCursorPlugin: Completed repositioning attempt');
+      }, 100);
     }
   }, [needsRepositioning, remoteCursors, currentUserId, editor]);
   
@@ -512,9 +524,15 @@ const RemoteCursorPlugin: React.FC<{
             }
           } else {
             console.log('⚠️ RemoteCursorPlugin: Could not find Lexical node for key:', nodeKey);
+            console.log('💡 RemoteCursorPlugin: This usually happens after content updates when node keys change');
+            console.log('🚫 RemoteCursorPlugin: Hiding cursor instead of showing fallback (stale position)');
+            
+            // Hide the cursor instead of showing fallback - this prevents the upper left corner issue
+            cursorElement.style.opacity = '0';
+            return; // Exit early, don't show fallback
           }
           
-          // Fallback positioning - place at start of editor
+          // Fallback positioning should only be reached if we can't find DOM elements for valid nodes
           console.log('🎯 RemoteCursorPlugin: Using fallback positioning for', cursor.userName);
           
           cursorElement.style.left = '10px';
@@ -536,16 +554,15 @@ const RemoteCursorPlugin: React.FC<{
           
         } catch (error) {
           console.error('❌ RemoteCursorPlugin: Lexical positioning error:', error);
-          // Ultimate fallback
-          cursorElement.style.left = '10px';
-          cursorElement.style.top = '10px';
-          cursorElement.style.opacity = '0.3';
-          positionLabel(cursorElement, 10, 10, overlay, cursor);
+          console.log('🚫 RemoteCursorPlugin: Hiding cursor due to positioning error');
+          // Hide cursor instead of showing fallback to prevent upper left corner positioning
+          cursorElement.style.opacity = '0';
         }
       });
       
     } catch (error) {
       console.error('❌ RemoteCursorPlugin: Positioning error:', error);
+      console.log('🚫 RemoteCursorPlugin: Hiding cursor due to outer positioning error');
       cursorElement.style.opacity = '0';
     }
   };
@@ -698,20 +715,36 @@ const CursorTrackingPlugin: React.FC<{
   currentUser: User;
   documentId: string;
   onCursorUpdate: (position: CursorPosition) => void;
-}> = ({ webSocketClient, currentUser, documentId, onCursorUpdate }) => {
+  effectiveUserId: string;
+}> = ({ webSocketClient, currentUser, documentId, onCursorUpdate, effectiveUserId }) => {
   const [editor] = useLexicalComposerContext();
   
   useEffect(() => {
     console.log('🎯 CursorTrackingPlugin initialized:', {
       hasWebSocketClient: !!webSocketClient,
       documentId,
-      userId: currentUser.id || currentUser.email
+      userId: currentUser.id || currentUser.email,
+      webSocketClientType: typeof webSocketClient,
+      webSocketClientMethods: webSocketClient ? Object.getOwnPropertyNames(webSocketClient) : []
     });
     
     if (!webSocketClient) {
       console.log('⚠️ CursorTrackingPlugin: No WebSocket client provided');
       return;
     }
+    
+    // Listen for cursor refresh requests
+    const handleCursorRefreshRequest = (message: any) => {
+      console.log('🔄 CursorTrackingPlugin: Received cursor refresh request:', message);
+      // Force a fresh cursor position update
+      setTimeout(() => {
+        console.log('🔄 CursorTrackingPlugin: Triggering fresh cursor position after refresh request');
+        handleSelectionChange();
+      }, 150); // Small delay to ensure content is settled
+    };
+    
+    // Register the refresh request handler
+    webSocketClient.on('request_cursor_refresh', handleCursorRefreshRequest);
     
     const handleSelectionChange = () => {
       console.log('🎯 Selection change detected');
@@ -734,7 +767,7 @@ const CursorTrackingPlugin: React.FC<{
           
           // Use Lexical node keys directly - much simpler!
           const position: CursorPosition = {
-            userId: currentUser.id || currentUser.email,
+            userId: effectiveUserId,
             userName: currentUser.name || currentUser.email,
             userEmail: currentUser.email,
             position: {
@@ -769,11 +802,33 @@ const CursorTrackingPlugin: React.FC<{
       });
     });
     
-    console.log('✅ CursorTrackingPlugin setup complete');
+    // Also register a command listener for selections
+    const removeCommandListener = editor.registerCommand(
+      'SELECTION_CHANGE_COMMAND' as any,
+      () => {
+        console.log('🎯 Selection command triggered');
+        handleSelectionChange();
+        return false;
+      },
+      1
+    );
+    
+    // Add a document-level selection change listener as backup
+    const handleDocumentSelectionChange = () => {
+      console.log('🎯 Document selection change detected');
+      handleSelectionChange();
+    };
+    
+    document.addEventListener('selectionchange', handleDocumentSelectionChange);
+    
+    console.log('✅ CursorTrackingPlugin setup complete with multiple listeners');
     
     return () => {
       console.log('🧹 CursorTrackingPlugin cleanup');
       removeSelectionListener();
+      removeCommandListener();
+      document.removeEventListener('selectionchange', handleDocumentSelectionChange);
+      webSocketClient.off('request_cursor_refresh', handleCursorRefreshRequest);
     };
   }, [editor, webSocketClient, currentUser, documentId, onCursorUpdate]);
   
@@ -783,7 +838,7 @@ const CursorTrackingPlugin: React.FC<{
 export interface CollaborativeEditorProps {
   documentId: string;
   initialContent: string;
-  onContentChange: (content: string) => void;
+  onContentChange: (content: string, cursorPosition?: CursorPosition) => void;
   onSave?: (content: string) => void;
   onWebSocketClientReady?: (client: any) => void;
   onRemoteContentUpdate?: (updateFn: (content: string) => void) => void;
@@ -809,6 +864,23 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   readOnly = false,
   showToolbar = true
 }) => {
+  // Create a unique browser session identifier for collaborative editing
+  const browserSessionId = useMemo(() => {
+    const stored = localStorage.getItem('collaborativeSessionId');
+    if (stored) {
+      return stored;
+    }
+    const newSessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+    localStorage.setItem('collaborativeSessionId', newSessionId);
+    console.log('🆔 Generated new browser session ID:', newSessionId);
+    return newSessionId;
+  }, []);
+  
+  // Create effective user ID that includes browser session for cursor tracking
+  const effectiveUserId = useMemo(() => {
+    const baseUserId = currentUser.id || currentUser.email;
+    return `${baseUserId}_${browserSessionId}`;
+  }, [currentUser.id, currentUser.email, browserSessionId]);
   console.log('🔧 CollaborativeEditor received props:', {
     documentId,
     initialContentLength: initialContent?.length,
@@ -829,6 +901,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const [remoteCursors, setRemoteCursors] = useState<Map<string, CursorPosition>>(new Map());
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [needsCursorRepositioning, setNeedsCursorRepositioning] = useState(false);
+  const [webSocketClientReady, setWebSocketClientReady] = useState(false);
   
   const editorRef = useRef<LexicalEditor | null>(null);
   const contentChangedRef = useRef(false);
@@ -837,60 +910,314 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const lastCursorPositionRef = useRef<CursorPosition | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isTypingRef = useRef(false);
+  const lastContentUpdateTime = useRef<number>(0);
+  const isApplyingRemoteUpdate = useRef<boolean>(false);
   
+  // Cursor repositioning function
+  const triggerRepositioning = useCallback(() => {
+    setNeedsCursorRepositioning(true);
+    setTimeout(() => setNeedsCursorRepositioning(false), 100);
+  }, []);
+
   // Callback when content is updated (for cursor repositioning)
   const handleContentUpdated = useCallback(() => {
     console.log('🔄 CollaborativeEditor: Content updated, forcing cursor repositioning');
     
     // Force multiple repositioning attempts
-    const triggerRepositioning = () => {
-      setNeedsCursorRepositioning(true);
-      setTimeout(() => setNeedsCursorRepositioning(false), 100);
-    };
-    
     triggerRepositioning();
     setTimeout(triggerRepositioning, 200);
     setTimeout(triggerRepositioning, 500);
     
     console.log('🔄 CollaborativeEditor: Scheduled cursor repositioning');
-  }, []);
+  }, [triggerRepositioning]);
   
   // Remote content update function
   const applyRemoteContentUpdate = useCallback((content: string) => {
-    console.log('🔄 CollaborativeEditor: Applying remote content update:', content.length);
+    console.log('🔄 CollaborativeEditor: Applying remote content update:', content.length, 'chars');
+    console.log('🔄 CollaborativeEditor: Current remote cursors count before update:', remoteCursors.size);
+    
+    // Record the time of content update
+    lastContentUpdateTime.current = Date.now();
+    console.log('⏰ CollaborativeEditor: Recording content update time:', lastContentUpdateTime.current);
+    
+    // Clear remote cursors before applying content update since node keys will change
+    console.log('🧹 CollaborativeEditor: Clearing remote cursors before content update');
+    setRemoteCursors(new Map());
+    
+    // Also clear the last cursor position reference to prevent stale positions in auto-save
+    lastCursorPositionRef.current = null;
     
     if (editorRef.current) {
       try {
-        editorRef.current.update(() => {
-          const root = $getRoot();
-          root.clear();
-          
-          if (isLexicalJson(content)) {
-            const parsedContent = JSON.parse(content);
-            if (parsedContent.root) {
-              // Import the content into the editor
-              const importedState = editorRef.current!.parseEditorState(content);
-              editorRef.current!.setEditorState(importedState);
-              console.log('✅ CollaborativeEditor: Applied remote Lexical content');
-            }
-          } else {
-            // Handle plain text
-            const paragraph = $createParagraphNode();
-            paragraph.append($createTextNode(content));
-            root.append(paragraph);
-            console.log('✅ CollaborativeEditor: Applied remote plain text content');
+        // Set flag to prevent auto-save during remote update
+        isApplyingRemoteUpdate.current = true;
+        console.log('🚫 CollaborativeEditor: Setting remote update flag to prevent auto-save');
+        
+        // Apply content update by setting the full editor state to preserve rich formatting
+        if (isLexicalJson(content)) {
+          try {
+            console.log('🔄 CollaborativeEditor: Importing remote Lexical content with full formatting...');
+            
+            // Parse and set the full Lexical editor state to preserve rich text formatting
+            const editorState = editorRef.current.parseEditorState(content);
+            editorRef.current.setEditorState(editorState);
+            
+            console.log('✅ CollaborativeEditor: Applied remote Lexical content with full formatting preserved');
+          } catch (error) {
+            console.error('❌ Error parsing Lexical JSON, using text fallback:', error);
+            
+            // Fallback to text extraction if JSON parsing fails
+            editorRef.current.update(() => {
+              const root = $getRoot();
+              root.clear();
+              
+              try {
+                const textContent = extractTextFromLexical(content);
+                if (textContent) {
+                  const lines = textContent.split('\n');
+                  for (const line of lines) {
+                    const paragraph = $createParagraphNode();
+                    if (line.trim()) {
+                      paragraph.append($createTextNode(line));
+                    }
+                    root.append(paragraph);
+                  }
+                  console.log('✅ CollaborativeEditor: Applied remote content as text fallback');
+                }
+              } catch (fallbackError) {
+                console.error('❌ Error in text fallback:', fallbackError);
+                const paragraph = $createParagraphNode();
+                paragraph.append($createTextNode('Error loading remote content'));
+                root.append(paragraph);
+              }
+            });
           }
+        } else {
+          // Handle plain text by updating within editor
+          editorRef.current.update(() => {
+            const root = $getRoot();
+            root.clear();
+            
+            const lines = content.split('\n');
+            for (const line of lines) {
+              const paragraph = $createParagraphNode();
+              if (line.trim()) {
+                paragraph.append($createTextNode(line));
+              }
+              root.append(paragraph);
+            }
+            console.log('✅ CollaborativeEditor: Applied remote plain text content');
+          });
+        }
+        
+        console.log('✅ CollaborativeEditor: Content update complete, cursors cleared. Fresh cursor positions will be needed.');
+        
+        // Show temporary message about cursor clearing
+        if (remoteCursors.size > 0) {
+          console.log('ℹ️ CollaborativeEditor: Remote cursors cleared due to content update. Users will need to move their cursors to re-sync positions.');
+        }
+        
+        // Request fresh cursor positions from all users after a brief delay
+        // This ensures the content update is fully processed before requesting fresh positions
+        setTimeout(() => {
+          if (webSocketClientRef.current) {
+            console.log('📡 Requesting fresh cursor positions from all users after content update');
+            try {
+              webSocketClientRef.current.send({
+                type: 'request_cursor_refresh',
+                data: {
+                  reason: 'content_updated',
+                  timestamp: new Date().toISOString()
+                }
+              });
+            } catch (error) {
+              console.error('❌ Failed to send cursor refresh request:', error);
+            }
+          }
+        }, 200);
+        
+                // Force current user to send fresh cursor position after content update
+        // This ensures cursor positions are based on the NEW node structure
+        setTimeout(() => {
+          console.log('🔄 CollaborativeEditor: Triggering fresh cursor position update after content update');
           
-          // Trigger cursor repositioning after content update
-          setTimeout(() => {
-            handleContentUpdated();
-          }, 50);
-        });
+          // Also trigger refresh request handler for the current user's CursorTrackingPlugin
+          if (webSocketClientRef.current) {
+            console.log('🔄 Triggering cursor refresh for current user via plugin');
+            // Simulate a cursor refresh request to the current user's plugin
+            const fakeRefreshMessage = {
+              type: 'request_cursor_refresh',
+              data: {
+                reason: 'content_updated_local',
+                timestamp: new Date().toISOString()
+              }
+            };
+            
+            // Emit the refresh request to trigger the CursorTrackingPlugin's handler
+            try {
+              if (webSocketClientRef.current) {
+                webSocketClientRef.current.emit('request_cursor_refresh', fakeRefreshMessage);
+              } else {
+                throw new Error('WebSocket client not available');
+              }
+            } catch (error) {
+              console.log('⚠️ Could not emit refresh request to plugin, using fallback');
+              
+              // Fallback: directly read current selection and send position
+              if (editorRef.current) {
+                editorRef.current.getEditorState().read(() => {
+                  const selection = $getSelection();
+                  if ($isRangeSelection(selection)) {
+                    const anchorNode = selection.anchor.getNode();
+                    const focusNode = selection.focus.getNode();
+                    
+                    const position: CursorPosition = {
+                      userId: effectiveUserId,
+                      userName: currentUser.name || currentUser.email,
+                      userEmail: currentUser.email,
+                      position: {
+                        key: anchorNode.getKey(),
+                        offset: selection.anchor.offset,
+                        type: selection.isCollapsed() ? 'cursor' : 'selection',
+                        anchor: {
+                          key: anchorNode.getKey(),
+                          offset: selection.anchor.offset
+                        },
+                        focus: {
+                          key: focusNode.getKey(),
+                          offset: selection.focus.offset
+                        }
+                      },
+                      timestamp: new Date().toISOString()
+                    };
+                    
+                    console.log('📡 Sending fallback cursor position after remote content update');
+                    if (webSocketClientRef.current) {
+                      try {
+                        webSocketClientRef.current.send({
+                          type: 'cursor_position',
+                          data: position
+                        });
+                        
+                        lastCursorPositionRef.current = position;
+                      } catch (error) {
+                        console.error('❌ Failed to send fallback cursor position:', error);
+                      }
+                    } else {
+                      console.log('⚠️ Cannot send fallback cursor position - WebSocket client not available');
+                    }
+                  }
+                });
+              }
+            }
+          }
+        }, 400); // Longer delay to ensure content processing is complete
+         
       } catch (error) {
         console.error('❌ CollaborativeEditor: Failed to apply remote content:', error);
+      } finally {
+        // Clear the flag after update is complete
+        setTimeout(() => {
+          isApplyingRemoteUpdate.current = false;
+          console.log('✅ CollaborativeEditor: Cleared remote update flag');
+        }, 200); // Small delay to ensure all change handlers have completed
       }
+    } else {
+      console.log('⚠️ CollaborativeEditor: No editor ref available for content update');
     }
-  }, [handleContentUpdated]);
+  }, [remoteCursors.size, currentUser.id, currentUser.email, currentUser.name]);
+
+  // Lightweight real-time content update that preserves cursors
+  const applyRealTimeContentUpdate = useCallback((content: string) => {
+    console.log('⚡ CollaborativeEditor: Applying real-time content update (lightweight):', content.length, 'chars');
+    
+    if (editorRef.current && isLexicalJson(content)) {
+      try {
+        // Set flag to prevent auto-save during remote update
+        isApplyingRemoteUpdate.current = true;
+        console.log('🚫 CollaborativeEditor: Setting remote update flag for real-time update');
+        
+        // For real-time updates, use setEditorState to preserve formatting
+        const editorState = editorRef.current.parseEditorState(content);
+        editorRef.current.setEditorState(editorState);
+        
+        console.log('✅ CollaborativeEditor: Applied real-time Lexical content, triggering cursor repositioning');
+        
+        // For real-time updates, trigger immediate cursor repositioning 
+        // without updating lastContentUpdateTime to avoid blocking cursors
+        if (remoteCursors.size > 0) {
+          console.log('🎯 CollaborativeEditor: Triggering cursor repositioning for', remoteCursors.size, 'remote cursors');
+          
+          // Trigger repositioning after a brief delay to ensure DOM is updated
+          setTimeout(() => {
+            triggerRepositioning();
+          }, 30); // Shorter delay for real-time updates
+        }
+        
+        // Also send current user's cursor position to ensure it stays in sync
+        if (webSocketClientRef.current) {
+          setTimeout(() => {
+            console.log('📍 Sending current user cursor position after real-time update');
+            
+            if (editorRef.current) {
+              editorRef.current.getEditorState().read(() => {
+                const selection = $getSelection();
+                if ($isRangeSelection(selection)) {
+                  const anchorNode = selection.anchor.getNode();
+                  const focusNode = selection.focus.getNode();
+                  
+                  const position: CursorPosition = {
+                    userId: effectiveUserId,
+                    userName: currentUser.name || currentUser.email,
+                    userEmail: currentUser.email,
+                    position: {
+                      key: anchorNode.getKey(),
+                      offset: selection.anchor.offset,
+                      type: selection.isCollapsed() ? 'cursor' : 'selection',
+                      anchor: {
+                        key: anchorNode.getKey(),
+                        offset: selection.anchor.offset
+                      },
+                      focus: {
+                        key: focusNode.getKey(),
+                        offset: selection.focus.offset
+                      }
+                    },
+                    timestamp: new Date().toISOString()
+                  };
+                  
+                  if (webSocketClientRef.current) {
+                    try {
+                      webSocketClientRef.current.send({
+                        type: 'cursor_position',
+                        data: position
+                      });
+                      
+                      lastCursorPositionRef.current = position;
+                      console.log('📡 Sent updated cursor position after real-time update');
+                    } catch (error) {
+                      console.error('❌ Failed to send cursor position after real-time update:', error);
+                    }
+                  }
+                }
+              });
+            }
+          }, 100);
+        }
+        
+      } catch (error) {
+        console.error('❌ CollaborativeEditor: Failed to apply real-time content:', error);
+      } finally {
+        // Clear the flag after a short delay
+        setTimeout(() => {
+          isApplyingRemoteUpdate.current = false;
+          console.log('✅ CollaborativeEditor: Cleared remote update flag (real-time)');
+        }, 30); // Shorter delay for real-time updates
+      }
+    } else {
+      console.log('⚠️ CollaborativeEditor: Invalid content for real-time update');
+    }
+  }, [remoteCursors.size, currentUser.id, currentUser.email, currentUser.name, triggerRepositioning]);
   
   // Handle cursor updates
   const handleCursorUpdate = useCallback((position: CursorPosition) => {
@@ -906,81 +1233,97 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       });
       
       // Send cursor position to other users
-      webSocketClientRef.current.send({
-        type: 'cursor_position',
-        data: position
-      });
-      
-      console.log('✅ Cursor position sent successfully');
+      try {
+        webSocketClientRef.current.send({
+          type: 'cursor_position',
+          data: position
+        });
+        console.log('✅ Cursor position sent successfully');
+      } catch (error) {
+        console.error('❌ Failed to send cursor position:', error);
+      }
     } else {
       console.log('❌ No WebSocket client available for cursor update');
     }
   }, []);
   
+  // Track processed messages to prevent duplicates
+  const processedMessagesRef = useRef<Set<string>>(new Set());
+  
   // Handle remote cursor position updates
   const handleRemoteCursorUpdate = useCallback((message: WebSocketMessage) => {
-    console.log('🖱️ handleRemoteCursorUpdate called with message:', message);
     
     if (message.data && message.data.position) {
       const cursorPosition: CursorPosition = message.data;
-      console.log('🖱️ Processing cursor position:', cursorPosition);
       
-      // Don't show our own cursor
-      if (cursorPosition.userId === currentUser.id || cursorPosition.userId === currentUser.email) {
-        console.log('🖱️ Ignoring own cursor position');
+      // Extract session ID from the effectiveUserId (format: baseUserId_sessionId)
+      const sessionId = localStorage.getItem('sessionId') || 'unknown';
+      const cursorSessionId = cursorPosition.userId.includes('_') ? 
+                         cursorPosition.userId.split('_').pop() : 
+                         null;
+      
+      // Extract base user ID from the effectiveUserId
+      const baseUserId = cursorPosition.userId.includes('_') ? 
+                        cursorPosition.userId.split('_')[0] : 
+                        cursorPosition.userId;
+      
+      // Check if this is our own cursor by comparing both base user ID and session ID
+      const isOwnCursor = (baseUserId === currentUser.id || baseUserId === currentUser.email) &&
+                         cursorSessionId === sessionId;
+      
+      if (isOwnCursor) {
+        console.log('🖱️ Ignoring own cursor (same user and session)');
+        return;
+      }
+      
+      // Check if we recently updated content - if so, briefly ignore cursor updates
+      // This prevents positioning cursors with stale node keys after content updates
+      const now = Date.now();
+      const timeSinceUpdate = now - lastContentUpdateTime.current;
+      
+      // Also check the timestamp of the cursor position itself
+      const cursorTimestamp = new Date(cursorPosition.timestamp).getTime();
+      const timeSinceCursorUpdate = now - cursorTimestamp;
+      
+      // Ignore cursor updates if they're much older than 15 seconds or very recent content update
+      if (timeSinceUpdate < 150 || timeSinceCursorUpdate > 15000) {
+        if (timeSinceUpdate < 150) {
+          console.log('🚫 Briefly ignoring cursor update due to recent content update');
+        }
         return;
       }
       
       setRemoteCursors(prev => {
         const newCursors = new Map(prev);
         newCursors.set(cursorPosition.userId, cursorPosition);
-        console.log('🖱️ Updated remote cursors map:', {
-          userId: cursorPosition.userId,
-          userName: cursorPosition.userName,
-          totalCursors: newCursors.size,
-          allCursorIds: Array.from(newCursors.keys())
-        });
+        console.log('🖱️ Updated cursor for:', cursorPosition.userName, '(total:', newCursors.size, ')');
         return newCursors;
       });
-    } else {
-      console.log('🖱️ No cursor position data in message');
     }
   }, [currentUser.id, currentUser.email]);
   
   // Handle typing indicators
   const handleTypingStart = useCallback((message: any) => {
-    console.log('⌨️ User started typing:', message);
     if (message.data && message.userId !== currentUser.id && message.userId !== currentUser.email) {
-      console.log('⌨️ Adding user to typing list:', message.userId);
       setTypingUsers(prev => {
         const newTypingUsers = new Set(prev);
         newTypingUsers.add(message.userId);
-        console.log('⌨️ Current typing users:', Array.from(newTypingUsers));
         return newTypingUsers;
       });
     }
   }, [currentUser.id, currentUser.email]);
   
   const handleTypingStop = useCallback((message: any) => {
-    console.log('⌨️ User stopped typing:', message);
     if (message.data && message.userId !== currentUser.id && message.userId !== currentUser.email) {
-      console.log('⌨️ Removing user from typing list:', message.userId);
       setTypingUsers(prev => {
         const newTypingUsers = new Set(prev);
         newTypingUsers.delete(message.userId);
-        console.log('⌨️ Current typing users:', Array.from(newTypingUsers));
         return newTypingUsers;
       });
     }
   }, [currentUser.id, currentUser.email]);
   
-  console.log('🔧 CollaborativeEditor state:', {
-    connectionStatus,
-    currentContentLength: currentContent?.length,
-    lastSavedContentLength: lastSavedContent?.length,
-    isInitialized: isInitializedRef.current,
-    editorRefExists: !!editorRef.current
-  });
+  // Remove excessive state logging
   
   // Create stable editor config with initial content
   const editorConfig = useMemo(() => ({
@@ -1055,35 +1398,33 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           console.log('✅ Submission WebSocket client created');
           
-          // Add raw message listener for debugging
-          client.on('message', (rawMessage) => {
-            console.log('📨 RAW MESSAGE RECEIVED:', rawMessage);
-          });
-          
-          // Add debugging for each specific event handler
-          const debugHandleRemoteCursorUpdate = (message: WebSocketMessage) => {
-            console.log('🖱️ CURSOR_POSITION EVENT RECEIVED:', message);
-            handleRemoteCursorUpdate(message);
-          };
-          
-          const debugHandleTypingStart = (message: WebSocketMessage) => {
-            console.log('⌨️ TYPING_START EVENT RECEIVED:', message);
-            handleTypingStart(message);
-          };
-          
-          const debugHandleTypingStop = (message: WebSocketMessage) => {
-            console.log('⌨️ TYPING_STOP EVENT RECEIVED:', message);
-            handleTypingStop(message);
-          };
+          // Add event handlers without excessive logging
           
           client.on('connected', () => {
             setConnectionStatus('connected');
             console.log('✅ WebSocket connected successfully');
           });
           
-          client.on('cursor_position', debugHandleRemoteCursorUpdate);
-          client.on('typing_start', debugHandleTypingStart);
-          client.on('typing_stop', debugHandleTypingStop);
+          client.on('cursor_position', handleRemoteCursorUpdate);
+          client.on('typing_start', handleTypingStart);
+          client.on('typing_stop', handleTypingStop);
+          
+          client.on('request_cursor_refresh', (message: any) => {
+            console.log('🔄 CURSOR_REFRESH_REQUEST RECEIVED:', message);
+            // Immediately send current cursor position if we have one
+            if (editorRef.current && lastCursorPositionRef.current) {
+              console.log('📡 Sending current cursor position in response to refresh request');
+              setTimeout(() => {
+                // Re-send the last known cursor position
+                client.send({
+                  type: 'cursor_position',
+                  data: lastCursorPositionRef.current
+                });
+              }, 100); // Small delay to ensure the request is processed
+            } else {
+              console.log('⚠️ No current cursor position to send in response to refresh request');
+            }
+          });
           
           client.on('user_joined', (message) => {
             console.log('👤 User joined:', message.userName);
@@ -1131,18 +1472,52 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               // For now, just log that we received an update
             }
           });
+
+          client.on('realtime_content_update', (message) => {
+            console.log('⚡ Real-time content update by remote user:', message);
+            // Don't update our own content to avoid infinite loops
+            if (message.userId !== (currentUser.id || currentUser.email)) {
+              console.log('⚡ Applying real-time content update from remote user:', message.userId);
+              
+              if (message.data && message.data.lexicalContent) {
+                const { lexicalContent, cursorPosition } = message.data;
+                
+                console.log('⚡ CollaborativeEditor: Processing real-time update:', {
+                  lexicalContentLength: lexicalContent?.length,
+                  hasCursorPosition: !!cursorPosition,
+                  isValidLexical: isLexicalJson(lexicalContent)
+                });
+                
+                // Validate the content before applying
+                if (isLexicalJson(lexicalContent)) {
+                  console.log('⚡ CollaborativeEditor: Applying real-time content update (lightweight)');
+                  applyRealTimeContentUpdate(lexicalContent);
+                } else {
+                  console.error('❌ CollaborativeEditor: Invalid Lexical content in real-time update');
+                }
+              } else {
+                console.error('❌ CollaborativeEditor: No lexical content in real-time update');
+              }
+            }
+          });
           
           webSocketClientRef.current = client;
           setConnectionStatus('connected');
+          setWebSocketClientReady(true);
+          console.log('🔌 WebSocket client ready, enabling cursor tracking');
           
           // Notify parent that WebSocket client is ready
           if (onWebSocketClientReady) {
             onWebSocketClientReady(client);
           }
           
-          // Register remote content update function
+          // Register remote content update functions
           if (onRemoteContentUpdate) {
+            // Register the full update function for regular updates
             onRemoteContentUpdate(applyRemoteContentUpdate);
+            
+            // Also store the real-time function for TrackedChangesEditor
+            client.applyRealTimeUpdate = applyRealTimeContentUpdate;
           }
           
           console.log('✅ Submission WebSocket fully configured');
@@ -1168,6 +1543,23 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           client.on('typing_start', handleTypingStart);
           client.on('typing_stop', handleTypingStop);
           
+          client.on('request_cursor_refresh', (message: any) => {
+            console.log('🔄 CURSOR_REFRESH_REQUEST RECEIVED (document):', message);
+            // Immediately send current cursor position if we have one
+            if (editorRef.current && lastCursorPositionRef.current) {
+              console.log('📡 Sending current cursor position in response to refresh request (document)');
+              setTimeout(() => {
+                // Re-send the last known cursor position
+                client.send({
+                  type: 'cursor_position',
+                  data: lastCursorPositionRef.current
+                });
+              }, 100); // Small delay to ensure the request is processed
+            } else {
+              console.log('⚠️ No current cursor position to send in response to refresh request (document)');
+            }
+          });
+          
           client.on('error', () => {
             setConnectionStatus('error');
             console.error('❌ Document WebSocket connection error');
@@ -1175,15 +1567,21 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           webSocketClientRef.current = client;
           setConnectionStatus('connected');
+          setWebSocketClientReady(true);
+          console.log('🔌 WebSocket client ready, enabling cursor tracking');
           
           // Notify parent that WebSocket client is ready
           if (onWebSocketClientReady) {
             onWebSocketClientReady(client);
           }
           
-          // Register remote content update function
+          // Register remote content update functions
           if (onRemoteContentUpdate) {
+            // Register the full update function for regular updates
             onRemoteContentUpdate(applyRemoteContentUpdate);
+            
+            // Also store the real-time function for TrackedChangesEditor
+            client.applyRealTimeUpdate = applyRealTimeContentUpdate;
           }
           
           console.log('✅ Document WebSocket fully configured');
@@ -1191,6 +1589,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       } catch (error) {
         console.error('❌ Failed to connect WebSocket:', error);
         setConnectionStatus('error');
+        setWebSocketClientReady(false);
+        webSocketClientRef.current = null;
       }
     };
     
@@ -1199,6 +1599,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     return () => {
       // Cleanup WebSocket connection
       console.log('🧹 Cleaning up WebSocket connection...');
+      setWebSocketClientReady(false);
+      webSocketClientRef.current = null;
       if (webSocketManagerRef.current) {
         if (useSubmissionWebSocket) {
           webSocketManagerRef.current.disconnectFromSubmission(documentId, currentUser.id || currentUser.email);
@@ -1227,42 +1629,111 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         console.log('📊 Content comparison:', {
           oldContentLength: currentContent?.length || 0,
           newContentLength: jsonContent?.length || 0,
-          textContentLength: textContent.length
+          textContentLength: textContent.length,
+          isRemoteUpdate: isApplyingRemoteUpdate.current
         });
         
         setCurrentContent(jsonContent);
         contentChangedRef.current = true;
         
-        // Notify parent component with the full JSON
-        onContentChange(jsonContent);
+        // Get cursor position information before notifying parent
+        let cursorPosition: CursorPosition | undefined;
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) {
+          const anchorNode = selection.anchor.getNode();
+          const focusNode = selection.focus.getNode();
+          
+          cursorPosition = {
+            userId: effectiveUserId,
+            userName: currentUser.name || currentUser.email,
+            userEmail: currentUser.email,
+            position: {
+              key: anchorNode.getKey(),
+              offset: selection.anchor.offset,
+              type: selection.isCollapsed() ? 'cursor' : 'selection',
+              anchor: {
+                key: anchorNode.getKey(),
+                offset: selection.anchor.offset
+              },
+              focus: {
+                key: focusNode.getKey(),
+                offset: selection.focus.offset
+              }
+            },
+            timestamp: new Date().toISOString()
+          };
+        }
+        
+        // Only notify parent component if this is NOT a remote update
+        // This prevents auto-save from triggering when remote content is applied
+        if (!isApplyingRemoteUpdate.current) {
+          console.log('📤 Notifying parent component of content change (local edit) with cursor position:', {
+            hasCursorPosition: !!cursorPosition,
+            cursorType: cursorPosition?.position.type
+          });
+          onContentChange(jsonContent, cursorPosition);
+        } else {
+          console.log('🚫 Skipping parent notification (remote update)');
+        }
+        
+        // After content change, send fresh cursor position to other users
+        // This ensures that after any content update, other users get updated cursor positions
+        if (webSocketClientRef.current && cursorPosition) {
+          console.log('📍 Sending fresh cursor position after content change');
+          
+          // Send immediately with fresh node keys
+          setTimeout(() => {
+            console.log('📡 Sending immediate fresh cursor position with new node keys:', {
+              anchorKey: cursorPosition!.position.key,
+              anchorOffset: cursorPosition!.position.offset
+            });
+            
+            if (webSocketClientRef.current) {
+              try {
+                webSocketClientRef.current.send({
+                  type: 'cursor_position',
+                  data: cursorPosition
+                });
+              } catch (error) {
+                console.error('❌ Failed to send immediate cursor position:', error);
+              }
+            } else {
+              console.log('⚠️ Cannot send cursor position - WebSocket client not available');
+            }
+          }, 100); // Small delay to ensure content processing is complete
+        }
         
         // Notify other users of content changes via WebSocket
         if (webSocketClientRef.current) {
-          console.log('📤 Sending content update to WebSocket...');
-          webSocketClientRef.current.send({
-            type: 'content_updated',
-            documentId: documentId,
-            data: {
-              content: jsonContent,
-              timestamp: new Date().toISOString()
-            }
-          });
-          console.log('✅ Content update sent');
-          
-          // Handle typing indicators
-          if (!isTypingRef.current) {
-            isTypingRef.current = true;
-            console.log('⌨️ Sending typing_start indicator...');
+          try {
+            console.log('📤 Sending content update to WebSocket...');
             webSocketClientRef.current.send({
-              type: 'typing_start',
+              type: 'content_updated',
               documentId: documentId,
               data: {
-                userId: currentUser.id || currentUser.email,
-                userName: currentUser.name || currentUser.email,
+                content: jsonContent,
                 timestamp: new Date().toISOString()
               }
             });
-            console.log('✅ Typing start sent');
+            console.log('✅ Content update sent');
+            
+            // Handle typing indicators
+            if (!isTypingRef.current) {
+              isTypingRef.current = true;
+              console.log('⌨️ Sending typing_start indicator...');
+              webSocketClientRef.current.send({
+                type: 'typing_start',
+                documentId: documentId,
+                data: {
+                  userId: currentUser.id || currentUser.email,
+                  userName: currentUser.name || currentUser.email,
+                  timestamp: new Date().toISOString()
+                }
+              });
+              console.log('✅ Typing start sent');
+            }
+          } catch (error) {
+            console.error('❌ Failed to send content update or typing indicator:', error);
           }
           
           // Clear previous timeout
@@ -1420,7 +1891,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     }
   };
   
-  const hasUnsavedChanges = currentContent !== lastSavedContent;
+  // Remove the separate save logic since TrackedChangesEditor handles all saving via auto-save
+  // const hasUnsavedChanges = currentContent !== lastSavedContent;
   
   return (
     <div className={`collaborative-editor ${className}`}>
@@ -1430,9 +1902,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           <span className="connection-status">
             {getConnectionStatusIcon()} {getConnectionStatusText()}
           </span>
-          {hasUnsavedChanges && (
-            <span className="unsaved-indicator">• Unsaved changes</span>
-          )}
+          {/* Removed unsaved changes indicator - handled by TrackedChangesEditor auto-save */}
           {/* Typing indicators */}
           {typingUsers.size > 0 && (
             <div className="typing-indicators">
@@ -1460,15 +1930,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             onUserClick={() => setShowPresencePanel(!showPresencePanel)}
           />
           
-          {onSave && (
-            <button 
-              className="save-button"
-              onClick={handleSave}
-              disabled={!hasUnsavedChanges}
-            >
-              💾 Save Locally
-            </button>
-          )}
+          {/* Removed Save Locally button - TrackedChangesEditor handles all saving via auto-save */}
         </div>
       </div>
       
@@ -1503,12 +1965,16 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <ListPlugin />
               <LinkPlugin />
               <EditorRefPlugin editorRef={editorRef} />
-              <CursorTrackingPlugin 
-                webSocketClient={webSocketClientRef.current}
-                currentUser={currentUser}
-                documentId={documentId}
-                onCursorUpdate={handleCursorUpdate}
-              />
+              {/* Only render CursorTrackingPlugin when WebSocket is connected */}
+              {webSocketClientReady && webSocketClientRef.current && (
+                <CursorTrackingPlugin 
+                  webSocketClient={webSocketClientRef.current}
+                  currentUser={currentUser}
+                  documentId={documentId}
+                  onCursorUpdate={handleCursorUpdate}
+                  effectiveUserId={effectiveUserId}
+                />
+              )}
               <RemoteCursorPlugin
                 remoteCursors={remoteCursors}
                 currentUserId={currentUser.id || currentUser.email}

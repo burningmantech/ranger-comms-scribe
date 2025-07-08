@@ -30,7 +30,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
@@ -63,6 +63,7 @@ export class SubmissionWebSocketClient {
   private readonly MAX_MISSED_HEARTBEATS = 2; // Fail faster
   private messageQueue: Array<Omit<WebSocketMessage, 'submissionId' | 'userId' | 'userName' | 'userEmail' | 'timestamp'>> = [];
   private isConnecting = false;
+  public applyRealTimeUpdate?: (content: string) => void;
 
   constructor(
     submissionId: string,
@@ -491,6 +492,7 @@ export class CollaborativeWebSocketClient {
   private isConnecting = false;
   private documentVersion = 0;
   private pendingOperations: TextOperation[] = [];
+  public applyRealTimeUpdate?: (content: string) => void;
 
   constructor(
     documentId: string,

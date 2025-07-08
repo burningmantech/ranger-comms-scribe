@@ -112,6 +112,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const lastCursorPositionRef = useRef<any>(null);
   const remoteUpdateFunctionRef = useRef<((content: string) => void) | null>(null);
 
+  // Real-time character-by-character sync state
+  const realTimeUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastRealTimeUpdateRef = useRef<string>('');
+  const pendingRealTimeUpdateRef = useRef<boolean>(false);
+  const realTimeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isApplyingRealTimeUpdateRef = useRef<boolean>(false);
+
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
 
@@ -582,7 +589,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         };
         
         console.log('📡 Sending WebSocket update for auto-save:', updateMessage);
-        webSocketClientRef.current.send(updateMessage);
+        if (webSocketClientRef.current) {
+          try {
+            webSocketClientRef.current.send(updateMessage);
+          } catch (error) {
+            console.error('❌ Failed to send WebSocket update for auto-save:', error);
+          }
+        } else {
+          console.log('⚠️ Cannot send WebSocket update - client not available');
+        }
       }
       
       // Call the save function
@@ -636,6 +651,115 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [getDisplayableText]);
 
+  // Send real-time character-by-character updates
+  const sendRealTimeUpdate = useCallback((content: string, cursorPosition?: any) => {
+    console.log('🚀 sendRealTimeUpdate called:', {
+      hasContent: !!content,
+      contentLength: content?.length,
+      hasWebSocketClient: !!webSocketClientRef.current,
+      hasCursorPosition: !!cursorPosition,
+      contentPreview: content?.substring(0, 100)
+    });
+
+    if (!webSocketClientRef.current) {
+      console.log('⚠️ Cannot send real-time update: WebSocket not connected');
+      return;
+    }
+
+    // Ensure we're sending valid Lexical JSON content
+    if (!content || !isLexicalJson(content)) {
+      console.error('❌ Cannot send real-time update: Invalid Lexical content:', {
+        hasContent: !!content,
+        contentType: typeof content,
+        isLexicalJson: content ? isLexicalJson(content) : false,
+        contentPreview: content?.substring(0, 200)
+      });
+      return;
+    }
+
+    // Extract plain text for the content field (for backwards compatibility)
+    const plainTextContent = getDisplayableText(content);
+
+    const updateMessage = {
+      type: 'realtime_content_update' as const,
+      data: {
+        content: plainTextContent, // Plain text for display/compatibility
+        lexicalContent: content,   // Full Lexical JSON for editor updates
+        cursorPosition: cursorPosition || lastCursorPositionRef.current,
+        timestamp: new Date().toISOString(),
+        userId: effectiveUserId,
+        userName: currentUser.name || currentUser.email,
+        isRealTime: true
+      }
+    };
+
+    console.log('📤 About to send real-time update message:', {
+      messageType: updateMessage.type,
+      plainTextLength: plainTextContent.length,
+      lexicalContentLength: content.length,
+      userId: updateMessage.data.userId,
+      userName: updateMessage.data.userName,
+      hasCursorPosition: !!updateMessage.data.cursorPosition
+    });
+
+    try {
+      webSocketClientRef.current.send(updateMessage);
+      console.log('✅ Successfully sent real-time update:', {
+        contentLength: plainTextContent.length,
+        lexicalContentLength: content.length,
+        hasCursorPosition: !!updateMessage.data.cursorPosition,
+        isValidLexical: isLexicalJson(content)
+      });
+    } catch (error) {
+      console.error('❌ Failed to send real-time update:', error);
+    }
+  }, [effectiveUserId, currentUser.name, currentUser.email, getDisplayableText]);
+
+  // Throttled real-time update sender (sends updates every 150ms max)
+  const throttledRealTimeUpdate = useCallback((content: string, cursorPosition?: any) => {
+    console.log('⏱️ throttledRealTimeUpdate called:', {
+      hasContent: !!content,
+      contentLength: content?.length,
+      isApplyingRealTimeUpdate: isApplyingRealTimeUpdateRef.current,
+      isPendingUpdate: pendingRealTimeUpdateRef.current,
+      hasCursorPosition: !!cursorPosition
+    });
+
+    // Skip if we're applying a real-time update
+    if (isApplyingRealTimeUpdateRef.current) {
+      console.log('🔄 Skipping throttled real-time update - applying remote update');
+      return;
+    }
+    
+    // Store the latest content and cursor position
+    lastRealTimeUpdateRef.current = content;
+    lastCursorPositionRef.current = cursorPosition;
+    
+    // If we're not already pending an update, schedule one
+    if (!pendingRealTimeUpdateRef.current) {
+      console.log('⏰ Scheduling real-time update in 150ms...');
+      pendingRealTimeUpdateRef.current = true;
+      
+      realTimeUpdateTimeoutRef.current = setTimeout(() => {
+        console.log('⏰ Real-time update timeout triggered');
+        
+        // Double-check we're not applying a remote update before sending
+        if (isApplyingRealTimeUpdateRef.current) {
+          console.log('🔄 Skipping scheduled real-time update - applying remote update');
+          pendingRealTimeUpdateRef.current = false;
+          return;
+        }
+        
+        console.log('📤 Executing scheduled real-time update');
+        // Send the most recent content
+        sendRealTimeUpdate(lastRealTimeUpdateRef.current, lastCursorPositionRef.current);
+        pendingRealTimeUpdateRef.current = false;
+      }, 150); // 150ms throttle - fast enough to feel real-time but not overwhelming
+    } else {
+      console.log('⏰ Real-time update already pending, updating content for next send');
+    }
+  }, [sendRealTimeUpdate]);
+
   // Debounced auto-save (5 seconds after typing stops)
   const scheduleAutoSave = useCallback(() => {
     if (!isAutoSaveEnabledRef.current) {
@@ -684,71 +808,178 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleWebSocketUpdate = useCallback((message: WebSocketMessage) => {
     // Don't process our own updates
     if (message.userId === (currentUser.id || currentUser.email)) {
+      console.log('📨 Ignoring own WebSocket update');
       return;
     }
     
-    console.log('📨 Received WebSocket update:', message);
+    console.log('📨 TrackedChangesEditor: Received remote WebSocket update:', message);
     
+    // Handle real-time content updates (character-by-character)
+    if (message.type === 'realtime_content_update' && message.data) {
+      const { content, lexicalContent, cursorPosition, isRealTime, userId, userName } = message.data;
+      
+      console.log('⚡ TrackedChangesEditor: Processing real-time update from', userName, {
+        contentLength: content?.length,
+        lexicalContentLength: lexicalContent?.length,
+        hasCursorPosition: !!cursorPosition,
+        isRealTime,
+        lexicalContentType: typeof lexicalContent,
+        isLexicalJson: lexicalContent ? isLexicalJson(lexicalContent) : false,
+        lexicalPreview: lexicalContent?.substring(0, 200)
+      });
+      
+      // Ensure we have valid Lexical content
+      if (!lexicalContent || !isLexicalJson(lexicalContent)) {
+        console.error('❌ TrackedChangesEditor: Invalid Lexical content in real-time update:', {
+          hasLexicalContent: !!lexicalContent,
+          lexicalContentType: typeof lexicalContent,
+          isLexicalJson: lexicalContent ? isLexicalJson(lexicalContent) : false
+        });
+        return; // Skip invalid content
+      }
+      
+      // Apply the real-time update immediately
+      // Try to use the specialized real-time update function first
+      if (webSocketClientRef.current && webSocketClientRef.current.applyRealTimeUpdate) {
+        console.log('⚡ TrackedChangesEditor: Applying real-time update via specialized function');
+        try {
+          // Set flag to prevent feedback loop
+          isApplyingRealTimeUpdateRef.current = true;
+          
+          webSocketClientRef.current.applyRealTimeUpdate(lexicalContent);
+          
+          // Update our state to match
+          setEditedProposedContent(lexicalContent);
+          
+          // Show brief visual feedback
+          setRemoteUpdateStatus('applied');
+          setTimeout(() => {
+            setRemoteUpdateStatus('none');
+          }, 1000);
+          
+          console.log('✅ TrackedChangesEditor: Real-time update applied successfully via specialized function');
+          
+          // Reset flag after a short delay to ensure the change event is processed
+          setTimeout(() => {
+            isApplyingRealTimeUpdateRef.current = false;
+          }, 100);
+        } catch (error) {
+          console.error('❌ TrackedChangesEditor: Error applying real-time update via specialized function:', error);
+          isApplyingRealTimeUpdateRef.current = false;
+        }
+      } else if (remoteUpdateFunctionRef.current) {
+        console.log('⚡ TrackedChangesEditor: Applying real-time update via fallback remote update function');
+        try {
+          // Set flag to prevent feedback loop
+          isApplyingRealTimeUpdateRef.current = true;
+          
+          remoteUpdateFunctionRef.current(lexicalContent);
+          
+          // Update our state to match
+          setEditedProposedContent(lexicalContent);
+          
+          // Show brief visual feedback
+          setRemoteUpdateStatus('applied');
+          setTimeout(() => {
+            setRemoteUpdateStatus('none');
+          }, 1000);
+          
+          console.log('✅ TrackedChangesEditor: Real-time update applied successfully via fallback function');
+          
+          // Reset flag after a short delay to ensure the change event is processed
+          setTimeout(() => {
+            isApplyingRealTimeUpdateRef.current = false;
+          }, 100);
+        } catch (error) {
+          console.error('❌ TrackedChangesEditor: Error applying real-time update via fallback function:', error);
+          isApplyingRealTimeUpdateRef.current = false;
+        }
+      } else {
+        console.log('⚠️ TrackedChangesEditor: No remote update function available for real-time update');
+        // Fallback to state update - but only if we have valid Lexical content
+        if (lexicalContent && isLexicalJson(lexicalContent)) {
+          // Set flag to prevent feedback loop
+          isApplyingRealTimeUpdateRef.current = true;
+          
+          setEditedProposedContent(lexicalContent);
+          console.log('✅ TrackedChangesEditor: Applied real-time update via state fallback');
+          
+          // Reset flag after a short delay
+          setTimeout(() => {
+            isApplyingRealTimeUpdateRef.current = false;
+          }, 100);
+        } else {
+          console.error('❌ TrackedChangesEditor: Cannot apply real-time update - invalid Lexical content');
+        }
+      }
+      
+      return; // Exit early for real-time updates
+    }
+    
+    // Handle regular content updates (auto-save, manual save)
     if (message.type === 'content_updated' && message.data) {
       const { field, newValue, lexicalContent, isAutoSave, cursorPosition, preserveEditingState } = message.data;
       
       if (field === 'proposedVersions.richTextContent' && lexicalContent) {
-        console.log('🔄 Processing remote lexical update...', {
+        console.log('🔄 TrackedChangesEditor: Processing remote lexical update...', {
           isAutoSave,
           preserveEditingState,
-          hasCursorPosition: !!cursorPosition
+          hasCursorPosition: !!cursorPosition,
+          hasRemoteUpdateFunction: !!remoteUpdateFunctionRef.current,
+          lexicalContentLength: lexicalContent?.length
         });
         
         // More intelligent handling of when to apply updates
         const now = Date.now();
         const timeSinceLastAutoSave = lastAutoSaveTime ? now - lastAutoSaveTime.getTime() : Infinity;
-        const timeSinceLastEdit = now - (Date.now()); // This will be updated with actual edit timestamp
         
         // Determine if the user is actively editing
         const isActivelyEditing = timeSinceLastAutoSave < 15000; // 15 seconds since last auto-save
         const shouldPreserveEditing = preserveEditingState && isActivelyEditing;
         
-                 if (!shouldPreserveEditing) {
-           console.log('🔄 Applying remote update (user not actively editing)');
-           
-           // Show visual feedback that a remote update is being applied
-           setRemoteUpdateStatus('applying');
-           
-           // Store current cursor position before update
-           const currentCursor = lastCursorPositionRef.current;
-           
-           // Apply the content update through the CollaborativeEditor
-           if (remoteUpdateFunctionRef.current) {
-             console.log('🔄 Triggering editor update via remote update function');
-             remoteUpdateFunctionRef.current(lexicalContent);
-           } else {
-             console.log('⚠️ No remote update function available, falling back to state update');
-             setEditedProposedContent(lexicalContent);
-           }
-           
-           // Also update our state
-           setEditedProposedContent(lexicalContent);
-           setLastSavedProposedContent(lexicalContent);
-           
-           // If the update included cursor position information, we can use it
-           // to better position other users' cursors
-           if (cursorPosition) {
-             console.log('📍 Remote update includes cursor position:', cursorPosition);
-             // The CollaborativeEditor will handle cursor positioning
-           }
-           
-           // Show applied status briefly
-           setRemoteUpdateStatus('applied');
-           setTimeout(() => {
-             setRemoteUpdateStatus('none');
-           }, 2000);
-           
-           // Show a notification about the update
-           if (onRefreshNeeded) {
-             onRefreshNeeded();
-           }
-         } else {
-          console.log('⚠️ User is actively editing, deferring remote update');
+        if (!shouldPreserveEditing) {
+          console.log('🔄 TrackedChangesEditor: Applying remote update (user not actively editing)');
+          
+          // Show visual feedback that a remote update is being applied
+          setRemoteUpdateStatus('applying');
+          
+          // Apply the content update through the CollaborativeEditor
+          if (remoteUpdateFunctionRef.current) {
+            console.log('🔄 TrackedChangesEditor: Triggering editor update via remote update function');
+            try {
+              remoteUpdateFunctionRef.current(lexicalContent);
+              console.log('✅ TrackedChangesEditor: Remote update function called successfully');
+            } catch (error) {
+              console.error('❌ TrackedChangesEditor: Error calling remote update function:', error);
+            }
+          } else {
+            console.log('⚠️ TrackedChangesEditor: No remote update function available, falling back to state update');
+            setEditedProposedContent(lexicalContent);
+          }
+          
+          // Also update our state
+          setEditedProposedContent(lexicalContent);
+          setLastSavedProposedContent(lexicalContent);
+          
+          // If the update included cursor position information, we can use it
+          // to better position other users' cursors
+          if (cursorPosition) {
+            console.log('📍 TrackedChangesEditor: Remote update includes cursor position:', cursorPosition);
+            // The CollaborativeEditor will handle cursor positioning
+          }
+          
+          // Show applied status briefly
+          setRemoteUpdateStatus('applied');
+          setTimeout(() => {
+            setRemoteUpdateStatus('none');
+          }, 2000);
+          
+          // Show a notification about the update
+          if (onRefreshNeeded) {
+            onRefreshNeeded();
+          }
+        } else {
+          console.log('⚠️ TrackedChangesEditor: User is actively editing, deferring remote update');
           
           // In a production system, you would:
           // 1. Queue this update for later application
@@ -756,7 +987,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           // 3. Show a notification that updates are pending
           
           // For now, we'll just log and potentially show a warning
-          console.log('💾 Remote changes available but deferred due to active editing');
+          console.log('💾 TrackedChangesEditor: Remote changes available but deferred due to active editing');
         }
       }
     }
@@ -764,11 +995,24 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Store WebSocket client reference
   const handleWebSocketClientRef = useCallback((client: any) => {
+    console.log('🔗 handleWebSocketClientRef called with client:', {
+      hasClient: !!client,
+      clientType: typeof client,
+      clientConnected: client?.isConnected
+    });
+
     webSocketClientRef.current = client;
     
     if (client) {
+      console.log('🔌 Setting up WebSocket event listeners...');
+      
       // Listen for content updates
       client.on('content_updated', handleWebSocketUpdate);
+      console.log('👂 Listening for content_updated messages');
+      
+      // Listen for real-time content updates (character-by-character)
+      client.on('realtime_content_update', handleWebSocketUpdate);
+      console.log('👂 Listening for realtime_content_update messages');
       
       // Listen for cursor position updates to track current user's position
       client.on('cursor_position', (message: any) => {
@@ -778,8 +1022,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           console.log('📍 Updated current user cursor position:', message.data);
         }
       });
+      console.log('👂 Listening for cursor_position messages');
       
-      console.log('🔌 WebSocket client connected for auto-save and cursor tracking');
+      console.log('✅ WebSocket client fully connected for auto-save, real-time sync, and cursor tracking');
+      
+      // Test the WebSocket connection
+      if (client.isConnected) {
+        console.log('🧪 WebSocket client reports as connected, testing send functionality');
+      } else {
+        console.log('⚠️ WebSocket client reports as not connected');
+      }
+    } else {
+      console.log('❌ No WebSocket client provided to handleWebSocketClientRef');
     }
   }, [handleWebSocketUpdate, currentUser.id, currentUser.email]);
 
@@ -788,6 +1042,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     return () => {
       if (autoSaveTimeoutRef.current) {
         clearTimeout(autoSaveTimeoutRef.current);
+      }
+      if (realTimeUpdateTimeoutRef.current) {
+        clearTimeout(realTimeUpdateTimeoutRef.current);
+      }
+      if (realTimeUpdateIntervalRef.current) {
+        clearInterval(realTimeUpdateIntervalRef.current);
       }
     };
   }, []);
@@ -1122,14 +1382,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     documentId={submission.id}
                     currentUser={currentUser}
                     initialContent={proposedEditorContent}
-                    onContentChange={(json) => {
+                    onContentChange={(json, cursorPosition) => {
                       setEditedProposedContent(json);
                       console.log('📝 Proposed editor content changed:', {
                         contentLength: json.length,
-                        isLexical: isLexicalJson(json)
+                        isLexical: isLexicalJson(json),
+                        hasCursorPosition: !!cursorPosition
                       });
                       
-                      // Auto-track changes as user types (debounced)
+                      // Send real-time character-by-character updates immediately
                       const originalContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
                       const hasChanges = json !== originalContent;
                       const hasChangesFromLastSaved = json !== lastSavedProposedContent;
@@ -1143,32 +1404,44 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         autoSaveStatus
                       });
                       
-                      if (hasChanges && hasChangesFromLastSaved) {
-                        console.log('📝 Content has changes, scheduling auto-save');
-                        
-                        // Schedule auto-save (7 seconds after typing stops)
-                        scheduleAutoSave();
-                        
-                        // Create a tracked change for real-time collaboration
-                        const currentText = getDisplayableText(originalContent);
-                        const newText = getDisplayableText(json);
-                        
-                        if (currentText !== newText) {
-                          // Create incremental change for real-time tracking
-                          const newChange = {
-                            id: `change-${Date.now()}`,
-                            field: 'content' as const,
-                            oldValue: currentText,
-                            newValue: newText,
-                            changedBy: currentUser.id,
-                            timestamp: new Date(),
-                            isIncremental: true,
-                            richTextOldValue: originalContent,
-                            richTextNewValue: json
-                          };
+                      if (hasChanges) {
+                        // Check if we're applying a real-time update to prevent feedback loops
+                        if (isApplyingRealTimeUpdateRef.current) {
+                          console.log('🔄 Skipping real-time update - applying remote update');
+                        } else {
+                          console.log('⚡ Content has changes, sending real-time update');
                           
-                          console.log('📝 Created tracked change:', newChange);
-                          // Note: In a real implementation, this would be sent to other users via WebSocket
+                          // Send immediate real-time update with cursor position
+                          throttledRealTimeUpdate(json, cursorPosition);
+                        }
+                        
+                        if (hasChangesFromLastSaved) {
+                          console.log('📝 Content has changes from last saved, scheduling auto-save');
+                          
+                          // Schedule auto-save (7 seconds after typing stops)
+                          scheduleAutoSave();
+                          
+                          // Create a tracked change for real-time collaboration
+                          const currentText = getDisplayableText(originalContent);
+                          const newText = getDisplayableText(json);
+                          
+                          if (currentText !== newText) {
+                            // Create incremental change for real-time tracking
+                            const newChange = {
+                              id: `change-${Date.now()}`,
+                              field: 'content' as const,
+                              oldValue: currentText,
+                              newValue: newText,
+                              changedBy: currentUser.id,
+                              timestamp: new Date(),
+                              isIncremental: true,
+                              richTextOldValue: originalContent,
+                              richTextNewValue: json
+                            };
+                            
+                            console.log('📝 Created tracked change:', newChange);
+                            // Note: In a real implementation, this would be sent to other users via WebSocket
+                          }
                         }
                       } else if (!hasChangesFromLastSaved) {
                         console.log('📝 Content matches last saved version, no auto-save needed');

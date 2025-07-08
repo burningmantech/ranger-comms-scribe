@@ -48,7 +48,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
