@@ -52,7 +52,8 @@ const RemoteCursorPlugin: React.FC<{
   remoteCursors: Map<string, CursorPosition>;
   currentUserId: string;
   needsRepositioning?: boolean;
-}> = ({ remoteCursors, currentUserId, needsRepositioning }) => {
+  webSocketClient?: any;
+}> = ({ remoteCursors, currentUserId, needsRepositioning, webSocketClient }) => {
   const [editor] = useLexicalComposerContext();
   const cursorsRef = useRef<Map<string, HTMLElement>>(new Map());
   const overlayRef = useRef<HTMLElement | null>(null);
@@ -525,10 +526,30 @@ const RemoteCursorPlugin: React.FC<{
           } else {
             console.log('⚠️ RemoteCursorPlugin: Could not find Lexical node for key:', nodeKey);
             console.log('💡 RemoteCursorPlugin: This usually happens after content updates when node keys change');
-            console.log('🚫 RemoteCursorPlugin: Hiding cursor instead of showing fallback (stale position)');
+            console.log('🚫 RemoteCursorPlugin: Hiding cursor and requesting fresh position for:', cursor.userName);
             
             // Hide the cursor instead of showing fallback - this prevents the upper left corner issue
             cursorElement.style.opacity = '0';
+            
+            // Request a fresh cursor position from this user to update their stale position
+            // This helps resolve stale cursors more quickly
+            if (webSocketClient) {
+              try {
+                webSocketClient.send({
+                  type: 'request_cursor_refresh',
+                  targetUserId: cursor.userId,
+                  data: {
+                    reason: 'stale_node_key',
+                    staleCursorKey: nodeKey,
+                    timestamp: new Date().toISOString()
+                  }
+                });
+                console.log('📡 Requested fresh cursor position from:', cursor.userName);
+              } catch (error) {
+                console.error('❌ Failed to request cursor refresh:', error);
+              }
+            }
+            
             return; // Exit early, don't show fallback
           }
           
@@ -2246,6 +2267,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                 remoteCursors={remoteCursors}
                 currentUserId={currentUser.id || currentUser.email}
                 needsRepositioning={needsCursorRepositioning}
+                webSocketClient={webSocketClientRef.current}
               />
             </div>
           </div>
