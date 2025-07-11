@@ -484,8 +484,8 @@ export class CollaborativeWebSocketClient {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private heartbeatTimeoutId: NodeJS.Timeout | null = null;
   private lastHeartbeatResponse: number = 0;
-  private readonly HEARTBEAT_INTERVAL = 15000;
-  private readonly HEARTBEAT_TIMEOUT = 5000;
+  private readonly HEARTBEAT_INTERVAL = 60000;
+  private readonly HEARTBEAT_TIMEOUT = 3000;
   private connectionHealthChecks = 0;
   private readonly MAX_MISSED_HEARTBEATS = 2;
   private messageQueue: Array<Omit<WebSocketMessage, 'userId' | 'userName' | 'userEmail' | 'timestamp'>> = [];
@@ -759,6 +759,8 @@ export class CollaborativeWebSocketClient {
   private handleHeartbeatTimeout(): void {
     console.log('⚠️ Heartbeat timeout - missed response');
     this.connectionHealthChecks++;
+
+    this.sendHeartbeat();
     
     if (this.connectionHealthChecks >= this.MAX_MISSED_HEARTBEATS) {
       console.log('💀 Too many missed heartbeats - forcing reconnection');
