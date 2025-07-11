@@ -57,6 +57,7 @@ const RemoteCursorPlugin: React.FC<{
   const [editor] = useLexicalComposerContext();
   const cursorsRef = useRef<Map<string, HTMLElement>>(new Map());
   const overlayRef = useRef<HTMLElement | null>(null);
+  const sentRefreshRequests = useRef<Set<string>>(new Set());
   
   // Create overlay container
   useEffect(() => {
@@ -532,21 +533,38 @@ const RemoteCursorPlugin: React.FC<{
             cursorElement.style.opacity = '0';
             
             // Request a fresh cursor position from this user to update their stale position
-            // This helps resolve stale cursors more quickly
+            // This helps resolve stale cursors more quickly - with rate limiting
             if (webSocketClient) {
-              try {
-                webSocketClient.send({
-                  type: 'request_cursor_refresh',
-                  targetUserId: cursor.userId,
-                  data: {
-                    reason: 'stale_node_key',
-                    staleCursorKey: nodeKey,
-                    timestamp: new Date().toISOString()
-                  }
-                });
-                console.log('📡 Requested fresh cursor position from:', cursor.userName);
-              } catch (error) {
-                console.error('❌ Failed to request cursor refresh:', error);
+              const now = Date.now();
+              const requestKey = `${cursor.userId}_${nodeKey}`;
+              
+              // Rate limit: don't send the same request more than once every 5 seconds
+              if (!sentRefreshRequests.current.has(requestKey)) {
+                try {
+                  webSocketClient.send({
+                    type: 'request_cursor_refresh',
+                    targetUserId: cursor.userId,
+                    data: {
+                      reason: 'stale_node_key',
+                      staleCursorKey: nodeKey,
+                      timestamp: new Date().toISOString()
+                    }
+                  });
+                  console.log('📡 Requested fresh cursor position from:', cursor.userName);
+                  
+                  // Track this request to prevent duplicates
+                  sentRefreshRequests.current.add(requestKey);
+                  
+                  // Clean up after 5 seconds
+                  setTimeout(() => {
+                    sentRefreshRequests.current.delete(requestKey);
+                  }, 5000);
+                  
+                } catch (error) {
+                  console.error('❌ Failed to request cursor refresh:', error);
+                }
+              } else {
+                console.log('🚫 Skipping duplicate cursor refresh request for:', cursor.userName);
               }
             }
             
@@ -1191,6 +1209,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const isTypingRef = useRef(false);
   const lastContentUpdateTime = useRef<number>(0);
   const isApplyingRemoteUpdate = useRef<boolean>(false);
+  const lastCursorRefreshRequestTime = useRef<number>(0);
   
   // Cursor repositioning function - memoized to prevent re-renders
   const triggerRepositioning = useCallback(() => {
@@ -1687,18 +1706,35 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           client.on('request_cursor_refresh', (message: any) => {
             console.log('🔄 CURSOR_REFRESH_REQUEST RECEIVED:', message);
-            // Immediately send current cursor position if we have one
-            if (editorRef.current && lastCursorPositionRef.current) {
-              console.log('📡 Sending current cursor position in response to refresh request');
-              setTimeout(() => {
-                // Re-send the last known cursor position
-                client.send({
-                  type: 'cursor_position',
-                  data: lastCursorPositionRef.current
-                });
-              }, 100); // Small delay to ensure the request is processed
+            
+            // Only respond if this request is targeted at the current user
+            if (message.targetUserId === effectiveUserId) {
+              // Rate limit responses to prevent spam
+              const now = Date.now();
+              if (now - lastCursorRefreshRequestTime.current > 1000) { // At most once per second
+                lastCursorRefreshRequestTime.current = now;
+                
+                // Send current cursor position if we have one
+                if (editorRef.current && lastCursorPositionRef.current) {
+                  console.log('📡 Sending current cursor position in response to refresh request');
+                  setTimeout(() => {
+                    // Re-send the last known cursor position
+                    client.send({
+                      type: 'cursor_position',
+                      data: lastCursorPositionRef.current
+                    });
+                  }, 100); // Small delay to ensure the request is processed
+                } else {
+                  console.log('⚠️ No current cursor position to send in response to refresh request');
+                }
+              } else {
+                console.log('🚫 Skipping cursor refresh response due to rate limit');
+              }
             } else {
-              console.log('⚠️ No current cursor position to send in response to refresh request');
+              console.log('🚫 Ignoring cursor refresh request - not targeted at current user:', {
+                targetUserId: message.targetUserId,
+                currentEffectiveUserId: effectiveUserId
+              });
             }
           });
           
@@ -1831,18 +1867,35 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           client.on('request_cursor_refresh', (message: any) => {
             console.log('🔄 CURSOR_REFRESH_REQUEST RECEIVED (document):', message);
-            // Immediately send current cursor position if we have one
-            if (editorRef.current && lastCursorPositionRef.current) {
-              console.log('📡 Sending current cursor position in response to refresh request (document)');
-              setTimeout(() => {
-                // Re-send the last known cursor position
-                client.send({
-                  type: 'cursor_position',
-                  data: lastCursorPositionRef.current
-                });
-              }, 100); // Small delay to ensure the request is processed
+            
+            // Only respond if this request is targeted at the current user
+            if (message.targetUserId === effectiveUserId) {
+              // Rate limit responses to prevent spam
+              const now = Date.now();
+              if (now - lastCursorRefreshRequestTime.current > 1000) { // At most once per second
+                lastCursorRefreshRequestTime.current = now;
+                
+                // Send current cursor position if we have one
+                if (editorRef.current && lastCursorPositionRef.current) {
+                  console.log('📡 Sending current cursor position in response to refresh request (document)');
+                  setTimeout(() => {
+                    // Re-send the last known cursor position
+                    client.send({
+                      type: 'cursor_position',
+                      data: lastCursorPositionRef.current
+                    });
+                  }, 100); // Small delay to ensure the request is processed
+                } else {
+                  console.log('⚠️ No current cursor position to send in response to refresh request (document)');
+                }
+              } else {
+                console.log('🚫 Skipping cursor refresh response due to rate limit (document)');
+              }
             } else {
-              console.log('⚠️ No current cursor position to send in response to refresh request (document)');
+              console.log('🚫 Ignoring cursor refresh request - not targeted at current user (document):', {
+                targetUserId: message.targetUserId,
+                currentEffectiveUserId: effectiveUserId
+              });
             }
           });
           
