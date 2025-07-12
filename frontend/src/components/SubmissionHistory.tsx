@@ -109,68 +109,83 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
         </div>
       )}
       
+      {canViewFilteredSubmissions && (
+        <hr className="border-gray-300 my-6" />
+      )}
+      
       <div className="space-y-4">
-        {filteredSubmissions.map((submission) => (
-          <div key={submission.id} className="border rounded-lg overflow-hidden">
-            <div className="p-4">
-              <div 
-                className="cursor-pointer hover:bg-gray-50"
-                onClick={() => onSelectSubmission(submission)}
-              >
-                <h3 className="text-lg font-semibold">{submission.title}</h3>
-                <p className="text-sm text-gray-600">
-                  Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
-                </p>
-                <p className="text-sm text-gray-600">Status: {submission.status}</p>
+        {filteredSubmissions.map((submission, index) => (
+          <div key={submission.id}>
+            <div className="border rounded-lg overflow-hidden">
+              <div className="p-4">
+                <div 
+                  className="cursor-pointer p-3 rounded-lg border-2 border-dashed border-gray-200 hover:border-blue-400 hover:bg-gray-50 transition-all duration-200"
+                  onClick={() => navigate(`/tracked-changes/${submission.id}`)}
+                >
+                  <h3 className="text-lg font-semibold text-blue-600 hover:text-blue-800 transition-colors">
+                    {submission.title}
+                  </h3>
+                  <p className="text-sm text-gray-600 mt-2">
+                    Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
+                  </p>
+                  <p className="text-sm text-gray-600">Status: {submission.status}</p>
+                  
+                  <div className="mt-3 flex space-x-2">
+                    <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
+                      {`${submission.comments?.length || 0} Comments `}
+                    </span>
+                    <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
+                      {`${submission.approvals?.length || 0} Approvals `}
+                    </span>
+                    <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
+                      {`${submission.changes?.length || 0} Changes`}
+                    </span>
+                  </div>
+                </div>
                 
-                <div className="mt-2 flex">
-                  <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
-                    {`${submission.comments?.length || 0} Comments `}
-                  </span>
-                  <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
-                    {`${submission.approvals?.length || 0} Approvals `}
-                  </span>
-                  <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
-                    {`${submission.changes?.length || 0} Changes`}
-                  </span>
+                <div className="btn-group">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectSubmission(submission);
+                    }}
+                    className="btn btn-secondary btn-with-icon"
+                  >
+                    <i className="fas fa-eye"></i>
+                    <span className="btn-text">View Details</span>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/tracked-changes/${submission.id}`);
+                    }}
+                    className="btn btn-tertiary btn-with-icon"
+                  >
+                    <i className="fas fa-history"></i>
+                    <span className="btn-text">Tracked Changes</span>
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteClick(submission, e)}
+                    className="btn btn-danger btn-with-icon"
+                  >
+                    <i className="fas fa-trash"></i>
+                    <span className="btn-text">Delete</span>
+                  </button>
                 </div>
               </div>
-              
-              <div className="mt-3 flex space-x-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSelectSubmission(submission);
-                  }}
-                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  View Details
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(`/tracked-changes/${submission.id}`);
-                  }}
-                  className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700"
-                >
-                  Tracked Changes
-                </button>
-                <button
-                  onClick={(e) => handleDeleteClick(submission, e)}
-                  className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
 
-            {submission.changes?.length > 0 && (
-              <div className="border-t">
-                <div className="p-4">
-                  <h4 className="text-sm font-semibold mb-2">Recent Changes</h4>
-                  {submission.changes.slice(-3).map(renderChange)}
+              {submission.changes?.length > 0 && (
+                <div className="border-t">
+                  <div className="p-4">
+                    <h4 className="text-sm font-semibold mb-2">Recent Changes</h4>
+                    {submission.changes.slice(-3).map(renderChange)}
+                  </div>
                 </div>
-              </div>
+              )}
+            </div>
+            
+            {index < filteredSubmissions.length - 1 && (
+              <hr className="border-gray-200 my-6" />
             )}
           </div>
         ))}
