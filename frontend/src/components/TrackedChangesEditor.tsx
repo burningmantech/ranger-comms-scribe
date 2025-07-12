@@ -122,6 +122,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const realTimeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isApplyingRealTimeUpdateRef = useRef<boolean>(false);
 
+  // Auto-save period change consolidation state
+  const autoSavePeriodStartContentRef = useRef<string>('');
+  const autoSavePeriodStartTimeRef = useRef<Date | null>(null);
+  const hasChangesInCurrentPeriodRef = useRef<boolean>(false);
+
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
 
@@ -365,6 +370,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     setTimeout(() => {
       hasInitializedContentRef.current = true;
       console.log('✅ Content initialization complete');
+      
+      // Reset auto-save period tracking on initialization
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
     }, 100);
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
@@ -472,13 +482,57 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       currentContentLength: currentContent?.length,
       editedContentLength: editedProposedContent?.length,
       currentContentPreview: currentContent?.substring(0, 100),
-      editedContentPreview: editedProposedContent?.substring(0, 100)
+      editedContentPreview: editedProposedContent?.substring(0, 100),
+      hasChangesInCurrentPeriod: hasChangesInCurrentPeriodRef.current
     });
     
     if (!hasActualChanges) {
       console.log('No changes to submit');
       setAutoSaveStatus('idle');
+      // Reset auto-save period tracking
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
       return;
+    }
+
+    // Create a consolidated tracked change for manual save if there are changes in the current period
+    if (hasChangesInCurrentPeriodRef.current && autoSavePeriodStartContentRef.current) {
+      const periodStartContent = autoSavePeriodStartContentRef.current;
+      const periodStartTime = autoSavePeriodStartTimeRef.current;
+      
+      // Create a single consolidated change for the entire period
+      const periodStartText = getDisplayableText(periodStartContent);
+      const currentText = getDisplayableText(editedProposedContent);
+      
+      if (periodStartText !== currentText) {
+        const consolidatedChange: Change = {
+          id: `manual-save-${Date.now()}`,
+          field: 'content' as const,
+          oldValue: periodStartText,
+          newValue: currentText,
+          changedBy: currentUser.id,
+          timestamp: periodStartTime || new Date(),
+          isIncremental: false, // This is a consolidated change, not incremental
+          richTextOldValue: periodStartContent,
+          richTextNewValue: editedProposedContent
+        };
+        
+        console.log('📝 Creating consolidated tracked change for manual save:', {
+          changeId: consolidatedChange.id,
+          oldLength: periodStartText.length,
+          newLength: currentText.length,
+          periodDuration: periodStartTime ? new Date().getTime() - periodStartTime.getTime() : 0
+        });
+        
+        // Add the consolidated change to the tracked changes sidebar
+        onSuggestion(consolidatedChange);
+      }
+      
+      // Reset auto-save period tracking
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
     }
 
     try {
@@ -517,6 +571,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       setAutoSaveStatus('saved');
       setLastAutoSaveTime(new Date());
       
+      // Reset auto-save period tracking after successful manual save
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
+      
       // Reset to idle after 3 seconds
       setTimeout(() => {
         setAutoSaveStatus('idle');
@@ -526,12 +585,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       console.error('❌ Save failed:', error);
       setAutoSaveStatus('error');
       
+      // Reset auto-save period tracking on error (changes will be tracked again on next edit)
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
+      
       // Reset to idle after 5 seconds
       setTimeout(() => {
         setAutoSaveStatus('idle');
       }, 5000);
     }
-  }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email]);
+  }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email, getDisplayableText, onSuggestion]);
 
   // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -628,17 +692,61 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       currentEditorContentLength: currentEditorContent?.length || 0,
       currentContentLength: currentContent?.length || 0,
       hasActualChanges,
-      editedProposedContentLength: editedProposedContent?.length || 0
+      editedProposedContentLength: editedProposedContent?.length || 0,
+      hasChangesInCurrentPeriod: hasChangesInCurrentPeriodRef.current
     });
     
     if (!hasActualChanges) {
       console.log('🔄 No changes detected, skipping auto-save');
       setAutoSaveStatus('idle');
+      // Reset auto-save period tracking
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
       return;
     }
 
     console.log('💾 Performing auto-save with current content...');
     setAutoSaveStatus('saving');
+
+    // Create a consolidated tracked change for this auto-save period
+    if (hasChangesInCurrentPeriodRef.current && autoSavePeriodStartContentRef.current) {
+      const periodStartContent = autoSavePeriodStartContentRef.current;
+      const periodStartTime = autoSavePeriodStartTimeRef.current;
+      
+      // Create a single consolidated change for the entire auto-save period
+      const periodStartText = getDisplayableText(periodStartContent);
+      const currentText = getDisplayableText(currentEditorContent);
+      
+      if (periodStartText !== currentText) {
+        const consolidatedChange: Change = {
+          id: `autosave-${Date.now()}`,
+          field: 'content' as const,
+          oldValue: periodStartText,
+          newValue: currentText,
+          changedBy: currentUser.id,
+          timestamp: periodStartTime || new Date(),
+          isIncremental: false, // This is a consolidated change, not incremental
+          richTextOldValue: periodStartContent,
+          richTextNewValue: currentEditorContent
+        };
+        
+        console.log('📝 Creating consolidated tracked change for auto-save period:', {
+          changeId: consolidatedChange.id,
+          oldLength: periodStartText.length,
+          newLength: currentText.length,
+          periodDuration: periodStartTime ? new Date().getTime() - periodStartTime.getTime() : 0
+        });
+        
+        // Add the consolidated change to the tracked changes sidebar
+        onSuggestion(consolidatedChange);
+      }
+      
+      // Reset auto-save period tracking
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
+    }
     
     try {
       // Create the updated submission using the current editor content
@@ -705,6 +813,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       
       console.log('✅ Auto-save completed successfully');
       
+      // Reset auto-save period tracking after successful save
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
+      
       // Reset to idle after 3 seconds
       setTimeout(() => {
         setAutoSaveStatus('idle');
@@ -714,12 +827,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       console.error('❌ Auto-save failed:', error);
       setAutoSaveStatus('error');
       
+      // Reset auto-save period tracking on error (changes will be tracked again on next edit)
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
+      
       // Reset to idle after 5 seconds
       setTimeout(() => {
         setAutoSaveStatus('idle');
       }, 5000);
     }
-  }, [editedProposedContent, submission, currentUser.id, currentUser.email, onSave]);
+  }, [editedProposedContent, submission, currentUser.id, currentUser.email, onSave, getDisplayableText, onSuggestion]);
 
   // Generate a summary of changes for WebSocket notifications
   const generateChangeSummary = useCallback((oldContent: string, newContent: string) => {
@@ -1162,6 +1280,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       if (realTimeUpdateIntervalRef.current) {
         clearInterval(realTimeUpdateIntervalRef.current);
       }
+      
+      // Reset auto-save period tracking on unmount
+      hasChangesInCurrentPeriodRef.current = false;
+      autoSavePeriodStartContentRef.current = '';
+      autoSavePeriodStartTimeRef.current = null;
     };
   }, []);
 
@@ -1575,36 +1698,24 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           throttledRealTimeUpdate(json, cursorPosition);
                         }
                         
-                        if (hasChangesFromLastSaved) {
-                          console.log('📝 Content has changes from last saved, scheduling auto-save');
-                          
-                          // Schedule auto-save (7 seconds after typing stops)
-                          scheduleAutoSave();
-                          
-                          // Create a tracked change for real-time collaboration and auto-save change bubbles
-                          const currentText = getDisplayableText(originalContent);
-                          const newText = getDisplayableText(json);
-                          
-                          if (currentText !== newText) {
-                            // Create incremental change for real-time tracking
-                            const newChange: Change = {
-                              id: `change-${Date.now()}`,
-                              field: 'content' as const,
-                              oldValue: currentText,
-                              newValue: newText,
-                              changedBy: currentUser.id,
-                              timestamp: new Date(),
-                              isIncremental: true,
-                              richTextOldValue: originalContent,
-                              richTextNewValue: json
-                            };
-                            
-                            console.log('📝 Created tracked change for auto-save:', newChange);
-                            
-                            // Call onSuggestion to add this change to the tracked changes sidebar
-                            onSuggestion(newChange);
-                          }
+                                              if (hasChangesFromLastSaved) {
+                        console.log('📝 Content has changes from last saved, scheduling auto-save');
+                        
+                        // Start tracking the auto-save period if not already started
+                        if (!hasChangesInCurrentPeriodRef.current) {
+                          console.log('🔄 Starting new auto-save period tracking');
+                          hasChangesInCurrentPeriodRef.current = true;
+                          autoSavePeriodStartContentRef.current = originalContent;
+                          autoSavePeriodStartTimeRef.current = new Date();
                         }
+                        
+                        // Schedule auto-save (7 seconds after typing stops)
+                        scheduleAutoSave();
+                        
+                        // Note: Individual character changes are no longer created here
+                        // They will be consolidated into a single change during auto-save
+                        console.log('📝 Changes being tracked for consolidation in auto-save period');
+                      }
                       } else if (!hasChangesFromLastSaved) {
                         console.log('📝 Content matches last saved version, no auto-save needed');
                       } else {
