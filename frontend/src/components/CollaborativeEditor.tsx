@@ -47,17 +47,263 @@ const getUserColor = (userId: string): string => {
   return colors[Math.abs(hash) % colors.length];
 };
 
+// Line/Position utility functions
+const getLinePositionFromDOMSelection = (editorElement: HTMLElement, selection: Range): { line: number; column: number } | null => {
+  try {
+    const startContainer = selection.startContainer;
+    const startOffset = selection.startOffset;
+    
+    // Find which paragraph/block element contains the selection
+    let targetParagraph = startContainer.nodeType === Node.TEXT_NODE ? startContainer.parentElement : startContainer as Element;
+    
+    // Walk up to find the paragraph element
+    while (targetParagraph && targetParagraph !== editorElement) {
+      if (targetParagraph.tagName === 'P' || targetParagraph.tagName === 'DIV' || 
+          targetParagraph.classList?.contains('paragraph') ||
+          targetParagraph.getAttribute('data-lexical-paragraph') !== null) {
+        break;
+      }
+      targetParagraph = targetParagraph.parentElement;
+    }
+    
+    if (!targetParagraph || targetParagraph === editorElement) {
+      console.warn('⚠️ Could not find paragraph element for selection');
+      return null;
+    }
+    
+    // Count which line (paragraph) this is
+    let currentLine = 0;
+    const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph');
+    
+    for (let i = 0; i < paragraphs.length; i++) {
+      if (paragraphs[i] === targetParagraph) {
+        currentLine = i;
+        break;
+      }
+    }
+    
+    // Calculate column position within this paragraph
+    let currentColumn = 0;
+    const walker = document.createTreeWalker(
+      targetParagraph,
+      NodeFilter.SHOW_TEXT
+    );
+    
+    let node;
+    let found = false;
+    
+    while (node = walker.nextNode()) {
+      if (node === startContainer) {
+        currentColumn += startOffset;
+        found = true;
+        break;
+      }
+      
+      const textContent = node.textContent || '';
+      currentColumn += textContent.length;
+    }
+    
+    if (!found) {
+      console.warn('⚠️ Could not find text node within paragraph');
+      return null;
+    }
+    
+    console.log('📍 Line/Column calculated:', { line: currentLine, column: currentColumn, paragraphCount: paragraphs.length });
+    return { line: currentLine, column: currentColumn };
+  } catch (error) {
+    console.error('❌ Error getting line/position from DOM selection:', error);
+    return null;
+  }
+};
+
+const getDOMPositionFromLinePosition = (editorElement: HTMLElement, line: number, column: number): { textNode: Node; offset: number } | null => {
+  try {
+    // Find all paragraph elements
+    const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph');
+    
+    if (line >= paragraphs.length) {
+      console.warn('⚠️ Line number exceeds available paragraphs:', { requestedLine: line, totalParagraphs: paragraphs.length });
+      // Fall back to last paragraph
+      if (paragraphs.length > 0) {
+        const lastParagraph = paragraphs[paragraphs.length - 1];
+        const walker = document.createTreeWalker(lastParagraph, NodeFilter.SHOW_TEXT);
+        let lastNode = null;
+        let node;
+        while (node = walker.nextNode()) {
+          lastNode = node;
+        }
+        if (lastNode) {
+          return { textNode: lastNode, offset: (lastNode.textContent || '').length };
+        }
+      }
+      return null;
+    }
+    
+    const targetParagraph = paragraphs[line] as HTMLElement;
+    
+    // Walk through text nodes in this paragraph to find the column position
+    let currentColumn = 0;
+    const walker = document.createTreeWalker(
+      targetParagraph,
+      NodeFilter.SHOW_TEXT
+    );
+    
+    let node;
+    while (node = walker.nextNode()) {
+      const textContent = node.textContent || '';
+      
+      if (currentColumn + textContent.length >= column) {
+        // Found the text node containing our target column
+        const offsetInNode = column - currentColumn;
+        console.log('🎯 RemoteCursorPlugin: Found DOM position:', {
+          line,
+          column,
+          textNodeContent: textContent,
+          offset: offsetInNode
+        });
+        return { textNode: node, offset: offsetInNode };
+      }
+      
+      currentColumn += textContent.length;
+    }
+    
+    // If column is beyond the text content, position at the end of the paragraph
+    const walker2 = document.createTreeWalker(targetParagraph, NodeFilter.SHOW_TEXT);
+    let lastNode = null;
+    let lastNodeInParagraph;
+    while (lastNodeInParagraph = walker2.nextNode()) {
+      lastNode = lastNodeInParagraph;
+    }
+    
+    if (lastNode) {
+      console.log('🎯 RemoteCursorPlugin: Column beyond text, positioning at end of paragraph:', {
+        line,
+        column,
+        textContent: lastNode.textContent,
+        endPosition: (lastNode.textContent || '').length
+      });
+      return { textNode: lastNode, offset: (lastNode.textContent || '').length };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ Error getting DOM position from line/position:', error);
+    return null;
+  }
+};
+
+const getLexicalSelectionLinePosition = (editor: LexicalEditor): { line: number; column: number } | null => {
+  try {
+    return editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) {
+        return null;
+      }
+      
+      const editorElement = editor.getRootElement();
+      if (!editorElement) {
+        return null;
+      }
+      
+      // Create a range from the selection
+      const range = document.createRange();
+      const anchorNode = selection.anchor.getNode();
+      const anchorOffset = selection.anchor.offset;
+      
+      // Find the DOM node corresponding to the Lexical node
+      const anchorDOMElement = editor.getElementByKey(anchorNode.getKey());
+      if (!anchorDOMElement) {
+        return null;
+      }
+      
+      // Find the text node within the DOM element
+      const textNodeResult = findTextNodeInElement(anchorDOMElement, anchorOffset);
+      if (!textNodeResult) {
+        return null;
+      }
+      
+      range.setStart(textNodeResult.textNode, textNodeResult.offset);
+      range.setEnd(textNodeResult.textNode, textNodeResult.offset);
+      
+      return getLinePositionFromDOMSelection(editorElement, range);
+    });
+  } catch (error) {
+    console.error('❌ Error getting Lexical selection line/position:', error);
+    return null;
+  }
+};
+
+const setLexicalSelectionFromLinePosition = (editor: LexicalEditor, line: number, column: number): boolean => {
+  try {
+    const editorElement = editor.getRootElement();
+    if (!editorElement) {
+      return false;
+    }
+    
+    const domPosition = getDOMPositionFromLinePosition(editorElement, line, column);
+    if (!domPosition) {
+      return false;
+    }
+    
+    // Create a range at the DOM position
+    const range = document.createRange();
+    range.setStart(domPosition.textNode, domPosition.offset);
+    range.setEnd(domPosition.textNode, domPosition.offset);
+    
+    // Convert DOM range to Lexical selection
+    const selection = window.getSelection();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+      
+      // Focus the editor to ensure selection is visible
+      editorElement.focus();
+      
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('❌ Error setting Lexical selection from line/position:', error);
+    return false;
+  }
+};
+
+const findTextNodeInElement = (element: Element, targetOffset: number): { textNode: Node; offset: number } | null => {
+  const walker = document.createTreeWalker(
+    element,
+    NodeFilter.SHOW_TEXT
+  );
+  
+  let currentOffset = 0;
+  let node;
+  
+  while (node = walker.nextNode()) {
+    const textContent = node.textContent || '';
+    if (currentOffset + textContent.length >= targetOffset) {
+      return {
+        textNode: node,
+        offset: targetOffset - currentOffset
+      };
+    }
+    currentOffset += textContent.length;
+  }
+  
+  return null;
+};
+
 // Remote cursor overlay plugin
 const RemoteCursorPlugin: React.FC<{
   remoteCursors: Map<string, CursorPosition>;
+  currentUserCursor: CursorPosition | null;
   currentUserId: string;
   needsRepositioning?: boolean;
   webSocketClient?: any;
-}> = ({ remoteCursors, currentUserId, needsRepositioning, webSocketClient }) => {
+}> = ({ remoteCursors, currentUserCursor, currentUserId, needsRepositioning, webSocketClient }) => {
   const [editor] = useLexicalComposerContext();
   const cursorsRef = useRef<Map<string, HTMLElement>>(new Map());
   const overlayRef = useRef<HTMLElement | null>(null);
-  const sentRefreshRequests = useRef<Set<string>>(new Set());
+  const sentRefreshRequests = useRef<Map<string, number>>(new Map());
   
   // Create overlay container
   useEffect(() => {
@@ -120,11 +366,11 @@ const RemoteCursorPlugin: React.FC<{
       }
     }
     
-    // Add/update cursors
+    // Add/update remote cursors
     remoteCursors.forEach((cursor, userId) => {
-      if (userId === currentUserId) return; // Skip own cursor
+      if (userId === currentUserId) return; // Skip own cursor in remote cursors
       
-      console.log('🎯 RemoteCursorPlugin: Processing cursor for user:', userId, cursor);
+      console.log('🎯 RemoteCursorPlugin: Processing remote cursor for user:', userId, cursor);
       
       // Get or create cursor element
       let cursorElement = cursorsRef.current.get(userId);
@@ -132,14 +378,31 @@ const RemoteCursorPlugin: React.FC<{
         cursorElement = createCursorElement(cursor);
         overlay.appendChild(cursorElement);
         cursorsRef.current.set(userId, cursorElement);
-        console.log('✅ RemoteCursorPlugin: Created new cursor for user:', userId);
+        console.log('✅ RemoteCursorPlugin: Created new remote cursor for user:', userId);
       }
       
       // Position the cursor
       positionCursor(cursorElement, cursor, editorElement, overlay);
     });
     
-  }, [remoteCursors, currentUserId, editor]);
+    // Add/update current user's cursor
+    if (currentUserCursor) {
+      console.log('🎯 RemoteCursorPlugin: Processing current user cursor:', currentUserCursor);
+      
+      const userId = currentUserCursor.userId;
+      let cursorElement = cursorsRef.current.get(userId);
+      if (!cursorElement) {
+        cursorElement = createCursorElement(currentUserCursor);
+        overlay.appendChild(cursorElement);
+        cursorsRef.current.set(userId, cursorElement);
+        console.log('✅ RemoteCursorPlugin: Created new current user cursor');
+      }
+      
+      // Position the current user's cursor
+      positionCursor(cursorElement, currentUserCursor, editorElement, overlay);
+    }
+    
+  }, [remoteCursors, currentUserCursor, currentUserId, editor]);
   
   // Force repositioning when needed
   useEffect(() => {
@@ -282,7 +545,7 @@ const RemoteCursorPlugin: React.FC<{
     return cursorEl;
   };
   
-  // Position cursor at text offset
+  // Position cursor at line/column position
   const positionCursor = (
     cursorElement: HTMLElement, 
     cursor: CursorPosition, 
@@ -290,318 +553,244 @@ const RemoteCursorPlugin: React.FC<{
     overlay: HTMLElement
   ) => {
     try {
-      const nodeKey = cursor.position.key;
-      const nodeOffset = cursor.position.offset;
+      const line = cursor.position.line;
+      const column = cursor.position.column;
       const isSelection = cursor.position.type === 'selection';
-      console.log('🎯 RemoteCursorPlugin: Positioning cursor for', cursor.userName, 'at node', nodeKey, 'offset', nodeOffset, 'isSelection:', isSelection);
+      console.log('🎯 RemoteCursorPlugin: Positioning cursor for', cursor.userName, 'at line', line, 'column', column, 'isSelection:', isSelection);
       
-      // Use Lexical node keys directly - much simpler and more accurate!
-      editor.getEditorState().read(() => {
-        try {
-          // Handle selections differently
-          if (isSelection && cursor.position.focus && cursor.position.anchor) {
-            const anchorKey = cursor.position.anchor.key;
-            const anchorOffset = cursor.position.anchor.offset;
-            const focusKey = cursor.position.focus.key;
-            const focusOffset = cursor.position.focus.offset;
+      // Handle selections differently
+      if (isSelection && cursor.position.focus && cursor.position.anchor) {
+        const anchorLine = cursor.position.anchor.line;
+        const anchorColumn = cursor.position.anchor.column;
+        const focusLine = cursor.position.focus.line;
+        const focusColumn = cursor.position.focus.column;
+        
+        console.log('🎯 RemoteCursorPlugin: SELECTION DETECTED:', {
+          anchorLine, anchorColumn, focusLine, focusColumn
+        });
+        
+        // Check if it's a collapsed selection (just a cursor)
+        const isCollapsed = anchorLine === focusLine && anchorColumn === focusColumn;
+        
+        if (!isCollapsed) {
+          console.log('🎯 RemoteCursorPlugin: Processing REAL selection...');
+          // Handle actual selection
+          try {
+            const anchorDOMPosition = getDOMPositionFromLinePosition(editorElement, anchorLine, anchorColumn);
+            const focusDOMPosition = getDOMPositionFromLinePosition(editorElement, focusLine, focusColumn);
             
-            console.log('🎯 RemoteCursorPlugin: SELECTION DETECTED:', {
-              anchorKey, anchorOffset, focusKey, focusOffset,
-              hasAnchorKey: !!anchorKey,
-              hasFocusKey: !!focusKey
-            });
-            
-            // Check if it's a collapsed selection (just a cursor)
-            const isCollapsed = anchorKey === focusKey && anchorOffset === focusOffset;
-            
-            console.log('🎯 RemoteCursorPlugin: Selection analysis:', {
-              isCollapsed,
-              anchorOffset,
-              focusOffset,
-              sameKey: anchorKey === focusKey
-            });
-            
-            if (!isCollapsed) {
-              console.log('🎯 RemoteCursorPlugin: Processing REAL selection...');
-              // Handle actual selection
-              try {
-                const anchorNode = editor.getEditorState()._nodeMap.get(anchorKey);
-                const focusNode = editor.getEditorState()._nodeMap.get(focusKey);
+            if (anchorDOMPosition && focusDOMPosition) {
+              const range = document.createRange();
+              
+              // Ensure proper range direction
+              let startPosition = anchorDOMPosition;
+              let endPosition = focusDOMPosition;
+              
+              // For same text node, ensure start < end
+              if (anchorDOMPosition.textNode === focusDOMPosition.textNode) {
+                if (anchorDOMPosition.offset > focusDOMPosition.offset) {
+                  startPosition = focusDOMPosition;
+                  endPosition = anchorDOMPosition;
+                }
+              }
+              
+              range.setStart(startPosition.textNode, startPosition.offset);
+              range.setEnd(endPosition.textNode, endPosition.offset);
+              
+              const rect = range.getBoundingClientRect();
+              const overlayRect = overlay.getBoundingClientRect();
+              
+              console.log('🎯 RemoteCursorPlugin: Range rect:', {
+                width: rect.width,
+                height: rect.height,
+                left: rect.left,
+                top: rect.top,
+                overlayLeft: overlayRect.left,
+                overlayTop: overlayRect.top
+              });
+              
+              if (rect.width > 0 && rect.height > 0) {
+                const left = rect.left - overlayRect.left;
+                const top = rect.top - overlayRect.top;
                 
-                console.log('🎯 RemoteCursorPlugin: Found nodes:', {
-                  hasAnchorNode: !!anchorNode,
-                  hasFocusNode: !!focusNode,
-                  anchorNodeType: anchorNode?.getType(),
-                  focusNodeType: focusNode?.getType()
+                // Position cursor element
+                cursorElement.style.left = `${left}px`;
+                cursorElement.style.top = `${top}px`;
+                cursorElement.style.opacity = '1';
+                
+                // Show selection highlight
+                const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+                if (selection) {
+                  selection.style.width = `${rect.width}px`;
+                  selection.style.height = `${rect.height}px`;
+                  selection.style.left = '0px';
+                  selection.style.top = '0px';
+                  selection.style.display = 'block';
+                }
+                
+                // Hide cursor line for selections
+                const lineElement = cursorElement.querySelector('.cursor-line') as HTMLElement;
+                if (lineElement) {
+                  lineElement.style.display = 'none';
+                }
+                
+                positionLabel(cursorElement, left, top, overlay, cursor);
+                
+                console.log('✅ RemoteCursorPlugin: SELECTION POSITIONED SUCCESSFULLY:', {
+                  left, top, width: rect.width, height: rect.height
                 });
                 
-                if (anchorNode && focusNode) {
-                  const anchorDomElement = editor.getElementByKey(anchorKey);
-                  const focusDomElement = editor.getElementByKey(focusKey);
-                  
-                  console.log('🎯 RemoteCursorPlugin: Found DOM elements:', {
-                    hasAnchorDOM: !!anchorDomElement,
-                    hasFocusDOM: !!focusDomElement,
-                    anchorDOMTag: anchorDomElement?.tagName,
-                    focusDOMTag: focusDomElement?.tagName
-                  });
-                  
-                  if (anchorDomElement && focusDomElement) {
-                    const anchorTextNode = findTextNodeInElement(anchorDomElement, anchorOffset);
-                    const focusTextNode = findTextNodeInElement(focusDomElement, focusOffset);
-                    
-                    console.log('🎯 RemoteCursorPlugin: Found text nodes:', {
-                      hasAnchorText: !!anchorTextNode,
-                      hasFocusText: !!focusTextNode,
-                      anchorTextContent: anchorTextNode?.textNode.textContent?.substring(0, 50),
-                      focusTextContent: focusTextNode?.textNode.textContent?.substring(0, 50),
-                      anchorOffset: anchorTextNode?.offset,
-                      focusOffset: focusTextNode?.offset
-                    });
-                    
-                    if (anchorTextNode && focusTextNode) {
-                      const range = document.createRange();
-                      
-                      // Ensure proper range direction
-                      let startNode = anchorTextNode;
-                      let endNode = focusTextNode;
-                      
-                      // For same text node, ensure start < end
-                      if (anchorTextNode.textNode === focusTextNode.textNode) {
-                        if (anchorTextNode.offset > focusTextNode.offset) {
-                          startNode = focusTextNode;
-                          endNode = anchorTextNode;
-                        }
-                      }
-                      
-                      range.setStart(startNode.textNode, startNode.offset);
-                      range.setEnd(endNode.textNode, endNode.offset);
-                      
-                      const rect = range.getBoundingClientRect();
-                      const overlayRect = overlay.getBoundingClientRect();
-                      
-                      console.log('🎯 RemoteCursorPlugin: Range rect:', {
-                        width: rect.width,
-                        height: rect.height,
-                        left: rect.left,
-                        top: rect.top,
-                        overlayLeft: overlayRect.left,
-                        overlayTop: overlayRect.top
-                      });
-                      
-                      if (rect.width > 0 && rect.height > 0) {
-                        const left = rect.left - overlayRect.left;
-                        const top = rect.top - overlayRect.top;
-                        
-                        // Position cursor element
-                        cursorElement.style.left = `${left}px`;
-                        cursorElement.style.top = `${top}px`;
-                        cursorElement.style.opacity = '1';
-                        
-                        // Show selection highlight
-                        const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
-                        console.log('🎯 RemoteCursorPlugin: Selection element found:', !!selection);
-                        
-                        if (selection) {
-                          selection.style.width = `${rect.width}px`;
-                          selection.style.height = `${rect.height}px`;
-                          selection.style.left = '0px';
-                          selection.style.top = '0px';
-                          selection.style.display = 'block';
-                          
-                          console.log('🎨 SELECTION HIGHLIGHT APPLIED:', {
-                            width: selection.style.width,
-                            height: selection.style.height,
-                            display: selection.style.display,
-                            backgroundColor: selection.style.backgroundColor
-                          });
-                        }
-                        
-                        // Hide cursor line for selections
-                        const line = cursorElement.querySelector('.cursor-line') as HTMLElement;
-                        if (line) {
-                          line.style.display = 'none';
-                        }
-                        
-                        positionLabel(cursorElement, left, top, overlay, cursor);
-                        
-                        console.log('✅ RemoteCursorPlugin: SELECTION POSITIONED SUCCESSFULLY:', {
-                          left, top, width: rect.width, height: rect.height,
-                          selectionVisible: selection?.style.display === 'block'
-                        });
-                        
-                        return;
-                      } else {
-                        console.log('⚠️ RemoteCursorPlugin: Invalid selection rect:', rect);
-                      }
-                    } else {
-                      console.log('⚠️ RemoteCursorPlugin: Could not find text nodes for selection');
-                    }
-                  } else {
-                    console.log('⚠️ RemoteCursorPlugin: Could not find DOM elements for selection');
-                  }
-                } else {
-                  console.log('⚠️ RemoteCursorPlugin: Could not find Lexical nodes for selection');
-                }
-              } catch (error) {
-                console.log('⚠️ RemoteCursorPlugin: Selection positioning error:', error);
+                return;
+              } else {
+                console.log('⚠️ RemoteCursorPlugin: Invalid selection rect:', rect);
               }
             } else {
-              console.log('🎯 RemoteCursorPlugin: Collapsed selection, treating as cursor');
+              console.log('⚠️ RemoteCursorPlugin: Could not find DOM positions for selection');
             }
+          } catch (error) {
+            console.log('⚠️ RemoteCursorPlugin: Selection positioning error:', error);
           }
+        } else {
+          console.log('🎯 RemoteCursorPlugin: Collapsed selection, treating as cursor');
+        }
+      }
+      
+      // Handle regular cursor positioning (or fallback for selections)
+      const domPosition = getDOMPositionFromLinePosition(editorElement, line, column);
+      
+      if (domPosition) {
+        console.log('🎯 RemoteCursorPlugin: Found DOM position:', {
+          line, column,
+          textNodeContent: domPosition.textNode.textContent?.substring(0, 50),
+          offset: domPosition.offset
+        });
+        
+        try {
+          const range = document.createRange();
+          range.setStart(domPosition.textNode, domPosition.offset);
+          range.setEnd(domPosition.textNode, domPosition.offset);
           
-          // Handle regular cursor positioning (or fallback for selections)
-          const lexicalNode = editor.getEditorState()._nodeMap.get(nodeKey);
+          const rect = range.getBoundingClientRect();
+          const overlayRect = overlay.getBoundingClientRect();
           
-          if (lexicalNode) {
-            console.log('🎯 RemoteCursorPlugin: Found Lexical node:', {
-              nodeKey,
-              nodeType: lexicalNode.getType(),
-              nodeTextContent: lexicalNode.getTextContent ? lexicalNode.getTextContent() : '[no text content]'
+          if (rect.height > 0) {
+            const left = rect.left - overlayRect.left;
+            const top = rect.top - overlayRect.top;
+            
+            // Position the cursor
+            cursorElement.style.left = `${left}px`;
+            cursorElement.style.top = `${top}px`;
+            cursorElement.style.opacity = '1';
+            
+            // Hide selection highlight for regular cursor and show cursor line
+            const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+            if (selection) {
+              selection.style.display = 'none';
+            }
+            
+            const lineElement = cursorElement.querySelector('.cursor-line') as HTMLElement;
+            if (lineElement) {
+              lineElement.style.display = 'block';
+            }
+            
+            // Smart label positioning
+            positionLabel(cursorElement, left, top, overlay, cursor);
+            
+            console.log('✅ RemoteCursorPlugin: Positioned cursor using line/position:', { 
+              left, 
+              top, 
+              line,
+              column,
+              targetChar: domPosition.textNode.textContent?.charAt(domPosition.offset) || '',
             });
             
-            // Get the DOM element for this Lexical node
-            const domElement = editor.getElementByKey(nodeKey);
-            
-            if (domElement) {
-              console.log('🎯 RemoteCursorPlugin: Found DOM element:', domElement);
+            return; // Successfully positioned
+          } else {
+            console.log('⚠️ RemoteCursorPlugin: Invalid rect dimensions:', rect);
+          }
+        } catch (error) {
+          console.log('⚠️ RemoteCursorPlugin: Range positioning error:', error);
+        }
+      } else {
+        console.log('⚠️ RemoteCursorPlugin: Could not find DOM position for line/column:', line, column);
+        console.log('💡 RemoteCursorPlugin: This may happen if content has changed');
+        console.log('🚫 RemoteCursorPlugin: Hiding cursor and requesting fresh position for:', cursor.userName);
+        
+        // Hide the cursor instead of showing fallback - this prevents the upper left corner issue
+        cursorElement.style.opacity = '0';
+        
+        // Request a fresh cursor position from this user to update their stale position
+        if (webSocketClient) {
+          const now = Date.now();
+          const userRequestKey = `${cursor.userId}_recent`;
+          const lastRequestTime = sentRefreshRequests.current.get(userRequestKey) || 0;
+          const timeSinceLastRequest = now - lastRequestTime;
+          
+          // Rate limit: don't send requests to the same user more than once every 3 seconds
+          if (timeSinceLastRequest > 3000) {
+            try {
+              console.log('📡 Sending cursor refresh request:', {
+                fromUserId: currentUserId,
+                targetUserId: cursor.userId,
+                targetUserName: cursor.userName,
+                staleCursorPosition: [line, column],
+                reason: 'stale_line_position'
+              });
               
-              // Find the text node within this DOM element at the correct offset
-              const textNodeResult = findTextNodeInElement(domElement, nodeOffset);
-              
-              if (textNodeResult) {
-                try {
-                  const range = document.createRange();
-                  range.setStart(textNodeResult.textNode, textNodeResult.offset);
-                  range.setEnd(textNodeResult.textNode, textNodeResult.offset);
-                  
-                  const rect = range.getBoundingClientRect();
-                  const overlayRect = overlay.getBoundingClientRect();
-                  
-                  if (rect.height > 0) {
-                    const left = rect.left - overlayRect.left;
-                    const top = rect.top - overlayRect.top;
-                    
-                    // Position the cursor
-                    cursorElement.style.left = `${left}px`;
-                    cursorElement.style.top = `${top}px`;
-                    cursorElement.style.opacity = '1';
-                    
-                    // Hide selection highlight for regular cursor and show cursor line
-                    const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
-                    if (selection) {
-                      selection.style.display = 'none';
-                    }
-                    
-                    const line = cursorElement.querySelector('.cursor-line') as HTMLElement;
-                    if (line) {
-                      line.style.display = 'block';
-                    }
-                    
-                    // Smart label positioning
-                    positionLabel(cursorElement, left, top, overlay, cursor);
-                    
-                    console.log('✅ RemoteCursorPlugin: Positioned cursor using node key:', { 
-                      left, 
-                      top, 
-                      nodeKey,
-                      nodeOffset,
-                      domTextNodeOffset: textNodeResult.offset,
-                      targetChar: textNodeResult.textNode.textContent?.charAt(textNodeResult.offset) || '',
-                    });
-                    
-                    return; // Successfully positioned
-                  } else {
-                    console.log('⚠️ RemoteCursorPlugin: Invalid rect dimensions:', rect);
-                  }
-                } catch (error) {
-                  console.log('⚠️ RemoteCursorPlugin: Range positioning error:', error);
+              webSocketClient.send({
+                type: 'request_cursor_refresh',
+                targetUserId: cursor.userId,
+                requestingUserId: currentUserId,
+                data: {
+                  reason: 'stale_line_position',
+                  staleCursorPosition: [line, column],
+                  timestamp: new Date().toISOString()
                 }
-              } else {
-                console.log('⚠️ RemoteCursorPlugin: Could not find text node in DOM element');
-              }
-            } else {
-              console.log('⚠️ RemoteCursorPlugin: Could not find DOM element for node key:', nodeKey);
+              });
+              console.log('📡 Requested fresh cursor position from:', cursor.userName);
+              
+              // Track this request to prevent duplicates
+              sentRefreshRequests.current.set(userRequestKey, now);
+              
+              // Clean up after 10 seconds
+              setTimeout(() => {
+                sentRefreshRequests.current.delete(userRequestKey);
+              }, 10000);
+              
+            } catch (error) {
+              console.error('❌ Failed to request cursor refresh:', error);
             }
           } else {
-            console.log('⚠️ RemoteCursorPlugin: Could not find Lexical node for key:', nodeKey);
-            console.log('💡 RemoteCursorPlugin: This usually happens after content updates when node keys change');
-            console.log('🚫 RemoteCursorPlugin: Hiding cursor and requesting fresh position for:', cursor.userName);
-            
-            // Hide the cursor instead of showing fallback - this prevents the upper left corner issue
-            cursorElement.style.opacity = '0';
-            
-            // Request a fresh cursor position from this user to update their stale position
-            // This helps resolve stale cursors more quickly - with rate limiting
-            if (webSocketClient) {
-              const now = Date.now();
-              const requestKey = `${cursor.userId}_${nodeKey}`;
-              
-              // Rate limit: don't send the same request more than once every 5 seconds
-              if (!sentRefreshRequests.current.has(requestKey)) {
-                try {
-                  webSocketClient.send({
-                    type: 'request_cursor_refresh',
-                    targetUserId: cursor.userId,
-                    data: {
-                      reason: 'stale_node_key',
-                      staleCursorKey: nodeKey,
-                      timestamp: new Date().toISOString()
-                    }
-                  });
-                  console.log('📡 Requested fresh cursor position from:', cursor.userName);
-                  
-                  // Track this request to prevent duplicates
-                  sentRefreshRequests.current.add(requestKey);
-                  
-                  // Clean up after 5 seconds
-                  setTimeout(() => {
-                    sentRefreshRequests.current.delete(requestKey);
-                  }, 5000);
-                  
-                } catch (error) {
-                  console.error('❌ Failed to request cursor refresh:', error);
-                }
-              } else {
-                console.log('🚫 Skipping duplicate cursor refresh request for:', cursor.userName);
-              }
-            }
-            
-            return; // Exit early, don't show fallback
+            console.log('🚫 Skipping duplicate cursor refresh request for:', cursor.userName, `(${timeSinceLastRequest}ms since last request)`);
           }
-          
-          // Fallback positioning should only be reached if we can't find DOM elements for valid nodes
-          console.log('🎯 RemoteCursorPlugin: Using fallback positioning for', cursor.userName);
-          
-          cursorElement.style.left = '10px';
-          cursorElement.style.top = '10px';
-          cursorElement.style.opacity = '0.7';
-          
-          // For fallback, show cursor line and hide selection
-          const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
-          if (selection) {
-            selection.style.display = 'none';
-          }
-          
-          const line = cursorElement.querySelector('.cursor-line') as HTMLElement;
-          if (line) {
-            line.style.display = 'block';
-          }
-          
-          positionLabel(cursorElement, 10, 10, overlay, cursor);
-          
-        } catch (error) {
-          console.error('❌ RemoteCursorPlugin: Lexical positioning error:', error);
-          console.log('🚫 RemoteCursorPlugin: Hiding cursor due to positioning error');
-          // Hide cursor instead of showing fallback to prevent upper left corner positioning
-          cursorElement.style.opacity = '0';
         }
-      });
+        
+        return; // Exit early, don't show fallback
+      }
+      
+      // Fallback positioning should only be reached if we can't find DOM positions
+      console.log('🎯 RemoteCursorPlugin: Using fallback positioning for', cursor.userName);
+      
+      cursorElement.style.left = '10px';
+      cursorElement.style.top = '10px';
+      cursorElement.style.opacity = '0.7';
+      
+      // For fallback, show cursor line and hide selection
+      const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+      if (selection) {
+        selection.style.display = 'none';
+      }
+      
+      const cursorLineElement = cursorElement.querySelector('.cursor-line') as HTMLElement;
+      if (cursorLineElement) {
+        cursorLineElement.style.display = 'block';
+      }
+      
+      positionLabel(cursorElement, 10, 10, overlay, cursor);
       
     } catch (error) {
       console.error('❌ RemoteCursorPlugin: Positioning error:', error);
-      console.log('🚫 RemoteCursorPlugin: Hiding cursor due to outer positioning error');
+      console.log('🚫 RemoteCursorPlugin: Hiding cursor due to positioning error');
       cursorElement.style.opacity = '0';
     }
   };
@@ -757,6 +946,7 @@ const CursorTrackingPlugin: React.FC<{
   effectiveUserId: string;
 }> = ({ webSocketClient, currentUser, documentId, onCursorUpdate, effectiveUserId }) => {
   const [editor] = useLexicalComposerContext();
+  const selectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   useEffect(() => {
     console.log('🎯 CursorTrackingPlugin initialized:', {
@@ -775,11 +965,28 @@ const CursorTrackingPlugin: React.FC<{
     // Listen for cursor refresh requests
     const handleCursorRefreshRequest = (message: any) => {
       console.log('🔄 CursorTrackingPlugin: Received cursor refresh request:', message);
-      // Force a fresh cursor position update
-      setTimeout(() => {
-        console.log('🔄 CursorTrackingPlugin: Triggering fresh cursor position after refresh request');
-        handleSelectionChange();
-      }, 150); // Small delay to ensure content is settled
+      console.log('🔄 CursorTrackingPlugin: Current user info:', {
+        currentUserId: currentUser.id,
+        currentUserEmail: currentUser.email,
+        effectiveUserId: effectiveUserId,
+        targetUserId: message.targetUserId
+      });
+      
+      // Only respond if this request is targeted at the current user
+      if (message.targetUserId === effectiveUserId) {
+        console.log('✅ CursorTrackingPlugin: Refresh request is targeted at current user - responding');
+        
+        // Force a fresh cursor position update
+        setTimeout(() => {
+          console.log('🔄 CursorTrackingPlugin: Triggering fresh cursor position after refresh request');
+          handleSelectionChange();
+        }, 150); // Small delay to ensure content is settled
+      } else {
+        console.log('🚫 CursorTrackingPlugin: Ignoring refresh request - not targeted at current user:', {
+          targetUserId: message.targetUserId,
+          currentEffectiveUserId: effectiveUserId
+        });
+      }
     };
     
     // Register the refresh request handler
@@ -787,50 +994,92 @@ const CursorTrackingPlugin: React.FC<{
     
     const handleSelectionChange = () => {
       console.log('🎯 Selection change detected');
-      editor.getEditorState().read(() => {
-        const selection = $getSelection();
-        console.log('🎯 Current selection:', selection);
+      
+      // This function is now always called from within editor.read() context
+      const selection = $getSelection();
+      console.log('🎯 Current selection:', selection);
+      
+      if ($isRangeSelection(selection)) {
+        console.log('🎯 Range selection detected');
         
-        if ($isRangeSelection(selection)) {
-          console.log('🎯 Range selection detected');
-          const anchorNode = selection.anchor.getNode();
-          const focusNode = selection.focus.getNode();
-          
-          console.log('🎯 Selection details:', {
-            anchorKey: anchorNode.getKey(),
-            anchorOffset: selection.anchor.offset,
-            focusKey: focusNode.getKey(),
-            focusOffset: selection.focus.offset,
-            isCollapsed: selection.isCollapsed()
-          });
-          
-          // Use Lexical node keys directly - much simpler!
-          const position: CursorPosition = {
-            userId: effectiveUserId,
-            userName: currentUser.name || currentUser.email,
-            userEmail: currentUser.email,
-            position: {
-              key: anchorNode.getKey(), // Use actual Lexical node key
-              offset: selection.anchor.offset, // Use actual offset within that node
-              type: selection.isCollapsed() ? 'cursor' : 'selection',
-              anchor: {
-                key: anchorNode.getKey(),
-                offset: selection.anchor.offset
-              },
-              focus: {
-                key: focusNode.getKey(),
-                offset: selection.focus.offset
-              }
-            },
-            timestamp: new Date().toISOString()
-          };
-          
-          console.log('🎯 Calling onCursorUpdate with node-based position:', position);
-          onCursorUpdate(position);
-        } else {
-          console.log('🎯 Non-range selection, ignoring');
+        // Get line/position coordinates for the selection
+        const anchorLinePosition = getLexicalSelectionLinePosition(editor);
+        if (!anchorLinePosition) {
+          console.log('⚠️ Could not get line/position for selection');
+          return;
         }
-      });
+        
+        const isCollapsed = selection.isCollapsed();
+        let focusLinePosition = anchorLinePosition;
+        
+        // For selections (not just cursors), we need to get focus position too
+        if (!isCollapsed) {
+          // Calculate the actual focus position for selections
+          const focusNode = selection.focus.getNode();
+          const focusOffset = selection.focus.offset;
+          const editorElement = editor.getRootElement();
+          
+          if (editorElement) {
+            // Find the DOM element for the focus node
+            const focusDOMElement = editor.getElementByKey(focusNode.getKey());
+            if (focusDOMElement) {
+              const focusTextNodeResult = findTextNodeInElement(focusDOMElement, focusOffset);
+              if (focusTextNodeResult) {
+                const focusRange = document.createRange();
+                focusRange.setStart(focusTextNodeResult.textNode, focusTextNodeResult.offset);
+                focusRange.setEnd(focusTextNodeResult.textNode, focusTextNodeResult.offset);
+                
+                const calculatedFocusPosition = getLinePositionFromDOMSelection(editorElement, focusRange);
+                if (calculatedFocusPosition) {
+                  focusLinePosition = calculatedFocusPosition;
+                  console.log('🎯 Calculated focus position for selection:', focusLinePosition);
+                }
+              }
+            }
+          }
+        }
+        
+        console.log('🎯 Selection details:', {
+          anchorLine: anchorLinePosition.line,
+          anchorColumn: anchorLinePosition.column,
+          focusLine: focusLinePosition.line,
+          focusColumn: focusLinePosition.column,
+          isCollapsed
+        });
+        
+        // Create cursor position using line/column coordinates
+        const position: CursorPosition = {
+          userId: effectiveUserId,
+          userName: currentUser.name || currentUser.email,
+          userEmail: currentUser.email,
+          position: {
+            line: anchorLinePosition.line,
+            column: anchorLinePosition.column,
+            type: isCollapsed ? 'cursor' : 'selection',
+            anchor: {
+              line: anchorLinePosition.line,
+              column: anchorLinePosition.column
+            },
+            focus: {
+              line: focusLinePosition.line,
+              column: focusLinePosition.column
+            }
+          },
+          timestamp: new Date().toISOString()
+        };
+        
+        console.log('🎯 Calling onCursorUpdate with line/position:', {
+          userId: effectiveUserId,
+          userName: currentUser.name || currentUser.email,
+          userEmail: currentUser.email,
+          line: anchorLinePosition.line,
+          column: anchorLinePosition.column,
+          type: isCollapsed ? 'cursor' : 'selection'
+        });
+        onCursorUpdate(position);
+      } else {
+        console.log('🎯 Non-range selection, ignoring');
+      }
     };
     
     console.log('🎯 Registering update listener...');
@@ -846,7 +1095,10 @@ const CursorTrackingPlugin: React.FC<{
       'SELECTION_CHANGE_COMMAND' as any,
       () => {
         console.log('🎯 Selection command triggered');
-        handleSelectionChange();
+        // Properly wrap in editor context
+        editor.getEditorState().read(() => {
+          handleSelectionChange();
+        });
         return false;
       },
       1
@@ -855,7 +1107,16 @@ const CursorTrackingPlugin: React.FC<{
     // Add a document-level selection change listener as backup
     const handleDocumentSelectionChange = () => {
       console.log('🎯 Document selection change detected');
-      handleSelectionChange();
+      // Debounce document selection changes to avoid excessive updates
+      if (selectionTimeoutRef.current) {
+        clearTimeout(selectionTimeoutRef.current);
+      }
+      selectionTimeoutRef.current = setTimeout(() => {
+        // Properly wrap in editor context
+        editor.getEditorState().read(() => {
+          handleSelectionChange();
+        });
+      }, 100);
     };
     
     document.addEventListener('selectionchange', handleDocumentSelectionChange);
@@ -868,6 +1129,9 @@ const CursorTrackingPlugin: React.FC<{
       removeCommandListener();
       document.removeEventListener('selectionchange', handleDocumentSelectionChange);
       webSocketClient.off('request_cursor_refresh', handleCursorRefreshRequest);
+      if (selectionTimeoutRef.current) {
+        clearTimeout(selectionTimeoutRef.current);
+      }
     };
   }, [editor, webSocketClient, currentUser.id, currentUser.email, currentUser.name, documentId, effectiveUserId]); // Stabilized dependencies
   
@@ -884,8 +1148,8 @@ const transformCursorPosition = (
   try {
     console.log('🔄 Transforming cursor position:', {
       userId: oldPosition.userId,
-      oldKey: oldPosition.position.key,
-      oldOffset: oldPosition.position.offset,
+      oldLine: oldPosition.position.line,
+      oldColumn: oldPosition.position.column,
       positionType: oldPosition.position.type
     });
     
@@ -898,10 +1162,10 @@ const transformCursorPosition = (
       return null;
     }
     
-    // Get the text position in the old document
-    const oldTextPosition = getTextPositionFromLexicalPosition(oldContent, oldPosition.position);
+    // Convert line/column to text position in the old document
+    const oldTextPosition = getTextPositionFromLineColumn(oldText, oldPosition.position.line, oldPosition.position.column);
     if (oldTextPosition === null) {
-      console.log('⚠️ Could not get text position from old Lexical position');
+      console.log('⚠️ Could not get text position from old line/column');
       return null;
     }
     
@@ -912,10 +1176,10 @@ const transformCursorPosition = (
       return null;
     }
     
-    // Convert the new text position back to Lexical position
-    const newLexicalPosition = getLexicalPositionFromTextPosition(newContent, newTextPosition);
-    if (!newLexicalPosition) {
-      console.log('⚠️ Could not convert text position to Lexical position');
+    // Convert the new text position back to line/column
+    const newLineColumn = getLineColumnFromTextPosition(newText, newTextPosition);
+    if (!newLineColumn) {
+      console.log('⚠️ Could not convert text position to line/column');
       return null;
     }
     
@@ -923,16 +1187,16 @@ const transformCursorPosition = (
     const transformedPosition: CursorPosition = {
       ...oldPosition,
       position: {
-        key: newLexicalPosition.key,
-        offset: newLexicalPosition.offset,
+        line: newLineColumn.line,
+        column: newLineColumn.column,
         type: oldPosition.position.type,
         anchor: oldPosition.position.type === 'selection' && oldPosition.position.anchor ? {
-          key: newLexicalPosition.key,
-          offset: newLexicalPosition.offset
+          line: newLineColumn.line,
+          column: newLineColumn.column
         } : undefined,
         focus: oldPosition.position.type === 'selection' && oldPosition.position.focus ? {
-          key: newLexicalPosition.key,
-          offset: newLexicalPosition.offset
+          line: newLineColumn.line,
+          column: newLineColumn.column
         } : undefined
       },
       timestamp: new Date().toISOString()
@@ -940,8 +1204,8 @@ const transformCursorPosition = (
     
     console.log('✅ Transformed cursor position:', {
       userId: transformedPosition.userId,
-      newKey: transformedPosition.position.key,
-      newOffset: transformedPosition.position.offset,
+      newLine: transformedPosition.position.line,
+      newColumn: transformedPosition.position.column,
       oldTextPosition,
       newTextPosition
     });
@@ -954,9 +1218,74 @@ const transformCursorPosition = (
   }
 };
 
-// Get text position from Lexical position
+// Convert line/column coordinates to linear text position
+const getTextPositionFromLineColumn = (text: string, line: number, column: number): number | null => {
+  try {
+    let currentLine = 0;
+    let currentColumn = 0;
+    
+    for (let i = 0; i < text.length; i++) {
+      if (currentLine === line && currentColumn === column) {
+        return i;
+      }
+      
+      if (text[i] === '\n') {
+        currentLine++;
+        currentColumn = 0;
+      } else {
+        currentColumn++;
+      }
+    }
+    
+    // Check if we're at the end of the target line
+    if (currentLine === line && currentColumn === column) {
+      return text.length;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ Error converting line/column to text position:', error);
+    return null;
+  }
+};
+
+// Convert linear text position to line/column coordinates  
+const getLineColumnFromTextPosition = (text: string, position: number): { line: number; column: number } | null => {
+  try {
+    if (position < 0 || position > text.length) {
+      return null;
+    }
+    
+    let line = 0;
+    let column = 0;
+    
+    for (let i = 0; i < position; i++) {
+      if (text[i] === '\n') {
+        line++;
+        column = 0;
+      } else {
+        column++;
+      }
+    }
+    
+    return { line, column };
+  } catch (error) {
+    console.error('❌ Error converting text position to line/column:', error);
+    return null;
+  }
+};
+
+// Legacy function - kept for compatibility but updated to work with line/column
 const getTextPositionFromLexicalPosition = (lexicalContent: string, position: any): number | null => {
   try {
+    // If position has line/column, use those directly
+    if (typeof position.line === 'number' && typeof position.column === 'number') {
+      const text = extractTextFromLexical(lexicalContent);
+      if (!text) return null;
+      return getTextPositionFromLineColumn(text, position.line, position.column);
+    }
+    
+    // Legacy support for old key/offset format
     const editorState = JSON.parse(lexicalContent);
     let textPosition = 0;
     let found = false;
@@ -964,11 +1293,15 @@ const getTextPositionFromLexicalPosition = (lexicalContent: string, position: an
     const traverseNode = (node: any): boolean => {
       if (found) return true;
       
+      // Legacy support - this function is deprecated
+      // TODO: Remove this function or update it to handle new line/column format
+      /*
       if (node.type === 'text' && node.key === position.key) {
         textPosition += position.offset;
         found = true;
         return true;
       }
+      */
       
       if (node.type === 'text') {
         textPosition += (node.text || '').length;
@@ -1196,6 +1529,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const [lastSavedContent, setLastSavedContent] = useState('');
   const [showPresencePanel, setShowPresencePanel] = useState(false);
   const [remoteCursors, setRemoteCursors] = useState<Map<string, CursorPosition>>(new Map());
+  const [currentUserCursor, setCurrentUserCursor] = useState<CursorPosition | null>(null);
   const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
   const [needsCursorRepositioning, setNeedsCursorRepositioning] = useState(false);
   const [webSocketClientReady, setWebSocketClientReady] = useState(false);
@@ -1210,6 +1544,14 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const lastContentUpdateTime = useRef<number>(0);
   const isApplyingRemoteUpdate = useRef<boolean>(false);
   const lastCursorRefreshRequestTime = useRef<number>(0);
+  
+  // Preserve cursors during real-time updates to prevent loss during state changes
+  const preservedCursorsRef = useRef<Map<string, CursorPosition>>(new Map());
+  
+  // Keep preserved cursors ref in sync with state
+  useEffect(() => {
+    preservedCursorsRef.current = new Map(remoteCursors);
+  }, [remoteCursors]);
   
   // Cursor repositioning function - memoized to prevent re-renders
   const triggerRepositioning = useCallback(() => {
@@ -1239,9 +1581,46 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         return JSON.stringify(editorRef.current?.getEditorState());
       });
       
-      const cursorsToTransform = new Map(remoteCursors);
+      // Save current user's cursor position before the update
+      let currentUserCursorPosition: CursorPosition | null = null;
+      try {
+        // Wrap the entire cursor position saving in editor context
+        if (editorRef.current) {
+          editorRef.current.getEditorState().read(() => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) {
+              const linePosition = getLexicalSelectionLinePosition(editorRef.current!);
+              if (linePosition) {
+                currentUserCursorPosition = {
+                  userId: effectiveUserId,
+                  userName: currentUser.name || currentUser.email,
+                  userEmail: currentUser.email,
+                  position: {
+                    line: linePosition.line,
+                    column: linePosition.column,
+                    type: selection.isCollapsed() ? 'cursor' : 'selection',
+                    anchor: {
+                      line: linePosition.line,
+                      column: linePosition.column
+                    },
+                    focus: {
+                      line: linePosition.line,
+                      column: linePosition.column
+                    }
+                  },
+                  timestamp: new Date().toISOString()
+                };
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.error('❌ Failed to save current user cursor position:', error);
+      }
       
-      console.log('📸 Captured cursors before update:', {
+      const cursorsToTransform = new Map(preservedCursorsRef.current);
+      
+      console.log('📸 Captured cursors before update (from preserved ref):', {
         cursorCount: cursorsToTransform.size,
         oldContentLength: oldContent?.length || 0,
         newContentLength: content?.length || 0
@@ -1306,10 +1685,33 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           // Apply transformed cursors
           setRemoteCursors(transformedCursors);
+          // Also update the preserved cursors ref to keep it in sync
+          preservedCursorsRef.current = new Map(transformedCursors);
           console.log('✅ Applied transformed cursors:', {
             originalCount: cursorsToTransform.size,
             transformedCount: transformedCursors.size
           });
+          
+          // Restore current user's cursor position after content update
+          if (currentUserCursorPosition && editorRef.current) {
+            console.log('🔄 Restoring current user cursor position:', currentUserCursorPosition.position);
+            try {
+              editorRef.current.update(() => {
+                const restored = setLexicalSelectionFromLinePosition(
+                  editorRef.current!,
+                  currentUserCursorPosition!.position.line,
+                  currentUserCursorPosition!.position.column
+                );
+                if (restored) {
+                  console.log('✅ Successfully restored current user cursor position');
+                } else {
+                  console.log('⚠️ Could not restore current user cursor position');
+                }
+              });
+            } catch (error) {
+              console.error('❌ Failed to restore cursor position:', error);
+            }
+          }
           
           // Trigger repositioning to ensure cursors are properly positioned
           setTimeout(() => {
@@ -1324,43 +1726,46 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             console.log('📍 Sending current user cursor position after content update');
             
             if (editorRef.current) {
+              // Wrap cursor position logic in proper editor context
               editorRef.current.getEditorState().read(() => {
                 const selection = $getSelection();
                 if ($isRangeSelection(selection)) {
-                  const anchorNode = selection.anchor.getNode();
-                  const focusNode = selection.focus.getNode();
-                  
-                  const position: CursorPosition = {
-                    userId: effectiveUserId,
-                    userName: currentUser.name || currentUser.email,
-                    userEmail: currentUser.email,
-                    position: {
-                      key: anchorNode.getKey(),
-                      offset: selection.anchor.offset,
-                      type: selection.isCollapsed() ? 'cursor' : 'selection',
-                      anchor: {
-                        key: anchorNode.getKey(),
-                        offset: selection.anchor.offset
+                  const linePosition = getLexicalSelectionLinePosition(editorRef.current!);
+                  if (linePosition) {
+                    const isCollapsed = selection.isCollapsed();
+                    
+                    const position: CursorPosition = {
+                      userId: effectiveUserId,
+                      userName: currentUser.name || currentUser.email,
+                      userEmail: currentUser.email,
+                      position: {
+                        line: linePosition.line,
+                        column: linePosition.column,
+                        type: isCollapsed ? 'cursor' : 'selection',
+                        anchor: {
+                          line: linePosition.line,
+                          column: linePosition.column
+                        },
+                        focus: {
+                          line: linePosition.line,
+                          column: linePosition.column
+                        }
                       },
-                      focus: {
-                        key: focusNode.getKey(),
-                        offset: selection.focus.offset
+                      timestamp: new Date().toISOString()
+                    };
+                    
+                    if (webSocketClientRef.current) {
+                      try {
+                        webSocketClientRef.current.send({
+                          type: 'cursor_position',
+                          data: position
+                        });
+                        
+                        lastCursorPositionRef.current = position;
+                        console.log('📡 Sent updated cursor position after content update');
+                      } catch (error) {
+                        console.error('❌ Failed to send cursor position after content update:', error);
                       }
-                    },
-                    timestamp: new Date().toISOString()
-                  };
-                  
-                  if (webSocketClientRef.current) {
-                    try {
-                      webSocketClientRef.current.send({
-                        type: 'cursor_position',
-                        data: position
-                      });
-                      
-                      lastCursorPositionRef.current = position;
-                      console.log('📡 Sent updated cursor position after content update');
-                    } catch (error) {
-                      console.error('❌ Failed to send cursor position after content update:', error);
                     }
                   }
                 }
@@ -1393,12 +1798,51 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         return JSON.stringify(editorRef.current?.getEditorState());
       });
       
-      const cursorsToTransform = new Map(remoteCursors);
+      // Save current user's cursor position before the update
+      let currentUserCursorPosition: CursorPosition | null = null;
+      try {
+        // Wrap the entire cursor position saving in editor context
+        if (editorRef.current) {
+          editorRef.current.getEditorState().read(() => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) {
+              const linePosition = getLexicalSelectionLinePosition(editorRef.current!);
+              if (linePosition) {
+                currentUserCursorPosition = {
+                  userId: effectiveUserId,
+                  userName: currentUser.name || currentUser.email,
+                  userEmail: currentUser.email,
+                  position: {
+                    line: linePosition.line,
+                    column: linePosition.column,
+                    type: selection.isCollapsed() ? 'cursor' : 'selection',
+                    anchor: {
+                      line: linePosition.line,
+                      column: linePosition.column
+                    },
+                    focus: {
+                      line: linePosition.line,
+                      column: linePosition.column
+                    }
+                  },
+                  timestamp: new Date().toISOString()
+                };
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.error('❌ Failed to save current user cursor position (real-time):', error);
+      }
       
-      console.log('📸 Captured cursors for real-time update:', {
+      // IMPORTANT: Use preserved cursors ref to avoid losing cursors during state changes
+      const cursorsToTransform = new Map(preservedCursorsRef.current);
+      
+      console.log('📸 Captured cursors for real-time update (from preserved ref):', {
         cursorCount: cursorsToTransform.size,
         oldContentLength: oldContent?.length || 0,
-        newContentLength: content?.length || 0
+        newContentLength: content?.length || 0,
+        cursorIds: Array.from(cursorsToTransform.keys())
       });
       
       try {
@@ -1437,10 +1881,33 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           // Apply transformed cursors
           setRemoteCursors(transformedCursors);
+          // Also update the preserved cursors ref to keep it in sync
+          preservedCursorsRef.current = new Map(transformedCursors);
           console.log('✅ Applied transformed cursors (real-time):', {
             originalCount: cursorsToTransform.size,
             transformedCount: transformedCursors.size
           });
+          
+          // Restore current user's cursor position after real-time update
+          if (currentUserCursorPosition && editorRef.current) {
+            console.log('🔄 Restoring current user cursor position (real-time):', currentUserCursorPosition.position);
+            try {
+              editorRef.current.update(() => {
+                const restored = setLexicalSelectionFromLinePosition(
+                  editorRef.current!,
+                  currentUserCursorPosition!.position.line,
+                  currentUserCursorPosition!.position.column
+                );
+                if (restored) {
+                  console.log('✅ Successfully restored current user cursor position (real-time)');
+                } else {
+                  console.log('⚠️ Could not restore current user cursor position (real-time)');
+                }
+              });
+            } catch (error) {
+              console.error('❌ Failed to restore cursor position (real-time):', error);
+            }
+          }
           
           // Trigger repositioning to ensure cursors are properly positioned
           setTimeout(() => {
@@ -1455,43 +1922,46 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             console.log('📍 Sending current user cursor position after real-time update');
             
             if (editorRef.current) {
+              // Wrap cursor position logic in proper editor context
               editorRef.current.getEditorState().read(() => {
                 const selection = $getSelection();
                 if ($isRangeSelection(selection)) {
-                  const anchorNode = selection.anchor.getNode();
-                  const focusNode = selection.focus.getNode();
-                  
-                  const position: CursorPosition = {
-                    userId: effectiveUserId,
-                    userName: currentUser.name || currentUser.email,
-                    userEmail: currentUser.email,
-                    position: {
-                      key: anchorNode.getKey(),
-                      offset: selection.anchor.offset,
-                      type: selection.isCollapsed() ? 'cursor' : 'selection',
-                      anchor: {
-                        key: anchorNode.getKey(),
-                        offset: selection.anchor.offset
+                  const linePosition = getLexicalSelectionLinePosition(editorRef.current!);
+                  if (linePosition) {
+                    const isCollapsed = selection.isCollapsed();
+                    
+                    const position: CursorPosition = {
+                      userId: effectiveUserId,
+                      userName: currentUser.name || currentUser.email,
+                      userEmail: currentUser.email,
+                      position: {
+                        line: linePosition.line,
+                        column: linePosition.column,
+                        type: isCollapsed ? 'cursor' : 'selection',
+                        anchor: {
+                          line: linePosition.line,
+                          column: linePosition.column
+                        },
+                        focus: {
+                          line: linePosition.line,
+                          column: linePosition.column
+                        }
                       },
-                      focus: {
-                        key: focusNode.getKey(),
-                        offset: selection.focus.offset
+                      timestamp: new Date().toISOString()
+                    };
+                    
+                    if (webSocketClientRef.current) {
+                      try {
+                        webSocketClientRef.current.send({
+                          type: 'cursor_position',
+                          data: position
+                        });
+                        
+                        lastCursorPositionRef.current = position;
+                        console.log('📡 Sent updated cursor position after real-time update');
+                      } catch (error) {
+                        console.error('❌ Failed to send cursor position after real-time update:', error);
                       }
-                    },
-                    timestamp: new Date().toISOString()
-                  };
-                  
-                  if (webSocketClientRef.current) {
-                    try {
-                      webSocketClientRef.current.send({
-                        type: 'cursor_position',
-                        data: position
-                      });
-                      
-                      lastCursorPositionRef.current = position;
-                      console.log('📡 Sent updated cursor position after real-time update');
-                    } catch (error) {
-                      console.error('❌ Failed to send cursor position after real-time update:', error);
                     }
                   }
                 }
@@ -1518,12 +1988,15 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const handleCursorUpdate = useCallback((position: CursorPosition) => {
     console.log('🎯 handleCursorUpdate called with position:', position);
     
+    // Update current user's cursor position for display
+    setCurrentUserCursor(position);
+    
     if (webSocketClientRef.current) {
       console.log('🎯 Sending cursor position via WebSocket:', {
         hasWebSocketClient: !!webSocketClientRef.current,
         position: position,
-        positionKey: position.position.key,
-        positionOffset: position.position.offset,
+        positionLine: position.position.line,
+        positionColumn: position.position.column,
         userId: position.userId
       });
       
@@ -1591,6 +2064,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       setRemoteCursors(prev => {
         const newCursors = new Map(prev);
         newCursors.set(cursorPosition.userId, cursorPosition);
+        // Also update the preserved cursors ref to keep it in sync
+        preservedCursorsRef.current.set(cursorPosition.userId, cursorPosition);
         console.log('🖱️ Updated cursor for:', cursorPosition.userName, '(total:', newCursors.size, ')');
         return newCursors;
       });
@@ -1706,9 +2181,17 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           client.on('request_cursor_refresh', (message: any) => {
             console.log('🔄 CURSOR_REFRESH_REQUEST RECEIVED:', message);
+            console.log('🔄 Current user info:', {
+              currentUserId: currentUser.id,
+              currentUserEmail: currentUser.email,
+              effectiveUserId: effectiveUserId,
+              targetUserId: message.targetUserId
+            });
             
             // Only respond if this request is targeted at the current user
             if (message.targetUserId === effectiveUserId) {
+              console.log('✅ Cursor refresh request is targeted at current user - responding');
+              
               // Rate limit responses to prevent spam
               const now = Date.now();
               if (now - lastCursorRefreshRequestTime.current > 1000) { // At most once per second
@@ -1726,6 +2209,49 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   }, 100); // Small delay to ensure the request is processed
                 } else {
                   console.log('⚠️ No current cursor position to send in response to refresh request');
+                  // Try to get current cursor position from editor
+                  if (editorRef.current) {
+                    editorRef.current.getEditorState().read(() => {
+                      const selection = $getSelection();
+                      if ($isRangeSelection(selection)) {
+                        const anchorNode = selection.anchor.getNode();
+                        const focusNode = selection.focus.getNode();
+                        
+                        const linePosition = editorRef.current ? getLexicalSelectionLinePosition(editorRef.current) : null;
+                        if (linePosition) {
+                          const position: CursorPosition = {
+                            userId: effectiveUserId,
+                            userName: currentUser.name || currentUser.email,
+                            userEmail: currentUser.email,
+                            position: {
+                              line: linePosition.line,
+                              column: linePosition.column,
+                              type: selection.isCollapsed() ? 'cursor' : 'selection',
+                              anchor: selection.isCollapsed() ? undefined : {
+                                line: linePosition.line,
+                                column: linePosition.column
+                              },
+                              focus: selection.isCollapsed() ? undefined : {
+                                line: linePosition.line,
+                                column: linePosition.column
+                              }
+                            },
+                            timestamp: new Date().toISOString()
+                          };
+                        
+                          console.log('📡 Sending fresh cursor position in response to refresh request:', position);
+                          client.send({
+                            type: 'cursor_position',
+                            data: position
+                          });
+                        } else {
+                          console.log('⚠️ No valid selection available for cursor refresh response');
+                        }
+                      } else {
+                        console.log('⚠️ No valid selection available for cursor refresh response');
+                      }
+                    });
+                  }
                 }
               } else {
                 console.log('🚫 Skipping cursor refresh response due to rate limit');
@@ -1867,9 +2393,17 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           client.on('request_cursor_refresh', (message: any) => {
             console.log('🔄 CURSOR_REFRESH_REQUEST RECEIVED (document):', message);
+            console.log('🔄 Current user info (document):', {
+              currentUserId: currentUser.id,
+              currentUserEmail: currentUser.email,
+              effectiveUserId: effectiveUserId,
+              targetUserId: message.targetUserId
+            });
             
             // Only respond if this request is targeted at the current user
             if (message.targetUserId === effectiveUserId) {
+              console.log('✅ Cursor refresh request is targeted at current user - responding (document)');
+              
               // Rate limit responses to prevent spam
               const now = Date.now();
               if (now - lastCursorRefreshRequestTime.current > 1000) { // At most once per second
@@ -1887,6 +2421,49 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   }, 100); // Small delay to ensure the request is processed
                 } else {
                   console.log('⚠️ No current cursor position to send in response to refresh request (document)');
+                  // Try to get current cursor position from editor
+                  if (editorRef.current) {
+                    editorRef.current.getEditorState().read(() => {
+                      const selection = $getSelection();
+                      if ($isRangeSelection(selection)) {
+                        const anchorNode = selection.anchor.getNode();
+                        const focusNode = selection.focus.getNode();
+                        
+                        const linePosition = editorRef.current ? getLexicalSelectionLinePosition(editorRef.current) : null;
+                        if (linePosition) {
+                          const position: CursorPosition = {
+                            userId: effectiveUserId,
+                            userName: currentUser.name || currentUser.email,
+                            userEmail: currentUser.email,
+                            position: {
+                              line: linePosition.line,
+                              column: linePosition.column,
+                              type: selection.isCollapsed() ? 'cursor' : 'selection',
+                              anchor: selection.isCollapsed() ? undefined : {
+                                line: linePosition.line,
+                                column: linePosition.column
+                              },
+                              focus: selection.isCollapsed() ? undefined : {
+                                line: linePosition.line,
+                                column: linePosition.column
+                              }
+                            },
+                            timestamp: new Date().toISOString()
+                          };
+                        
+                          console.log('📡 Sending fresh cursor position in response to refresh request (document):', position);
+                          client.send({
+                            type: 'cursor_position',
+                            data: position
+                          });
+                        } else {
+                          console.log('⚠️ No valid selection available for cursor refresh response (document)');
+                        }
+                      } else {
+                        console.log('⚠️ No valid selection available for cursor refresh response (document)');
+                      }
+                    });
+                  }
                 }
               } else {
                 console.log('🚫 Skipping cursor refresh response due to rate limit (document)');
@@ -1981,30 +2558,38 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         
         // Get cursor position information before notifying parent
         let cursorPosition: CursorPosition | undefined;
-        const selection = $getSelection();
-        if ($isRangeSelection(selection)) {
-          const anchorNode = selection.anchor.getNode();
-          const focusNode = selection.focus.getNode();
-          
-          cursorPosition = {
-            userId: effectiveUserId,
-            userName: currentUser.name || currentUser.email,
-            userEmail: currentUser.email,
-            position: {
-              key: anchorNode.getKey(),
-              offset: selection.anchor.offset,
-              type: selection.isCollapsed() ? 'cursor' : 'selection',
-              anchor: {
-                key: anchorNode.getKey(),
-                offset: selection.anchor.offset
-              },
-              focus: {
-                key: focusNode.getKey(),
-                offset: selection.focus.offset
+        // Wrap cursor position logic in proper editor context
+        if (editorRef.current) {
+          editorRef.current.getEditorState().read(() => {
+            const selection = $getSelection();
+            if ($isRangeSelection(selection)) {
+              const anchorNode = selection.anchor.getNode();
+              const focusNode = selection.focus.getNode();
+              
+              const linePosition = editorRef.current ? getLexicalSelectionLinePosition(editorRef.current) : null;
+              if (linePosition) {
+                cursorPosition = {
+                  userId: effectiveUserId,
+                  userName: currentUser.name || currentUser.email,
+                  userEmail: currentUser.email,
+                  position: {
+                    line: linePosition.line,
+                    column: linePosition.column,
+                    type: selection.isCollapsed() ? 'cursor' : 'selection',
+                    anchor: selection.isCollapsed() ? undefined : {
+                      line: linePosition.line,
+                      column: linePosition.column
+                    },
+                    focus: selection.isCollapsed() ? undefined : {
+                      line: linePosition.line,
+                      column: linePosition.column
+                    }
+                  },
+                  timestamp: new Date().toISOString()
+                };
               }
-            },
-            timestamp: new Date().toISOString()
-          };
+            }
+          });
         }
         
         // Only notify parent component if this is NOT a remote update
@@ -2026,9 +2611,9 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           
           // Send immediately with fresh node keys
           setTimeout(() => {
-            console.log('📡 Sending immediate fresh cursor position with new node keys:', {
-              anchorKey: cursorPosition!.position.key,
-              anchorOffset: cursorPosition!.position.offset
+            console.log('📡 Sending immediate fresh cursor position with new line/column:', {
+              line: cursorPosition!.position.line,
+              column: cursorPosition!.position.column
             });
             
             if (webSocketClientRef.current) {
@@ -2318,6 +2903,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               />
               <RemoteCursorPlugin
                 remoteCursors={remoteCursors}
+                currentUserCursor={currentUserCursor}
                 currentUserId={currentUser.id || currentUser.email}
                 needsRepositioning={needsCursorRepositioning}
                 webSocketClient={webSocketClientRef.current}

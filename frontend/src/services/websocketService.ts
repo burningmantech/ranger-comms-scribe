@@ -5,11 +5,11 @@ export interface CursorPosition {
   userName: string;
   userEmail: string;
   position: {
-    key: string;
-    offset: number;
+    line: number;
+    column: number;
     type: 'cursor' | 'selection';
-    anchor?: { key: string; offset: number };
-    focus?: { key: string; offset: number };
+    anchor?: { line: number; column: number };
+    focus?: { line: number; column: number };
   };
   timestamp: string;
 }
@@ -57,8 +57,8 @@ export class SubmissionWebSocketClient {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private heartbeatTimeoutId: NodeJS.Timeout | null = null;
   private lastHeartbeatResponse: number = 0;
-  private readonly HEARTBEAT_INTERVAL = 15000; // 15 seconds (more frequent)
-  private readonly HEARTBEAT_TIMEOUT = 5000; // 5 seconds to wait for response
+  private readonly HEARTBEAT_INTERVAL = 60000;
+  private readonly HEARTBEAT_TIMEOUT = 3000; // 5 seconds to wait for response
   private connectionHealthChecks = 0;
   private readonly MAX_MISSED_HEARTBEATS = 2; // Fail faster
   private messageQueue: Array<Omit<WebSocketMessage, 'submissionId' | 'userId' | 'userName' | 'userEmail' | 'timestamp'>> = [];

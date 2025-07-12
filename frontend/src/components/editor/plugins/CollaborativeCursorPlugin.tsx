@@ -79,21 +79,23 @@ export default function CollaborativeCursorPlugin({
           const focus = selection.focus;
           
           try {
+            // For now, let's use simple position/offset approach
+            // TODO: Implement proper line/column conversion
             const cursorPosition: CursorPosition = {
               userId: currentUserId,
               userName: '', // Will be filled by the parent component
               userEmail: '', // Will be filled by the parent component
               position: {
-                key: anchor.key,
-                offset: anchor.offset,
+                line: 0, // Simplified for now
+                column: anchor.offset,
                 type: selection.isCollapsed() ? 'cursor' : 'selection',
                 anchor: selection.isCollapsed() ? undefined : {
-                  key: anchor.key,
-                  offset: anchor.offset
+                  line: 0,
+                  column: anchor.offset
                 },
                 focus: selection.isCollapsed() ? undefined : {
-                  key: focus.key,
-                  offset: focus.offset
+                  line: 0,
+                  column: focus.offset
                 }
               },
               timestamp: new Date().toISOString()
@@ -101,8 +103,8 @@ export default function CollaborativeCursorPlugin({
 
             // Only send if position changed significantly
             if (!lastPositionRef.current || 
-                lastPositionRef.current.position.key !== cursorPosition.position.key ||
-                lastPositionRef.current.position.offset !== cursorPosition.position.offset ||
+                lastPositionRef.current.position.line !== cursorPosition.position.line ||
+                lastPositionRef.current.position.column !== cursorPosition.position.column ||
                 lastPositionRef.current.position.type !== cursorPosition.position.type) {
               
               onCursorUpdate(cursorPosition);
@@ -147,48 +149,11 @@ export default function CollaborativeCursorPlugin({
 
       try {
         editor.getEditorState().read(() => {
-          const node = $getNodeByKey(cursor.position.key);
-          if (!node) return;
-
-          // Get the DOM element for this node
-          const nodeElement = editor.getElementByKey(cursor.position.key);
-          if (!nodeElement) return;
-
-          // Calculate cursor position
-          const range = document.createRange();
-          const textNode = getTextNodeAtOffset(nodeElement, cursor.position.offset);
-          
-          if (textNode) {
-            range.setStart(textNode.node, textNode.offset);
-            range.setEnd(textNode.node, textNode.offset);
-            
-            const rect = range.getBoundingClientRect();
-            const editorRect = editorElement.getBoundingClientRect();
-            
-            // Create or update cursor element
-            let cursorElement = cursorElements.get(cursor.userId);
-            if (!cursorElement) {
-              cursorElement = createCursorElement(cursor);
-              editorElement.appendChild(cursorElement);
-            } else {
-              updateCursorElement(cursorElement, cursor);
-            }
-
-            // Position the cursor
-            const left = rect.left - editorRect.left;
-            const top = rect.top - editorRect.top;
-            
-            cursorElement.style.left = `${left}px`;
-            cursorElement.style.top = `${top}px`;
-            cursorElement.style.height = `${rect.height || 20}px`;
-
-            newCursorElements.set(cursor.userId, cursorElement);
-
-            // Handle selections
-            if (cursor.position.type === 'selection' && cursor.position.anchor && cursor.position.focus) {
-              updateSelectionHighlight(cursor, editorElement, editorRect);
-            }
-          }
+          // TODO: Implement proper cursor positioning for line/column format
+          // For now, skip cursor positioning for remote cursors
+          // This is a simplified implementation
+          console.log('Remote cursor positioning not fully implemented yet');
+          return;
         });
       } catch (error) {
         console.error('Error positioning cursor for user', cursor.userId, ':', error);
