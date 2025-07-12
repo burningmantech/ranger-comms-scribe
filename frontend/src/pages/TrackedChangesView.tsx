@@ -178,10 +178,15 @@ export const TrackedChangesView: React.FC = () => {
           sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
           // Add proposed versions with rich text support
           proposedVersions: {
+            // Start with base proposed versions (plain text)
             ...trackedChanges.proposedVersions,
-            // If we have rich text proposed versions, use them
+            // Override with rich text content if available (prioritize rich text)
             ...(trackedChanges.proposedVersionsRichText && {
               richTextContent: trackedChanges.proposedVersionsRichText.content
+            }),
+            // Also set content field from plain text versions if not already set
+            ...(trackedChanges.proposedVersions && {
+              content: trackedChanges.proposedVersions.content
             })
           }
         };
@@ -272,6 +277,15 @@ export const TrackedChangesView: React.FC = () => {
         // Include the proposed versions data
         proposedVersions: updatedSubmission.proposedVersions
       };
+      
+      console.log('🔍 SAVE DEBUG: Sending to backend:', {
+        submissionContentLength: backendSubmission.content?.length,
+        submissionRichTextContentLength: backendSubmission.richTextContent?.length,
+        proposedVersionsRichTextContentLength: backendSubmission.proposedVersions?.richTextContent?.length,
+        proposedVersionsContentLength: backendSubmission.proposedVersions?.content?.length,
+        proposedVersionsRichTextContentIsLexical: backendSubmission.proposedVersions?.richTextContent ? isLexicalJson(backendSubmission.proposedVersions.richTextContent) : false,
+        proposedVersionsRichTextContentPreview: backendSubmission.proposedVersions?.richTextContent?.substring(0, 100)
+      });
 
       // Save to both submission and tracked changes APIs
       const [submissionResponse, trackedChangesResponse] = await Promise.all([
@@ -284,17 +298,28 @@ export const TrackedChangesView: React.FC = () => {
           body: JSON.stringify(backendSubmission),
         }),
         // Save proposed versions to tracked changes API
-        updatedSubmission.proposedVersions ? fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${sessionId}`,
-          },
-          body: JSON.stringify({
+        updatedSubmission.proposedVersions ? (() => {
+          const trackedChangesPayload = {
             proposedVersionsRichText: updatedSubmission.proposedVersions.richTextContent,
             proposedVersionsContent: updatedSubmission.proposedVersions.content
-          }),
-        }) : Promise.resolve({ ok: true })
+          };
+          
+          console.log('🔍 TRACKED CHANGES DEBUG: Sending to tracked changes API:', {
+            proposedVersionsRichTextLength: trackedChangesPayload.proposedVersionsRichText?.length,
+            proposedVersionsContentLength: trackedChangesPayload.proposedVersionsContent?.length,
+            proposedVersionsRichTextIsLexical: trackedChangesPayload.proposedVersionsRichText ? isLexicalJson(trackedChangesPayload.proposedVersionsRichText) : false,
+            proposedVersionsRichTextPreview: trackedChangesPayload.proposedVersionsRichText?.substring(0, 100)
+          });
+          
+          return fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${sessionId}`,
+            },
+            body: JSON.stringify(trackedChangesPayload),
+          });
+        })() : Promise.resolve({ ok: true })
       ]);
 
       if (!submissionResponse.ok) {
@@ -505,7 +530,19 @@ export const TrackedChangesView: React.FC = () => {
           commsApprovedBy: data.commsApprovedBy,
           sentBy: data.sentBy,
           sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
-          proposedVersions: trackedChanges.proposedVersions || {}
+          // Add proposed versions with rich text support
+          proposedVersions: {
+            // Start with base proposed versions (plain text)
+            ...trackedChanges.proposedVersions,
+            // Override with rich text content if available (prioritize rich text)
+            ...(trackedChanges.proposedVersionsRichText && {
+              richTextContent: trackedChanges.proposedVersionsRichText.content
+            }),
+            // Also set content field from plain text versions if not already set
+            ...(trackedChanges.proposedVersions && {
+              content: trackedChanges.proposedVersions.content
+            })
+          }
         };
         setSubmission(transformedSubmission);
       }
@@ -602,7 +639,19 @@ export const TrackedChangesView: React.FC = () => {
           commsApprovedBy: data.commsApprovedBy,
           sentBy: data.sentBy,
           sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
-          proposedVersions: trackedChanges.proposedVersions || {}
+          // Add proposed versions with rich text support
+          proposedVersions: {
+            // Start with base proposed versions (plain text)
+            ...trackedChanges.proposedVersions,
+            // Override with rich text content if available (prioritize rich text)
+            ...(trackedChanges.proposedVersionsRichText && {
+              richTextContent: trackedChanges.proposedVersionsRichText.content
+            }),
+            // Also set content field from plain text versions if not already set
+            ...(trackedChanges.proposedVersions && {
+              content: trackedChanges.proposedVersions.content
+            })
+          }
         };
         setSubmission(transformedSubmission);
       }
@@ -614,6 +663,14 @@ export const TrackedChangesView: React.FC = () => {
   const handleSuggestion = async (suggestion: Change) => {
     try {
       console.log('TrackedChangesView: handleSuggestion called with:', suggestion);
+      console.log('🔍 SUGGESTION DEBUG: Current submission state before creating suggestion:', {
+        submissionContentLength: submission?.content?.length,
+        submissionRichTextContentLength: submission?.richTextContent?.length,
+        proposedVersionsRichTextContentLength: submission?.proposedVersions?.richTextContent?.length,
+        proposedVersionsRichTextContentIsLexical: submission?.proposedVersions?.richTextContent ? isLexicalJson(submission.proposedVersions.richTextContent) : false,
+        proposedVersionsRichTextContentPreview: submission?.proposedVersions?.richTextContent?.substring(0, 100)
+      });
+      
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
@@ -664,6 +721,16 @@ export const TrackedChangesView: React.FC = () => {
         console.log('TrackedChangesView: Refreshed data:', {
           submission: data,
           trackedChanges: trackedChanges
+        });
+        
+        console.log('🔍 REFRESH DEBUG: Data received from backend:', {
+          submissionContentLength: data.content?.length,
+          submissionRichTextContentLength: data.richTextContent?.length,
+          submissionContentIsLexical: data.content ? isLexicalJson(data.content) : false,
+          submissionRichTextContentIsLexical: data.richTextContent ? isLexicalJson(data.richTextContent) : false,
+          trackedChangesProposedVersionsRichTextContentLength: trackedChanges.proposedVersions?.richTextContent?.length,
+          trackedChangesProposedVersionsRichTextContentIsLexical: trackedChanges.proposedVersions?.richTextContent ? isLexicalJson(trackedChanges.proposedVersions.richTextContent) : false,
+          trackedChangesProposedVersionsRichTextContentPreview: trackedChanges.proposedVersions?.richTextContent?.substring(0, 100)
         });
         
         // Transform tracked changes to the format expected by the frontend
@@ -717,7 +784,19 @@ export const TrackedChangesView: React.FC = () => {
           commsApprovedBy: data.commsApprovedBy,
           sentBy: data.sentBy,
           sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
-          proposedVersions: trackedChanges.proposedVersions || {}
+          // Add proposed versions with rich text support
+          proposedVersions: {
+            // Start with base proposed versions (plain text)
+            ...trackedChanges.proposedVersions,
+            // Override with rich text content if available (prioritize rich text)
+            ...(trackedChanges.proposedVersionsRichText && {
+              richTextContent: trackedChanges.proposedVersionsRichText.content
+            }),
+            // Also set content field from plain text versions if not already set
+            ...(trackedChanges.proposedVersions && {
+              content: trackedChanges.proposedVersions.content
+            })
+          }
         };
         console.log('TrackedChangesView: Setting transformed submission:', transformedSubmission);
         setSubmission(transformedSubmission);

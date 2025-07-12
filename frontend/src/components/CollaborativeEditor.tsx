@@ -2742,36 +2742,174 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         }
       }
       
-      // For plain text content, create a proper editor state
-      editor.update(() => {
-        const root = $getRoot();
-        root.clear();
+      // Check if content contains HTML or rich text formatting
+      // Only treat as HTML if it starts with HTML tags, not if it just contains them
+      const isHtml = typeof initialContent === 'string' && 
+                     initialContent.trim().startsWith('<') && 
+                     !isLexicalJson(initialContent);
+      
+      if (isHtml) {
+        console.log('🔄 Processing HTML/rich text content');
         
-        console.log('🔄 Editor update callback started, root cleared');
-        
-        if (initialContent.trim()) {
-          console.log('🔄 Processing plain text content:', {
-            contentType: typeof initialContent,
-            contentLength: initialContent.length,
-            contentPreview: initialContent.substring(0, 100)
-          });
+        // For HTML content, use the browser's parsing to preserve formatting
+        editor.update(() => {
+          const root = $getRoot();
+          root.clear();
           
-          // Create a paragraph with the text content
-          const paragraph = $createParagraphNode();
-          const textNode = $createTextNode(initialContent);
-          paragraph.append(textNode);
-          root.append(paragraph);
-          console.log('🔄 Added paragraph with text node to root');
+          // Create a temporary element to parse the HTML
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = initialContent;
           
-          // Update current content state with JSON representation
-          const jsonContent = JSON.stringify(editor.getEditorState());
-          setCurrentContent(jsonContent);
-          setLastSavedContent(jsonContent);
-          console.log('🔄 Updated content state');
-        } else {
-          console.log('🔄 Initial content is empty, no content to load');
-        }
-      });
+                     // Convert HTML structure to Lexical nodes
+           const processHtmlNode = (htmlNode: Node, currentParagraph?: any): any => {
+             if (htmlNode.nodeType === Node.TEXT_NODE) {
+               const text = htmlNode.textContent || '';
+               if (text.trim()) {
+                 const textNode = $createTextNode(text);
+                 if (currentParagraph) {
+                   currentParagraph.append(textNode);
+                   return currentParagraph;
+                 } else {
+                   const paragraph = $createParagraphNode();
+                   paragraph.append(textNode);
+                   root.append(paragraph);
+                   return paragraph;
+                 }
+               }
+             } else if (htmlNode.nodeType === Node.ELEMENT_NODE) {
+               const element = htmlNode as HTMLElement;
+               const tagName = element.tagName.toLowerCase();
+               
+               if (tagName === 'p' || tagName === 'div') {
+                 const paragraph = $createParagraphNode();
+                 
+                 // Process child nodes within this paragraph
+                 Array.from(element.childNodes).forEach(child => {
+                   processHtmlNode(child, paragraph);
+                 });
+                 
+                 // Only add paragraph if it has content
+                 if (paragraph.getTextContent().trim()) {
+                   root.append(paragraph);
+                 }
+                 return paragraph;
+               } else if (tagName === 'br') {
+                 const paragraph = $createParagraphNode();
+                 root.append(paragraph);
+                 return paragraph;
+               } else if (tagName === 'strong' || tagName === 'b') {
+                 // Handle bold text
+                 const text = element.textContent || '';
+                 if (text.trim()) {
+                   const textNode = $createTextNode(text);
+                   // Note: In a full implementation, you'd set formatting here
+                   if (currentParagraph) {
+                     currentParagraph.append(textNode);
+                     return currentParagraph;
+                   } else {
+                     const paragraph = $createParagraphNode();
+                     paragraph.append(textNode);
+                     root.append(paragraph);
+                     return paragraph;
+                   }
+                 }
+               } else if (tagName === 'em' || tagName === 'i') {
+                 // Handle italic text
+                 const text = element.textContent || '';
+                 if (text.trim()) {
+                   const textNode = $createTextNode(text);
+                   // Note: In a full implementation, you'd set formatting here
+                   if (currentParagraph) {
+                     currentParagraph.append(textNode);
+                     return currentParagraph;
+                   } else {
+                     const paragraph = $createParagraphNode();
+                     paragraph.append(textNode);
+                     root.append(paragraph);
+                     return paragraph;
+                   }
+                 }
+               } else {
+                 // For other elements, extract text content and process children
+                 Array.from(element.childNodes).forEach(child => {
+                   processHtmlNode(child, currentParagraph);
+                 });
+                 
+                 // If no children processed and has text, create a text node
+                 if (element.childNodes.length === 0) {
+                   const text = element.textContent || '';
+                   if (text.trim()) {
+                     const textNode = $createTextNode(text);
+                     if (currentParagraph) {
+                       currentParagraph.append(textNode);
+                       return currentParagraph;
+                     } else {
+                       const paragraph = $createParagraphNode();
+                       paragraph.append(textNode);
+                       root.append(paragraph);
+                       return paragraph;
+                     }
+                   }
+                 }
+               }
+             }
+             return currentParagraph;
+           };
+          
+          // Process all child nodes
+          Array.from(tempDiv.childNodes).forEach(processHtmlNode);
+          
+          // If no content was added, create a single paragraph with the raw content
+          if (root.getChildren().length === 0) {
+            const paragraph = $createParagraphNode();
+            const textNode = $createTextNode(initialContent);
+            paragraph.append(textNode);
+            root.append(paragraph);
+          }
+          
+          console.log('🔄 Added HTML content to editor');
+        });
+      } else {
+        // For plain text content, create a proper editor state
+        editor.update(() => {
+          const root = $getRoot();
+          root.clear();
+          
+          console.log('🔄 Editor update callback started, root cleared');
+          
+          if (initialContent.trim()) {
+            console.log('🔄 Processing plain text content:', {
+              contentType: typeof initialContent,
+              contentLength: initialContent.length,
+              contentPreview: initialContent.substring(0, 100)
+            });
+            
+            // Split by line breaks and create paragraphs
+            const lines = initialContent.split('\n');
+            
+            lines.forEach(line => {
+              const paragraph = $createParagraphNode();
+              if (line.trim()) {
+                const textNode = $createTextNode(line);
+                paragraph.append(textNode);
+              }
+              root.append(paragraph);
+            });
+            
+            console.log('🔄 Added plain text content to editor');
+          } else {
+            console.log('🔄 Initial content is empty, no content to load');
+          }
+        });
+      }
+      
+      // Update current content state with JSON representation after content is set
+      setTimeout(() => {
+        const jsonContent = JSON.stringify(editor.getEditorState());
+        setCurrentContent(jsonContent);
+        setLastSavedContent(jsonContent);
+        console.log('🔄 Updated content state with processed content');
+      }, 100);
     } else {
       console.log('🔧 Editor initialization skipped:', {
         hasEditorRef: !!editorRef.current,

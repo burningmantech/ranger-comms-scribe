@@ -101,8 +101,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Auto-save state
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<Date | null>(null);
+  const [autoSaveCountdown, setAutoSaveCountdown] = useState<number | null>(null);
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const autoSaveCountdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isAutoSaveEnabledRef = useRef(true);
+  const hasInitializedContentRef = useRef(false);
   
   // Remote update state
   const [remoteUpdateStatus, setRemoteUpdateStatus] = useState<'none' | 'applying' | 'applied'>('none');
@@ -146,6 +149,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Stable onChange handler for the editor
   const handleEditorChange = useCallback((editor: any, json: string) => {
+    // Skip if we're still initializing content to prevent auto-save on load
+    if (!hasInitializedContentRef.current) {
+      console.log('🚫 Skipping editor change during initialization');
+      return;
+    }
+    
     // Only update if the content has actually changed
     if (json !== editedProposedContentRef.current) {
       setEditedProposedContent(json);
@@ -233,31 +242,52 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return content;
     }
     
+    // Check if content contains HTML or rich text formatting
+    // Only treat as HTML if it starts with HTML tags, not if it just contains them
+    const isHtml = typeof content === 'string' && 
+                   content.trim().startsWith('<') && 
+                   !isLexicalJson(content);
+    
+    if (isHtml) {
+      console.log('🔄 getRichTextContent: Processing HTML content');
+      
+      // For HTML content, let the CollaborativeEditor handle the conversion
+      // Just return the HTML content as-is and let the editor parse it
+      return content;
+    }
+    
     // If it's plain text, create a basic Lexical structure
     if (typeof content === 'string' && content.trim()) {
-      // Create a basic Lexical JSON structure for plain text
+      // For plain text with line breaks, create multiple paragraphs
+      const lines = content.split('\n').filter(line => line.trim() !== '');
+      
+      if (lines.length === 0) {
+        return '';
+      }
+      
+      // Create a Lexical JSON structure with multiple paragraphs for multi-line content
+      const children = lines.map(line => ({
+        children: [
+          {
+            detail: 0,
+            format: 0,
+            mode: "normal",
+            style: "",
+            text: line,
+            type: "text",
+            version: 1
+          }
+        ],
+        direction: "ltr",
+        format: "",
+        indent: 0,
+        type: "paragraph",
+        version: 1
+      }));
+      
       const basicLexicalStructure = {
         root: {
-          children: [
-            {
-              children: [
-                {
-                  detail: 0,
-                  format: 0,
-                  mode: "normal",
-                  style: "",
-                  text: content,
-                  type: "text",
-                  version: 1
-                }
-              ],
-              direction: "ltr",
-              format: "",
-              indent: 0,
-              type: "paragraph",
-              version: 1
-            }
-          ],
+          children: children,
           direction: "ltr",
           format: "",
           indent: 0,
@@ -265,6 +295,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           version: 1
         }
       };
+      
       const result = JSON.stringify(basicLexicalStructure);
       return result;
     }
@@ -281,28 +312,60 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                    submission.richTextContent || 
                    submission.content || '';
     
+    console.log('🔍 Content initialization with source data:', {
+      proposedVersionsRichTextContent: !!submission.proposedVersions?.richTextContent,
+      proposedVersionsRichTextContentLength: submission.proposedVersions?.richTextContent?.length,
+      proposedVersionsRichTextContentPreview: submission.proposedVersions?.richTextContent?.substring(0, 100),
+      proposedVersionsContent: !!submission.proposedVersions?.content,
+      richTextContent: !!submission.richTextContent,
+      content: !!submission.content,
+      finalContentLength: content?.length,
+      finalContentPreview: content?.substring(0, 100),
+      isLexicalJson: isLexicalJson(content)
+    });
+    
     // If content looks like a comment, skip it and use empty content
     if (typeof content === 'string' && content.includes('@change:')) {
       content = '';
     }
     
+    // DEFENSE: If we have editedProposedContent that's richer than what we're getting from backend,
+    // and the new content is plain text while the current content is Lexical JSON, preserve the current content
+    const isCurrentContentRich = editedProposedContent && isLexicalJson(editedProposedContent);
+    const isNewContentPlain = content && !isLexicalJson(content);
+    
+    if (isCurrentContentRich && isNewContentPlain && editedProposedContent) {
+      console.log('🛡️ DEFENSE: Preserving rich content over plain text from backend');
+      console.log('🛡️ Current content length:', editedProposedContent.length, 'chars (rich)');
+      console.log('🛡️ New content length:', content.length, 'chars (plain)');
+      // Keep the current rich content instead of overwriting with plain text
+      return;
+    }
+    
     const richTextContent = getRichTextContent(content);
     
-    // Only update the edited content if we're not currently editing
-    // This prevents overwriting user's changes while they're editing
-    if (!false) {
-      setEditedProposedContent(richTextContent);
-    }
+    console.log('🔍 After getRichTextContent conversion:', {
+      inputLength: content?.length,
+      outputLength: richTextContent?.length,
+      inputPreview: content?.substring(0, 100),
+      outputPreview: richTextContent?.substring(0, 100),
+      inputIsLexical: isLexicalJson(content),
+      outputIsLexical: isLexicalJson(richTextContent)
+    });
     
-    // Update last saved content when submission changes (from parent)
-    // Only update if we don't have local changes or if the submission has actually changed
-    if (!lastSavedProposedContent || lastSavedProposedContent !== richTextContent) {
-      setLastSavedProposedContent(richTextContent);
-    }
+    // Always update the edited content and last saved content during initialization
+    setEditedProposedContent(richTextContent);
+    setLastSavedProposedContent(richTextContent);
     
     // Always update the initial content reference for fresh data
     // This ensures the editor gets the latest content when entering edit mode
     initialEditorContentRef.current = richTextContent;
+    
+    // Mark as initialized after a short delay to ensure all state is set
+    setTimeout(() => {
+      hasInitializedContentRef.current = true;
+      console.log('✅ Content initialization complete');
+    }, 100);
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
   // Convert changes to tracked changes with status
@@ -435,7 +498,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         proposedVersionsRichTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length
       });
       
+      console.log('🔍 About to call onSave with content details:', {
+        richTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length,
+        richTextContentIsLexical: isLexicalJson(updatedSubmission.proposedVersions?.richTextContent || ''),
+        richTextContentPreview: updatedSubmission.proposedVersions?.richTextContent?.substring(0, 150)
+      });
+      
       await onSave(updatedSubmission);
+      
+      console.log('🔍 onSave completed, content after save:', {
+        editedProposedContentLength: editedProposedContent?.length,
+        editedProposedContentIsLexical: isLexicalJson(editedProposedContent || ''),
+        editedProposedContentPreview: editedProposedContent?.substring(0, 150)
+      });
       
       // Update the last saved content after successful save
       setLastSavedProposedContent(editedProposedContent);
@@ -530,12 +605,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Real-time status changes are now handled by CollaborativeEditor
   }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
 
-  // Auto-save functionality
+  // Auto-save functionality with countdown timer
   const performAutoSave = useCallback(async () => {
     if (!isAutoSaveEnabledRef.current) {
       console.log('🚫 Auto-save disabled, skipping');
       return;
     }
+
+    // Clear countdown timer
+    if (autoSaveCountdownIntervalRef.current) {
+      clearInterval(autoSaveCountdownIntervalRef.current);
+      autoSaveCountdownIntervalRef.current = null;
+    }
+    setAutoSaveCountdown(null);
 
     // Get the most current content from the editor state
     const currentEditorContent = editedProposedContentRef.current || editedProposedContent;
@@ -600,8 +682,20 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
       }
       
+      console.log('🔍 Auto-save about to call onSave with content details:', {
+        richTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length,
+        richTextContentIsLexical: isLexicalJson(updatedSubmission.proposedVersions?.richTextContent || ''),
+        richTextContentPreview: updatedSubmission.proposedVersions?.richTextContent?.substring(0, 150)
+      });
+      
       // Call the save function
       await onSave(updatedSubmission);
+      
+      console.log('🔍 Auto-save onSave completed, content after save:', {
+        currentEditorContentLength: currentEditorContent?.length,
+        currentEditorContentIsLexical: isLexicalJson(currentEditorContent || ''),
+        currentEditorContentPreview: currentEditorContent?.substring(0, 150)
+      });
       
       // Update state with the content that was actually saved
       setLastSavedProposedContent(currentEditorContent);
@@ -760,29 +854,45 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [sendRealTimeUpdate]);
 
-  // Debounced auto-save (5 seconds after typing stops)
+  // Debounced auto-save (7 seconds after typing stops) with countdown timer
   const scheduleAutoSave = useCallback(() => {
     if (!isAutoSaveEnabledRef.current) {
       console.log('🚫 Auto-save disabled, not scheduling');
       return;
     }
 
-    // Clear existing timeout
+    // Clear existing timeout and countdown
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
       console.log('🔄 Cleared previous auto-save timeout');
     }
     
-    // Set status to pending
-    setAutoSaveStatus('pending');
+    if (autoSaveCountdownIntervalRef.current) {
+      clearInterval(autoSaveCountdownIntervalRef.current);
+      autoSaveCountdownIntervalRef.current = null;
+    }
     
-    // Schedule auto-save for 7 seconds later (increased to ensure last character is captured)
+    // Set status to pending and start countdown
+    setAutoSaveStatus('pending');
+    setAutoSaveCountdown(7);
+    
+    // Start countdown timer
+    autoSaveCountdownIntervalRef.current = setInterval(() => {
+      setAutoSaveCountdown(prev => {
+        if (prev === null || prev <= 1) {
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    // Schedule auto-save for 7 seconds later
     autoSaveTimeoutRef.current = setTimeout(() => {
       console.log('⏰ Auto-save timeout triggered');
       performAutoSave();
     }, 7000);
     
-    console.log('⏰ Auto-save scheduled for 7 seconds...');
+    console.log('⏰ Auto-save scheduled for 7 seconds with countdown...');
   }, [performAutoSave]);
 
   // Fallback auto-save check - ensures auto-save happens even if scheduling is missed
@@ -1043,6 +1153,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       if (autoSaveTimeoutRef.current) {
         clearTimeout(autoSaveTimeoutRef.current);
       }
+      if (autoSaveCountdownIntervalRef.current) {
+        clearInterval(autoSaveCountdownIntervalRef.current);
+      }
       if (realTimeUpdateTimeoutRef.current) {
         clearTimeout(realTimeUpdateTimeoutRef.current);
       }
@@ -1161,7 +1274,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         </div>
         <div className="comment-actions">
           <button
-            className="reply-button"
+            className="btn btn-sm btn-tertiary reply-button"
             onClick={(e) => {
               e.stopPropagation();
               setReplyToComment(comment.id);
@@ -1181,6 +1294,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             />
             <div className="reply-actions">
               <button
+                className="btn btn-sm btn-neutral"
                 onClick={() => {
                   setReplyToComment(null);
                   setReplyText('');
@@ -1189,8 +1303,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 Cancel
               </button>
               <button
+                className="btn btn-sm btn-primary"
                 onClick={() => handleCommentReply(comment.id)}
-                className="primary"
               >
                 Reply
               </button>
@@ -1238,9 +1352,42 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                    submission.richTextContent || 
                    submission.content || '';
     
-    // For now, let's simplify by just passing the content directly
-    // If it's already Lexical JSON, use it as-is
-    // If it's plain text, pass it as plain text and let the editor handle it
+    console.log('📝 proposedEditorContent: Content source analysis:', {
+      hasProposedVersionsRichTextContent: !!submission.proposedVersions?.richTextContent,
+      proposedVersionsRichTextContentLength: submission.proposedVersions?.richTextContent?.length,
+      proposedVersionsRichTextContentType: typeof submission.proposedVersions?.richTextContent,
+      proposedVersionsRichTextContentIsLexical: submission.proposedVersions?.richTextContent ? isLexicalJson(submission.proposedVersions.richTextContent) : false,
+      proposedVersionsRichTextContentPreview: submission.proposedVersions?.richTextContent?.substring(0, 100),
+      
+      hasProposedVersionsContent: !!submission.proposedVersions?.content,
+      proposedVersionsContentLength: submission.proposedVersions?.content?.length,
+      proposedVersionsContentType: typeof submission.proposedVersions?.content,
+      proposedVersionsContentIsLexical: submission.proposedVersions?.content ? isLexicalJson(submission.proposedVersions.content) : false,
+      proposedVersionsContentPreview: submission.proposedVersions?.content?.substring(0, 100),
+      
+      hasRichTextContent: !!submission.richTextContent,
+      richTextContentLength: submission.richTextContent?.length,
+      richTextContentType: typeof submission.richTextContent,
+      richTextContentIsLexical: submission.richTextContent ? isLexicalJson(submission.richTextContent) : false,
+      richTextContentPreview: submission.richTextContent?.substring(0, 100),
+      
+      hasContent: !!submission.content,
+      contentLength: submission.content?.length,
+      contentType: typeof submission.content,
+      contentIsLexical: submission.content ? isLexicalJson(submission.content) : false,
+      contentPreview: submission.content?.substring(0, 100),
+      
+      finalContentLength: content?.length,
+      finalContentType: typeof content,
+      finalContentIsLexical: content ? isLexicalJson(content) : false,
+      finalContentPreview: content?.substring(0, 100)
+    });
+    
+    // Pass the content directly to the CollaborativeEditor
+    // The CollaborativeEditor will handle the proper conversion based on content type:
+    // - Lexical JSON: use as-is
+    // - HTML: parse and preserve formatting
+    // - Plain text: create proper paragraph structure
     let result = content;
     
     // If content is empty, provide a default
@@ -1248,10 +1395,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       result = 'Start typing your content here...';
     }
     
-    console.log('📝 Simplified proposedEditorContent result:', {
+    console.log('📝 proposedEditorContent result:', {
       resultLength: result?.length,
       resultType: typeof result,
-      resultPreview: result?.substring(0, 200)
+      resultPreview: result?.substring(0, 200),
+      isLexicalJson: isLexicalJson(result),
+      isHtml: typeof result === 'string' && result.trim().startsWith('<') && !isLexicalJson(result)
     });
     
     return result;
@@ -1282,10 +1431,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               </span>
             )}
             
-            {/* Auto-save status */}
+            {/* Auto-save status with countdown */}
             {autoSaveStatus === 'pending' && remoteUpdateStatus === 'none' && (
               <span className="save-status pending">
-                ⏰ Auto-save in 7s...
+                ⏰ Auto-save in {autoSaveCountdown}s...
               </span>
             )}
             {autoSaveStatus === 'saving' && (
@@ -1306,7 +1455,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             
             {/* Manual save button */}
             <button
-              className="manual-save-button"
+              className="btn btn-sm btn-primary manual-save-button"
               onClick={() => {
                 console.log('💾 Manual save requested');
                 
@@ -1314,6 +1463,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 if (autoSaveTimeoutRef.current) {
                   clearTimeout(autoSaveTimeoutRef.current);
                 }
+                if (autoSaveCountdownIntervalRef.current) {
+                  clearInterval(autoSaveCountdownIntervalRef.current);
+                  autoSaveCountdownIntervalRef.current = null;
+                }
+                setAutoSaveCountdown(null);
                 
                 performAutoSave();
               }}
@@ -1354,7 +1508,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 <div className="section-actions">
                   {canApproveProposedVersion() && !isProposedVersionApproved && (
                     <button
-                      className="approve-button"
+                      className="btn btn-primary approve-button"
                       onClick={() => setShowProposedVersionApprovalDialog(true)}
                       title="Approve proposed version"
                     >
@@ -1383,6 +1537,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     currentUser={currentUser}
                     initialContent={proposedEditorContent}
                     onContentChange={(json, cursorPosition) => {
+                      // Skip processing if we're still initializing content to prevent auto-save on load
+                      if (!hasInitializedContentRef.current) {
+                        console.log('🚫 Skipping content change during initialization');
+                        return;
+                      }
+                      
                       setEditedProposedContent(json);
                       console.log('📝 Proposed editor content changed:', {
                         contentLength: json.length,
@@ -1421,13 +1581,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           // Schedule auto-save (7 seconds after typing stops)
                           scheduleAutoSave();
                           
-                          // Create a tracked change for real-time collaboration
+                          // Create a tracked change for real-time collaboration and auto-save change bubbles
                           const currentText = getDisplayableText(originalContent);
                           const newText = getDisplayableText(json);
                           
                           if (currentText !== newText) {
                             // Create incremental change for real-time tracking
-                            const newChange = {
+                            const newChange: Change = {
                               id: `change-${Date.now()}`,
                               field: 'content' as const,
                               oldValue: currentText,
@@ -1439,8 +1599,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               richTextNewValue: json
                             };
                             
-                            console.log('📝 Created tracked change:', newChange);
-                            // Note: In a real implementation, this would be sent to other users via WebSocket
+                            console.log('📝 Created tracked change for auto-save:', newChange);
+                            
+                            // Call onSuggestion to add this change to the tracked changes sidebar
+                            onSuggestion(newChange);
                           }
                         }
                       } else if (!hasChangesFromLastSaved) {
@@ -1458,6 +1620,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       if (autoSaveTimeoutRef.current) {
                         clearTimeout(autoSaveTimeoutRef.current);
                       }
+                      if (autoSaveCountdownIntervalRef.current) {
+                        clearInterval(autoSaveCountdownIntervalRef.current);
+                        autoSaveCountdownIntervalRef.current = null;
+                      }
+                      setAutoSaveCountdown(null);
                       setAutoSaveStatus('saving');
                       
                       handleProposedEditSubmit();
@@ -1655,7 +1822,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   {canMakeEditorialDecisions() && (
                     <>
                       <button
-                        className="action-button approve"
+                        className="btn btn-icon btn-sm btn-secondary action-button approve"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleChangeDecision(change.id, 'approve');
@@ -1663,14 +1830,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         title="Approve this change"
                         disabled={change.status !== 'pending'}
                         style={{ 
-                          opacity: change.status !== 'pending' ? 0.4 : 1,
-                          backgroundColor: change.status !== 'pending' ? '#f5f5f5' : '#fff'
+                          opacity: change.status !== 'pending' ? 0.4 : 1
                         }}
                       >
                         ✓
                       </button>
                       <button
-                        className="action-button reject"
+                        className="btn btn-icon btn-sm btn-danger action-button reject"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleChangeDecision(change.id, 'reject');
@@ -1678,15 +1844,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         title="Reject this change"
                         disabled={change.status !== 'pending'}
                         style={{ 
-                          opacity: change.status !== 'pending' ? 0.4 : 1,
-                          backgroundColor: change.status !== 'pending' ? '#f5f5f5' : '#fff'
+                          opacity: change.status !== 'pending' ? 0.4 : 1
                         }}
                       >
                         ✗
                       </button>
                       {(change.status === 'approved' || change.status === 'rejected') && (
                         <button
-                          className="action-button undo"
+                          className="btn btn-icon btn-sm btn-neutral action-button undo"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleUndoChange(change.id);
@@ -1699,7 +1864,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     </>
                   )}
                   <button
-                    className="action-button comment"
+                    className="btn btn-icon btn-sm btn-tertiary action-button comment"
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedChange(change.id);
@@ -1733,7 +1898,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     <div className="comments-header">
                       <span className="comments-count">{change.comments.length} comment{change.comments.length !== 1 ? 's' : ''}</span>
                       <button
-                        className="expand-comments-button"
+                        className="btn btn-icon btn-sm btn-neutral expand-comments-button"
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleCommentExpansion(change.id);
@@ -1769,8 +1934,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               autoFocus
             />
             <div className="dialog-actions">
-              <button onClick={() => setShowCommentDialog(false)}>Cancel</button>
-              <button onClick={handleCommentSubmit} className="primary">
+              <button className="btn btn-neutral" onClick={() => setShowCommentDialog(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleCommentSubmit}>
                 Add Comment
               </button>
             </div>
@@ -1794,8 +1959,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               autoFocus
             />
             <div className="dialog-actions">
-              <button onClick={() => setShowSuggestionDialog(false)}>Cancel</button>
-              <button onClick={handleSuggestionSubmit} className="primary">
+              <button className="btn btn-neutral" onClick={() => setShowSuggestionDialog(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSuggestionSubmit}>
                 Suggest Edit
               </button>
             </div>
@@ -1818,11 +1983,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               />
             </div>
             <div className="dialog-actions">
-              <button onClick={() => setShowProposedVersionApprovalDialog(false)}>Cancel</button>
-              <button onClick={handleProposedVersionRejection} className="reject">
+              <button className="btn btn-neutral" onClick={() => setShowProposedVersionApprovalDialog(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleProposedVersionRejection}>
                 Reject
               </button>
-              <button onClick={handleProposedVersionApproval} className="primary">
+              <button className="btn btn-primary" onClick={handleProposedVersionApproval}>
                 Approve
               </button>
             </div>

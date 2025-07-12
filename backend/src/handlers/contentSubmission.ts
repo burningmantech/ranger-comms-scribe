@@ -115,7 +115,36 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  return json(submission);
+  // Get proposed versions from tracked changes system
+  const savedProposedVersions = await getObject(`proposed_versions/${id}`, env) as any;
+  
+  console.log('🔍 Content submission GET - checking for proposed versions:', {
+    submissionId: id,
+    hasProposedVersions: !!savedProposedVersions,
+    proposedVersionsRichText: savedProposedVersions?.proposedVersionsRichText ? 'present' : 'missing',
+    proposedVersionsContent: savedProposedVersions?.proposedVersionsContent ? 'present' : 'missing'
+  });
+  
+  // Merge proposed versions into submission if they exist
+  const submissionWithProposedVersions = {
+    ...submission,
+    proposedVersions: savedProposedVersions ? {
+      richTextContent: savedProposedVersions.proposedVersionsRichText,
+      content: savedProposedVersions.proposedVersionsContent,
+      lastModified: savedProposedVersions.lastUpdatedAt,
+      lastModifiedBy: savedProposedVersions.lastUpdatedBy
+    } : undefined
+  };
+
+  console.log('🔍 Content submission GET - response:', {
+    submissionId: id,
+    hasProposedVersions: !!submissionWithProposedVersions.proposedVersions,
+    proposedVersionsRichTextContentLength: submissionWithProposedVersions.proposedVersions?.richTextContent?.length,
+    proposedVersionsContentLength: submissionWithProposedVersions.proposedVersions?.content?.length,
+    proposedVersionsRichTextContentIsLexical: submissionWithProposedVersions.proposedVersions?.richTextContent ? submissionWithProposedVersions.proposedVersions.richTextContent.includes('"root"') : false
+  });
+
+  return json(submissionWithProposedVersions);
 });
 
 // Update a submission
@@ -160,6 +189,17 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
         lastUpdatedBy: user.id,
         lastUpdatedAt: new Date().toISOString()
       };
+      
+      console.log('🔍 Content submission handler - saving proposed versions:', {
+        submissionId: id,
+        hasRichTextContent: !!updates.proposedVersions.richTextContent,
+        richTextContentLength: updates.proposedVersions.richTextContent?.length,
+        richTextContentIsLexical: updates.proposedVersions.richTextContent ? updates.proposedVersions.richTextContent.includes('"root"') : false,
+        hasContent: !!updates.proposedVersions.content,
+        contentLength: updates.proposedVersions.content?.length,
+        richTextContentPreview: updates.proposedVersions.richTextContent?.substring(0, 100)
+      });
+      
       await putObject(`proposed_versions/${id}`, proposedVersionsData, env);
       console.log('✅ Proposed versions saved from content submission update');
     } catch (error) {

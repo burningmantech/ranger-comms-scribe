@@ -65,13 +65,27 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     // First, try to get saved proposed versions from cache
     const savedProposedVersions = await getObject(`proposed_versions/${submissionId}`, env) as any;
     
+    console.log('🔍 Backend getTrackedChangesHandler - savedProposedVersions:', {
+      hasData: !!savedProposedVersions,
+      proposedVersionsRichText: savedProposedVersions?.proposedVersionsRichText ? 'present' : 'missing',
+      proposedVersionsContent: savedProposedVersions?.proposedVersionsContent ? 'present' : 'missing',
+      submissionId
+    });
+    
     if (savedProposedVersions) {
       console.log('📋 Found saved proposed versions for submission:', submissionId);
       if (savedProposedVersions.proposedVersionsRichText) {
         proposedVersionsRichText['content'] = savedProposedVersions.proposedVersionsRichText;
+        console.log('✅ Set proposedVersionsRichText from cache:', {
+          length: savedProposedVersions.proposedVersionsRichText.length,
+          isLexical: savedProposedVersions.proposedVersionsRichText.includes('"root"')
+        });
       }
       if (savedProposedVersions.proposedVersionsContent) {
         proposedVersions['content'] = savedProposedVersions.proposedVersionsContent;
+        console.log('✅ Set proposedVersionsContent from cache:', {
+          length: savedProposedVersions.proposedVersionsContent.length
+        });
       }
     }
     
@@ -95,11 +109,21 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
       }
     }
 
-    return new Response(JSON.stringify({
+    const response = {
       changes: changesWithComments,
       proposedVersions,
       proposedVersionsRichText
-    }), {
+    };
+
+    console.log('🔍 Backend getTrackedChangesHandler - response:', {
+      changesCount: changesWithComments.length,
+      proposedVersionsFields: Object.keys(proposedVersions),
+      proposedVersionsRichTextFields: Object.keys(proposedVersionsRichText),
+      proposedVersionsRichTextContentLength: proposedVersionsRichText.content?.length,
+      proposedVersionsRichTextContentIsLexical: proposedVersionsRichText.content ? proposedVersionsRichText.content.includes('"root"') : false
+    });
+
+    return new Response(JSON.stringify(response), {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error) {
@@ -312,6 +336,16 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
   try {
     const { proposedVersionsRichText, proposedVersionsContent } = await request.json();
 
+    console.log('🔍 updateProposedVersionsHandler - received data:', {
+      submissionId,
+      hasProposedVersionsRichText: !!proposedVersionsRichText,
+      proposedVersionsRichTextLength: proposedVersionsRichText?.length,
+      proposedVersionsRichTextIsLexical: proposedVersionsRichText ? proposedVersionsRichText.includes('"root"') : false,
+      hasProposedVersionsContent: !!proposedVersionsContent,
+      proposedVersionsContentLength: proposedVersionsContent?.length,
+      proposedVersionsRichTextPreview: proposedVersionsRichText?.substring(0, 100)
+    });
+
     // Check permissions
     const hasPermission = request.user.userType === 'Admin' ||
                          request.user.userType === 'CommsCadre' ||
@@ -331,11 +365,19 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
       lastUpdatedAt: new Date().toISOString()
     };
 
+    console.log('🔍 updateProposedVersionsHandler - saving data:', {
+      submissionId,
+      dataKeys: Object.keys(proposedVersionsData),
+      proposedVersionsRichTextLength: proposedVersionsData.proposedVersionsRichText?.length,
+      proposedVersionsContentLength: proposedVersionsData.proposedVersionsContent?.length,
+      proposedVersionsRichTextIsLexical: proposedVersionsData.proposedVersionsRichText ? proposedVersionsData.proposedVersionsRichText.includes('"root"') : false
+    });
+
     // Store in cache (you can also store this in D1 database if needed)
     const { putObject } = await import('../services/cacheService');
     await putObject(`proposed_versions/${submissionId}`, proposedVersionsData, env);
 
-    console.log('✅ Proposed versions saved successfully for submission:', submissionId);
+    console.log('✅ updateProposedVersionsHandler - proposed versions saved successfully for submission:', submissionId);
 
     return new Response(JSON.stringify({ success: true, data: proposedVersionsData }), {
       headers: { 'Content-Type': 'application/json' }

@@ -1,5 +1,8 @@
 /* Tracked Changes Editor - Google Docs-like styling */
 
+/* Import shared button styles */
+@import './styles/common.css';
+
 .tracked-changes-editor {
   display: flex;
   flex-direction: column;
