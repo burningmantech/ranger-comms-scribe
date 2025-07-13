@@ -172,8 +172,8 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
                     }}
                     className="btn btn-tertiary btn-with-icon"
                   >
-                    <i className="fas fa-history"></i>
-                    <span className="btn-text">Tracked Changes</span>
+                    <i className="fas fa-edit"></i>
+                    <span className="btn-text">Edit</span>
                   </button>
                   <button
                     onClick={(e) => handleDeleteClick(submission, e)}
