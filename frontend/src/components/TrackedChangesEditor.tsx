@@ -98,6 +98,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [replyToComment, setReplyToComment] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   
+  // Synchronized scrolling refs and state
+  const originalDiffTextRef = useRef<HTMLDivElement>(null);
+  const proposedDiffTextRef = useRef<HTMLDivElement>(null);
+  const isScrollingSyncedRef = useRef(false);
+  
   // Auto-save state
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
   const [lastAutoSaveTime, setLastAutoSaveTime] = useState<Date | null>(null);
@@ -377,6 +382,47 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       autoSavePeriodStartTimeRef.current = null;
     }, 100);
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
+
+  // Synchronized scrolling handlers
+  const handleOriginalScroll = useCallback(() => {
+    if (isScrollingSyncedRef.current || !originalDiffTextRef.current || !proposedDiffTextRef.current) return;
+    
+    isScrollingSyncedRef.current = true;
+    requestAnimationFrame(() => {
+      if (proposedDiffTextRef.current && originalDiffTextRef.current) {
+        proposedDiffTextRef.current.scrollTop = originalDiffTextRef.current.scrollTop;
+      }
+      isScrollingSyncedRef.current = false;
+    });
+  }, []);
+
+  const handleProposedScroll = useCallback(() => {
+    if (isScrollingSyncedRef.current || !originalDiffTextRef.current || !proposedDiffTextRef.current) return;
+    
+    isScrollingSyncedRef.current = true;
+    requestAnimationFrame(() => {
+      if (originalDiffTextRef.current && proposedDiffTextRef.current) {
+        originalDiffTextRef.current.scrollTop = proposedDiffTextRef.current.scrollTop;
+      }
+      isScrollingSyncedRef.current = false;
+    });
+  }, []);
+
+  // Add scroll event listeners
+  useEffect(() => {
+    const originalElement = originalDiffTextRef.current;
+    const proposedElement = proposedDiffTextRef.current;
+    
+    if (originalElement && proposedElement) {
+      originalElement.addEventListener('scroll', handleOriginalScroll);
+      proposedElement.addEventListener('scroll', handleProposedScroll);
+      
+      return () => {
+        originalElement.removeEventListener('scroll', handleOriginalScroll);
+        proposedElement.removeEventListener('scroll', handleProposedScroll);
+      };
+    }
+  }, [handleOriginalScroll, handleProposedScroll]);
 
   // Convert changes to tracked changes with status
   const trackedChanges: TrackedChange[] = useMemo(() => {
@@ -2040,7 +2086,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       <div className="diff-view">
                         <div className="diff-column">
                           <h4>Original Version</h4>
-                          <div className="diff-text">
+                          <div className="diff-text" ref={originalDiffTextRef}>
                             {diff.map((segment, index) => {
                               if (segment.type === 'delete' || segment.type === 'equal') {
                                 return (
@@ -2059,7 +2105,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         
                         <div className="diff-column">
                           <h4>Proposed Version</h4>
-                          <div className="diff-text">
+                          <div className="diff-text" ref={proposedDiffTextRef}>
                             {diff.map((segment, index) => {
                               if (segment.type === 'insert' || segment.type === 'equal') {
                                 return (
