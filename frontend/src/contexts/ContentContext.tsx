@@ -110,7 +110,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           })),
           changes: submission.changes.map((change: any) => ({
             ...change,
-            changedAt: new Date(change.changedAt)
+            timestamp: new Date(change.changedAt || change.timestamp)
           }))
         }));
         setSubmissions(submissionsWithDates);
@@ -194,7 +194,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           })),
           changes: data.changes.map((change: any) => ({
             ...change,
-            changedAt: new Date(change.changedAt)
+            timestamp: new Date(change.changedAt || change.timestamp)
           }))
         };
 

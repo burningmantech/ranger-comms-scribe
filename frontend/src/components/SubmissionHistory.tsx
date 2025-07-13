@@ -51,11 +51,22 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
     ? submissions 
     : submissions.filter(sub => selectedStatuses.has(sub.status));
 
-  const renderChange = (change: Change) => (
-    <div key={change.id} className="text-sm text-gray-600">
-      <span className="font-medium">{change.field}</span> changed by {change.changedBy} on {new Date(change.timestamp).toLocaleDateString()}
-    </div>
-  );
+  const renderChange = (change: Change) => {
+    const formatDate = (timestamp: Date | string | undefined) => {
+      if (!timestamp) return 'Unknown date';
+      
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) return 'Unknown date';
+      
+      return date.toLocaleDateString();
+    };
+
+    return (
+      <div key={change.id} className="text-sm text-gray-600">
+        <span className="font-medium">{change.field}</span> changed by {change.changedBy} on {formatDate(change.timestamp)}
+      </div>
+    );
+  };
 
   const handleDeleteClick = (submission: ContentSubmission, e: React.MouseEvent) => {
     e.stopPropagation();
