@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges } from '../utils/diffAlgorithm';
-import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
+import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical } from '../utils/lexicalUtils';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { CollaborativeEditor } from './CollaborativeEditor';
 import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '../services/websocketService';
@@ -468,6 +468,57 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     console.log('Edit mode change requested but collaborative editing is always on');
   }, []);
 
+  // Dedicated save function for reverted content that bypasses change detection
+  const saveRevertedContent = useCallback(async (revertedContent: string) => {
+    console.log('💾 Saving reverted content directly to backend:', {
+      revertedContentLength: revertedContent?.length,
+      revertedContentPreview: revertedContent?.substring(0, 100)
+    });
+
+    try {
+      setAutoSaveStatus('saving');
+      
+      // Update the submission with the reverted content
+      const updatedSubmission = {
+        ...submission,
+        proposedVersions: {
+          ...submission.proposedVersions,
+          richTextContent: revertedContent,
+          lastModified: new Date().toISOString(),
+          lastModifiedBy: currentUser.id || currentUser.email
+        }
+      };
+      
+      console.log('💾 Calling onSave with reverted submission:', {
+        submissionId: updatedSubmission.id,
+        proposedVersionsRichTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length
+      });
+      
+      await onSave(updatedSubmission);
+      
+      // Update the last saved content after successful save
+      setLastSavedProposedContent(revertedContent);
+      setAutoSaveStatus('saved');
+      setLastAutoSaveTime(new Date());
+      
+      console.log('✅ Reverted content saved successfully');
+      
+      // Reset to idle after 3 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 3000);
+      
+    } catch (error) {
+      console.error('❌ Failed to save reverted content:', error);
+      setAutoSaveStatus('error');
+      
+      // Reset to idle after 5 seconds
+      setTimeout(() => {
+        setAutoSaveStatus('idle');
+      }, 5000);
+    }
+  }, [submission, currentUser.id, currentUser.email, onSave]);
+
   const handleProposedEditSubmit = useCallback(async () => {
     console.log('📝 Submitting proposed edit:', {
       editedProposedContentLength: editedProposedContent?.length,
@@ -597,16 +648,212 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email, getDisplayableText, onSuggestion]);
 
+  // Helper function to revert a change in the content
+  const revertChangeInContent = useCallback((change: TrackedChange) => {
+    console.log('🔄 Reverting change:', {
+      changeId: change.id,
+      oldValue: change.oldValue,
+      newValue: change.newValue,
+      richTextOldValue: change.richTextOldValue,
+      richTextNewValue: change.richTextNewValue,
+      isIncremental: change.isIncremental
+    });
+
+    // Get current content
+    const currentContent = editedProposedContent || 
+                          submission.proposedVersions?.richTextContent || 
+                          submission.richTextContent || 
+                          submission.content || '';
+
+    // Try to revert using rich text values first, then fall back to plain text
+    const valueToRevert = change.richTextNewValue !== undefined ? change.richTextNewValue : change.newValue;
+    const revertToValue = change.richTextOldValue !== undefined ? change.richTextOldValue : change.oldValue;
+
+    if (valueToRevert === undefined || revertToValue === undefined) {
+      console.warn('⚠️ Cannot revert change: missing old or new value', {
+        oldValue: change.oldValue,
+        newValue: change.newValue,
+        richTextOldValue: change.richTextOldValue,
+        richTextNewValue: change.richTextNewValue,
+        valueToRevert,
+        revertToValue
+      });
+      return;
+    }
+
+    // For incremental changes, find and replace the specific part
+    if (change.isIncremental) {
+      // Work directly with Lexical JSON to preserve formatting
+      if (isLexicalJson(currentContent)) {
+        // Use Lexical utilities to preserve formatting
+        const newText = getDisplayableText(valueToRevert);
+        const oldText = getDisplayableText(revertToValue);
+        
+        let revertedContent = currentContent;
+        
+        // Handle deletion case where newValue is empty (text was deleted)
+        if (newText === '') {
+          // This is a deletion - restore the deleted text
+          console.log('🔄 Handling deletion reversion with Lexical preservation:', {
+            oldText,
+            currentContentType: 'Lexical JSON'
+          });
+          
+          // Insert the deleted text back into the Lexical structure
+          revertedContent = insertTextInLexical(currentContent, oldText);
+          
+          console.log('✅ Reverted deletion in Lexical JSON:', {
+            restoredText: oldText,
+            preservedFormatting: true
+          });
+        } else {
+          // Handle replacement case - replace newText with oldText
+          console.log('🔄 Handling replacement reversion with Lexical preservation:', {
+            searchingFor: newText,
+            replacingWith: oldText
+          });
+          
+          revertedContent = findAndReplaceInLexical(currentContent, newText, oldText);
+          
+          console.log('✅ Reverted replacement in Lexical JSON:', {
+            searchText: newText,
+            replaceText: oldText,
+            preservedFormatting: true
+          });
+        }
+        
+        setEditedProposedContent(revertedContent);
+        
+        if (remoteUpdateFunctionRef.current) {
+          remoteUpdateFunctionRef.current(revertedContent);
+        }
+        
+        // Immediately save the reverted content to ensure backend persistence
+        console.log('💾 Triggering immediate save for reverted content');
+        setTimeout(() => {
+          saveRevertedContent(revertedContent);
+        }, 100);
+      } else {
+        // Fallback to plain text handling for non-Lexical content
+        const currentText = getDisplayableText(currentContent);
+        const newText = getDisplayableText(valueToRevert);
+        const oldText = getDisplayableText(revertToValue);
+        
+        // Handle deletion case where newValue is empty (text was deleted)
+        if (newText === '') {
+          console.log('🔄 Handling deletion reversion (plain text):', {
+            oldText,
+            currentTextLength: currentText.length
+          });
+          
+          // Simple append for plain text (could be improved with better positioning)
+          const revertedText = currentText + (currentText.endsWith(' ') ? '' : ' ') + oldText;
+          const revertedRichContent = getRichTextContent(revertedText);
+          
+                     console.log('✅ Reverted deletion (plain text):', {
+             restoredText: oldText,
+             newContentLength: revertedText.length
+           });
+           
+           setEditedProposedContent(revertedRichContent);
+           
+           if (remoteUpdateFunctionRef.current) {
+             remoteUpdateFunctionRef.current(revertedRichContent);
+           }
+           
+           // Immediately save the reverted content to ensure backend persistence
+           console.log('💾 Triggering immediate save for reverted content (plain text deletion)');
+           setTimeout(() => {
+             saveRevertedContent(revertedRichContent);
+           }, 100);
+        } else {
+          // Handle replacement case
+          const index = currentText.indexOf(newText);
+          if (index !== -1) {
+            const revertedText = currentText.substring(0, index) + 
+                                oldText + 
+                                currentText.substring(index + newText.length);
+            
+            const revertedRichContent = getRichTextContent(revertedText);
+            
+            console.log('✅ Reverted replacement (plain text):', {
+              originalText: currentText.substring(Math.max(0, index - 10), index + newText.length + 10),
+              revertedText: revertedText.substring(Math.max(0, index - 10), index + oldText.length + 10)
+            });
+            
+            setEditedProposedContent(revertedRichContent);
+            
+            if (remoteUpdateFunctionRef.current) {
+              remoteUpdateFunctionRef.current(revertedRichContent);
+            }
+            
+            // Immediately save the reverted content to ensure backend persistence
+            console.log('💾 Triggering immediate save for reverted content (plain text replacement)');
+            setTimeout(() => {
+              saveRevertedContent(revertedRichContent);
+            }, 100);
+          } else {
+            console.warn('⚠️ Could not find text to revert in incremental change', {
+              searchingFor: newText,
+              inContent: currentText.substring(0, 200) + '...'
+            });
+          }
+        }
+      }
+    } else {
+      // For non-incremental changes, check if the current content matches the new value
+      // and if so, revert it to the old value
+      const currentText = getDisplayableText(currentContent);
+      const newText = getDisplayableText(valueToRevert);
+      
+      if (currentText === newText) {
+        // Content matches the new value, revert to old value
+        const revertedRichContent = getRichTextContent(revertToValue);
+        
+        console.log('✅ Reverted non-incremental change:', {
+          wasContent: currentText.substring(0, 100),
+          nowContent: getDisplayableText(revertToValue).substring(0, 100)
+        });
+        
+        // Update the editor content
+        setEditedProposedContent(revertedRichContent);
+        
+        // If we have a remote update function, use it to update the editor
+        if (remoteUpdateFunctionRef.current) {
+          remoteUpdateFunctionRef.current(revertedRichContent);
+        }
+        
+        // Immediately save the reverted content to ensure backend persistence
+        console.log('💾 Triggering immediate save for reverted content (non-incremental)');
+        setTimeout(() => {
+          saveRevertedContent(revertedRichContent);
+        }, 100);
+      } else {
+        console.warn('⚠️ Current content does not match expected new value for non-incremental change');
+        console.log('Current:', currentText.substring(0, 100));
+        console.log('Expected:', newText.substring(0, 100));
+      }
+    }
+
+    // Auto-save will be triggered by the content change
+  }, [editedProposedContent, submission, getDisplayableText, getRichTextContent, saveRevertedContent]);
+
   // Handle change decision (approve/reject)
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
     if (decision === 'approve') {
       onApprove(changeId);
     } else {
+      // Find the change to revert
+      const changeToRevert = trackedChanges.find(change => change.id === changeId);
+      if (changeToRevert) {
+        // Revert the change in the proposed content
+        revertChangeInContent(changeToRevert);
+      }
       onReject(changeId);
     }
     
     // Real-time approvals are now handled by CollaborativeEditor
-  }, [onApprove, onReject]);
+  }, [onApprove, onReject, trackedChanges, revertChangeInContent]);
 
   // Handle suggestion submission
   const handleSuggestionSubmit = useCallback(() => {

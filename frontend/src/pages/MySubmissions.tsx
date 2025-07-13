@@ -46,7 +46,7 @@ export const MySubmissions: React.FC = () => {
         {selectedSubmission && (
           <button
             onClick={() => setSelectedSubmission(null)}
-            className="back-button"
+            className="btn btn-neutral"
           >
             ← Back to Requests
           </button>

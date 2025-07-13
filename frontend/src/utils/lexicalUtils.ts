@@ -48,4 +48,135 @@ export function isLexicalJson(data: string | object): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Find and replace text within Lexical JSON while preserving formatting
+ */
+export function findAndReplaceInLexical(lexicalJson: string | object, searchText: string, replaceText: string): string {
+  if (!lexicalJson || !searchText) return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+  
+  try {
+    const data = typeof lexicalJson === 'string' ? JSON.parse(lexicalJson) : lexicalJson;
+    
+    if (!data || !data.root || !data.root.children) {
+      return JSON.stringify(data);
+    }
+    
+    function replaceInNode(node: any): any {
+      if (!node) return node;
+      
+      // If it's a text node, replace the text while preserving other properties
+      if (node.type === 'text' && node.text) {
+        return {
+          ...node,
+          text: node.text.replace(new RegExp(escapeRegExp(searchText), 'g'), replaceText)
+        };
+      }
+      
+      // If it has children, recursively process them
+      if (node.children && Array.isArray(node.children)) {
+        return {
+          ...node,
+          children: node.children.map(replaceInNode)
+        };
+      }
+      
+      return node;
+    }
+    
+    const updatedData = {
+      ...data,
+      root: {
+        ...data.root,
+        children: data.root.children.map(replaceInNode)
+      }
+    };
+    
+    return JSON.stringify(updatedData);
+  } catch (error) {
+    console.error('Error replacing text in Lexical JSON:', error);
+    return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+  }
+}
+
+/**
+ * Insert text at a specific position in Lexical JSON while preserving formatting
+ */
+export function insertTextInLexical(lexicalJson: string | object, insertText: string, position?: number): string {
+  if (!lexicalJson || !insertText) return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+  
+  try {
+    const data = typeof lexicalJson === 'string' ? JSON.parse(lexicalJson) : lexicalJson;
+    
+    if (!data || !data.root || !data.root.children) {
+      return JSON.stringify(data);
+    }
+    
+    // If no position specified, append to the end
+    if (position === undefined) {
+      // Find the last paragraph and append text there, or create a new paragraph
+      const lastChild = data.root.children[data.root.children.length - 1];
+      
+      if (lastChild && lastChild.type === 'paragraph' && lastChild.children) {
+        // Append to last paragraph
+        const newTextNode = {
+          detail: 0,
+          format: 0,
+          mode: "normal",
+          style: "",
+          text: ' ' + insertText,
+          type: "text",
+          version: 1
+        };
+        
+        lastChild.children.push(newTextNode);
+      } else {
+        // Create new paragraph
+        const newParagraph = {
+          children: [
+            {
+              detail: 0,
+              format: 0,
+              mode: "normal",
+              style: "",
+              text: insertText,
+              type: "text",
+              version: 1
+            }
+          ],
+          direction: "ltr",
+          format: "",
+          indent: 0,
+          type: "paragraph",
+          version: 1
+        };
+        
+        data.root.children.push(newParagraph);
+      }
+    } else {
+      // Insert at specific position (more complex implementation needed)
+      // For now, just append to end
+      return insertTextInLexical(lexicalJson, insertText);
+    }
+    
+    return JSON.stringify(data);
+  } catch (error) {
+    console.error('Error inserting text in Lexical JSON:', error);
+    return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+  }
+}
+
+/**
+ * Remove specific text from Lexical JSON while preserving formatting
+ */
+export function removeTextFromLexical(lexicalJson: string | object, textToRemove: string): string {
+  return findAndReplaceInLexical(lexicalJson, textToRemove, '');
+}
+
+/**
+ * Helper function to escape special regex characters
+ */
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 } 

@@ -913,7 +913,7 @@ export const TrackedChangesView: React.FC = () => {
           <p className="text-red-700">{error}</p>
           <button
             onClick={() => navigate('/requests')}
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            className="btn btn-neutral"
           >
             Back to Requests
           </button>
@@ -930,7 +930,7 @@ export const TrackedChangesView: React.FC = () => {
           <p className="text-yellow-700">Submission not found or you don't have access to it.</p>
           <button
             onClick={() => navigate('/requests')}
-            className="mt-4 px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+            className="btn btn-neutral"
           >
             Back to Requests
           </button>
@@ -949,7 +949,7 @@ export const TrackedChangesView: React.FC = () => {
           </div>
           <button
             onClick={() => navigate('/requests')}
-            className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
+            className="btn btn-neutral"
           >
             ← Back to Requests
           </button>
