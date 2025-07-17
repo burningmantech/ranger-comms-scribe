@@ -142,9 +142,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const requestRefresh = useCallback(() => {
     if (onRefreshNeeded) {
       onRefreshNeeded();
-    } else {
-      // TODO: Add refresh mechanism - parent component needs to refetch data
-      console.log('🔄 Refresh needed but no refresh callback provided');
     }
   }, [onRefreshNeeded, submission.id]);
 
@@ -162,7 +159,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleEditorChange = useCallback((editor: any, json: string) => {
     // Skip if we're still initializing content to prevent auto-save on load
     if (!hasInitializedContentRef.current) {
-      console.log('🚫 Skipping editor change during initialization');
       return;
     }
     
@@ -296,9 +292,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           const stringified = JSON.stringify(parsed, null, 2);
           return stringified.substring(0, 200) + (stringified.length > 200 ? '...' : '');
         }
-      } catch (e) {
-        console.log('getChangeDisplayText: Failed to parse as JSON, treating as plain text');
-      }
+              } catch (e) {
+          // Failed to parse as JSON, treating as plain text
+        }
     }
     
     return content;
@@ -323,8 +319,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                    !isLexicalJson(content);
     
     if (isHtml) {
-      console.log('🔄 getRichTextContent: Processing HTML content');
-      
       // For HTML content, let the CollaborativeEditor handle the conversion
       // Just return the HTML content as-is and let the editor parse it
       return content;
@@ -386,17 +380,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                    submission.richTextContent || 
                    submission.content || '';
     
-    console.log('🔍 Content initialization with source data:', {
-      proposedVersionsRichTextContent: !!submission.proposedVersions?.richTextContent,
-      proposedVersionsRichTextContentLength: submission.proposedVersions?.richTextContent?.length,
-      proposedVersionsRichTextContentPreview: submission.proposedVersions?.richTextContent?.substring(0, 100),
-      proposedVersionsContent: !!submission.proposedVersions?.content,
-      richTextContent: !!submission.richTextContent,
-      content: !!submission.content,
-      finalContentLength: content?.length,
-      finalContentPreview: content?.substring(0, 100),
-      isLexicalJson: isLexicalJson(content)
-    });
+
     
     // If content looks like a comment, skip it and use empty content
     if (typeof content === 'string' && content.includes('@change:')) {
@@ -409,23 +393,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const isNewContentPlain = content && !isLexicalJson(content);
     
     if (isCurrentContentRich && isNewContentPlain && editedProposedContent) {
-      console.log('🛡️ DEFENSE: Preserving rich content over plain text from backend');
-      console.log('🛡️ Current content length:', editedProposedContent.length, 'chars (rich)');
-      console.log('🛡️ New content length:', content.length, 'chars (plain)');
       // Keep the current rich content instead of overwriting with plain text
       return;
     }
     
     const richTextContent = getRichTextContent(content);
-    
-    console.log('🔍 After getRichTextContent conversion:', {
-      inputLength: content?.length,
-      outputLength: richTextContent?.length,
-      inputPreview: content?.substring(0, 100),
-      outputPreview: richTextContent?.substring(0, 100),
-      inputIsLexical: isLexicalJson(content),
-      outputIsLexical: isLexicalJson(richTextContent)
-    });
     
     // Always update the edited content and last saved content during initialization
     setEditedProposedContent(richTextContent);
@@ -438,7 +410,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Mark as initialized after a short delay to ensure all state is set
     setTimeout(() => {
       hasInitializedContentRef.current = true;
-      console.log('✅ Content initialization complete');
       
       // Reset auto-save period tracking on initialization
       hasChangesInCurrentPeriodRef.current = false;
@@ -580,11 +551,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Dedicated save function for reverted content that bypasses change detection
   const saveRevertedContent = useCallback(async (revertedContent: string) => {
-    console.log('💾 Saving reverted content directly to backend:', {
-      revertedContentLength: revertedContent?.length,
-      revertedContentPreview: revertedContent?.substring(0, 100)
-    });
-
     try {
       setAutoSaveStatus('saving');
       
@@ -599,19 +565,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
       };
       
-      console.log('💾 Calling onSave with reverted submission:', {
-        submissionId: updatedSubmission.id,
-        proposedVersionsRichTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length
-      });
-      
       await onSave(updatedSubmission);
       
       // Update the last saved content after successful save
       setLastSavedProposedContent(revertedContent);
       setAutoSaveStatus('saved');
       setLastAutoSaveTime(new Date());
-      
-      console.log('✅ Reverted content saved successfully');
       
       // Reset to idle after 3 seconds
       setTimeout(() => {
@@ -630,25 +589,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [submission, currentUser.id, currentUser.email, onSave]);
 
   const handleProposedEditSubmit = useCallback(async () => {
-    console.log('📝 Submitting proposed edit:', {
-      editedProposedContentLength: editedProposedContent?.length,
-      editedProposedContentPreview: editedProposedContent?.substring(0, 100)
-    });
-    
     const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
     const hasActualChanges = editedProposedContent !== currentContent;
     
-    console.log('📝 Checking for changes:', {
-      hasActualChanges,
-      currentContentLength: currentContent?.length,
-      editedContentLength: editedProposedContent?.length,
-      currentContentPreview: currentContent?.substring(0, 100),
-      editedContentPreview: editedProposedContent?.substring(0, 100),
-      hasChangesInCurrentPeriod: hasChangesInCurrentPeriodRef.current
-    });
-    
     if (!hasActualChanges) {
-      console.log('No changes to submit');
       setAutoSaveStatus('idle');
       // Reset auto-save period tracking
       hasChangesInCurrentPeriodRef.current = false;
@@ -679,13 +623,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           richTextNewValue: editedProposedContent
         };
         
-        console.log('📝 Creating consolidated tracked change for manual save:', {
-          changeId: consolidatedChange.id,
-          oldLength: periodStartText.length,
-          newLength: currentText.length,
-          periodDuration: periodStartTime ? new Date().getTime() - periodStartTime.getTime() : 0
-        });
-        
         // Add the consolidated change to the tracked changes sidebar
         onSuggestion(consolidatedChange);
       }
@@ -708,24 +645,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
       };
       
-      console.log('📝 Calling onSave with updated submission:', {
-        submissionId: updatedSubmission.id,
-        proposedVersionsRichTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length
-      });
-      
-      console.log('🔍 About to call onSave with content details:', {
-        richTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length,
-        richTextContentIsLexical: isLexicalJson(updatedSubmission.proposedVersions?.richTextContent || ''),
-        richTextContentPreview: updatedSubmission.proposedVersions?.richTextContent?.substring(0, 150)
-      });
-      
       await onSave(updatedSubmission);
-      
-      console.log('🔍 onSave completed, content after save:', {
-        editedProposedContentLength: editedProposedContent?.length,
-        editedProposedContentIsLexical: isLexicalJson(editedProposedContent || ''),
-        editedProposedContentPreview: editedProposedContent?.substring(0, 150)
-      });
       
       // Update the last saved content after successful save
       setLastSavedProposedContent(editedProposedContent);
@@ -760,14 +680,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Helper function to revert a change in the content
   const revertChangeInContent = useCallback((change: TrackedChange) => {
-    console.log('🔄 Reverting change:', {
-      changeId: change.id,
-      oldValue: change.oldValue,
-      newValue: change.newValue,
-      richTextOldValue: change.richTextOldValue,
-      richTextNewValue: change.richTextNewValue,
-      isIncremental: change.isIncremental
-    });
 
     // Get current content
     const currentContent = editedProposedContent || 
@@ -804,32 +716,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // Handle deletion case where newValue is empty (text was deleted)
         if (newText === '') {
           // This is a deletion - restore the deleted text
-          console.log('🔄 Handling deletion reversion with Lexical preservation:', {
-            oldText,
-            currentContentType: 'Lexical JSON'
-          });
-          
           // Insert the deleted text back into the Lexical structure
           revertedContent = insertTextInLexical(currentContent, oldText);
-          
-          console.log('✅ Reverted deletion in Lexical JSON:', {
-            restoredText: oldText,
-            preservedFormatting: true
-          });
         } else {
           // Handle replacement case - replace newText with oldText
-          console.log('🔄 Handling replacement reversion with Lexical preservation:', {
-            searchingFor: newText,
-            replacingWith: oldText
-          });
-          
           revertedContent = findAndReplaceInLexical(currentContent, newText, oldText);
-          
-          console.log('✅ Reverted replacement in Lexical JSON:', {
-            searchText: newText,
-            replaceText: oldText,
-            preservedFormatting: true
-          });
         }
         
         setEditedProposedContent(revertedContent);
@@ -839,7 +730,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
         
         // Immediately save the reverted content to ensure backend persistence
-        console.log('💾 Triggering immediate save for reverted content');
         setTimeout(() => {
           saveRevertedContent(revertedContent);
         }, 100);
@@ -851,20 +741,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         
         // Handle deletion case where newValue is empty (text was deleted)
         if (newText === '') {
-          console.log('🔄 Handling deletion reversion (plain text):', {
-            oldText,
-            currentTextLength: currentText.length
-          });
-          
           // Simple append for plain text (could be improved with better positioning)
           const revertedText = currentText + (currentText.endsWith(' ') ? '' : ' ') + oldText;
           const revertedRichContent = getRichTextContent(revertedText);
           
-                     console.log('✅ Reverted deletion (plain text):', {
-             restoredText: oldText,
-             newContentLength: revertedText.length
-           });
-           
            setEditedProposedContent(revertedRichContent);
            
            if (remoteUpdateFunctionRef.current) {
@@ -872,7 +752,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
            }
            
            // Immediately save the reverted content to ensure backend persistence
-           console.log('💾 Triggering immediate save for reverted content (plain text deletion)');
            setTimeout(() => {
              saveRevertedContent(revertedRichContent);
            }, 100);
@@ -886,11 +765,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             
             const revertedRichContent = getRichTextContent(revertedText);
             
-            console.log('✅ Reverted replacement (plain text):', {
-              originalText: currentText.substring(Math.max(0, index - 10), index + newText.length + 10),
-              revertedText: revertedText.substring(Math.max(0, index - 10), index + oldText.length + 10)
-            });
-            
             setEditedProposedContent(revertedRichContent);
             
             if (remoteUpdateFunctionRef.current) {
@@ -898,7 +772,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             }
             
             // Immediately save the reverted content to ensure backend persistence
-            console.log('💾 Triggering immediate save for reverted content (plain text replacement)');
             setTimeout(() => {
               saveRevertedContent(revertedRichContent);
             }, 100);
@@ -920,11 +793,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // Content matches the new value, revert to old value
         const revertedRichContent = getRichTextContent(revertToValue);
         
-        console.log('✅ Reverted non-incremental change:', {
-          wasContent: currentText.substring(0, 100),
-          nowContent: getDisplayableText(revertToValue).substring(0, 100)
-        });
-        
         // Update the editor content
         setEditedProposedContent(revertedRichContent);
         
@@ -934,14 +802,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
         
         // Immediately save the reverted content to ensure backend persistence
-        console.log('💾 Triggering immediate save for reverted content (non-incremental)');
         setTimeout(() => {
           saveRevertedContent(revertedRichContent);
         }, 100);
-      } else {
-        console.warn('⚠️ Current content does not match expected new value for non-incremental change');
-        console.log('Current:', currentText.substring(0, 100));
-        console.log('Expected:', newText.substring(0, 100));
       }
     }
 
@@ -994,7 +857,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         type: 'COMMENT',
         resolved: false
       };
-      console.log('TrackedChangesEditor: Submitting comment:', comment);
       onComment(comment);
       setCommentText('');
       setShowCommentDialog(false);
@@ -1029,7 +891,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Auto-save functionality with countdown timer
   const performAutoSave = useCallback(async () => {
     if (!isAutoSaveEnabledRef.current) {
-      console.log('🚫 Auto-save disabled, skipping');
       return;
     }
 
@@ -1045,16 +906,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
     const hasActualChanges = currentEditorContent !== currentContent;
     
-    console.log('💾 Auto-save check:', {
-      currentEditorContentLength: currentEditorContent?.length || 0,
-      currentContentLength: currentContent?.length || 0,
-      hasActualChanges,
-      editedProposedContentLength: editedProposedContent?.length || 0,
-      hasChangesInCurrentPeriod: hasChangesInCurrentPeriodRef.current
-    });
-    
     if (!hasActualChanges) {
-      console.log('🔄 No changes detected, skipping auto-save');
       setAutoSaveStatus('idle');
       // Reset auto-save period tracking
       hasChangesInCurrentPeriodRef.current = false;
@@ -1063,7 +915,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return;
     }
 
-    console.log('💾 Performing auto-save with current content...');
     setAutoSaveStatus('saving');
 
     // Create a consolidated tracked change for this auto-save period
@@ -1087,13 +938,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           richTextOldValue: periodStartContent,
           richTextNewValue: currentEditorContent
         };
-        
-        console.log('📝 Creating consolidated tracked change for auto-save period:', {
-          changeId: consolidatedChange.id,
-          oldLength: periodStartText.length,
-          newLength: currentText.length,
-          periodDuration: periodStartTime ? new Date().getTime() - periodStartTime.getTime() : 0
-        });
         
         // Add the consolidated change to the tracked changes sidebar
         onSuggestion(consolidatedChange);
@@ -1135,40 +979,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           }
         };
         
-        console.log('📡 Sending WebSocket update for auto-save:', updateMessage);
         if (webSocketClientRef.current) {
           try {
             webSocketClientRef.current.send(updateMessage);
           } catch (error) {
             console.error('❌ Failed to send WebSocket update for auto-save:', error);
           }
-        } else {
-          console.log('⚠️ Cannot send WebSocket update - client not available');
         }
       }
       
-      console.log('🔍 Auto-save about to call onSave with content details:', {
-        richTextContentLength: updatedSubmission.proposedVersions?.richTextContent?.length,
-        richTextContentIsLexical: isLexicalJson(updatedSubmission.proposedVersions?.richTextContent || ''),
-        richTextContentPreview: updatedSubmission.proposedVersions?.richTextContent?.substring(0, 150)
-      });
-      
       // Call the save function
       await onSave(updatedSubmission);
-      
-      console.log('🔍 Auto-save onSave completed, content after save:', {
-        currentEditorContentLength: currentEditorContent?.length,
-        currentEditorContentIsLexical: isLexicalJson(currentEditorContent || ''),
-        currentEditorContentPreview: currentEditorContent?.substring(0, 150)
-      });
       
       // Update state with the content that was actually saved
       setLastSavedProposedContent(currentEditorContent);
       setEditedProposedContent(currentEditorContent); // Ensure state is in sync
       setAutoSaveStatus('saved');
       setLastAutoSaveTime(new Date());
-      
-      console.log('✅ Auto-save completed successfully');
       
       // Reset auto-save period tracking after successful save
       hasChangesInCurrentPeriodRef.current = false;
@@ -1231,7 +1058,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     });
 
     if (!webSocketClientRef.current) {
-      console.log('⚠️ Cannot send real-time update: WebSocket not connected');
       return;
     }
 
@@ -1273,12 +1099,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     try {
       webSocketClientRef.current.send(updateMessage);
-      console.log('✅ Successfully sent real-time update:', {
-        contentLength: plainTextContent.length,
-        lexicalContentLength: content.length,
-        hasCursorPosition: !!updateMessage.data.cursorPosition,
-        isValidLexical: isLexicalJson(content)
-      });
     } catch (error) {
       console.error('❌ Failed to send real-time update:', error);
     }
@@ -1296,7 +1116,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     // Skip if we're applying a real-time update
     if (isApplyingRealTimeUpdateRef.current) {
-      console.log('🔄 Skipping throttled real-time update - applying remote update');
       return;
     }
     
@@ -1314,12 +1133,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         
         // Double-check we're not applying a remote update before sending
         if (isApplyingRealTimeUpdateRef.current) {
-          console.log('🔄 Skipping scheduled real-time update - applying remote update');
           pendingRealTimeUpdateRef.current = false;
           return;
         }
         
-        console.log('📤 Executing scheduled real-time update');
         // Send the most recent content
         sendRealTimeUpdate(lastRealTimeUpdateRef.current, lastCursorPositionRef.current);
         pendingRealTimeUpdateRef.current = false;
@@ -1332,14 +1149,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Debounced auto-save (7 seconds after typing stops) with countdown timer
   const scheduleAutoSave = useCallback(() => {
     if (!isAutoSaveEnabledRef.current) {
-      console.log('🚫 Auto-save disabled, not scheduling');
       return;
     }
 
     // Clear existing timeout and countdown
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
-      console.log('🔄 Cleared previous auto-save timeout');
     }
     
     if (autoSaveCountdownIntervalRef.current) {
@@ -1363,11 +1178,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     
     // Schedule auto-save for 7 seconds later
     autoSaveTimeoutRef.current = setTimeout(() => {
-      console.log('⏰ Auto-save timeout triggered');
       performAutoSave();
     }, 7000);
-    
-    console.log('⏰ Auto-save scheduled for 7 seconds with countdown...');
   }, [performAutoSave]);
 
   // Fallback auto-save check - ensures auto-save happens even if scheduling is missed
@@ -1381,7 +1193,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       
       // Only auto-save if there are changes and we're not already saving
       if (hasChanges && hasUnsavedChanges && autoSaveStatus === 'idle') {
-        console.log('🔍 Fallback auto-save check detected unsaved changes');
         performAutoSave();
       }
     }, 10000); // Check every 10 seconds as fallback
@@ -1393,40 +1204,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleWebSocketUpdate = useCallback((message: WebSocketMessage) => {
     // Don't process our own updates
     if (message.userId === (currentUser.id || currentUser.email)) {
-      console.log('📨 Ignoring own WebSocket update');
       return;
     }
-    
-    console.log('📨 TrackedChangesEditor: Received remote WebSocket update:', message);
     
     // Handle real-time content updates (character-by-character)
     if (message.type === 'realtime_content_update' && message.data) {
       const { content, lexicalContent, cursorPosition, isRealTime, userId, userName } = message.data;
       
-      console.log('⚡ TrackedChangesEditor: Processing real-time update from', userName, {
-        contentLength: content?.length,
-        lexicalContentLength: lexicalContent?.length,
-        hasCursorPosition: !!cursorPosition,
-        isRealTime,
-        lexicalContentType: typeof lexicalContent,
-        isLexicalJson: lexicalContent ? isLexicalJson(lexicalContent) : false,
-        lexicalPreview: lexicalContent?.substring(0, 200)
-      });
-      
       // Ensure we have valid Lexical content
       if (!lexicalContent || !isLexicalJson(lexicalContent)) {
-        console.error('❌ TrackedChangesEditor: Invalid Lexical content in real-time update:', {
-          hasLexicalContent: !!lexicalContent,
-          lexicalContentType: typeof lexicalContent,
-          isLexicalJson: lexicalContent ? isLexicalJson(lexicalContent) : false
-        });
+        console.error('❌ TrackedChangesEditor: Invalid Lexical content in real-time update');
         return; // Skip invalid content
       }
       
       // Apply the real-time update immediately
       // Try to use the specialized real-time update function first
       if (webSocketClientRef.current && webSocketClientRef.current.applyRealTimeUpdate) {
-        console.log('⚡ TrackedChangesEditor: Applying real-time update via specialized function');
         try {
           // Set flag to prevent feedback loop
           isApplyingRealTimeUpdateRef.current = true;
@@ -1442,8 +1235,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             setRemoteUpdateStatus('none');
           }, 1000);
           
-          console.log('✅ TrackedChangesEditor: Real-time update applied successfully via specialized function');
-          
           // Reset flag after a short delay to ensure the change event is processed
           setTimeout(() => {
             isApplyingRealTimeUpdateRef.current = false;
@@ -1453,7 +1244,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           isApplyingRealTimeUpdateRef.current = false;
         }
       } else if (remoteUpdateFunctionRef.current) {
-        console.log('⚡ TrackedChangesEditor: Applying real-time update via fallback remote update function');
         try {
           // Set flag to prevent feedback loop
           isApplyingRealTimeUpdateRef.current = true;
@@ -1469,8 +1259,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             setRemoteUpdateStatus('none');
           }, 1000);
           
-          console.log('✅ TrackedChangesEditor: Real-time update applied successfully via fallback function');
-          
           // Reset flag after a short delay to ensure the change event is processed
           setTimeout(() => {
             isApplyingRealTimeUpdateRef.current = false;
@@ -1480,14 +1268,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           isApplyingRealTimeUpdateRef.current = false;
         }
       } else {
-        console.log('⚠️ TrackedChangesEditor: No remote update function available for real-time update');
         // Fallback to state update - but only if we have valid Lexical content
         if (lexicalContent && isLexicalJson(lexicalContent)) {
           // Set flag to prevent feedback loop
           isApplyingRealTimeUpdateRef.current = true;
           
           setEditedProposedContent(lexicalContent);
-          console.log('✅ TrackedChangesEditor: Applied real-time update via state fallback');
           
           // Reset flag after a short delay
           setTimeout(() => {
@@ -1506,119 +1292,66 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       const { field, newValue, lexicalContent, isAutoSave, cursorPosition, preserveEditingState } = message.data;
       
       if (field === 'proposedVersions.richTextContent' && lexicalContent) {
-        console.log('🔄 TrackedChangesEditor: Processing remote lexical update...', {
-          isAutoSave,
-          preserveEditingState,
-          hasCursorPosition: !!cursorPosition,
-          hasRemoteUpdateFunction: !!remoteUpdateFunctionRef.current,
-          lexicalContentLength: lexicalContent?.length
-        });
+              // More intelligent handling of when to apply updates
+      const now = Date.now();
+      const timeSinceLastAutoSave = lastAutoSaveTime ? now - lastAutoSaveTime.getTime() : Infinity;
+      
+      // Determine if the user is actively editing
+      const isActivelyEditing = timeSinceLastAutoSave < 15000; // 15 seconds since last auto-save
+      const shouldPreserveEditing = preserveEditingState && isActivelyEditing;
+      
+      if (!shouldPreserveEditing) {
+        // Show visual feedback that a remote update is being applied
+        setRemoteUpdateStatus('applying');
         
-        // More intelligent handling of when to apply updates
-        const now = Date.now();
-        const timeSinceLastAutoSave = lastAutoSaveTime ? now - lastAutoSaveTime.getTime() : Infinity;
-        
-        // Determine if the user is actively editing
-        const isActivelyEditing = timeSinceLastAutoSave < 15000; // 15 seconds since last auto-save
-        const shouldPreserveEditing = preserveEditingState && isActivelyEditing;
-        
-        if (!shouldPreserveEditing) {
-          console.log('🔄 TrackedChangesEditor: Applying remote update (user not actively editing)');
-          
-          // Show visual feedback that a remote update is being applied
-          setRemoteUpdateStatus('applying');
-          
-          // Apply the content update through the CollaborativeEditor
-          if (remoteUpdateFunctionRef.current) {
-            console.log('🔄 TrackedChangesEditor: Triggering editor update via remote update function');
-            try {
-              remoteUpdateFunctionRef.current(lexicalContent);
-              console.log('✅ TrackedChangesEditor: Remote update function called successfully');
-            } catch (error) {
-              console.error('❌ TrackedChangesEditor: Error calling remote update function:', error);
-            }
-          } else {
-            console.log('⚠️ TrackedChangesEditor: No remote update function available, falling back to state update');
-            setEditedProposedContent(lexicalContent);
-          }
-          
-          // Also update our state
-          setEditedProposedContent(lexicalContent);
-          setLastSavedProposedContent(lexicalContent);
-          
-          // If the update included cursor position information, we can use it
-          // to better position other users' cursors
-          if (cursorPosition) {
-            console.log('📍 TrackedChangesEditor: Remote update includes cursor position:', cursorPosition);
-            // The CollaborativeEditor will handle cursor positioning
-          }
-          
-          // Show applied status briefly
-          setRemoteUpdateStatus('applied');
-          setTimeout(() => {
-            setRemoteUpdateStatus('none');
-          }, 2000);
-          
-          // Show a notification about the update
-          if (onRefreshNeeded) {
-            onRefreshNeeded();
+        // Apply the content update through the CollaborativeEditor
+        if (remoteUpdateFunctionRef.current) {
+          try {
+            remoteUpdateFunctionRef.current(lexicalContent);
+          } catch (error) {
+            console.error('❌ TrackedChangesEditor: Error calling remote update function:', error);
           }
         } else {
-          console.log('⚠️ TrackedChangesEditor: User is actively editing, deferring remote update');
-          
-          // In a production system, you would:
-          // 1. Queue this update for later application
-          // 2. Use operational transforms to merge changes
-          // 3. Show a notification that updates are pending
-          
-          // For now, we'll just log and potentially show a warning
-          console.log('💾 TrackedChangesEditor: Remote changes available but deferred due to active editing');
+          setEditedProposedContent(lexicalContent);
         }
+        
+        // Also update our state
+        setEditedProposedContent(lexicalContent);
+        setLastSavedProposedContent(lexicalContent);
+        
+        // Show applied status briefly
+        setRemoteUpdateStatus('applied');
+        setTimeout(() => {
+          setRemoteUpdateStatus('none');
+        }, 2000);
+        
+        // Show a notification about the update
+        if (onRefreshNeeded) {
+          onRefreshNeeded();
+        }
+      }
       }
     }
   }, [currentUser.id, currentUser.email, lastAutoSaveTime, onRefreshNeeded]);
 
   // Store WebSocket client reference
   const handleWebSocketClientRef = useCallback((client: any) => {
-    console.log('🔗 handleWebSocketClientRef called with client:', {
-      hasClient: !!client,
-      clientType: typeof client,
-      clientConnected: client?.isConnected
-    });
-
     webSocketClientRef.current = client;
     
     if (client) {
-      console.log('🔌 Setting up WebSocket event listeners...');
-      
       // Listen for content updates
       client.on('content_updated', handleWebSocketUpdate);
-      console.log('👂 Listening for content_updated messages');
       
       // Listen for real-time content updates (character-by-character)
       client.on('realtime_content_update', handleWebSocketUpdate);
-      console.log('👂 Listening for realtime_content_update messages');
       
       // Listen for cursor position updates to track current user's position
       client.on('cursor_position', (message: any) => {
         if (message.userId === (currentUser.id || currentUser.email)) {
           // Store our own cursor position for use in auto-save messages
           lastCursorPositionRef.current = message.data;
-          console.log('📍 Updated current user cursor position:', message.data);
         }
       });
-      console.log('👂 Listening for cursor_position messages');
-      
-      console.log('✅ WebSocket client fully connected for auto-save, real-time sync, and cursor tracking');
-      
-      // Test the WebSocket connection
-      if (client.isConnected) {
-        console.log('🧪 WebSocket client reports as connected, testing send functionality');
-      } else {
-        console.log('⚠️ WebSocket client reports as not connected');
-      }
-    } else {
-      console.log('❌ No WebSocket client provided to handleWebSocketClientRef');
     }
   }, [handleWebSocketUpdate, currentUser.id, currentUser.email]);
 
@@ -1656,7 +1389,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         type: 'COMMENT',
         resolved: false
       };
-      console.log('TrackedChangesEditor: Submitting reply:', reply);
       onComment(reply);
       setReplyText('');
       setReplyToComment(null);
@@ -1816,8 +1548,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       context
     };
 
-    console.log('📋 Creating tracked change:', trackedChange);
-
     // Always update the edited content for collaborative editing
     if (trackedChange.willUpdateEditedContent) {
       setEditedProposedContent(newValue);
@@ -1832,37 +1562,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                    submission.richTextContent || 
                    submission.content || '';
     
-    console.log('📝 proposedEditorContent: Content source analysis:', {
-      hasProposedVersionsRichTextContent: !!submission.proposedVersions?.richTextContent,
-      proposedVersionsRichTextContentLength: submission.proposedVersions?.richTextContent?.length,
-      proposedVersionsRichTextContentType: typeof submission.proposedVersions?.richTextContent,
-      proposedVersionsRichTextContentIsLexical: submission.proposedVersions?.richTextContent ? isLexicalJson(submission.proposedVersions.richTextContent) : false,
-      proposedVersionsRichTextContentPreview: submission.proposedVersions?.richTextContent?.substring(0, 100),
-      
-      hasProposedVersionsContent: !!submission.proposedVersions?.content,
-      proposedVersionsContentLength: submission.proposedVersions?.content?.length,
-      proposedVersionsContentType: typeof submission.proposedVersions?.content,
-      proposedVersionsContentIsLexical: submission.proposedVersions?.content ? isLexicalJson(submission.proposedVersions.content) : false,
-      proposedVersionsContentPreview: submission.proposedVersions?.content?.substring(0, 100),
-      
-      hasRichTextContent: !!submission.richTextContent,
-      richTextContentLength: submission.richTextContent?.length,
-      richTextContentType: typeof submission.richTextContent,
-      richTextContentIsLexical: submission.richTextContent ? isLexicalJson(submission.richTextContent) : false,
-      richTextContentPreview: submission.richTextContent?.substring(0, 100),
-      
-      hasContent: !!submission.content,
-      contentLength: submission.content?.length,
-      contentType: typeof submission.content,
-      contentIsLexical: submission.content ? isLexicalJson(submission.content) : false,
-      contentPreview: submission.content?.substring(0, 100),
-      
-      finalContentLength: content?.length,
-      finalContentType: typeof content,
-      finalContentIsLexical: content ? isLexicalJson(content) : false,
-      finalContentPreview: content?.substring(0, 100)
-    });
-    
     // Pass the content directly to the CollaborativeEditor
     // The CollaborativeEditor will handle the proper conversion based on content type:
     // - Lexical JSON: use as-is
@@ -1874,14 +1573,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (!result || result.trim() === '') {
       result = 'Start typing your content here...';
     }
-    
-    console.log('📝 proposedEditorContent result:', {
-      resultLength: result?.length,
-      resultType: typeof result,
-      resultPreview: result?.substring(0, 200),
-      isLexicalJson: isLexicalJson(result),
-      isHtml: typeof result === 'string' && result.trim().startsWith('<') && !isLexicalJson(result)
-    });
     
     return result;
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content]);
@@ -1936,21 +1627,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             {/* Manual save button */}
             <button
               className="btn btn-sm btn-primary manual-save-button"
-              onClick={() => {
-                console.log('💾 Manual save requested');
-                
-                // Cancel auto-save and perform immediate save
-                if (autoSaveTimeoutRef.current) {
-                  clearTimeout(autoSaveTimeoutRef.current);
-                }
-                if (autoSaveCountdownIntervalRef.current) {
-                  clearInterval(autoSaveCountdownIntervalRef.current);
-                  autoSaveCountdownIntervalRef.current = null;
-                }
-                setAutoSaveCountdown(null);
-                
-                performAutoSave();
-              }}
+                          onClick={() => {
+              // Cancel auto-save and perform immediate save
+              if (autoSaveTimeoutRef.current) {
+                clearTimeout(autoSaveTimeoutRef.current);
+              }
+              if (autoSaveCountdownIntervalRef.current) {
+                clearInterval(autoSaveCountdownIntervalRef.current);
+                autoSaveCountdownIntervalRef.current = null;
+              }
+              setAutoSaveCountdown(null);
+              
+              performAutoSave();
+            }}
               disabled={autoSaveStatus === 'saving' || editedProposedContent === lastSavedProposedContent}
               title="Save changes now"
             >
@@ -2017,72 +1706,42 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     currentUser={currentUser}
                     initialContent={proposedEditorContent}
                     onContentChange={(json, cursorPosition) => {
-                      // Skip processing if we're still initializing content to prevent auto-save on load
-                      if (!hasInitializedContentRef.current) {
-                        console.log('🚫 Skipping content change during initialization');
-                        return;
-                      }
-                      
-                      setEditedProposedContent(json);
-                      console.log('📝 Proposed editor content changed:', {
-                        contentLength: json.length,
-                        isLexical: isLexicalJson(json),
-                        hasCursorPosition: !!cursorPosition
-                      });
-                      
-                      // Send real-time character-by-character updates immediately
-                      const originalContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
-                      const hasChanges = json !== originalContent;
-                      const hasChangesFromLastSaved = json !== lastSavedProposedContent;
-                      
-                      console.log('📝 Content change analysis:', {
-                        hasChanges,
-                        hasChangesFromLastSaved,
-                        jsonLength: json?.length || 0,
-                        originalContentLength: originalContent?.length || 0,
-                        lastSavedLength: lastSavedProposedContent?.length || 0,
-                        autoSaveStatus
-                      });
-                      
-                      if (hasChanges) {
-                        // Check if we're applying a real-time update to prevent feedback loops
-                        if (isApplyingRealTimeUpdateRef.current) {
-                          console.log('🔄 Skipping real-time update - applying remote update');
-                        } else {
-                          console.log('⚡ Content has changes, sending real-time update');
+                            // Skip processing if we're still initializing content to prevent auto-save on load
+      if (!hasInitializedContentRef.current) {
+        return;
+      }
+      
+      setEditedProposedContent(json);
+      
+      // Send real-time character-by-character updates immediately
+      const originalContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
+      const hasChanges = json !== originalContent;
+      const hasChangesFromLastSaved = json !== lastSavedProposedContent;
+      
+      if (hasChanges) {
+        // Check if we're applying a real-time update to prevent feedback loops
+        if (!isApplyingRealTimeUpdateRef.current) {
                           
                           // Send immediate real-time update with cursor position
                           throttledRealTimeUpdate(json, cursorPosition);
                         }
                         
-                                              if (hasChangesFromLastSaved) {
-                        console.log('📝 Content has changes from last saved, scheduling auto-save');
-                        
-                        // Start tracking the auto-save period if not already started
-                        if (!hasChangesInCurrentPeriodRef.current) {
-                          console.log('🔄 Starting new auto-save period tracking');
-                          hasChangesInCurrentPeriodRef.current = true;
-                          autoSavePeriodStartContentRef.current = originalContent;
-                          autoSavePeriodStartTimeRef.current = new Date();
-                        }
-                        
-                        // Schedule auto-save (7 seconds after typing stops)
-                        scheduleAutoSave();
-                        
-                        // Note: Individual character changes are no longer created here
-                        // They will be consolidated into a single change during auto-save
-                        console.log('📝 Changes being tracked for consolidation in auto-save period');
-                      }
-                      } else if (!hasChangesFromLastSaved) {
-                        console.log('📝 Content matches last saved version, no auto-save needed');
-                      } else {
-                        console.log('📝 Content change detected but no action needed');
-                      }
+                                                      if (hasChangesFromLastSaved) {
+        // Start tracking the auto-save period if not already started
+        if (!hasChangesInCurrentPeriodRef.current) {
+          hasChangesInCurrentPeriodRef.current = true;
+          autoSavePeriodStartContentRef.current = originalContent;
+          autoSavePeriodStartTimeRef.current = new Date();
+        }
+        
+        // Schedule auto-save (7 seconds after typing stops)
+        scheduleAutoSave();
+      }
+      }
                     }}
-                    onSave={(content) => {
-                      console.log('💾 Save button clicked with content:', content);
-                      // Update the edited content with the saved content
-                      setEditedProposedContent(content);
+                        onSave={(content) => {
+      // Update the edited content with the saved content
+      setEditedProposedContent(content);
                       
                       // Cancel auto-save since user is manually saving
                       if (autoSaveTimeoutRef.current) {
