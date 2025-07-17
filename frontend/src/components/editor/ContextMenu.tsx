@@ -14,24 +14,17 @@ interface ContextMenuProps {
 export default function ContextMenu({ x, y, onClose, onEdit, onDelete, canEdit = true, canDelete = true }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Debug logging
-  useEffect(() => {
-    console.log('🎯 ContextMenu mounted:', { x, y, canEdit, canDelete, hasDeleteHandler: !!onDelete });
-  }, [x, y, canEdit, canDelete, onDelete]);
+
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      console.log('🖱️ Click outside detected');
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        console.log('🔒 Closing menu - clicked outside');
         onClose();
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
-      console.log('⌨️ Key pressed:', event.key);
       if (event.key === 'Escape') {
-        console.log('🔒 Closing menu - escape pressed');
         onClose();
       }
     };
@@ -46,14 +39,12 @@ export default function ContextMenu({ x, y, onClose, onEdit, onDelete, canEdit =
   }, [onClose]);
 
   const handleEdit = (e: React.MouseEvent) => {
-    console.log('✏️ Edit clicked');
     e.preventDefault();
     e.stopPropagation();
     onEdit();
   };
 
   const handleDelete = (e: React.MouseEvent) => {
-    console.log('🗑️ Delete clicked');
     e.preventDefault();
     e.stopPropagation();
     if (onDelete) {
@@ -72,7 +63,6 @@ export default function ContextMenu({ x, y, onClose, onEdit, onDelete, canEdit =
         zIndex: 1000
       }}
       onClick={(e) => {
-        console.log('🖱️ Menu clicked');
         e.stopPropagation();
       }}
     >

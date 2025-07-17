@@ -111,7 +111,6 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       const [editor] = useLexicalComposerContext();
       
       useEffect(() => {
-        console.log('EditorInitPlugin: Setting editor reference');
         editorRef.current = editor;
       }, [editor]);
       
@@ -146,12 +145,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       editorRef.current = editor;
     }
     
-    // Log the first few state changes to debug initialization
-    console.log('LexicalEditor onChange:', {
-      hasEditor: !!editor,
-      stateType: editorState._nodeMap ? 'populated' : 'empty',
-      nodeCount: editorState._nodeMap?.size || 0
-    });
+
     
     if (onChange) {
       const json = JSON.stringify(editorState);
@@ -161,17 +155,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
 
   // Initialize editor content when component mounts or initialContent changes
   useEffect(() => {
-    console.log('LexicalEditor useEffect triggered:', {
-      hasEditor: !!editorRef.current,
-      hasContent: !!initialContent,
-      isLoaded,
-      hasInitialized: hasInitialized.current,
-      contentLength: initialContent?.length,
-      contentPreview: initialContent?.substring(0, 100)
-    });
-    
     if (!editorRef.current || !initialContent || !isLoaded || (hasInitialized.current && !forceReinitialize)) {
-      console.log('LexicalEditor: Skipping initialization - missing editor, content, not loaded, or already initialized (and not forcing reinitialize)');
       return;
     }
 
@@ -180,10 +164,8 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
     // Check if the initialContent is a Lexical JSON state
     if (initialContent.startsWith('{') && initialContent.includes('"root":')) {
       try {
-        console.log('LexicalEditor: Setting Lexical JSON state');
         const editorState = editor.parseEditorState(initialContent);
         editor.setEditorState(editorState);
-        console.log('LexicalEditor: Successfully set editor state');
         hasInitialized.current = true;
         return;
       } catch (e) {
@@ -193,19 +175,16 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
     
     // Check if it's a DraftJS state and convert it
     if (isValidDraftJs(initialContent)) {
-      console.log('LexicalEditor: Content is DraftJS, letting DraftJsImportPlugin handle it');
       hasInitialized.current = true;
       return; // DraftJsImportPlugin will handle this
     }
     
     // Otherwise, treat it as HTML
     try {
-      console.log('LexicalEditor: Converting HTML content');
       htmlToLexical(editor, initialContent);
       hasInitialized.current = true;
     } catch (e) {
       console.error('Error parsing HTML content:', e);
-      console.log('LexicalEditor: Falling back to plain text');
       editor.update(() => {
         const root = $getRoot();
         root.clear();
@@ -219,37 +198,23 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
 
   // Update editor content when content prop changes (for external updates)
   useEffect(() => {
-    console.log('LexicalEditor content prop changed:', {
-      hasEditor: !!editorRef.current,
-      isLoaded,
-      content,
-      contentType: typeof content,
-      contentLength: content?.length,
-      contentPreview: content?.substring(0, 100)
-    });
     
     if (!editorRef.current || !isLoaded) {
-      console.log('LexicalEditor: Skipping content update - missing editor or not loaded');
       return;
     }
     
     // Allow empty content to be set (for clearing the editor)
     if (content === undefined || content === null) {
-      console.log('LexicalEditor: Skipping content update - content is undefined/null');
       return;
     }
 
     const editor = editorRef.current;
     
-    console.log('LexicalEditor: Processing content update');
-    
     // Check if the content is a Lexical JSON state
     if (content.startsWith('{') && content.includes('"root":')) {
       try {
-        console.log('LexicalEditor: Updating with Lexical JSON state');
         const editorState = editor.parseEditorState(content);
         editor.setEditorState(editorState);
-        console.log('LexicalEditor: Successfully updated with Lexical JSON state');
         return;
       } catch (e) {
         console.error('Error parsing Lexical state for content update:', e);
@@ -258,17 +223,14 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
     
     // Check if it's a DraftJS state and convert it
     if (isValidDraftJs(content)) {
-      console.log('LexicalEditor: Content is DraftJS, letting DraftJsImportPlugin handle it');
       return; // DraftJsImportPlugin will handle this
     }
     
     // Otherwise, treat it as HTML
     try {
-      console.log('LexicalEditor: Converting HTML content for update');
       htmlToLexical(editor, content);
     } catch (e) {
       console.error('Error parsing HTML content for update:', e);
-      console.log('LexicalEditor: Falling back to plain text for update');
       editor.update(() => {
         const root = $getRoot();
         root.clear();

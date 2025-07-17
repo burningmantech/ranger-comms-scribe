@@ -24,8 +24,7 @@ export const MySubmissions: React.FC = () => {
   const [selectedSubmission, setSelectedSubmission] = React.useState<ContentSubmission | null>(null);
 
   React.useEffect(() => {
-    console.log('Current User:', currentUser);
-    console.log('All Submissions:', submissions);
+    // Effect dependencies for re-rendering when user or submissions change
   }, [currentUser, submissions]);
 
   if (!currentUser) {
@@ -36,8 +35,6 @@ export const MySubmissions: React.FC = () => {
   const filteredSubmissions = userPermissions?.canViewFilteredSubmissions
     ? submissions // Show all submissions if user has permission
     : submissions.filter(submission => submission.submittedBy === currentUser.email); // Show only user's submissions
-
-  console.log('Filtered Submissions:', filteredSubmissions);
 
   return (
     <div className="content-management">

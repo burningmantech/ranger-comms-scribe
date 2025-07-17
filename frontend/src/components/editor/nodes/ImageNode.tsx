@@ -210,17 +210,10 @@ export class ImageNode extends ElementNode {
       }
       
       // Don't set maxWidth when custom dimensions are specified to avoid scaling conflicts
-      console.log('🖼️ Applied custom dimensions:', { 
-        width: img.style.width, 
-        height: img.style.height,
-        originalWidth: this.__width,
-        originalHeight: this.__height
-      });
     } else {
       // Only apply responsive defaults when no custom dimensions
       img.style.maxWidth = '100%';
       img.style.height = 'auto';
-      console.log('🖼️ Applied responsive defaults');
     }
     
     // Add image metadata as data attributes

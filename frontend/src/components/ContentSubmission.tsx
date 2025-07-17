@@ -71,7 +71,6 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         const storedPermissions = localStorage.getItem('userPermissions');
         if (storedPermissions) {
           const permissions = JSON.parse(storedPermissions);
-          console.log('🔑 Using stored permissions:', permissions);
           setUserPermissions(permissions);
           setIsLoading(false);
           return;
@@ -90,7 +89,6 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         }
 
         const data = await response.json();
-        console.log('🔑 User roles and permissions:', data);
         
         // Set permissions from the response
         if (data.permissions) {
@@ -135,11 +133,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
 
         if (response.ok) {
           const data = await response.json();
-          console.log('📝 Fetched tracked changes data:', data);
-          console.log('📝 Fetched proposedVersions:', data.proposedVersionsRichText);
           setProposedVersions(data.proposedVersionsRichText || {});
         } else {
-          console.log('No tracked changes found for submission, using original content');
           setProposedVersions({});
         }
       } catch (error) {
@@ -181,35 +176,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const canReviewSuggestions = effectivePermissions.canReviewSuggestions;
   const canViewFilteredSubmissions = effectivePermissions.canViewFilteredSubmissions;
 
-  // Debug: Log user permissions
-  console.log('🔍 Current User Debug:', {
-    id: currentUser.id,
-    userId: (currentUser as any).userId,
-    email: currentUser.email,
-    name: currentUser.name,  
-    roles: currentUser.roles,
-    fullUserObject: currentUser,
-    permissions: effectivePermissions
-  });
-
   // Use email as fallback for user ID since the id field is undefined
   const effectiveUserId = currentUser.email;
-
-  // Debug: Log permission calculations
-  console.log('🔑 Permission Debug:', {
-    userRoles: currentUser.roles,
-    permissions: effectivePermissions,
-    effectiveUserId,
-    isEditing,
-    calculatedPermissions: {
-      canEdit,
-      canApprove,
-      canCreateSuggestions,
-      canApproveSuggestions,
-      canReviewSuggestions,
-      canViewFilteredSubmissions
-    }
-  });
 
   // Check if all required approvers have approved
   const allRequiredApproversApproved = submission.requiredApprovers?.every(approverEmail =>
@@ -290,34 +258,28 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
 
   // Handle incoming WebSocket messages
   const handleWebSocketMessage = (message: WebSocketMessage) => {
-    console.log('Received WebSocket message:', message);
-    
     switch (message.type) {
       case 'content_updated':
         if (message.userId !== effectiveUserId) {
           // Refresh the submission data when someone else updates it
-          console.log('Content updated by another user, refreshing...');
           // You might want to refresh the submission data here
         }
         break;
       case 'comment_added':
         if (message.userId !== effectiveUserId) {
           // Refresh comments when someone else adds a comment
-          console.log('Comment added by another user, refreshing...');
           // You might want to refresh the comments here
         }
         break;
       case 'approval_added':
         if (message.userId !== effectiveUserId) {
           // Refresh approvals when someone else adds an approval
-          console.log('Approval added by another user, refreshing...');
           // You might want to refresh the approvals here
         }
         break;
       case 'status_changed':
         if (message.userId !== effectiveUserId) {
           // Refresh the submission when status changes
-          console.log('Status changed by another user, refreshing...');
           // You might want to refresh the submission data here
         }
         break;
@@ -556,13 +518,6 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
                           <div className="lexical-editor-container read-only">
                 {(() => {
                   const content = proposedVersions?.richTextContent || proposedVersions?.content || submission.richTextContent || submission.content || '';
-                  console.log('🎨 LexicalEditor content:', {
-                    proposedVersionsRichText: proposedVersions?.richTextContent,
-                    proposedVersionsContent: proposedVersions?.content,
-                    submissionRichTextContent: submission.richTextContent,
-                    submissionContent: submission.content,
-                    finalContent: content
-                  });
                   return (
                     <LexicalEditorComponent
                       initialContent={content}

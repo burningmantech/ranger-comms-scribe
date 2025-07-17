@@ -83,7 +83,6 @@ export class SubmissionWebSocketClient {
     }
 
     if (this.isConnecting) {
-      console.log('⏳ WebSocket connection already in progress');
       return;
     }
 
@@ -115,11 +114,9 @@ export class SubmissionWebSocketClient {
       wsUrl.searchParams.set('userEmail', this.userEmail);
       wsUrl.searchParams.set('sessionId', sessionId);
 
-      console.log('🔌 Attempting WebSocket connection to:', wsUrl.toString());
       this.ws = new WebSocket(wsUrl.toString());
 
       this.ws.onopen = () => {
-        console.log('✅ WebSocket connected to submission room:', this.submissionId);
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         this.connectionHealthChecks = 0;
@@ -155,13 +152,6 @@ export class SubmissionWebSocketClient {
       };
 
       this.ws.onclose = (event) => {
-        console.log('❌ WebSocket connection closed:', {
-          code: event.code,
-          reason: event.reason,
-          wasClean: event.wasClean,
-          submissionId: this.submissionId
-        });
-        
         this.stopHeartbeat();
         this.ws = null;
         this.isConnecting = false;
@@ -169,7 +159,6 @@ export class SubmissionWebSocketClient {
         if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000); // Cap at 10 seconds
-          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
           setTimeout(() => this.connect(), delay);
         } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
           console.error('❌ Max reconnection attempts reached. WebSocket connection failed permanently.');
@@ -200,7 +189,6 @@ export class SubmissionWebSocketClient {
       this.isConnecting = false;
       
       if (error instanceof Error && error.message.includes('Session')) {
-        console.log('🔄 Session issue detected, attempting to refresh...');
         this.emit('session_expired', {
           type: 'error',
           submissionId: this.submissionId,
@@ -218,8 +206,6 @@ export class SubmissionWebSocketClient {
 
   private processMessageQueue(): void {
     if (this.messageQueue.length === 0) return;
-    
-    console.log(`📤 Processing ${this.messageQueue.length} queued messages`);
     
     const messages = [...this.messageQueue];
     this.messageQueue = [];

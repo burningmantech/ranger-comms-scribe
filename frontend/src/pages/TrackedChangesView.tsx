@@ -50,21 +50,10 @@ export const TrackedChangesView: React.FC = () => {
         const data = await submissionResponse.json();
         const trackedChanges = trackedChangesResponse.ok ? await trackedChangesResponse.json() : [];
         
-        console.log('Raw data from API:', {
-          id: data.id,
-          title: data.title,
-          content: data.content,
-          richTextContent: data.richTextContent,
-          richTextContentType: typeof data.richTextContent,
-          richTextContentLength: data.richTextContent?.length
-        });
-        
-        console.log('Tracked changes from API:', trackedChanges);
+
         
         // Determine the content to use for the tracked changes editor
         let content = data.content || '';
-        console.log('Initial content:', content);
-        console.log('Content type:', typeof content);
         
         // Handle different content formats
         let richTextContent = data.richTextContent;
@@ -72,26 +61,22 @@ export const TrackedChangesView: React.FC = () => {
         if (content) {
           // If content is an object, it might be Lexical JSON
           if (typeof content === 'object') {
-            console.log('Content is an object, checking if it\'s Lexical JSON...');
             if (isLexicalJson(content)) {
               // Preserve the Lexical JSON for rich text display
               richTextContent = content;
               const extractedText = extractTextFromLexical(content);
               if (extractedText) {
                 content = extractedText;
-                console.log('Using extracted text from object content for plain text fallback:', content);
               }
             }
           }
           // If content is a string that looks like JSON
           else if (typeof content === 'string' && content.trim().startsWith('{') && isLexicalJson(content)) {
-            console.log('Content field contains Lexical JSON string, preserving for rich text...');
             // Preserve the Lexical JSON for rich text display
             richTextContent = content;
             const extractedText = extractTextFromLexical(content);
             if (extractedText) {
               content = extractedText;
-              console.log('Using extracted text from content field for plain text fallback:', content);
             }
           }
         }
@@ -99,30 +84,21 @@ export const TrackedChangesView: React.FC = () => {
         // If we still don't have readable content, try richTextContent
         if (!content || content.trim() === '') {
           if (data.richTextContent) {
-            console.log('Checking if richTextContent is Lexical JSON...');
             const isLexical = isLexicalJson(data.richTextContent);
-            console.log('Is Lexical JSON:', isLexical);
             
             if (isLexical) {
               // If richTextContent is Lexical JSON, extract plain text from it
               const extractedText = extractTextFromLexical(data.richTextContent);
-              console.log('Extracted text from richTextContent:', extractedText);
               if (extractedText) {
                 content = extractedText;
-                console.log('Using extracted text as content:', content);
               }
-            } else {
-              console.log('richTextContent is not Lexical JSON');
             }
-          } else {
-            console.log('No richTextContent found');
           }
         }
         
         // Final fallback
         if (!content || content.trim() === '') {
           content = 'No content available';
-          console.log('No content found, using fallback');
         }
         
         // Transform tracked changes to the format expected by the frontend
@@ -190,19 +166,7 @@ export const TrackedChangesView: React.FC = () => {
             })
           }
         };
-        console.log('Final transformed submission:', {
-          id: transformedSubmission.id,
-          title: transformedSubmission.title,
-          content: transformedSubmission.content,
-          contentLength: transformedSubmission.content?.length,
-          contentPreview: transformedSubmission.content?.substring(0, 100),
-          richTextContent: transformedSubmission.richTextContent ? 'present' : 'undefined',
-          richTextContentLength: transformedSubmission.richTextContent?.length,
-          changesCount: transformedSubmission.changes.length,
-          proposedVersionsRichTextContent: transformedSubmission.proposedVersions?.richTextContent ? 'present' : 'undefined',
-          proposedVersionsRichTextContentLength: transformedSubmission.proposedVersions?.richTextContent?.length,
-          timestamp: new Date().toISOString()
-        });
+
         setSubmission(transformedSubmission);
       } catch (err) {
         console.error('Error fetching submission:', err);
@@ -218,17 +182,10 @@ export const TrackedChangesView: React.FC = () => {
 
   // Refresh function for WebSocket-triggered updates
   const handleRefreshNeeded = async () => {
-    console.log('🔄 TrackedChangesView: Refresh requested by WebSocket', {
-      submissionId,
-      currentSubmissionId: submission?.id,
-      timestamp: new Date().toISOString()
-    });
-    
     try {
       await fetchSubmission();
-      console.log('🔄 TrackedChangesView: Refresh completed successfully');
     } catch (error) {
-      console.error('🔄 TrackedChangesView: Refresh failed:', error);
+      console.error('TrackedChangesView: Refresh failed:', error);
     }
   };
 
@@ -278,14 +235,7 @@ export const TrackedChangesView: React.FC = () => {
         proposedVersions: updatedSubmission.proposedVersions
       };
       
-      console.log('🔍 SAVE DEBUG: Sending to backend:', {
-        submissionContentLength: backendSubmission.content?.length,
-        submissionRichTextContentLength: backendSubmission.richTextContent?.length,
-        proposedVersionsRichTextContentLength: backendSubmission.proposedVersions?.richTextContent?.length,
-        proposedVersionsContentLength: backendSubmission.proposedVersions?.content?.length,
-        proposedVersionsRichTextContentIsLexical: backendSubmission.proposedVersions?.richTextContent ? isLexicalJson(backendSubmission.proposedVersions.richTextContent) : false,
-        proposedVersionsRichTextContentPreview: backendSubmission.proposedVersions?.richTextContent?.substring(0, 100)
-      });
+
 
       // Save to both submission and tracked changes APIs
       const [submissionResponse, trackedChangesResponse] = await Promise.all([
@@ -304,12 +254,7 @@ export const TrackedChangesView: React.FC = () => {
             proposedVersionsContent: updatedSubmission.proposedVersions.content
           };
           
-          console.log('🔍 TRACKED CHANGES DEBUG: Sending to tracked changes API:', {
-            proposedVersionsRichTextLength: trackedChangesPayload.proposedVersionsRichText?.length,
-            proposedVersionsContentLength: trackedChangesPayload.proposedVersionsContent?.length,
-            proposedVersionsRichTextIsLexical: trackedChangesPayload.proposedVersionsRichText ? isLexicalJson(trackedChangesPayload.proposedVersionsRichText) : false,
-            proposedVersionsRichTextPreview: trackedChangesPayload.proposedVersionsRichText?.substring(0, 100)
-          });
+
           
           return fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
             method: 'PUT',
@@ -333,7 +278,7 @@ export const TrackedChangesView: React.FC = () => {
       const savedSubmission = await submissionResponse.json();
       setSubmission(savedSubmission);
       
-      console.log('✅ Successfully saved submission and tracked changes');
+
     } catch (err) {
       console.error('Error saving submission:', err);
       // You might want to show an error message to the user here
@@ -371,7 +316,7 @@ export const TrackedChangesView: React.FC = () => {
             const extractedText = extractTextFromLexical(content);
             if (extractedText) {
               content = extractedText;
-              console.log('Using extracted text from object content (comment):', content);
+  
             }
           }
         }
@@ -380,7 +325,7 @@ export const TrackedChangesView: React.FC = () => {
           const extractedText = extractTextFromLexical(content);
           if (extractedText) {
             content = extractedText;
-            console.log('Using extracted text from content field (comment):', content);
+
           }
         }
       }
@@ -391,7 +336,7 @@ export const TrackedChangesView: React.FC = () => {
           const extractedText = extractTextFromLexical(data.richTextContent);
           if (extractedText) {
             content = extractedText;
-            console.log('Using extracted text from richTextContent (comment):', content);
+
           }
         }
       }
@@ -662,19 +607,8 @@ export const TrackedChangesView: React.FC = () => {
 
   const handleSuggestion = async (suggestion: Change) => {
     try {
-      console.log('TrackedChangesView: handleSuggestion called with:', suggestion);
-      console.log('🔍 SUGGESTION DEBUG: Current submission state before creating suggestion:', {
-        submissionContentLength: submission?.content?.length,
-        submissionRichTextContentLength: submission?.richTextContent?.length,
-        proposedVersionsRichTextContentLength: submission?.proposedVersions?.richTextContent?.length,
-        proposedVersionsRichTextContentIsLexical: submission?.proposedVersions?.richTextContent ? isLexicalJson(submission.proposedVersions.richTextContent) : false,
-        proposedVersionsRichTextContentPreview: submission?.proposedVersions?.richTextContent?.substring(0, 100)
-      });
-      
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
-
-      console.log('TrackedChangesView: Making API call to create tracked change...');
       const response = await fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
         method: 'POST',
         headers: {
@@ -684,7 +618,6 @@ export const TrackedChangesView: React.FC = () => {
         body: JSON.stringify(suggestion),
       });
 
-      console.log('TrackedChangesView: API response status:', response.status);
       if (!response.ok) {
         const errorText = await response.text();
         console.error('TrackedChangesView: API error response:', errorText);
@@ -692,10 +625,8 @@ export const TrackedChangesView: React.FC = () => {
       }
 
       const createdChange = await response.json();
-      console.log('TrackedChangesView: Created change response:', createdChange);
 
       // Refresh both submission and tracked changes data
-      console.log('TrackedChangesView: Refreshing data...');
       const [submissionResponse, trackedChangesResponse] = await Promise.all([
         fetch(`${API_URL}/content/submissions/${submissionId}`, {
           headers: {
@@ -709,29 +640,13 @@ export const TrackedChangesView: React.FC = () => {
         })
       ]);
 
-      console.log('TrackedChangesView: Refresh response statuses:', {
-        submission: submissionResponse.status,
-        trackedChanges: trackedChangesResponse.status
-      });
+
 
       if (submissionResponse.ok && trackedChangesResponse.ok) {
         const data = await submissionResponse.json();
         const trackedChanges = await trackedChangesResponse.json();
         
-        console.log('TrackedChangesView: Refreshed data:', {
-          submission: data,
-          trackedChanges: trackedChanges
-        });
-        
-        console.log('🔍 REFRESH DEBUG: Data received from backend:', {
-          submissionContentLength: data.content?.length,
-          submissionRichTextContentLength: data.richTextContent?.length,
-          submissionContentIsLexical: data.content ? isLexicalJson(data.content) : false,
-          submissionRichTextContentIsLexical: data.richTextContent ? isLexicalJson(data.richTextContent) : false,
-          trackedChangesProposedVersionsRichTextContentLength: trackedChanges.proposedVersions?.richTextContent?.length,
-          trackedChangesProposedVersionsRichTextContentIsLexical: trackedChanges.proposedVersions?.richTextContent ? isLexicalJson(trackedChanges.proposedVersions.richTextContent) : false,
-          trackedChangesProposedVersionsRichTextContentPreview: trackedChanges.proposedVersions?.richTextContent?.substring(0, 100)
-        });
+
         
         // Transform tracked changes to the format expected by the frontend
         const transformedChanges = trackedChanges.changes.map((change: any) => ({
@@ -798,7 +713,7 @@ export const TrackedChangesView: React.FC = () => {
             })
           }
         };
-        console.log('TrackedChangesView: Setting transformed submission:', transformedSubmission);
+
         setSubmission(transformedSubmission);
       } else {
         console.error('TrackedChangesView: Failed to refresh data:', {
@@ -813,7 +728,7 @@ export const TrackedChangesView: React.FC = () => {
 
   const handleUndo = async (changeId: string) => {
     try {
-      console.log('TrackedChangesView: handleUndo called with changeId:', changeId);
+  
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
@@ -839,7 +754,7 @@ export const TrackedChangesView: React.FC = () => {
 
   const handleApproveProposedVersion = async (approverId: string, comment?: string) => {
     try {
-      console.log('TrackedChangesView: handleApproveProposedVersion called with:', { approverId, comment });
+  
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
@@ -869,7 +784,7 @@ export const TrackedChangesView: React.FC = () => {
 
   const handleRejectProposedVersion = async (rejecterId: string, comment?: string) => {
     try {
-      console.log('TrackedChangesView: handleRejectProposedVersion called with:', { rejecterId, comment });
+  
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 

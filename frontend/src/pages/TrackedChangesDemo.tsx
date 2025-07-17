@@ -73,7 +73,6 @@ export const TrackedChangesDemo: React.FC = () => {
 
   const handleSave = (updatedSubmission: ContentSubmission) => {
     setSubmission(updatedSubmission);
-    console.log('Saved submission:', updatedSubmission);
   };
 
   const handleComment = (comment: Comment) => {
@@ -81,7 +80,6 @@ export const TrackedChangesDemo: React.FC = () => {
       ...prev,
       comments: [...prev.comments, comment]
     }));
-    console.log('Added comment:', comment);
   };
 
   const handleApprove = (changeId: string) => {
@@ -98,7 +96,7 @@ export const TrackedChangesDemo: React.FC = () => {
       ...prev,
       approvals: [...prev.approvals, approval]
     }));
-    console.log('Approved change:', changeId);
+
   };
 
   const handleReject = (changeId: string) => {
@@ -115,7 +113,7 @@ export const TrackedChangesDemo: React.FC = () => {
       ...prev,
       approvals: [...prev.approvals, approval]
     }));
-    console.log('Rejected change:', changeId);
+
   };
 
   const handleSuggestion = (suggestion: Change) => {
@@ -123,7 +121,7 @@ export const TrackedChangesDemo: React.FC = () => {
       ...prev,
       changes: [...prev.changes, suggestion]
     }));
-    console.log('Added suggestion:', suggestion);
+
   };
 
   const handleUndo = (changeId: string) => {
@@ -135,7 +133,7 @@ export const TrackedChangesDemo: React.FC = () => {
           : change
       )
     }));
-    console.log('Undid change:', changeId);
+
   };
 
   const handleApproveProposedVersion = (approverId: string, comment?: string) => {
@@ -152,7 +150,7 @@ export const TrackedChangesDemo: React.FC = () => {
       ...prev,
       approvals: [...prev.approvals, approval]
     }));
-    console.log('Approved proposed version:', { approverId, comment });
+
   };
 
   const handleRejectProposedVersion = (rejecterId: string, comment?: string) => {
@@ -169,11 +167,11 @@ export const TrackedChangesDemo: React.FC = () => {
       ...prev,
       approvals: [...prev.approvals, approval]
     }));
-    console.log('Rejected proposed version:', { rejecterId, comment });
+
   };
 
   const handleRefreshNeeded = () => {
-    console.log('🔄 Demo: Refresh requested by WebSocket (no-op in demo)');
+
   };
 
   return (

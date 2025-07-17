@@ -592,59 +592,7 @@ export const SubmissionCollaborators = React.forwardRef<
         )}
       </div>
 
-      {/* Debug Information - Remove this block when no longer needed */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs">
-          <div className="font-semibold text-yellow-800 mb-2">Debug Info:</div>
-          <div className="space-y-1 text-yellow-700">
-            <div><strong>Current User ID:</strong> {effectiveUserId}</div>
-            <div><strong>Current User Name:</strong> {currentUser.name}</div>
-            <div><strong>Current User Email:</strong> {currentUser.email}</div>
-            <div><strong>Submission ID:</strong> {submissionId}</div>
-            <div><strong>Connected Users Count:</strong> {connectedUsers.length}</div>
-            <div><strong>Connected User IDs:</strong> {connectedUsers.map(u => u.userId).join(', ')}</div>
-            <div><strong>Connection Status:</strong> {connectionStatus}</div>
-            <div><strong>WebSocket State:</strong> {wsClientRef.current?.connectionState || 'not initialized'}</div>
-            <div><strong>Is Connected:</strong> {wsClientRef.current?.isConnected ? 'Yes' : 'No'}</div>
-            <div><strong>Health Status:</strong> {connectionHealth.isHealthy ? 'Healthy' : 'Unhealthy'}</div>
-            <div><strong>Missed Heartbeats:</strong> {connectionHealth.missedHeartbeats}/3</div>
-            <div><strong>Last Heartbeat:</strong> {connectionHealth.lastHeartbeat > 0 ? new Date(connectionHealth.lastHeartbeat).toLocaleTimeString() : 'Never'}</div>
-            <div><strong>Time Since Last Heartbeat:</strong> {connectionHealth.timeSinceLastHeartbeat > 0 ? `${Math.round(connectionHealth.timeSinceLastHeartbeat / 1000)}s` : 'N/A'}</div>
-          </div>
-          <div className="mt-2 space-x-2">
-            <button 
-              onClick={sendTestMessage}
-              className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded"
-            >
-              Send Test Message
-            </button>
-            <button 
-              onClick={requestRoomState}
-              className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white text-xs rounded"
-            >
-              Request Room State
-            </button>
-            <button 
-              onClick={reconnectWebSocket}
-              className="px-3 py-1 bg-orange-500 hover:bg-orange-600 text-white text-xs rounded"
-            >
-              Reconnect WebSocket
-            </button>
-            <button 
-              onClick={() => {
-                if (wsClientRef.current) {
-                  const health = wsClientRef.current.connectionHealth;
-                  console.log('📊 Connection Health Check:', health);
-                  alert(`Connection Health:\n- Healthy: ${health.isHealthy}\n- Missed Heartbeats: ${health.missedHeartbeats}/3\n- Time Since Last: ${Math.round(health.timeSinceLastHeartbeat / 1000)}s`);
-                }
-              }}
-              className="px-3 py-1 bg-purple-500 hover:bg-purple-600 text-white text-xs rounded"
-            >
-              Check Health
-            </button>
-          </div>
-        </div>
-      )}
+
 
       {/* Connected Users */}
       {connectedUsers.length > 0 && (
@@ -714,42 +662,9 @@ export const SubmissionCollaborators = React.forwardRef<
         </div>
       )}
 
-      {/* Debug: Show all notifications in development */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs">
-          <div className="font-semibold text-gray-800 mb-2">All Notifications Debug:</div>
-          <div className="space-y-1 text-gray-700">
-            <div><strong>Total Notifications:</strong> {notifications.length}</div>
-            {notifications.map((notif, index) => (
-              <div key={index} className="border-b pb-1 mb-1">
-                <div><strong>#{index + 1}:</strong> {notif.type} from {notif.userName}</div>
-                <div><strong>Message:</strong> {formatMessageText(notif)}</div>
-                <div><strong>Time:</strong> {formatRelativeTime(notif.timestamp)}</div>
-                {notif.data && <div><strong>Data:</strong> {JSON.stringify(notif.data)}</div>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* Debug: Show all received WebSocket messages */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
-          <div className="font-semibold text-blue-800 mb-2">All WebSocket Messages Debug:</div>
-          <div className="space-y-1 text-blue-700 max-h-60 overflow-y-auto">
-            <div><strong>Total Messages Received:</strong> {debugMessages.length}</div>
-            {debugMessages.slice(-10).map((debugMsg, index) => (
-              <div key={debugMsg.id} className="border-b pb-1 mb-1">
-                <div><strong>#{debugMessages.length - 10 + index + 1}:</strong> {debugMsg.type} from {debugMsg.message.userName || 'Unknown'}</div>
-                <div><strong>User ID:</strong> {debugMsg.message.userId}</div>
-                <div><strong>Is Current User:</strong> {debugMsg.message.userId === effectiveUserId ? 'Yes' : 'No'}</div>
-                <div><strong>Timestamp:</strong> {debugMsg.message.timestamp}</div>
-                {debugMsg.message.data && <div><strong>Data:</strong> {JSON.stringify(debugMsg.message.data)}</div>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+
+
 
       {/* Inline styles for animation - can be moved to CSS file later */}
       <style>{`

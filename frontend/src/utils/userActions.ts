@@ -33,8 +33,7 @@ export const handleUserLogin = async (userData: User, sessionId: string) => {
         });
 
         if (response.ok) {
-            const data = await response.json();
-            console.log('🔑 User roles and permissions:', data);
+                  const data = await response.json();
             
             // Update both roles and userType based on the roles
             userData.roles = data.roles || [];
@@ -77,7 +76,7 @@ export const LogoutUserReact = async (navigate?: (path: string) => void) => {
     localStorage.removeItem('sessionId');
     dispatchLoginStateChange(null);
 
-    console.log('User logged out');
+
     if (navigate) {
         navigate('/'); // Redirect to home page if navigate function is provided
     }
