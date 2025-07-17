@@ -31,10 +31,23 @@ export const SubmissionCollaborators = React.forwardRef<
   const [debugMessages, setDebugMessages] = useState<Array<{id: string, type: string, message: WebSocketMessage}>>([]);
   const [connectionHealth, setConnectionHealth] = useState<{
     isHealthy: boolean;
-    lastHeartbeat: number;
-    missedHeartbeats: number;
-    timeSinceLastHeartbeat: number;
-  }>({ isHealthy: false, lastHeartbeat: 0, missedHeartbeats: 0, timeSinceLastHeartbeat: 0 });
+    lastPong: number;
+    missedPongs: number;
+    timeSinceLastPong: number;
+    timeSinceLastActivity: number;
+    queuedMessages: number;
+    reconnectAttempts: number;
+    isConnecting: boolean;
+  }>({ 
+    isHealthy: false, 
+    lastPong: 0, 
+    missedPongs: 0, 
+    timeSinceLastPong: 0,
+    timeSinceLastActivity: 0,
+    queuedMessages: 0,
+    reconnectAttempts: 0,
+    isConnecting: false
+  });
   const wsClientRef = useRef<SubmissionWebSocketClient | null>(null);
 
   // Get effective user ID (fallback to email if id is not available)
@@ -578,8 +591,8 @@ export const SubmissionCollaborators = React.forwardRef<
           ({connectedUsers.length} user{connectedUsers.length !== 1 ? 's' : ''} connected)
         </span>
         {connectionHealth.isHealthy === false && wsClientRef.current?.isConnected && (
-          <span className="text-xs text-orange-600" title={`${connectionHealth.missedHeartbeats} missed heartbeats`}>
-            ⚠️ Health: {connectionHealth.missedHeartbeats}/3
+          <span className="text-xs text-orange-600" title={`${connectionHealth.missedPongs} missed pongs`}>
+            ⚠️ Health: {connectionHealth.missedPongs}/2
           </span>
         )}
         {connectionStatus === 'session_expired' && (

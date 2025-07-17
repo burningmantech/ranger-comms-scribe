@@ -48,7 +48,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
@@ -72,8 +72,13 @@ export interface ConnectionMetadata {
 export class SubmissionWebSocketServer {
   private connections: Map<WebSocket, ConnectionMetadata> = new Map();
   private submissionRooms: Map<string, Set<WebSocket>> = new Map();
+  private pingIntervals: Map<WebSocket, any> = new Map();
   protected ctx: DurableObjectState;
   protected env: any;
+  
+  // Enhanced ping/pong configuration
+  private readonly PING_INTERVAL = 30000; // 30 seconds
+  private readonly PING_TIMEOUT = 10000; // 10 seconds timeout for cleanup
 
   constructor(ctx: DurableObjectState, env: any) {
     this.ctx = ctx;
@@ -235,6 +240,9 @@ export class SubmissionWebSocketServer {
       console.error('❌ Error sending connected confirmation:', error);
     }
 
+    // Start ping/pong keepalive for this connection
+    this.startPingPong(server);
+
     console.log('🎉 WebSocket upgrade completed successfully');
     return new Response(null, {
       status: 101,
@@ -309,7 +317,7 @@ export class SubmissionWebSocketServer {
       // Get room ID for broadcasting
       const roomId = metadata.submissionId || metadata.documentId!;
 
-      // Handle heartbeat messages
+      // Handle heartbeat messages (legacy support)
       if (parsedMessage.type === 'heartbeat') {
         console.log('💓 Heartbeat received from user:', metadata.userId);
         
@@ -331,6 +339,38 @@ export class SubmissionWebSocketServer {
         }
         
         return; // Don't broadcast heartbeat messages to other users
+      }
+
+      // Handle ping messages
+      if (parsedMessage.type === 'ping') {
+        console.log('🏓 Ping received from user:', metadata.userId);
+        
+        // Send pong response directly to the sender
+        const pongResponse: WebSocketMessage = {
+          type: 'pong',
+          submissionId: metadata.submissionId,
+          documentId: metadata.documentId,
+          userId: metadata.userId,
+          userName: metadata.userName,
+          userEmail: metadata.userEmail,
+          timestamp: new Date().toISOString()
+        };
+        
+        try {
+          ws.send(JSON.stringify(pongResponse));
+          console.log('🏓 Pong response sent to user:', metadata.userId);
+        } catch (error) {
+          console.error('❌ Failed to send pong response:', error);
+        }
+        
+        return; // Don't broadcast ping messages to other users
+      }
+
+      // Handle pong messages
+      if (parsedMessage.type === 'pong') {
+        console.log('🏓 Pong received from user:', metadata.userId);
+        // Just log - no response needed for pong
+        return; // Don't broadcast pong messages to other users
       }
 
       // Special debugging for test messages
@@ -364,6 +404,9 @@ export class SubmissionWebSocketServer {
 
   async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
     console.log('🔌 WebSocket connection closed:', { code, reason, wasClean });
+    
+    // Clean up ping interval for this connection
+    this.cleanupConnection(ws);
     
     const metadata = this.connections.get(ws);
     if (metadata) {
@@ -534,6 +577,50 @@ export class SubmissionWebSocketServer {
 
     console.log('👥 Final deduplicated users being returned:', uniqueUsers);
     return uniqueUsers;
+  }
+
+  // Enhanced ping/pong system
+  private startPingPong(ws: WebSocket): void {
+    console.log('🏓 Starting server-side ping for connection');
+    
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        const metadata = this.connections.get(ws);
+        if (metadata) {
+          const pingMessage: WebSocketMessage = {
+            type: 'ping',
+            submissionId: metadata.submissionId,
+            documentId: metadata.documentId,
+            userId: 'server',
+            userName: 'Server',
+            userEmail: 'server@websocket',
+            timestamp: new Date().toISOString()
+          };
+          
+          try {
+            ws.send(JSON.stringify(pingMessage));
+            console.log('🏓 Server ping sent to user:', metadata.userId);
+          } catch (error) {
+            console.error('❌ Failed to send server ping:', error);
+            this.cleanupConnection(ws);
+          }
+        }
+      } else {
+        console.log('🏓 WebSocket not open, cleaning up ping interval');
+        this.cleanupConnection(ws);
+      }
+    }, this.PING_INTERVAL);
+    
+    this.pingIntervals.set(ws, pingInterval);
+  }
+
+  private cleanupConnection(ws: WebSocket): void {
+    // Clean up ping interval
+    const pingInterval = this.pingIntervals.get(ws);
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      this.pingIntervals.delete(ws);
+    }
   }
 
   // Public method to broadcast messages from external sources

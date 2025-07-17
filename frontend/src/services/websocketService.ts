@@ -30,7 +30,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
@@ -54,13 +54,22 @@ export class SubmissionWebSocketClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private isIntentionallyClosed = false;
-  private heartbeatInterval: NodeJS.Timeout | null = null;
-  private heartbeatTimeoutId: NodeJS.Timeout | null = null;
-  private lastHeartbeatResponse: number = 0;
-  private readonly HEARTBEAT_INTERVAL = 60000;
-  private readonly HEARTBEAT_TIMEOUT = 3000; // 5 seconds to wait for response
+  
+  // Enhanced ping/pong system
+  private pingInterval: NodeJS.Timeout | null = null;
+  private pongTimeoutId: NodeJS.Timeout | null = null;
+  private lastPongReceived: number = 0;
+  private readonly PING_INTERVAL = 30000; // 30 seconds - more frequent
+  private readonly PONG_TIMEOUT = 5000; // 5 seconds to wait for pong
   private connectionHealthChecks = 0;
-  private readonly MAX_MISSED_HEARTBEATS = 2; // Fail faster
+  private readonly MAX_MISSED_PONGS = 2; // Fail after 2 missed pongs
+  
+  // Connection activity monitoring
+  private lastActivityTime: number = 0;
+  private activityCheckInterval: NodeJS.Timeout | null = null;
+  private readonly ACTIVITY_CHECK_INTERVAL = 10000; // Check every 10 seconds
+  private readonly MAX_INACTIVITY_TIME = 60000; // Consider stale after 60 seconds of no activity
+  
   private messageQueue: Array<Omit<WebSocketMessage, 'submissionId' | 'userId' | 'userName' | 'userEmail' | 'timestamp'>> = [];
   private isConnecting = false;
   public applyRealTimeUpdate?: (content: string) => void;
@@ -117,11 +126,16 @@ export class SubmissionWebSocketClient {
       this.ws = new WebSocket(wsUrl.toString());
 
       this.ws.onopen = () => {
+        console.log('✅ WebSocket connected to submission:', this.submissionId);
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         this.connectionHealthChecks = 0;
-        this.lastHeartbeatResponse = Date.now();
-        this.startHeartbeat();
+        this.lastPongReceived = Date.now();
+        this.lastActivityTime = Date.now();
+        
+        // Start enhanced ping/pong system
+        this.startPingPong();
+        this.startActivityMonitoring();
         
         // Process queued messages
         this.processMessageQueue();
@@ -137,11 +151,20 @@ export class SubmissionWebSocketClient {
       };
 
       this.ws.onmessage = (event) => {
+        // Update activity time on any message
+        this.lastActivityTime = Date.now();
+        
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
           
-          if (message.type === 'heartbeat_response') {
-            this.handleHeartbeatResponse();
+          // Handle ping/pong messages
+          if (message.type === 'ping') {
+            this.handlePing();
+            return;
+          }
+          
+          if (message.type === 'pong' || message.type === 'heartbeat_response') {
+            this.handlePong();
             return;
           }
           
@@ -152,13 +175,22 @@ export class SubmissionWebSocketClient {
       };
 
       this.ws.onclose = (event) => {
-        this.stopHeartbeat();
+        console.log('❌ WebSocket connection closed:', {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+          submissionId: this.submissionId
+        });
+        
+        this.stopPingPong();
+        this.stopActivityMonitoring();
         this.ws = null;
         this.isConnecting = false;
         
         if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
-          const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000); // Cap at 10 seconds
+          const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
+          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
           setTimeout(() => this.connect(), delay);
         } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
           console.error('❌ Max reconnection attempts reached. WebSocket connection failed permanently.');
@@ -204,28 +236,13 @@ export class SubmissionWebSocketClient {
     }
   }
 
-  private processMessageQueue(): void {
-    if (this.messageQueue.length === 0) return;
-    
-    const messages = [...this.messageQueue];
-    this.messageQueue = [];
-    
-    messages.forEach(message => {
-      try {
-        this.send(message);
-      } catch (error) {
-        console.error('Failed to send queued message:', error);
-        // Re-queue the message if it fails
-        this.messageQueue.push(message);
-      }
-    });
-  }
-
   private async validateSession(sessionId: string): Promise<boolean> {
     try {
       const response = await fetch(`${API_URL}/auth/session`, {
+        method: 'GET',
         headers: {
-          'Authorization': `Bearer ${sessionId}`
+          'Authorization': `Bearer ${sessionId}`,
+          'Content-Type': 'application/json'
         }
       });
       return response.ok;
@@ -235,34 +252,46 @@ export class SubmissionWebSocketClient {
     }
   }
 
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    
-    this.heartbeatInterval = setInterval(() => {
-      this.sendHeartbeat();
-    }, this.HEARTBEAT_INTERVAL);
-  }
-
-  private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-    
-    if (this.heartbeatTimeoutId) {
-      clearTimeout(this.heartbeatTimeoutId);
-      this.heartbeatTimeoutId = null;
+  private processMessageQueue(): void {
+    console.log(`📤 Processing ${this.messageQueue.length} queued messages`);
+    while (this.messageQueue.length > 0) {
+      const message = this.messageQueue.shift();
+      if (message) {
+        this.send(message);
+      }
     }
   }
 
-  private sendHeartbeat(): void {
+  // Enhanced ping/pong system
+  private startPingPong(): void {
+    this.stopPingPong();
+    
+    console.log('🏓 Starting enhanced ping/pong keepalive system');
+    this.pingInterval = setInterval(() => {
+      this.sendPing();
+    }, this.PING_INTERVAL);
+  }
+
+  private stopPingPong(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+    
+    if (this.pongTimeoutId) {
+      clearTimeout(this.pongTimeoutId);
+      this.pongTimeoutId = null;
+    }
+  }
+
+  private sendPing(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.log('⚠️ Cannot send heartbeat - WebSocket not open');
+      console.log('⚠️ Cannot send ping - WebSocket not open');
       return;
     }
 
-    const heartbeatMessage = {
-      type: 'heartbeat',
+    const pingMessage = {
+      type: 'ping' as const,
       submissionId: this.submissionId,
       userId: this.userId,
       userName: this.userName,
@@ -271,43 +300,100 @@ export class SubmissionWebSocketClient {
     };
 
     try {
-      this.ws.send(JSON.stringify(heartbeatMessage));
-      console.log('💓 Heartbeat sent');
+      this.ws.send(JSON.stringify(pingMessage));
+      console.log('🏓 Ping sent');
       
-      this.heartbeatTimeoutId = setTimeout(() => {
-        this.handleHeartbeatTimeout();
-      }, this.HEARTBEAT_TIMEOUT);
+      // Set timeout for pong response
+      this.pongTimeoutId = setTimeout(() => {
+        this.handlePongTimeout();
+      }, this.PONG_TIMEOUT);
       
     } catch (error) {
-      console.error('❌ Failed to send heartbeat:', error);
-      this.handleHeartbeatTimeout();
+      console.error('❌ Failed to send ping:', error);
+      this.handlePongTimeout();
     }
   }
 
-  private handleHeartbeatResponse(): void {
-    console.log('💓 Heartbeat response received');
-    this.lastHeartbeatResponse = Date.now();
+  private handlePing(): void {
+    // Respond to server ping with pong
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const pongMessage = {
+      type: 'pong' as const,
+      submissionId: this.submissionId,
+      userId: this.userId,
+      userName: this.userName,
+      userEmail: this.userEmail,
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      this.ws.send(JSON.stringify(pongMessage));
+      console.log('🏓 Pong sent in response to ping');
+    } catch (error) {
+      console.error('❌ Failed to send pong:', error);
+    }
+  }
+
+  private handlePong(): void {
+    console.log('🏓 Pong received');
+    this.lastPongReceived = Date.now();
     this.connectionHealthChecks = 0;
     
-    if (this.heartbeatTimeoutId) {
-      clearTimeout(this.heartbeatTimeoutId);
-      this.heartbeatTimeoutId = null;
+    if (this.pongTimeoutId) {
+      clearTimeout(this.pongTimeoutId);
+      this.pongTimeoutId = null;
     }
   }
 
-  private handleHeartbeatTimeout(): void {
+  private handlePongTimeout(): void {
     this.connectionHealthChecks++;
-    console.log(`⚠️ Heartbeat timeout (${this.connectionHealthChecks}/${this.MAX_MISSED_HEARTBEATS})`);
+    console.log(`⚠️ Pong timeout (${this.connectionHealthChecks}/${this.MAX_MISSED_PONGS})`);
     
-    if (this.connectionHealthChecks >= this.MAX_MISSED_HEARTBEATS) {
+    if (this.connectionHealthChecks >= this.MAX_MISSED_PONGS) {
       console.log('💔 Connection appears stale, forcing reconnection');
+      this.forceReconnect();
+    } else {
+      // Try sending another ping immediately
+      this.sendPing();
+    }
+  }
+
+  // Activity monitoring to detect truly stale connections
+  private startActivityMonitoring(): void {
+    this.stopActivityMonitoring();
+    
+    this.activityCheckInterval = setInterval(() => {
+      this.checkConnectionActivity();
+    }, this.ACTIVITY_CHECK_INTERVAL);
+  }
+
+  private stopActivityMonitoring(): void {
+    if (this.activityCheckInterval) {
+      clearInterval(this.activityCheckInterval);
+      this.activityCheckInterval = null;
+    }
+  }
+
+  private checkConnectionActivity(): void {
+    const now = Date.now();
+    const timeSinceLastActivity = now - this.lastActivityTime;
+    const timeSinceLastPong = now - this.lastPongReceived;
+    
+    // If we haven't received any activity (including pongs) for too long, force reconnect
+    if (timeSinceLastActivity > this.MAX_INACTIVITY_TIME && 
+        timeSinceLastPong > this.MAX_INACTIVITY_TIME) {
+      console.log('💀 Connection appears completely stale - no activity detected');
       this.forceReconnect();
     }
   }
 
   private forceReconnect(): void {
     console.log('🔄 Forcing WebSocket reconnection due to stale connection');
-    this.stopHeartbeat();
+    this.stopPingPong();
+    this.stopActivityMonitoring();
     
     if (this.ws) {
       this.ws.close(1000, 'Stale connection detected');
@@ -329,7 +415,8 @@ export class SubmissionWebSocketClient {
   disconnect(): void {
     this.isIntentionallyClosed = true;
     this.isConnecting = false;
-    this.stopHeartbeat();
+    this.stopPingPong();
+    this.stopActivityMonitoring();
     
     if (this.ws) {
       this.ws.close(1000, 'Intentional disconnect');
@@ -365,6 +452,8 @@ export class SubmissionWebSocketClient {
 
     try {
       this.ws.send(JSON.stringify(fullMessage));
+      // Update activity time when sending messages
+      this.lastActivityTime = Date.now();
     } catch (error) {
       console.error('Failed to send message:', error);
       // Queue the message for retry
@@ -431,24 +520,28 @@ export class SubmissionWebSocketClient {
 
   get connectionHealth(): { 
     isHealthy: boolean; 
-    lastHeartbeat: number; 
-    missedHeartbeats: number;
-    timeSinceLastHeartbeat: number;
+    lastPong: number; 
+    missedPongs: number;
+    timeSinceLastPong: number;
+    timeSinceLastActivity: number;
     queuedMessages: number;
     reconnectAttempts: number;
     isConnecting: boolean;
   } {
     const now = Date.now();
-    const timeSinceLastHeartbeat = now - this.lastHeartbeatResponse;
-    const isHealthy = this.connectionHealthChecks < this.MAX_MISSED_HEARTBEATS && 
-                     timeSinceLastHeartbeat < this.HEARTBEAT_INTERVAL * 2 &&
+    const timeSinceLastPong = now - this.lastPongReceived;
+    const timeSinceLastActivity = now - this.lastActivityTime;
+    const isHealthy = this.connectionHealthChecks < this.MAX_MISSED_PONGS && 
+                     timeSinceLastPong < this.PING_INTERVAL * 2 &&
+                     timeSinceLastActivity < this.MAX_INACTIVITY_TIME &&
                      this.isConnected;
     
     return {
       isHealthy,
-      lastHeartbeat: this.lastHeartbeatResponse,
-      missedHeartbeats: this.connectionHealthChecks,
-      timeSinceLastHeartbeat,
+      lastPong: this.lastPongReceived,
+      missedPongs: this.connectionHealthChecks,
+      timeSinceLastPong,
+      timeSinceLastActivity,
       queuedMessages: this.messageQueue.length,
       reconnectAttempts: this.reconnectAttempts,
       isConnecting: this.isConnecting
@@ -467,13 +560,22 @@ export class CollaborativeWebSocketClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private isIntentionallyClosed = false;
-  private heartbeatInterval: NodeJS.Timeout | null = null;
-  private heartbeatTimeoutId: NodeJS.Timeout | null = null;
-  private lastHeartbeatResponse: number = 0;
-  private readonly HEARTBEAT_INTERVAL = 60000;
-  private readonly HEARTBEAT_TIMEOUT = 3000;
+  
+  // Enhanced ping/pong system
+  private pingInterval: NodeJS.Timeout | null = null;
+  private pongTimeoutId: NodeJS.Timeout | null = null;
+  private lastPongReceived: number = 0;
+  private readonly PING_INTERVAL = 30000; // 30 seconds - more frequent
+  private readonly PONG_TIMEOUT = 5000; // 5 seconds to wait for pong
   private connectionHealthChecks = 0;
-  private readonly MAX_MISSED_HEARTBEATS = 2;
+  private readonly MAX_MISSED_PONGS = 2; // Fail after 2 missed pongs
+  
+  // Connection activity monitoring
+  private lastActivityTime: number = 0;
+  private activityCheckInterval: NodeJS.Timeout | null = null;
+  private readonly ACTIVITY_CHECK_INTERVAL = 10000; // Check every 10 seconds
+  private readonly MAX_INACTIVITY_TIME = 60000; // Consider stale after 60 seconds of no activity
+  
   private messageQueue: Array<Omit<WebSocketMessage, 'userId' | 'userName' | 'userEmail' | 'timestamp'>> = [];
   private isConnecting = false;
   private documentVersion = 0;
@@ -538,8 +640,12 @@ export class CollaborativeWebSocketClient {
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         this.connectionHealthChecks = 0;
-        this.lastHeartbeatResponse = Date.now();
-        this.startHeartbeat();
+        this.lastPongReceived = Date.now();
+        this.lastActivityTime = Date.now();
+        
+        // Start enhanced ping/pong system
+        this.startPingPong();
+        this.startActivityMonitoring();
         
         this.processMessageQueue();
         
@@ -554,17 +660,28 @@ export class CollaborativeWebSocketClient {
       };
 
       this.ws.onmessage = (event) => {
+        // Update activity time on any message
+        this.lastActivityTime = Date.now();
+        
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
           
-          if (message.type === 'heartbeat_response') {
-            this.handleHeartbeatResponse();
+          // Handle ping/pong messages
+          if (message.type === 'ping') {
+            this.handlePing();
+            return;
+          }
+          
+          if (message.type === 'pong' || message.type === 'heartbeat_response') {
+            this.handlePong();
             return;
           }
 
           // Handle text operations for operational transforms
           if (message.type === 'text_operation' && message.data) {
-            this.handleTextOperation(message.data);
+            // Emit to handlers - let them handle the operational transforms
+            this.emit(message.type, message);
+            return;
           }
           
           this.emit(message.type, message);
@@ -581,7 +698,7 @@ export class CollaborativeWebSocketClient {
           documentId: this.documentId
         });
         
-        this.stopHeartbeat();
+        this.stopPingPong();
         this.ws = null;
         this.isConnecting = false;
         
@@ -609,107 +726,60 @@ export class CollaborativeWebSocketClient {
 
   private async validateSession(sessionId: string): Promise<boolean> {
     try {
-      const response = await fetch(`${API_URL}/auth/validate`, {
-        method: 'POST',
+      const response = await fetch(`${API_URL}/auth/session`, {
+        method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ sessionId }),
+          'Authorization': `Bearer ${sessionId}`,
+          'Content-Type': 'application/json'
+        }
       });
       return response.ok;
     } catch (error) {
-      console.error('Session validation error:', error);
+      console.error('Session validation failed:', error);
       return false;
     }
   }
 
-  private handleTextOperation(operation: TextOperation): void {
-    // Transform pending operations based on received operation
-    this.pendingOperations = this.pendingOperations.map(pendingOp => 
-      this.transformOperation(pendingOp, operation)
-    );
-    
-    // Update document version
-    this.documentVersion = Math.max(this.documentVersion, operation.version);
-  }
-
-  private transformOperation(op1: TextOperation, op2: TextOperation): TextOperation {
-    // Basic operational transform - for production, use a more sophisticated OT library
-    if (op1.type === 'insert' && op2.type === 'insert') {
-      if (op1.position <= op2.position) {
-        return op1;
-      } else {
-        return { ...op1, position: op1.position + (op2.content?.length || 0) };
-      }
-    } else if (op1.type === 'delete' && op2.type === 'insert') {
-      if (op1.position <= op2.position) {
-        return op1;
-      } else {
-        return { ...op1, position: op1.position + (op2.content?.length || 0) };
-      }
-    } else if (op1.type === 'insert' && op2.type === 'delete') {
-      if (op1.position <= op2.position) {
-        return op1;
-      } else {
-        return { ...op1, position: Math.max(op1.position - (op2.length || 0), op2.position) };
-      }
-    } else if (op1.type === 'delete' && op2.type === 'delete') {
-      if (op1.position <= op2.position) {
-        return op1;
-      } else {
-        return { ...op1, position: Math.max(op1.position - (op2.length || 0), op2.position) };
-      }
-    }
-    
-    return op1;
-  }
-
   private processMessageQueue(): void {
-    if (this.messageQueue.length === 0) return;
-    
     console.log(`📤 Processing ${this.messageQueue.length} queued messages`);
-    
-    const messages = [...this.messageQueue];
-    this.messageQueue = [];
-    
-    messages.forEach(message => {
-      try {
+    while (this.messageQueue.length > 0) {
+      const message = this.messageQueue.shift();
+      if (message) {
         this.send(message);
-      } catch (error) {
-        console.error('Failed to send queued message:', error);
-        this.messageQueue.push(message);
       }
-    });
-  }
-
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    
-    this.heartbeatInterval = setInterval(() => {
-      this.sendHeartbeat();
-    }, this.HEARTBEAT_INTERVAL);
-  }
-
-  private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-    
-    if (this.heartbeatTimeoutId) {
-      clearTimeout(this.heartbeatTimeoutId);
-      this.heartbeatTimeoutId = null;
     }
   }
 
-  private sendHeartbeat(): void {
+  // Enhanced ping/pong system
+  private startPingPong(): void {
+    this.stopPingPong();
+    
+    console.log('🏓 Starting enhanced ping/pong keepalive system');
+    this.pingInterval = setInterval(() => {
+      this.sendPing();
+    }, this.PING_INTERVAL);
+  }
+
+  private stopPingPong(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+    
+    if (this.pongTimeoutId) {
+      clearTimeout(this.pongTimeoutId);
+      this.pongTimeoutId = null;
+    }
+  }
+
+  private sendPing(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.log('⚠️ Cannot send heartbeat - WebSocket not open');
+      console.log('⚠️ Cannot send ping - WebSocket not open');
       return;
     }
 
-    const heartbeatMessage = {
-      type: 'heartbeat',
+    const pingMessage = {
+      type: 'ping' as const,
       documentId: this.documentId,
       userId: this.userId,
       userName: this.userName,
@@ -718,45 +788,100 @@ export class CollaborativeWebSocketClient {
     };
 
     try {
-      this.ws.send(JSON.stringify(heartbeatMessage));
-      console.log('💓 Heartbeat sent');
+      this.ws.send(JSON.stringify(pingMessage));
+      console.log('🏓 Ping sent');
       
-      this.heartbeatTimeoutId = setTimeout(() => {
-        this.handleHeartbeatTimeout();
-      }, this.HEARTBEAT_TIMEOUT);
+      // Set timeout for pong response
+      this.pongTimeoutId = setTimeout(() => {
+        this.handlePongTimeout();
+      }, this.PONG_TIMEOUT);
       
     } catch (error) {
-      console.error('❌ Failed to send heartbeat:', error);
-      this.handleHeartbeatTimeout();
+      console.error('❌ Failed to send ping:', error);
+      this.handlePongTimeout();
     }
   }
 
-  private handleHeartbeatResponse(): void {
-    console.log('💓 Heartbeat response received');
-    this.lastHeartbeatResponse = Date.now();
+  private handlePing(): void {
+    // Respond to server ping with pong
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const pongMessage = {
+      type: 'pong' as const,
+      documentId: this.documentId,
+      userId: this.userId,
+      userName: this.userName,
+      userEmail: this.userEmail,
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      this.ws.send(JSON.stringify(pongMessage));
+      console.log('🏓 Pong sent in response to ping');
+    } catch (error) {
+      console.error('❌ Failed to send pong:', error);
+    }
+  }
+
+  private handlePong(): void {
+    console.log('🏓 Pong received');
+    this.lastPongReceived = Date.now();
     this.connectionHealthChecks = 0;
     
-    if (this.heartbeatTimeoutId) {
-      clearTimeout(this.heartbeatTimeoutId);
-      this.heartbeatTimeoutId = null;
+    if (this.pongTimeoutId) {
+      clearTimeout(this.pongTimeoutId);
+      this.pongTimeoutId = null;
     }
   }
 
-  private handleHeartbeatTimeout(): void {
-    console.log('⚠️ Heartbeat timeout - missed response');
+  private handlePongTimeout(): void {
     this.connectionHealthChecks++;
-
-    this.sendHeartbeat();
+    console.log(`⚠️ Pong timeout (${this.connectionHealthChecks}/${this.MAX_MISSED_PONGS})`);
     
-    if (this.connectionHealthChecks >= this.MAX_MISSED_HEARTBEATS) {
-      console.log('💀 Too many missed heartbeats - forcing reconnection');
+    if (this.connectionHealthChecks >= this.MAX_MISSED_PONGS) {
+      console.log('💔 Connection appears stale, forcing reconnection');
+      this.forceReconnect();
+    } else {
+      // Try sending another ping immediately
+      this.sendPing();
+    }
+  }
+
+  // Activity monitoring to detect truly stale connections
+  private startActivityMonitoring(): void {
+    this.stopActivityMonitoring();
+    
+    this.activityCheckInterval = setInterval(() => {
+      this.checkConnectionActivity();
+    }, this.ACTIVITY_CHECK_INTERVAL);
+  }
+
+  private stopActivityMonitoring(): void {
+    if (this.activityCheckInterval) {
+      clearInterval(this.activityCheckInterval);
+      this.activityCheckInterval = null;
+    }
+  }
+
+  private checkConnectionActivity(): void {
+    const now = Date.now();
+    const timeSinceLastActivity = now - this.lastActivityTime;
+    const timeSinceLastPong = now - this.lastPongReceived;
+    
+    // If we haven't received any activity (including pongs) for too long, force reconnect
+    if (timeSinceLastActivity > this.MAX_INACTIVITY_TIME && 
+        timeSinceLastPong > this.MAX_INACTIVITY_TIME) {
+      console.log('💀 Connection appears completely stale - no activity detected');
       this.forceReconnect();
     }
   }
 
   private forceReconnect(): void {
     console.log('🔄 Forcing WebSocket reconnection due to stale connection');
-    this.stopHeartbeat();
+    this.stopPingPong();
+    this.stopActivityMonitoring();
     
     if (this.ws) {
       this.ws.close(1000, 'Stale connection detected');
@@ -777,7 +902,8 @@ export class CollaborativeWebSocketClient {
   disconnect(): void {
     this.isIntentionallyClosed = true;
     this.isConnecting = false;
-    this.stopHeartbeat();
+    this.stopPingPong();
+    this.stopActivityMonitoring();
     
     if (this.ws) {
       this.ws.close(1000, 'Intentional disconnect');
@@ -811,6 +937,8 @@ export class CollaborativeWebSocketClient {
 
     try {
       this.ws.send(JSON.stringify(fullMessage));
+      // Update activity time when sending messages
+      this.lastActivityTime = Date.now();
     } catch (error) {
       console.error('Failed to send message:', error);
       this.messageQueue.push(message);
