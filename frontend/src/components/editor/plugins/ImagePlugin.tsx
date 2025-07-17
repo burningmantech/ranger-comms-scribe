@@ -2,6 +2,10 @@ import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR, COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getRoot, $createParagraphNode, $createTextNode } from 'lexical';
 import { createCommand } from 'lexical';
+import { $createHeadingNode } from '@lexical/rich-text';
+import { $createListNode, $createListItemNode } from '@lexical/list';
+import { $createQuoteNode } from '@lexical/rich-text';
+import { $createTableNodeWithDimensions, $isTableRowNode, $isTableCellNode } from '@lexical/table';
 import { $createImageNode, ImageNode } from '../nodes/ImageNode';
 import { MediaItem } from '../../../types/index';
 import { API_URL } from '../../../config';
@@ -33,6 +37,9 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
   const [galleryImages, setGalleryImages] = useState<MediaItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  
+  // Ref to store the downloadAndReplaceImage function to avoid circular dependencies
+  const downloadAndReplaceImageRef = useRef<((src: string, width?: string, height?: string, placeholderId?: string) => Promise<void>) | null>(null);
 
   console.log('🎯 ImagePlugin mounted with currentUser:', currentUser);
 
@@ -79,39 +86,84 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
     };
   }, []);
 
+  // Helper function to recursively search for image nodes in the tree
+  const findImageNodesRecursively = useCallback((node: any): any[] => {
+    const imageNodes: any[] = [];
+    
+    if (node.getType() === 'image') {
+      imageNodes.push(node);
+    }
+    
+    // Recursively search children if they exist
+    if (typeof node.getChildren === 'function') {
+      const children = node.getChildren();
+      for (const child of children) {
+        imageNodes.push(...findImageNodesRecursively(child));
+      }
+    }
+    
+    return imageNodes;
+  }, []);
+
   // Helper function to replace skeleton with real image
   const replaceSkeletonWithImage = useCallback((placeholderId: string, imagePayload: any) => {
+    console.log('🔄 replaceSkeletonWithImage called:', {
+      placeholderId,
+      imagePayload: {
+        src: imagePayload.src?.substring(0, 50) + '...',
+        width: imagePayload.width,
+        height: imagePayload.height,
+        imageId: imagePayload.imageId
+      }
+    });
+    
     editor.update(() => {
       const root = $getRoot();
       
-      // Find all image nodes
-      root.getChildren().forEach(child => {
-        if (child.getType() === 'image') {
-          const imageNode = child as any;
-          if (imageNode.__imageId === placeholderId) {
-            console.log('🔄 Replacing skeleton with real image');
-            
-            // Create new real image node
-            const realImageNode = $createImageNode({
-              src: imagePayload.src,
-              altText: imagePayload.altText,
-              width: imagePayload.width,
-              height: imagePayload.height,
-              fullSizeSrc: imagePayload.fullSizeSrc,
-              thumbnailSrc: imagePayload.thumbnailSrc,
-              mediumSrc: imagePayload.mediumSrc,
-              imageId: imagePayload.imageId,
-              uploadedBy: imagePayload.uploadedBy,
-              uploadedAt: imagePayload.uploadedAt
-            });
-            
-            // Replace the skeleton node
-            imageNode.replace(realImageNode);
-          }
+      // Recursively find all image nodes in the entire tree
+      const allImageNodes = findImageNodesRecursively(root);
+      console.log('🔍 Searching for skeleton recursively, found', allImageNodes.length, 'total image nodes');
+      
+      let foundSkeleton = false;
+      
+      // Search through all image nodes
+      allImageNodes.forEach((imageNode, index) => {
+        console.log(`📸 Found image node ${index}:`, {
+          imageId: imageNode.__imageId,
+          src: imageNode.__src?.substring(0, 50) + '...',
+          matchesPlaceholder: imageNode.__imageId === placeholderId
+        });
+        
+        if (imageNode.__imageId === placeholderId) {
+          console.log('✅ Found matching skeleton, replacing with real image');
+          foundSkeleton = true;
+          
+          // Create new real image node
+          const realImageNode = $createImageNode({
+            src: imagePayload.src,
+            altText: imagePayload.altText,
+            width: imagePayload.width,
+            height: imagePayload.height,
+            fullSizeSrc: imagePayload.fullSizeSrc,
+            thumbnailSrc: imagePayload.thumbnailSrc,
+            mediumSrc: imagePayload.mediumSrc,
+            imageId: imagePayload.imageId,
+            uploadedBy: imagePayload.uploadedBy,
+            uploadedAt: imagePayload.uploadedAt
+          });
+          
+          // Replace the skeleton node
+          imageNode.replace(realImageNode);
+          console.log('🎉 Skeleton replaced successfully');
         }
       });
+      
+      if (!foundSkeleton) {
+        console.warn('⚠️ No matching skeleton found for placeholderId:', placeholderId);
+        console.log('🔍 Available image IDs:', allImageNodes.map(node => node.__imageId));
+      }
     });
-  }, [editor]);
+  }, [editor, findImageNodesRecursively]);
 
   // Helper function to recursively find all images in an element
   const findAllImages = useCallback((element: Element): Element[] => {
@@ -153,73 +205,12 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
       const nodesToInsert = [];
       let imageIndex = 0;
       
+      // Process each child node and convert to appropriate Lexical nodes
       for (let i = 0; i < childNodes.length; i++) {
         const node = childNodes[i];
-        
-        if (node.nodeType === Node.TEXT_NODE) {
-          // Handle text nodes
-          const textContent = node.textContent?.trim();
-          if (textContent) {
-            console.log('📝 Processing text:', textContent.substring(0, 50) + '...');
-            const textNode = $createTextNode(textContent);
-            const paragraphNode = $createParagraphNode();
-            paragraphNode.append(textNode);
-            nodesToInsert.push(paragraphNode);
-          }
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
-          const element = node as Element;
-          
-          // Check if this element contains an image
-          const imagesInElement = findAllImages(element);
-          
-          if (imagesInElement.length > 0) {
-            // Process each image found in this element
-            for (const imgElement of imagesInElement) {
-              const src = imgElement.getAttribute('src');
-              const width = imgElement.getAttribute('width');
-              const height = imgElement.getAttribute('height');
-              
-              console.log('🖼️ Processing image', imageIndex, 'with dimensions', width, 'x', height, 'from src:', src?.substring(0, 50) + '...');
-              
-              if (src && src.includes('googleusercontent.com')) {
-                // Process Google Docs image with skeleton
-                const placeholderId = `ordered-skeleton-${Date.now()}-${imageIndex}`;
-                const skeletonData = createSkeletonImageData(width || undefined, height || undefined, placeholderId);
-                const skeletonNode = $createImageNode(skeletonData);
-                nodesToInsert.push(skeletonNode);
-                
-                console.log('✅ Created skeleton with ID:', placeholderId);
-                
-                // Start async download and replacement
-                setTimeout(() => {
-                  downloadAndReplaceImage(src, width || undefined, height || undefined, placeholderId);
-                }, 0);
-                
-                imageIndex++;
-              }
-            }
-            
-            // Also process any text content from this element
-            const textContent = element.textContent?.trim();
-            if (textContent) {
-              console.log('📝 Processing element text:', textContent.substring(0, 50) + '...');
-              const textNode = $createTextNode(textContent);
-              const paragraphNode = $createParagraphNode();
-              paragraphNode.append(textNode);
-              nodesToInsert.push(paragraphNode);
-            }
-          } else {
-            // Handle elements without images
-            const textContent = element.textContent?.trim();
-            if (textContent) {
-              console.log('📝 Processing element text (no images):', textContent.substring(0, 50) + '...');
-              const textNode = $createTextNode(textContent);
-              const paragraphNode = $createParagraphNode();
-              paragraphNode.append(textNode);
-              nodesToInsert.push(paragraphNode);
-            }
-          }
-        }
+        const lexicalNodes = convertHTMLNodeToLexical(node, { imageIndex, allImages });
+        nodesToInsert.push(...lexicalNodes);
+        imageIndex = lexicalNodes.filter(n => n.getType && n.getType() === 'image').length + imageIndex;
       }
       
       // Insert all nodes at once
@@ -237,44 +228,459 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
     });
   }, [editor, createSkeletonImageData, findAllImages]);
 
-  // Helper function to download and replace image (separated from the main handler)
-  const downloadAndReplaceImage = useCallback(async (src: string, width?: string, height?: string, placeholderId?: string) => {
-    try {
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) {
-        console.error('❌ No session ID found - user not authenticated');
-        return;
+  // Helper function to convert HTML node to Lexical nodes
+  const convertHTMLNodeToLexical = useCallback((node: Node, context: { imageIndex: number, allImages: Element[] }): any[] => {
+    const results = [];
+    
+    if (node.nodeType === Node.TEXT_NODE) {
+      // Handle text nodes
+      const textContent = node.textContent?.trim();
+      if (textContent) {
+        const textNode = $createTextNode(textContent);
+        return [textNode]; // Return as array for consistency
       }
-
-      const response = await fetch(`${API_URL}/content/editor-images/proxy-google-docs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionId}`
-        },
-        body: JSON.stringify({ imageUrl: src })
-      });
-
-      if (!response.ok) {
-        console.error('❌ Backend proxy failed:', response.status, response.statusText);
-        return;
+      return [];
+    } 
+    
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const element = node as Element;
+      const tagName = element.tagName.toLowerCase();
+      
+      // Handle different HTML elements
+      switch (tagName) {
+        case 'h1':
+        case 'h2':
+        case 'h3':
+        case 'h4':
+        case 'h5':
+        case 'h6':
+          const headingNode = $createHeadingNode(tagName as any);
+          const headingText = extractTextWithFormatting(element);
+          if (headingText.length > 0) {
+            headingNode.append(...headingText);
+          }
+          results.push(headingNode);
+          break;
+          
+        case 'p':
+        case 'div':
+          // Handle paragraphs and divs
+          const hasImages = findAllImages(element).length > 0;
+          
+          if (hasImages) {
+            // If paragraph contains images, process mixed content
+            const mixedContent = processMixedContent(element, context);
+            results.push(...mixedContent);
+          } else {
+            // Regular paragraph
+            const paragraphNode = $createParagraphNode();
+            const paragraphText = extractTextWithFormatting(element);
+            if (paragraphText.length > 0) {
+              paragraphNode.append(...paragraphText);
+              results.push(paragraphNode);
+            }
+          }
+          break;
+          
+        case 'ul':
+          // Unordered list
+          const ulNode = $createListNode('bullet');
+          const listItems = element.querySelectorAll('li');
+          listItems.forEach(li => {
+            const listItemNode = $createListItemNode();
+            const itemText = extractTextWithFormatting(li);
+            if (itemText.length > 0) {
+              listItemNode.append(...itemText);
+            }
+            ulNode.append(listItemNode);
+          });
+          if (listItems.length > 0) {
+            results.push(ulNode);
+          }
+          break;
+          
+        case 'ol':
+          // Ordered list
+          const olNode = $createListNode('number');
+          const orderedItems = element.querySelectorAll('li');
+          orderedItems.forEach(li => {
+            const listItemNode = $createListItemNode();
+            const itemText = extractTextWithFormatting(li);
+            if (itemText.length > 0) {
+              listItemNode.append(...itemText);
+            }
+            olNode.append(listItemNode);
+          });
+          if (orderedItems.length > 0) {
+            results.push(olNode);
+          }
+          break;
+          
+        case 'blockquote':
+          // Quote
+          const quoteNode = $createQuoteNode();
+          const quoteText = extractTextWithFormatting(element);
+          if (quoteText.length > 0) {
+            quoteNode.append(...quoteText);
+          }
+          results.push(quoteNode);
+          break;
+          
+        case 'table':
+          // Tables - convert to Lexical table
+          console.log('🏢 Processing table element with', element.querySelectorAll('img').length, 'images');
+          const tableNode = createTableFromHTML(element, context);
+          if (tableNode) {
+            console.log('✅ Table node created and added to results');
+            results.push(tableNode);
+          } else {
+            console.log('❌ Failed to create table node');
+          }
+          break;
+          
+        case 'img':
+          // Handle images
+          const src = element.getAttribute('src');
+          const width = element.getAttribute('width');
+          const height = element.getAttribute('height');
+          
+          if (src && src.includes('googleusercontent.com')) {
+            const placeholderId = `ordered-skeleton-${Date.now()}-${context.imageIndex}`;
+            console.log('🖼️ Creating skeleton for Google Docs image:', {
+              src: src.substring(0, 50) + '...',
+              width,
+              height,
+              placeholderId,
+              imageIndex: context.imageIndex
+            });
+            
+            const skeletonData = createSkeletonImageData(width || undefined, height || undefined, placeholderId);
+            const skeletonNode = $createImageNode(skeletonData);
+            console.log('✅ Skeleton node created:', {
+              type: skeletonNode.getType(),
+              imageId: (skeletonNode as any).__imageId,
+              src: (skeletonNode as any).__src?.substring(0, 50) + '...'
+            });
+            
+            results.push(skeletonNode);
+            
+            // Start async download and replacement
+            setTimeout(() => {
+              console.log('⏳ Starting image download for placeholder:', placeholderId);
+              if (downloadAndReplaceImageRef.current) {
+                downloadAndReplaceImageRef.current(src, width || undefined, height || undefined, placeholderId);
+              } else {
+                console.error('❌ downloadAndReplaceImageRef.current is null!');
+              }
+            }, 0);
+            
+            context.imageIndex++;
+          }
+          break;
+          
+        case 'br':
+          // Line breaks - create empty paragraph
+          results.push($createParagraphNode());
+          break;
+          
+        default:
+          // For other elements, process their children
+          const childNodes = Array.from(element.childNodes);
+          for (const child of childNodes) {
+            const childResults = convertHTMLNodeToLexical(child, context);
+            results.push(...childResults);
+          }
+          break;
       }
-
-      const blob = await response.blob();
-      const file = new File([blob], `google-docs-image-${Date.now()}.jpg`, {
-        type: blob.type || 'image/jpeg'
-      });
-
-      // Store metadata for replacement
-      (file as any).originalWidth = width;
-      (file as any).originalHeight = height;
-      (file as any).placeholderId = placeholderId;
-
-      await handleImageUpload(file);
-    } catch (error) {
-      console.error('❌ Error downloading ordered image:', error);
     }
+    
+    return results;
+  }, [createSkeletonImageData, findAllImages]);
+
+  // Helper function to extract text with inline formatting
+  const extractTextWithFormatting = useCallback((element: Element): any[] => {
+    const textNodes = [];
+    
+    // Process all child nodes to preserve formatting
+    const processNode = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent;
+        if (text && text.trim()) {
+          const textNode = $createTextNode(text);
+          
+          // Apply formatting based on parent elements
+          let currentElement = node.parentElement;
+          while (currentElement && currentElement !== element.parentElement) {
+            const tagName = currentElement.tagName?.toLowerCase();
+            const style = currentElement.getAttribute('style') || '';
+            
+            // Apply formatting based on tags
+            if (tagName === 'b' || tagName === 'strong' || style.includes('font-weight:700') || style.includes('font-weight:bold')) {
+              textNode.toggleFormat('bold');
+            }
+            if (tagName === 'i' || tagName === 'em' || style.includes('font-style:italic')) {
+              textNode.toggleFormat('italic');
+            }
+            if (tagName === 'u' || style.includes('text-decoration:underline')) {
+              textNode.toggleFormat('underline');
+            }
+            if (tagName === 'strike' || tagName === 's' || style.includes('text-decoration:line-through')) {
+              textNode.toggleFormat('strikethrough');
+            }
+            
+            // Apply font size
+            const fontSizeMatch = style.match(/font-size:\s*([^;]+)/);
+            if (fontSizeMatch) {
+              const fontSize = fontSizeMatch[1].trim();
+              textNode.setStyle(textNode.getStyle() + `font-size: ${fontSize};`);
+            }
+            
+            // Apply font family
+            const fontFamilyMatch = style.match(/font-family:\s*([^;]+)/);
+            if (fontFamilyMatch) {
+              const fontFamily = fontFamilyMatch[1].trim();
+              textNode.setStyle(textNode.getStyle() + `font-family: ${fontFamily};`);
+            }
+            
+            // Apply text color
+            const colorMatch = style.match(/color:\s*([^;]+)/);
+            if (colorMatch) {
+              const color = colorMatch[1].trim();
+              textNode.setStyle(textNode.getStyle() + `color: ${color};`);
+            }
+            
+            currentElement = currentElement.parentElement;
+          }
+          
+          textNodes.push(textNode);
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        // Recursively process child elements
+        for (const child of node.childNodes) {
+          processNode(child);
+        }
+      }
+    };
+    
+    // Process all children of the element
+    for (const child of element.childNodes) {
+      processNode(child);
+    }
+    
+    // If no formatted text was found, fall back to plain text
+    if (textNodes.length === 0) {
+      const plainText = element.textContent?.trim();
+      if (plainText) {
+        textNodes.push($createTextNode(plainText));
+      }
+    }
+    
+    return textNodes;
   }, []);
+
+  // Helper function to process mixed content (text + images)
+  const processMixedContent = useCallback((element: Element, context: { imageIndex: number, allImages: Element[] }): any[] => {
+    const results = [];
+    
+    // Process all child nodes in order
+    for (const child of element.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = child.textContent?.trim();
+        if (text) {
+          const paragraphNode = $createParagraphNode();
+          paragraphNode.append($createTextNode(text));
+          results.push(paragraphNode);
+        }
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const childElement = child as Element;
+        
+        if (childElement.tagName.toLowerCase() === 'img') {
+          // Handle image
+          const src = childElement.getAttribute('src');
+          const width = childElement.getAttribute('width');
+          const height = childElement.getAttribute('height');
+          
+          if (src && src.includes('googleusercontent.com')) {
+            const placeholderId = `ordered-skeleton-${Date.now()}-${context.imageIndex}`;
+            const skeletonData = createSkeletonImageData(width || undefined, height || undefined, placeholderId);
+            const skeletonNode = $createImageNode(skeletonData);
+            results.push(skeletonNode);
+            
+            setTimeout(() => {
+              if (downloadAndReplaceImageRef.current) {
+                downloadAndReplaceImageRef.current(src, width || undefined, height || undefined, placeholderId);
+              }
+            }, 0);
+            
+            context.imageIndex++;
+          }
+        } else {
+          // Handle other elements
+          const childResults = convertHTMLNodeToLexical(child, context);
+          results.push(...childResults);
+        }
+      }
+    }
+    
+    return results;
+  }, [createSkeletonImageData]);
+
+  // Helper function to process mixed content in table cells (text + images)
+  const processMixedTableCellContent = useCallback((cellElement: Element, context: { imageIndex: number, allImages: Element[] }): any[] => {
+    const results = [];
+    
+    console.log('🔍 Processing table cell with mixed content');
+    
+    // Process all child nodes in the cell
+    const processChildNodes = (element: Element): any[] => {
+      const nodes = [];
+      
+      for (const child of element.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent?.trim();
+          if (text) {
+            nodes.push($createTextNode(text));
+          }
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          const childElement = child as Element;
+          const tagName = childElement.tagName.toLowerCase();
+          
+          if (tagName === 'img') {
+            // Handle image in table cell
+            const src = childElement.getAttribute('src');
+            const width = childElement.getAttribute('width');
+            const height = childElement.getAttribute('height');
+            
+            console.log('🖼️ Found image in table cell:', { src: src?.substring(0, 50) + '...', width, height });
+            
+            if (src && src.includes('googleusercontent.com')) {
+              const placeholderId = `table-cell-skeleton-${Date.now()}-${context.imageIndex}`;
+              console.log('🖼️ Creating skeleton for table cell image:', {
+                src: src.substring(0, 50) + '...',
+                width,
+                height,
+                placeholderId,
+                imageIndex: context.imageIndex
+              });
+              
+              const skeletonData = createSkeletonImageData(width || undefined, height || undefined, placeholderId);
+              const skeletonNode = $createImageNode(skeletonData);
+              console.log('✅ Table cell skeleton node created:', {
+                type: skeletonNode.getType(),
+                imageId: (skeletonNode as any).__imageId,
+                placeholderId: placeholderId,
+                src: (skeletonNode as any).__src?.substring(0, 50) + '...'
+              });
+              
+              // Verify the skeleton's imageId matches our placeholderId
+              if ((skeletonNode as any).__imageId !== placeholderId) {
+                console.warn('⚠️ Skeleton imageId mismatch!', {
+                  expected: placeholderId,
+                  actual: (skeletonNode as any).__imageId
+                });
+              }
+              
+              nodes.push(skeletonNode);
+              
+              // Start async download and replacement
+              setTimeout(() => {
+                console.log('⏳ Starting table cell image download for placeholder:', placeholderId);
+                if (downloadAndReplaceImageRef.current) {
+                  downloadAndReplaceImageRef.current(src, width || undefined, height || undefined, placeholderId);
+                } else {
+                  console.error('❌ downloadAndReplaceImageRef.current is null!');
+                }
+              }, 0);
+              
+              context.imageIndex++;
+            }
+          } else {
+            // Recursively process other elements
+            const childNodes = processChildNodes(childElement);
+            nodes.push(...childNodes);
+          }
+        }
+      }
+      
+      return nodes;
+    };
+    
+    const cellNodes = processChildNodes(cellElement);
+    
+    // If we have content, wrap it in a paragraph
+    if (cellNodes.length > 0) {
+      const paragraph = $createParagraphNode();
+      paragraph.append(...cellNodes);
+      results.push(paragraph);
+    } else {
+      // Empty cell gets an empty paragraph
+      results.push($createParagraphNode());
+    }
+    
+    return results;
+  }, [createSkeletonImageData]);
+
+  // Helper function to create table from HTML
+  const createTableFromHTML = useCallback((tableElement: Element, context: { imageIndex: number, allImages: Element[] }) => {
+    try {
+      const rows = tableElement.querySelectorAll('tr');
+      if (rows.length === 0) return null;
+      
+      // Determine table dimensions
+      let maxCols = 0;
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td, th');
+        maxCols = Math.max(maxCols, cells.length);
+      });
+      
+      // Create table node
+      const tableNode = $createTableNodeWithDimensions(rows.length, maxCols, true);
+      
+      // Populate table cells
+      const tableRows = (tableNode as any).getChildren();
+      for (let i = 0; i < rows.length && i < tableRows.length; i++) {
+        const htmlRow = rows[i];
+        const lexicalRow = tableRows[i];
+        const htmlCells = htmlRow.querySelectorAll('td, th');
+        const lexicalCells = $isTableRowNode(lexicalRow) ? lexicalRow.getChildren() : [];
+        
+        for (let j = 0; j < htmlCells.length && j < lexicalCells.length; j++) {
+          const htmlCell = htmlCells[j];
+          const lexicalCell = lexicalCells[j];
+          
+          if ($isTableCellNode(lexicalCell)) {
+            // Check if cell contains images
+            const imagesInCell = findAllImages(htmlCell);
+            console.log(`🔍 Cell ${i},${j} contains ${imagesInCell.length} images`);
+            
+            if (imagesInCell.length > 0) {
+              // Process mixed content (text + images) in table cell
+              const cellContent = processMixedTableCellContent(htmlCell, context);
+              cellContent.forEach(node => {
+                lexicalCell.append(node);
+              });
+            } else {
+              // Extract cell content with formatting (text only)
+              const cellText = extractTextWithFormatting(htmlCell);
+              if (cellText.length > 0) {
+                const cellParagraph = $createParagraphNode();
+                cellParagraph.append(...cellText);
+                lexicalCell.append(cellParagraph);
+              } else {
+                // Ensure cell has at least an empty paragraph
+                lexicalCell.append($createParagraphNode());
+              }
+            }
+          }
+        }
+      }
+      
+      return tableNode;
+    } catch (error) {
+      console.error('Error creating table from HTML:', error);
+      return null;
+    }
+  }, [processMixedTableCellContent]);
 
   // Helper function to parse HTML and maintain text/image order
   const handleHTMLImageContent = useCallback((htmlData: string) => {
@@ -723,6 +1129,67 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
       setUploadProgress(0);
     }
   }, [currentUser, editor, replaceSkeletonWithImage]);
+
+  // Helper function to download and replace image (separated from the main handler)
+  const downloadAndReplaceImage = useCallback(async (src: string, width?: string, height?: string, placeholderId?: string) => {
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) {
+        console.error('❌ No session ID found - user not authenticated');
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/content/editor-images/proxy-google-docs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionId}`
+        },
+        body: JSON.stringify({ imageUrl: src })
+      });
+
+      if (!response.ok) {
+        console.error('❌ Backend proxy failed:', response.status, response.statusText);
+        return;
+      }
+
+      const blob = await response.blob();
+      const file = new File([blob], `google-docs-image-${Date.now()}.jpg`, {
+        type: blob.type || 'image/jpeg'
+      });
+
+      // Store metadata for replacement
+      (file as any).originalWidth = width;
+      (file as any).originalHeight = height;
+      (file as any).placeholderId = placeholderId;
+
+      await handleImageUpload(file);
+    } catch (error) {
+      console.error('❌ Error downloading ordered image:', error);
+    }
+  }, [handleImageUpload]);
+
+  // Store the function in the ref for use by other functions
+  downloadAndReplaceImageRef.current = downloadAndReplaceImage;
+
+  // Debug function to check image processing status
+  const debugImageProcessing = useCallback(() => {
+    console.log('🔧 Debug Image Processing Status:', {
+      hasDownloadFunction: !!downloadAndReplaceImageRef.current,
+      hasHandleImageUpload: !!handleImageUpload,
+      hasCreateSkeletonData: !!createSkeletonImageData,
+      hasReplaceSkeletonWithImage: !!replaceSkeletonWithImage,
+      currentUser: currentUser?.name || currentUser?.email,
+      sessionId: !!localStorage.getItem('sessionId')
+    });
+  }, [currentUser, handleImageUpload, createSkeletonImageData, replaceSkeletonWithImage]);
+
+  // Make debug function available globally
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).debugImageProcessing = debugImageProcessing;
+    }
+  }, [debugImageProcessing]);
 
   // Load gallery images
   const loadGalleryImages = useCallback(async () => {

@@ -1,0 +1,192 @@
+
+ ⛅️ wrangler 4.6.0 (update available 4.24.3)
+--------------------------------------------
+
+Your Worker and resources are simulated locally via Miniflare. For more information, see: https://developers.cloudflare.com/workers/testing/local-development.
+
+Your worker has access to the following bindings:
+- Durable Objects:
+  - SUBMISSION_WEBSOCKET: SubmissionWebSocketServer
+- D1 Databases:
+  - D1: vox-quietus-d1 (fbea1cb9-8a22-49c4-9c5f-d0e13c036f11) [simulated locally]
+- R2 Buckets:
+  - R2: vox-quietus-r2 [simulated locally]
+- Vars:
+  - PUBLIC_URL: "https://api.scrivenly.com"
+  - FRONTEND_URL: "https://scrivenly.com"
+  - SESKey: "AKIA36OXS3SM4YRL76M4"
+⎔ Starting local server...
+[wrangler:inf] Ready on http://localhost:8787
+Initializing application from root endpoint...
+initializeApp called
+ENV KEYS in initializeApp: [
+  'PUBLIC_URL',
+  'FRONTEND_URL',
+  'SESKey',
+  'D1',
+  'SUBMISSION_WEBSOCKET',
+  'R2'
+]
+Initializing cache database...
+Creating object_cache table...
+Object cache table created successfully
+Creating index on last_updated...
+Index created successfully
+Verified object_cache table exists
+🔍 Getting user: alexander.young@gmail.com
+🔍 Getting user from storage: alexander.young@gmail.com
+Cache hit for key: user/alexander.young@gmail.com
+👤 Retrieved user from storage: {
+  id: 'alexander.young@gmail.com',
+  name: 'Alex Young',
+  email: 'alexander.young@gmail.com',
+  approved: true,
+  isAdmin: true,
+  userType: 'Admin',
+  groups: []
+}
+📝 Initializing empty roles array
+👤 Existing user check: {
+  id: 'alexander.young@gmail.com',
+  name: 'Alex Young',
+  email: 'alexander.young@gmail.com',
+  approved: true,
+  isAdmin: true,
+  userType: 'Admin',
+  groups: [],
+  roles: []
+}
+Starting migration: Setting all existing content to public
+Found 0 blog posts to update
+Found 0 media items to update
+Migration completed successfully
+Starting migration: Ensuring all users have a groups array
+Found 1 users to check
+Migration completed successfully. Updated 0 users.
+🔍 Getting user: communications@rangers.burningman.org
+🔍 Getting user from storage: communications@rangers.burningman.org
+Cache miss for key: user/communications@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 Existing user check: null
+📧 Looking up user by email
+🔍 Getting user from storage: communications@rangers.burningman.org
+Cache miss for key: user/communications@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 User by email: null
+👑 Is first admin: false
+❌ User not found
+🔍 Getting user: intake@rangers.burningman.org
+🔍 Getting user from storage: intake@rangers.burningman.org
+Cache miss for key: user/intake@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 Existing user check: null
+📧 Looking up user by email
+🔍 Getting user from storage: intake@rangers.burningman.org
+Cache miss for key: user/intake@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 User by email: null
+👑 Is first admin: false
+❌ User not found
+🔍 Getting user: logistics@rangers.burningman.org
+🔍 Getting user from storage: logistics@rangers.burningman.org
+Cache miss for key: user/logistics@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 Existing user check: null
+📧 Looking up user by email
+🔍 Getting user from storage: logistics@rangers.burningman.org
+Cache miss for key: user/logistics@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 User by email: null
+👑 Is first admin: false
+❌ User not found
+🔍 Getting user: operations@rangers.burningman.org
+🔍 Getting user from storage: operations@rangers.burningman.org
+Cache miss for key: user/operations@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 Existing user check: null
+📧 Looking up user by email
+🔍 Getting user from storage: operations@rangers.burningman.org
+Cache miss for key: user/operations@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 User by email: null
+👑 Is first admin: false
+❌ User not found
+🔍 Getting user: personnel@rangers.burningman.org
+🔍 Getting user from storage: personnel@rangers.burningman.org
+Cache miss for key: user/personnel@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 Existing user check: null
+📧 Looking up user by email
+🔍 Getting user from storage: personnel@rangers.burningman.org
+Cache miss for key: user/personnel@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 User by email: null
+👑 Is first admin: false
+❌ User not found
+🔍 Getting user: department@rangers.burningman.org
+🔍 Getting user from storage: department@rangers.burningman.org
+Cache miss for key: user/department@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 Existing user check: null
+📧 Looking up user by email
+🔍 Getting user from storage: department@rangers.burningman.org
+Cache miss for key: user/department@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 User by email: null
+👑 Is first admin: false
+❌ User not found
+🔍 Getting user: deputy@rangers.burningman.org
+🔍 Getting user from storage: deputy@rangers.burningman.org
+Cache miss for key: user/deputy@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 Existing user check: null
+📧 Looking up user by email
+🔍 Getting user from storage: deputy@rangers.burningman.org
+Cache miss for key: user/deputy@rangers.burningman.org
+👤 Retrieved user from storage: null
+❌ User not found in storage
+👤 User by email: null
+👑 Is first admin: false
+❌ User not found
+Caching page slugs...
+Cache hit for key: __list__:page/
+Cached 0 page slugs
+Final tables after initialization: {"count":1,"duration":0}
+Application initialized successfully from root endpoint
+[wrangler:inf] GET / 200 OK (50ms)
+⎔ Reloading local server...
+⎔ Reloading local server...
+⎔ Reloading local server...
+⎔ Reloading local server...
+⎔ Reloading local server...
+⎔ Reloading local server...
+⎔ Reloading local server...
+⎔ Reloading local server...
+⎔ Reloading local server...
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mservice core:user:vox-quietus-backend: Uncaught ReferenceError: AutoRouter is not defined[0m
+
+    at null.<anonymous> (index.js:6264:15)
+
+
+
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mThe Workers runtime failed to start. There is likely additional logging output above.[0m
+
+
+[32mIf you think this is a bug then please create an issue at https://github.com/cloudflare/workers-sdk/issues/new/choose[0m
+Note that there is a newer version of Wrangler available (4.24.3). Consider checking whether upgrading resolves this error.
+? Would you like to report this error to Cloudflare? Wrangler's output and the error details will be shared with the Wrangler team to help us diagnose and fix the issue.
+🤖 Using fallback value in non-interactive context: no
+🪵  Logs were written to "/Users/ayoung/.wrangler/logs/wrangler-2025-07-14_02-48-50_465.log"
