@@ -40,7 +40,7 @@ export const CommsRequest: React.FC = () => {
   const userJson = localStorage.getItem('user');
   const user = userJson ? JSON.parse(userJson) : null;
   const userEmail = user?.email || '';
-  const userId = user?.id || '';
+  const userId = user?.id || user?.email || '';  // Use email as fallback if id is not available
   
   const {
     register,
@@ -583,6 +583,7 @@ export const CommsRequest: React.FC = () => {
                     onChange={handleEditorChange}
                     placeholder="Include any text you'd like us to use or paste content and links here"
                     className="h-64"
+                    currentUserId={userId}
                   />
                 </Form.Group>
 

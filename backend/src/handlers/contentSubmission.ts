@@ -5,6 +5,8 @@ import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
+import { uploadMedia } from '../services/mediaService';
+import { Env } from '../utils/sessionManager';
 
 export const router = AutoRouter({ base: '/content' });
 
@@ -451,4 +453,124 @@ router.delete('/submissions/:id', withAuth, async (request: Request, env: any) =
   await deleteObject('content_submissions/list', env);
 
   return json({ message: 'Submission deleted successfully' });
-}); 
+});
+
+// Upload image for rich text editor content
+router.post('/editor-images/upload', withAuth, async (request: Request, env: any) => {
+  try {
+    const formData = await request.formData();
+    const user = (request as any).user as User;
+    const mediaFile = formData.get('media') as File;
+    const thumbnailFile = formData.get('thumbnail') as File;
+    const mediumFile = formData.get('medium') as File;
+    const isPublic = formData.get('isPublic') === 'true';
+    const takenBy = formData.get('takenBy') as string;
+
+    if (!mediaFile) {
+      return json({ error: 'No media file provided' }, { status: 400 });
+    }
+
+    const result = await uploadMedia(
+      mediaFile,
+      thumbnailFile,
+      user.id,
+      env,
+      isPublic,
+      undefined, // No groupId for editor images
+      takenBy,
+      mediumFile
+    );
+
+    if (result.success && result.mediaItem) {
+      return json(result.mediaItem);
+    } else {
+      return json({ error: result.message }, { status: 500 });
+    }
+  } catch (error) {
+    console.error('Error uploading editor image:', error);
+    return json({ error: 'Failed to upload image' }, { status: 500 });
+  }
+});
+
+// Add the new proxy route for Google Docs images
+router.post('/editor-images/proxy-google-docs', withAuth, async (request: Request, env: any) => {
+  console.log('🔧 Proxy route handler called');
+  const user = (request as any).user;
+  console.log('👤 User from withAuth:', user);
+  
+  return await proxyGoogleDocsImage(request, env);
+});
+
+// Proxy endpoint for downloading Google Docs images
+export async function proxyGoogleDocsImage(request: Request, env: Env): Promise<Response> {
+  console.log('🔧 proxyGoogleDocsImage called');
+  
+  if (request.method !== 'POST') {
+    console.log('❌ Method not allowed:', request.method);
+    return new Response('Method not allowed', { status: 405 });
+  }
+
+  try {
+    console.log('📥 Parsing request JSON...');
+    const { imageUrl } = await request.json();
+    
+    if (!imageUrl || typeof imageUrl !== 'string') {
+      console.log('❌ Invalid image URL:', imageUrl);
+      return new Response('Invalid image URL', { status: 400 });
+    }
+
+    // Validate that it's a Google Docs/userusercontent URL for security
+    if (!imageUrl.includes('googleusercontent.com') && !imageUrl.includes('docs.google.com')) {
+      console.log('❌ Non-Google URL rejected:', imageUrl);
+      return new Response('Only Google Docs images are supported', { status: 400 });
+    }
+
+    console.log('🔄 Proxying Google Docs image:', imageUrl);
+
+    // Download the image from Google's servers
+    const imageResponse = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    console.log('📥 Google response status:', imageResponse.status);
+    console.log('📥 Google response content-type:', imageResponse.headers.get('content-type'));
+    console.log('📥 Google response content-length:', imageResponse.headers.get('content-length'));
+
+    if (!imageResponse.ok) {
+      console.error('❌ Failed to fetch image from Google:', imageResponse.status, imageResponse.statusText);
+      
+      // Try to get the response body for more details
+      try {
+        const errorText = await imageResponse.text();
+        console.error('❌ Google error response body:', errorText);
+      } catch (e) {
+        console.error('❌ Could not read Google error response');
+      }
+      
+      return new Response(`Failed to fetch image: ${imageResponse.status} ${imageResponse.statusText}`, { status: 400 });
+    }
+
+    // Get the image data
+    const imageData = await imageResponse.arrayBuffer();
+    const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+
+    console.log('✅ Successfully proxied Google Docs image:', {
+      size: imageData.byteLength,
+      contentType
+    });
+
+    // Return the image data to the frontend
+    // Let the main router handle CORS via corsify
+    return new Response(imageData, {
+      headers: {
+        'Content-Type': contentType
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error proxying Google Docs image:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+} 

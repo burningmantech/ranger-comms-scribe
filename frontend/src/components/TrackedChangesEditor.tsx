@@ -4,6 +4,7 @@ import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges } from '
 import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical } from '../utils/lexicalUtils';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { CollaborativeEditor } from './CollaborativeEditor';
+import { $isImageNode } from './editor/nodes/ImageNode';
 import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '../services/websocketService';
 import './TrackedChangesEditor.css';
 
@@ -185,6 +186,69 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
     
     return content;
+  }, []);
+
+  // Helper function to extract images from Lexical content
+  const extractImagesFromLexical = useCallback((content: string): Array<{ src: string; alt: string; id?: string }> => {
+    if (!content || !isLexicalJson(content)) return [];
+    
+    try {
+      const lexicalData = JSON.parse(content);
+      const images: Array<{ src: string; alt: string; id?: string }> = [];
+      
+      const extractFromChildren = (children: any[]) => {
+        for (const child of children) {
+          if (child.type === 'image') {
+            images.push({
+              src: child.src,
+              alt: child.altText || '',
+              id: child.imageId
+            });
+          }
+          if (child.children) {
+            extractFromChildren(child.children);
+          }
+        }
+      };
+      
+      if (lexicalData.root?.children) {
+        extractFromChildren(lexicalData.root.children);
+      }
+      
+      return images;
+    } catch (error) {
+      console.error('Error extracting images from Lexical content:', error);
+      return [];
+    }
+  }, []);
+
+  // Helper function to render images in diff view
+  const renderImageInDiff = useCallback((image: { src: string; alt: string; id?: string }, type: 'added' | 'removed' | 'unchanged') => {
+    return (
+      <div key={image.id || image.src} className={`diff-image ${type}`}>
+        <img 
+          src={image.src} 
+          alt={image.alt} 
+          className="diff-image-content"
+          style={{ 
+            maxWidth: '200px', 
+            maxHeight: '150px',
+            objectFit: 'contain',
+            border: type === 'added' ? '2px solid #28a745' : 
+                   type === 'removed' ? '2px solid #dc3545' : 
+                   '2px solid #6c757d',
+            borderRadius: '4px',
+            margin: '4px'
+          }}
+        />
+        <div className="diff-image-label">
+          <span className={`diff-marker ${type}`}>
+            {type === 'added' ? '+' : type === 'removed' ? '-' : ''}
+          </span>
+          <span className="diff-image-alt">{image.alt}</span>
+        </div>
+      </div>
+    );
   }, []);
 
   // Helper function to get displayable text from change values (with debugging)
@@ -2054,11 +2118,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <div className="diff-content">
                 {(() => {
                   // Get the original and proposed content for comparison
-                  const originalText = getDisplayableText(submission.richTextContent || submission.content || '');
-                  const proposedText = getDisplayableText(editedProposedContent || submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '');
+                  const originalContent = submission.richTextContent || submission.content || '';
+                  const proposedContent = editedProposedContent || submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
                   
-                  // If content is the same, show no changes message
-                  if (originalText === proposedText) {
+                  const originalText = getDisplayableText(originalContent);
+                  const proposedText = getDisplayableText(proposedContent);
+                  
+                  // Extract images from both versions
+                  const originalImages = extractImagesFromLexical(originalContent);
+                  const proposedImages = extractImagesFromLexical(proposedContent);
+                  
+                  // Check if content is the same (text and images)
+                  const textSame = originalText === proposedText;
+                  const imagesSame = JSON.stringify(originalImages) === JSON.stringify(proposedImages);
+                  
+                  if (textSame && imagesSame) {
                     return (
                       <div className="no-changes">
                         <p>No changes detected between original and proposed versions.</p>
@@ -2066,8 +2140,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     );
                   }
                   
-                  // Generate word-level diff
+                  // Generate word-level diff for text
                   const diff = smartDiff(originalText, proposedText);
+                  
+                  // Compare images
+                  const addedImages = proposedImages.filter(pImg => 
+                    !originalImages.some(oImg => oImg.src === pImg.src)
+                  );
+                  const removedImages = originalImages.filter(oImg => 
+                    !proposedImages.some(pImg => pImg.src === oImg.src)
+                  );
+                  const unchangedImages = originalImages.filter(oImg => 
+                    proposedImages.some(pImg => pImg.src === oImg.src)
+                  );
                   
                   return (
                     <div className="diff-comparison">
@@ -2087,6 +2172,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         <div className="diff-column">
                           <h4>Original Version</h4>
                           <div className="diff-text" ref={originalDiffTextRef}>
+                            {/* Text content */}
                             {diff.map((segment, index) => {
                               if (segment.type === 'delete' || segment.type === 'equal') {
                                 return (
@@ -2100,12 +2186,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               }
                               return null;
                             })}
+                            
+                            {/* Images */}
+                            <div className="diff-images">
+                              {unchangedImages.map(image => renderImageInDiff(image, 'unchanged'))}
+                              {removedImages.map(image => renderImageInDiff(image, 'removed'))}
+                            </div>
                           </div>
                         </div>
                         
                         <div className="diff-column">
                           <h4>Proposed Version</h4>
                           <div className="diff-text" ref={proposedDiffTextRef}>
+                            {/* Text content */}
                             {diff.map((segment, index) => {
                               if (segment.type === 'insert' || segment.type === 'equal') {
                                 return (
@@ -2119,6 +2212,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               }
                               return null;
                             })}
+                            
+                            {/* Images */}
+                            <div className="diff-images">
+                              {unchangedImages.map(image => renderImageInDiff(image, 'unchanged'))}
+                              {addedImages.map(image => renderImageInDiff(image, 'added'))}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -2127,6 +2226,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       <div className="unified-diff">
                         <h4>Unified Diff View</h4>
                         <div className="unified-diff-content">
+                          {/* Text changes */}
                           {diff.map((segment, index) => (
                             <span
                               key={index}
@@ -2137,6 +2237,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               {segment.value}
                             </span>
                           ))}
+                          
+                          {/* Image changes */}
+                          <div className="unified-diff-images">
+                            {removedImages.map(image => (
+                              <div key={`removed-${image.src}`} className="unified-diff-image removed">
+                                <span className="diff-marker">-</span>
+                                {renderImageInDiff(image, 'removed')}
+                              </div>
+                            ))}
+                            {addedImages.map(image => (
+                              <div key={`added-${image.src}`} className="unified-diff-image added">
+                                <span className="diff-marker">+</span>
+                                {renderImageInDiff(image, 'added')}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     </div>

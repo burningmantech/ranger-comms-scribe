@@ -16,6 +16,8 @@ import { LinkNode } from '@lexical/link';
 import { ListPlugin } from '@lexical/react/LexicalListPlugin';
 import { LinkPlugin } from '@lexical/react/LexicalLinkPlugin';
 import { ToolbarPlugin } from './editor/plugins/ToolbarPlugin';
+import { ImagePlugin } from './editor/plugins/ImagePlugin';
+import { ImageNode } from './editor/nodes/ImageNode';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { UserPresence, UserPresenceData } from './UserPresence';
 import { User } from '../types/content';
@@ -2117,6 +2119,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       TableCellNode,
       TableRowNode,
       LinkNode,
+      ImageNode,
     ],
     onError: (error: Error) => {
       console.error('Lexical editor error:', error);
@@ -3030,6 +3033,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <HistoryPlugin />
               <ListPlugin />
               <LinkPlugin />
+              <ImagePlugin currentUser={currentUser} />
               <EditorRefPlugin editorRef={editorRef} />
               {/* Always render CursorTrackingPlugin but let it handle WebSocket client internally */}
               <CursorTrackingPlugin 

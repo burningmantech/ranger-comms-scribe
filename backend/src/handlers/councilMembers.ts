@@ -1,4 +1,4 @@
-import { Router, AutoRouter } from 'itty-router';
+import { AutoRouter } from 'itty-router';
 import { CouncilMember, CouncilRole, UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';

@@ -38,9 +38,32 @@ declare global {
 }
 
 export const { preflight, corsify } = cors({
-    // origin: 'https://scrivenly.com',
-    origin: '*',
-    allowMethods: '*',
+    origin: (origin: string) => {
+        const allowedOrigins = [
+            'https://scrivenly.com',
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+            'http://localhost:3001'
+        ];
+        
+        if (allowedOrigins.includes(origin)) {
+            return origin;
+        }
+        
+        // Return undefined to reject the origin
+        return undefined;
+    },
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowHeaders: [
+        'Content-Type',
+        'Authorization', 
+        'X-Requested-With',
+        'Accept',
+        'Origin',
+        'Cache-Control',
+        'Pragma'
+    ],
+    credentials: true,
     maxAge: 84600,
 });
 
@@ -136,8 +159,8 @@ router
     })
     .all('/auth/*', authRouter.fetch) // Handle all auth routes
     .all('/blog/*', blogRouter.fetch) // Handle all blog routes
-    .all('/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
-    .all('/gallery/*', galleryRouter.fetch) // Handle all gallery routes
+      .all('/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
+  .all('/gallery/*', galleryRouter.fetch) // Handle all gallery routes
     .all('/page/*', withOptionalSession) // Allow page to identify users with a session
     .all('/page/*', pageRouter.fetch) // Handle all page routes
     .all('/admin/*', withValidSession) // Middleware to check session for admin routes
@@ -145,10 +168,7 @@ router
     .all('/user/*', withValidSession) // Middleware to check session for user routes
     .all('/user/*', userRouter.fetch) // Handle all user routes
     .all('/content/*', withValidSession) // Middleware to check session for content routes
-    .all('/content/*', async (request: Request, env: Env) => {
-        console.log('Content route handler called with URL:', request.url);
-        return contentSubmissionRouter.fetch(request, env);
-    }) // Handle all content submission routes
+    .all('/content/*', contentSubmissionRouter.fetch) // Handle all content submission routes
     .all('/council/*', withValidSession) // Middleware to check session for council routes
     .all('/council/*', councilMemberRouter.fetch) // Handle all council member routes
     .all('/reminders/*', withValidSession) // Middleware to check session for reminder routes

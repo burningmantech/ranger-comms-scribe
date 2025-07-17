@@ -1968,3 +1968,147 @@
   max-width: 300px;
   margin-top: 5px;
 }
+
+/* Image diff styles */
+.diff-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.diff-image {
+  position: relative;
+  display: inline-block;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8f9fa;
+  padding: 8px;
+  transition: all 0.2s ease;
+}
+
+.diff-image:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.diff-image.added {
+  background: #d4edda;
+  border: 2px solid #28a745;
+}
+
+.diff-image.removed {
+  background: #f8d7da;
+  border: 2px solid #dc3545;
+}
+
+.diff-image.unchanged {
+  background: #e9ecef;
+  border: 2px solid #6c757d;
+}
+
+.diff-image-content {
+  display: block;
+  max-width: 200px;
+  max-height: 150px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: white;
+}
+
+.diff-image-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #495057;
+}
+
+.diff-image-label .diff-marker {
+  font-weight: bold;
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
+}
+
+.diff-image-label .diff-marker.added {
+  color: #28a745;
+}
+
+.diff-image-label .diff-marker.removed {
+  color: #dc3545;
+}
+
+.diff-image-alt {
+  font-style: italic;
+  color: #6c757d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+/* Unified diff image styles */
+.unified-diff-images {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.unified-diff-image {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.unified-diff-image .diff-marker {
+  font-weight: bold;
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+  line-height: 1;
+  margin-top: 8px;
+}
+
+.unified-diff-image.added .diff-marker {
+  color: #28a745;
+}
+
+.unified-diff-image.removed .diff-marker {
+  color: #dc3545;
+}
+
+.unified-diff-image .diff-image {
+  margin: 0;
+}
+
+/* Responsive image diff */
+@media (max-width: 768px) {
+  .diff-images {
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .diff-image-content {
+    max-width: 150px;
+    max-height: 120px;
+  }
+  
+  .diff-image-alt {
+    max-width: 130px;
+  }
+  
+  .unified-diff-image {
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .unified-diff-image .diff-marker {
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+}

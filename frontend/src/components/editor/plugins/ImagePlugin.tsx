@@ -1,46 +1,610 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
-import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR } from 'lexical';
+import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR, COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getRoot, $createParagraphNode } from 'lexical';
 import { createCommand } from 'lexical';
-import { $createParagraphNode } from 'lexical';
+import { $createImageNode, ImageNode } from '../nodes/ImageNode';
+import { MediaItem } from '../../../types/index';
+import { API_URL } from '../../../config';
 
 export const INSERT_IMAGE_COMMAND = createCommand('insertImage');
 
 export interface ImagePluginProps {
   onImageSelect?: () => void;
+  currentUser?: any;
 }
 
-export function ImagePlugin({ onImageSelect }: ImagePluginProps) {
-  const [editor] = useLexicalComposerContext();
+interface ImageUploadResponse {
+  id: string;
+  fileName: string;
+  fileType: string;
+  url: string;
+  thumbnailUrl: string;
+  mediumUrl: string;
+  uploadedBy: string;
+  uploaderName: string;
+  uploadedAt: string;
+  size: number;
+}
 
-  const insertImage = useCallback(
-    (payload: { src: string; altText?: string; width?: number; height?: number; fullSizeSrc?: string }) => {
-      editor.update(() => {
-        const selection = $getSelection();
-        if (!$isRangeSelection(selection)) {
+export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
+  const [editor] = useLexicalComposerContext();
+  const [showImageDialog, setShowImageDialog] = useState(false);
+  const [showGalleryDialog, setShowGalleryDialog] = useState(false);
+  const [galleryImages, setGalleryImages] = useState<MediaItem[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  // Helper function to handle Google Docs image clips
+  const handleGoogleDocsImageClip = useCallback((data: string) => {
+    console.log('🔍 Processing Google Docs image clip data');
+    
+    try {
+      // Google Docs image clips are typically JSON-wrapped data
+      const parsedData = JSON.parse(data);
+      console.log('📊 Parsed Google Docs data:', parsedData);
+      
+      // Look for image data in the parsed structure
+      // This can be either a URL or base64 data
+      if (parsedData && typeof parsedData === 'object') {
+        const imageData = extractImageFromGoogleDocsData(parsedData);
+        if (imageData) {
+          console.log('✅ Extracted image data from Google Docs clip:', imageData.substring(0, 100) + '...');
+          
+          // Check if it's a URL or base64 data
+          if (imageData.startsWith('http')) {
+            console.log('🔗 Google Docs image data is URL, downloading...');
+            downloadImageFromURL(imageData);
+          } else if (imageData.startsWith('data:image/')) {
+            console.log('📦 Google Docs image data is base64, converting...');
+            convertBase64ToFile(imageData);
+          } else {
+            console.log('❌ Unknown image data format from Google Docs');
+          }
+        } else {
+          console.log('❌ No image data found in Google Docs clip');
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error parsing Google Docs image clip:', error);
+      console.log('🔍 Raw Google Docs data:', data);
+    }
+  }, []);
+
+  // Helper function to handle HTML image content
+  const handleHTMLImageContent = useCallback((htmlData: string) => {
+    console.log('🔍 Processing HTML image content');
+    
+    try {
+      // Create a temporary DOM element to parse HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = htmlData;
+      
+      // Find all img tags
+      const images = tempDiv.querySelectorAll('img');
+      console.log('🖼️ Found images in HTML:', images.length);
+      
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const src = img.getAttribute('src');
+        const width = img.getAttribute('width');
+        const height = img.getAttribute('height');
+        const style = img.getAttribute('style');
+        
+        console.log(`📸 Image ${i + 1}:`, {
+          src: src?.substring(0, 50) + '...',
+          alt: img.getAttribute('alt'),
+          width: width,
+          height: height,
+          style: style
+        });
+        
+        if (src) {
+          if (src.startsWith('data:image/')) {
+            console.log('✅ Found base64 image in HTML');
+            convertBase64ToFile(src);
+            return; // Handle first base64 image found
+          } else if (src.startsWith('http')) {
+            console.log('🔗 Found external image URL in HTML');
+            
+            // For Google Docs URLs, try to create a cross-origin proxy or use a different approach
+            if (src.includes('googleusercontent.com') || src.includes('docs.google.com')) {
+              console.log('🔧 Attempting alternative approach for Google Docs image');
+              
+              // Pass the original dimensions to the handler
+              handleGoogleDocsImageFromHTML(src, img, width || undefined, height || undefined);
+            } else {
+              console.log('🔗 Downloading regular external image URL');
+              downloadImageFromURL(src);
+            }
+            return; // Handle first external image found
+          }
+        }
+      }
+      
+      console.log('❌ No processable images found in HTML');
+    } catch (error) {
+      console.error('❌ Error processing HTML image content:', error);
+    }
+  }, []);
+
+  // Helper function to handle Google Docs images from HTML with alternative approaches
+  const handleGoogleDocsImageFromHTML = useCallback(async (src: string, imgElement: HTMLImageElement, width?: string, height?: string) => {
+    console.log('🔧 Using backend proxy for Google Docs image');
+    console.log('📏 Original dimensions:', { width, height });
+    
+    try {
+      // Use the backend proxy to download the image
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) {
+        console.error('❌ No session ID found - user not authenticated');
+        alert('You must be logged in to paste images.');
+        return;
+      }
+
+      console.log('🔄 Sending image URL to backend proxy:', src);
+      
+      const response = await fetch(`${API_URL}/content/editor-images/proxy-google-docs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionId}`
+        },
+        body: JSON.stringify({ imageUrl: src })
+      });
+
+      if (!response.ok) {
+        console.error('❌ Backend proxy failed:', response.status, response.statusText);
+        alert('Failed to download image from Google Docs. Please try saving the image locally first.');
+        return;
+      }
+
+      // Convert response to blob and then to file
+      const blob = await response.blob();
+      const file = new File([blob], `google-docs-image-${Date.now()}.jpg`, {
+        type: blob.type || 'image/jpeg'
+      });
+
+      console.log('✅ Successfully downloaded image via backend proxy:', {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        originalWidth: width,
+        originalHeight: height
+      });
+
+      // Store original dimensions for use in upload
+      (file as any).originalWidth = width;
+      (file as any).originalHeight = height;
+
+      // Upload the file
+      setTimeout(() => {
+        handleImageUpload(file);
+      }, 0);
+
+    } catch (error) {
+      console.error('❌ Error using backend proxy for Google Docs image:', error);
+      alert('Failed to download image from Google Docs. Please try saving the image locally first.');
+    }
+  }, []);
+
+  // Helper function to extract image data from Google Docs data structure
+  const extractImageFromGoogleDocsData = (data: any): string | null => {
+    try {
+      console.log('🔍 Extracting image from Google Docs data structure');
+      
+      // Google Docs data has a nested structure
+      if (data && data.data && typeof data.data === 'string') {
+        console.log('📊 Parsing nested Google Docs data');
+        const nestedData = JSON.parse(data.data);
+        console.log('📊 Nested data structure:', nestedData);
+        
+        // Look for image_urls in the nested data
+        if (nestedData.image_urls && typeof nestedData.image_urls === 'object') {
+          console.log('🔍 Found image_urls object:', nestedData.image_urls);
+          
+          // Get the first image URL
+          const imageKeys = Object.keys(nestedData.image_urls);
+          if (imageKeys.length > 0) {
+            const firstImageUrl = nestedData.image_urls[imageKeys[0]];
+            console.log('✅ Found image URL in Google Docs data:', firstImageUrl);
+            return firstImageUrl;
+          }
+        }
+      }
+      
+      // Fallback: look for any URLs in the entire data structure
+      const dataStr = JSON.stringify(data);
+      
+      // Look for Google userusercontent URLs
+      const urlMatch = dataStr.match(/https:\/\/lh\d+-rt\.googleusercontent\.com\/[^"]+/);
+      if (urlMatch) {
+        console.log('✅ Found Google userusercontent URL as fallback:', urlMatch[0]);
+        return urlMatch[0];
+      }
+      
+      // Look for any other image URLs
+      const imageUrlMatch = dataStr.match(/https?:\/\/[^"]+\.(?:jpg|jpeg|png|gif|webp)/i);
+      if (imageUrlMatch) {
+        console.log('✅ Found image URL as fallback:', imageUrlMatch[0]);
+        return imageUrlMatch[0];
+      }
+      
+      // Original base64 check as final fallback
+      const base64Match = dataStr.match(/data:image\/[^;]+;base64,[^"]+/);
+      if (base64Match) {
+        console.log('✅ Found base64 image in Google Docs data');
+        return base64Match[0];
+      }
+      
+      console.log('❌ No image URL or base64 found in Google Docs data');
+      return null;
+    } catch (error) {
+      console.error('❌ Error extracting image from Google Docs data:', error);
+      return null;
+    }
+  };
+
+  // Helper function to convert base64 to file and upload
+  const convertBase64ToFile = useCallback((base64Data: string) => {
+    try {
+      console.log('🔄 Converting base64 to file');
+      
+      // Extract mime type and base64 data
+      const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
+      if (!matches) {
+        console.error('❌ Invalid base64 data format');
+        return;
+      }
+      
+      const mimeType = matches[1];
+      const base64 = matches[2];
+      
+      // Convert base64 to blob
+      const byteCharacters = atob(base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mimeType });
+      
+      // Create file object
+      const file = new File([blob], `pasted-image-${Date.now()}.${mimeType.split('/')[1]}`, {
+        type: mimeType
+      });
+      
+      console.log('✅ Converted base64 to file:', {
+        name: file.name,
+        size: file.size,
+        type: file.type
+      });
+      
+      // We'll call handleImageUpload directly since it's defined later
+      // This avoids the circular dependency issue
+      setTimeout(() => {
+        handleImageUpload(file);
+      }, 0);
+    } catch (error) {
+      console.error('❌ Error converting base64 to file:', error);
+    }
+  }, []);
+
+  // Helper function to download image from URL
+  const downloadImageFromURL = useCallback(async (url: string, retryCount = 0) => {
+    const maxRetries = 3;
+    const baseDelay = 1000; // 1 second
+    
+    try {
+      // For Google Docs URLs, use the backend proxy
+      if (url.includes('googleusercontent.com') || url.includes('docs.google.com')) {
+        console.log('🔧 Using backend proxy for Google Docs URL');
+        
+        const sessionId = localStorage.getItem('sessionId');
+        if (!sessionId) {
+          console.error('❌ No session ID found - user not authenticated');
+          alert('You must be logged in to paste images.');
           return;
         }
 
-        // Create an HTML img element
-        const imgElement = document.createElement('img');
-        imgElement.src = payload.src;
-        imgElement.alt = payload.altText || '';
-        if (payload.width) imgElement.width = Number(payload.width);
-        if (payload.height) imgElement.height = Number(payload.height);
-        if (payload.fullSizeSrc) imgElement.dataset.fullSrc = payload.fullSizeSrc;
+        console.log('🔄 Sending Google Docs URL to backend proxy:', url);
+        
+        const response = await fetch(`${API_URL}/content/editor-images/proxy-google-docs`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${sessionId}`
+          },
+          body: JSON.stringify({ imageUrl: url })
+        });
 
-        // Create a paragraph node to hold the image
-        const paragraphNode = $createParagraphNode();
-        
-        // Insert the paragraph node
-        selection.insertNodes([paragraphNode]);
-        
-        // Replace the paragraph's innerHTML with our image
-        const element = editor.getElementByKey(paragraphNode.getKey());
-        if (element) {
-          element.innerHTML = '';
-          element.appendChild(imgElement);
+        if (!response.ok) {
+          console.error('❌ Backend proxy failed:', response.status, response.statusText);
+          alert('Failed to download image from Google Docs. Please try saving the image locally first.');
+          return;
         }
+
+        // Convert response to blob and then to file
+        const blob = await response.blob();
+        const file = new File([blob], `google-docs-image-${Date.now()}.jpg`, {
+          type: blob.type || 'image/jpeg'
+        });
+
+        console.log('✅ Successfully downloaded Google Docs image via backend proxy:', {
+          name: file.name,
+          size: file.size,
+          type: file.type
+        });
+
+        // Upload the file
+        setTimeout(() => {
+          handleImageUpload(file);
+        }, 0);
+        
+        return;
+      }
+      
+      // For non-Google Docs URLs, use direct download with retry logic
+      console.log(`🔄 Downloading image from URL (attempt ${retryCount + 1}/${maxRetries + 1}):`, url);
+      
+      const response = await fetch(url);
+      
+      // Handle rate limiting with retry
+      if (response.status === 429) {
+        if (retryCount < maxRetries) {
+          const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
+          console.log(`⏱️ Rate limited, retrying in ${delay}ms...`);
+          setTimeout(() => {
+            downloadImageFromURL(url, retryCount + 1);
+          }, delay);
+          return;
+        } else {
+          throw new Error(`Rate limited after ${maxRetries} retries`);
+        }
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      const file = new File([blob], `downloaded-image-${Date.now()}.jpg`, {
+        type: blob.type || 'image/jpeg'
+      });
+      
+      console.log('✅ Downloaded image as file:', {
+        name: file.name,
+        size: file.size,
+        type: file.type
+      });
+      
+      // Upload the file
+      setTimeout(() => {
+        handleImageUpload(file);
+      }, 0);
+    } catch (error) {
+      console.error('❌ Error downloading image from URL:', error);
+      
+      // If all retries failed, show user-friendly message
+      if (retryCount >= maxRetries) {
+        alert('Failed to download image after multiple attempts. The image may be access-restricted or the server may be rate limiting requests.');
+      }
+    }
+  }, []);
+
+  // Image upload handler
+  const handleImageUpload = useCallback(async (file: File) => {
+    console.log('🖼️ handleImageUpload called with file:', file.name, file.type, file.size);
+    
+    if (!currentUser) {
+      console.error('❌ No current user for image upload');
+      alert('You must be logged in to upload images.');
+      return;
+    }
+
+    console.log('👤 Current user:', currentUser);
+
+    // Check session ID before proceeding
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) {
+      console.error('❌ No session ID found - user not authenticated');
+      alert('You must be logged in to upload images.');
+      return;
+    }
+    
+    console.log('🔐 Session ID found:', sessionId.substring(0, 8) + '...');
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      console.log('🔄 Creating image versions...');
+      // Create thumbnail and medium versions on the client side
+      const { thumbnail, medium } = await createImageVersions(file);
+      console.log('✅ Image versions created:', { thumbnail: thumbnail.name, medium: medium.name });
+      
+      // Upload to backend
+      const formData = new FormData();
+      formData.append('media', file);
+      formData.append('thumbnail', thumbnail);
+      formData.append('medium', medium);
+      formData.append('isPublic', 'true');
+      formData.append('takenBy', currentUser.name || currentUser.email);
+
+      console.log('📤 Uploading to', `${API_URL}/content/editor-images/upload`);
+      console.log('📤 Form data entries:', Array.from(formData.entries()).map(([key, value]) => [key, value instanceof File ? `File(${value.name}, ${value.size})` : value]));
+      
+      const response = await fetch(`${API_URL}/content/editor-images/upload`, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+        headers: {
+          'Authorization': `Bearer ${sessionId}`
+        }
+      });
+
+      console.log('📥 Upload response:', response.status, response.statusText);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Upload failed:', response.status, errorText);
+        throw new Error(`Upload failed: ${response.status} ${errorText}`);
+      }
+
+      const result: ImageUploadResponse = await response.json();
+      console.log('✅ Upload successful:', result);
+      
+      // Dispatch the INSERT_IMAGE_COMMAND with the image data
+      console.log('🚀 Dispatching INSERT_IMAGE_COMMAND with payload:', {
+        src: result.url,
+        altText: result.fileName,
+        width: (file as any).originalWidth,
+        height: (file as any).originalHeight,
+        fullSizeSrc: result.url,
+        thumbnailSrc: result.thumbnailUrl,
+        mediumSrc: result.mediumUrl,
+        imageId: result.id,
+        uploadedBy: currentUser.name || currentUser.email,
+        uploadedAt: new Date().toISOString()
+      });
+      
+      editor.dispatchCommand(INSERT_IMAGE_COMMAND, {
+        src: result.url,
+        altText: result.fileName,
+        width: (file as any).originalWidth,
+        height: (file as any).originalHeight,
+        fullSizeSrc: result.url,
+        thumbnailSrc: result.thumbnailUrl,
+        mediumSrc: result.mediumUrl,
+        imageId: result.id,
+        uploadedBy: currentUser.name || currentUser.email,
+        uploadedAt: new Date().toISOString()
+      });
+
+      setShowImageDialog(false);
+      console.log('✅ Image upload and insertion complete');
+    } catch (error) {
+      console.error('❌ Error uploading image:', error);
+      alert(`Failed to upload image: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+    }
+  }, [currentUser, editor]);
+
+  // Load gallery images
+  const loadGalleryImages = useCallback(async () => {
+    console.log('🖼️ Loading gallery images...');
+    
+    try {
+      // Get session ID for authentication
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) {
+        console.error('❌ No session ID found - cannot load gallery');
+        return;
+      }
+      
+      const response = await fetch(`${API_URL}/gallery/`, {
+        credentials: 'include',
+        headers: {
+          'Authorization': `Bearer ${sessionId}`
+        }
+      });
+
+      console.log('📥 Gallery response:', response.status, response.statusText);
+
+      if (response.ok) {
+        const images: MediaItem[] = await response.json();
+        console.log('✅ Gallery images loaded:', images.length, 'total items');
+        
+        const imageItems = images.filter(img => img.fileType.startsWith('image/'));
+        console.log('🖼️ Image items found:', imageItems.length);
+        
+        setGalleryImages(imageItems);
+      } else {
+        const errorText = await response.text();
+        console.error('❌ Gallery request failed:', response.status, errorText);
+        
+        // If it's a 403 error (admin required), show a more helpful message
+        if (response.status === 403) {
+          alert('Gallery access requires admin privileges. Only uploaded images will be shown.');
+          setGalleryImages([]);
+        } else {
+          alert(`Failed to load gallery: ${response.status} ${errorText}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error loading gallery images:', error);
+      alert('Failed to load gallery images. Only new uploads will be available.');
+      setGalleryImages([]);
+    }
+  }, []);
+
+  // Select image from gallery
+  const handleGalleryImageSelect = useCallback((image: MediaItem) => {
+    editor.dispatchCommand(INSERT_IMAGE_COMMAND, {
+      src: image.url,
+      altText: image.fileName,
+      width: undefined,
+      height: undefined,
+      fullSizeSrc: image.url,
+      thumbnailSrc: image.thumbnailUrl,
+      mediumSrc: image.mediumUrl,
+      imageId: image.id,
+      uploadedBy: image.uploaderName,
+      uploadedAt: image.uploadedAt
+    });
+
+    setShowGalleryDialog(false);
+  }, []);
+
+  // Insert image into editor
+  const insertImage = useCallback(
+    (payload: { 
+      src: string; 
+      altText?: string; 
+      width?: number; 
+      height?: number; 
+      fullSizeSrc?: string;
+      thumbnailSrc?: string;
+      mediumSrc?: string;
+      imageId?: string;
+      uploadedBy?: string;
+      uploadedAt?: string;
+    }) => {
+      console.log('🖼️ insertImage called with payload:', payload);
+      
+      editor.update(() => {
+        const selection = $getSelection();
+        console.log('🖼️ Current selection:', selection);
+        
+        // Create an image node using the custom ImageNode
+        const imageNode = $createImageNode({
+          src: payload.src,
+          altText: payload.altText || '',
+          width: payload.width,
+          height: payload.height,
+          fullSizeSrc: payload.fullSizeSrc || payload.src,
+          thumbnailSrc: payload.thumbnailSrc,
+          mediumSrc: payload.mediumSrc,
+          imageId: payload.imageId,
+          uploadedBy: payload.uploadedBy,
+          uploadedAt: payload.uploadedAt
+        });
+
+        console.log('🖼️ Created image node:', imageNode);
+
+        if ($isRangeSelection(selection)) {
+          console.log('🎯 Range selection detected, inserting at selection');
+          // Insert the image node at current selection
+          selection.insertNodes([imageNode]);
+        } else {
+          console.log('🎯 No range selection, appending to root');
+          // If no selection, append to the end of the document
+          const root = $getRoot();
+          root.append(imageNode);
+        }
+        
+        console.log('✅ Image node inserted successfully');
       });
     },
     [editor]
@@ -48,47 +612,635 @@ export function ImagePlugin({ onImageSelect }: ImagePluginProps) {
 
   // Register command listener
   useEffect(() => {
-    const removeListener = editor.registerCommand(
+    console.log('🎯 Registering INSERT_IMAGE_COMMAND listener');
+    
+    // Debug editor state
+    const debugEditorState = () => {
+      console.log('🔍 Editor debug info:', {
+        hasEditor: !!editor,
+        isEditable: editor ? editor.isEditable() : false,
+        rootElement: editor ? editor.getRootElement() : null,
+        hasRootElement: editor ? !!editor.getRootElement() : false
+      });
+    };
+
+    debugEditorState();
+    
+    // Register the INSERT_IMAGE_COMMAND listener
+    const removeInsertImageCommand = editor.registerCommand(
       INSERT_IMAGE_COMMAND,
       (payload: any) => {
-        insertImage(payload);
+        console.log('📸 INSERT_IMAGE_COMMAND triggered with payload:', payload);
+        
+        // Handle different payload structures
+        const src = payload.src || payload.url;
+        const altText = payload.altText || payload.alt || '';
+        
+        console.log('🖼️ Creating image node with:', { src, altText });
+        
+        const imageNode = $createImageNode({
+          src: src,
+          altText: altText,
+          width: payload.width,
+          height: payload.height,
+          fullSizeSrc: payload.fullSizeSrc,
+          thumbnailSrc: payload.thumbnailSrc,
+          mediumSrc: payload.mediumSrc,
+          imageId: payload.imageId,
+          uploadedBy: payload.uploadedBy,
+          uploadedAt: payload.uploadedAt
+        });
+        
+        console.log('✅ Image node created, inserting into editor...');
+        console.log('🔍 Image node details:', {
+          type: imageNode.getType(),
+          src: imageNode.__src,
+          altText: imageNode.__altText,
+          width: imageNode.__width,
+          height: imageNode.__height,
+          hasCreateDOM: typeof imageNode.createDOM === 'function'
+        });
+        
+        // Test if image URL is accessible
+        const testImg = new Image();
+        testImg.onload = () => {
+          console.log('✅ Image URL is accessible and loads successfully');
+        };
+        testImg.onerror = () => {
+          console.error('❌ Image URL failed to load - accessibility issue');
+        };
+        testImg.src = src;
+        
+        editor.update(() => {
+          const selection = $getSelection();
+          const root = $getRoot();
+          
+          console.log('📊 Editor state before insertion:', {
+            hasSelection: !!selection,
+            isRangeSelection: $isRangeSelection(selection),
+            rootChildren: root.getChildren().length,
+            rootType: root.getType()
+          });
+          
+          if ($isRangeSelection(selection)) {
+            console.log('📍 Inserting at selection');
+            
+            // Add a paragraph after the image for text input
+            const paragraphNode = $createParagraphNode();
+            
+            // Insert both image and paragraph together
+            selection.insertNodes([imageNode, paragraphNode]);
+            
+            // Move cursor to the new paragraph
+            paragraphNode.select();
+          } else {
+            console.log('📍 Appending to root');
+            root.append(imageNode);
+            
+            // Add a paragraph after the image for text input
+            const paragraphNode = $createParagraphNode();
+            root.append(paragraphNode);
+            // Move cursor to the new paragraph
+            paragraphNode.select();
+          }
+          
+          console.log('📊 Editor state after insertion:', {
+            rootChildren: root.getChildren().length,
+            lastChild: root.getLastChild()?.getType(),
+            secondToLastChild: root.getChildren()[root.getChildren().length - 2]?.getType()
+          });
+          
+          console.log('✅ Image node inserted into editor');
+        });
+        
         return true;
       },
       COMMAND_PRIORITY_EDITOR
     );
     
-    return () => {
-      removeListener();
+    console.log('✅ INSERT_IMAGE_COMMAND listener registered');
+    
+    // Add DOM-level paste event listener for debugging
+    const rootElement = editor.getRootElement();
+    
+    const handleDOMPaste = (e: ClipboardEvent) => {
+      console.log('🚨 DOM PASTE EVENT CAPTURED!', {
+        hasClipboardData: !!e.clipboardData,
+        itemsLength: e.clipboardData?.items?.length || 0,
+        types: e.clipboardData?.types || [],
+        items: e.clipboardData?.items ? Array.from(e.clipboardData.items).map(item => ({
+          kind: item.kind,
+          type: item.type
+        })) : []
+      });
     };
-  }, [editor, insertImage]);
 
-  // Register a custom handler for image insertion from gallery
-  useEffect(() => {
-    if (onImageSelect) {
-      const handleImageInsert = () => {
-        onImageSelect();
-      };
+    if (rootElement) {
+      console.log('✅ Adding DOM paste listener to root element');
+      rootElement.addEventListener('paste', handleDOMPaste);
+    } else {
+      console.log('❌ No root element found for DOM paste listener');
+    }
+
+    console.log('📋 Registering paste handler...');
+    
+    // Register the PASTE_COMMAND listener
+    const removePasteCommand = editor.registerCommand(
+      PASTE_COMMAND,
+      (event: ClipboardEvent) => {
+        console.log('🚨 LEXICAL PASTE COMMAND FIRED!', {
+          hasClipboardData: !!event.clipboardData,
+          itemsLength: event.clipboardData?.items?.length || 0,
+          types: event.clipboardData?.types || []
+        });
+
+        if (!event.clipboardData) {
+          console.log('❌ No clipboard data in paste event');
+          return false;
+        }
+
+        const items = Array.from(event.clipboardData.items);
+        console.log('📋 Clipboard items detailed:', items.map((item, index) => ({
+          index,
+          kind: item.kind,
+          type: item.type,
+          isFile: item.kind === 'file',
+          isImage: item.type.startsWith('image/'),
+          matchesPattern: item.kind === 'file' && item.type.startsWith('image/')
+        })));
+
+        // Also check clipboard.types for additional info
+        console.log('📋 Clipboard types:', event.clipboardData.types);
+
+        for (const item of items) {
+          console.log(`🔍 Checking item: kind="${item.kind}", type="${item.type}"`);
+          
+          // Handle regular file-based images
+          if (item.kind === 'file' && item.type.startsWith('image/')) {
+            console.log('🖼️ Found regular image file in clipboard:', item.type);
+            
+            try {
+              const file = item.getAsFile();
+              console.log('📁 getAsFile() result:', {
+                hasFile: !!file,
+                name: file?.name,
+                size: file?.size,
+                type: file?.type,
+                lastModified: file?.lastModified
+              });
+              
+              if (file) {
+                console.log('✅ Successfully got file object, uploading...');
+                
+                // Prevent default paste behavior for images
+                event.preventDefault();
+                
+                // Upload the image
+                handleImageUpload(file);
+                return true;
+              } else {
+                console.log('❌ getAsFile() returned null/undefined');
+              }
+            } catch (error) {
+              console.error('❌ Error calling getAsFile():', error);
+            }
+          }
+          
+          // Handle HTML content (which includes Google Docs images)
+          else if (item.kind === 'string' && item.type === 'text/html') {
+            console.log('🔍 Found HTML content, checking for images...');
+            
+            try {
+              item.getAsString((htmlData) => {
+                console.log('📄 HTML data received:', {
+                  hasData: !!htmlData,
+                  dataLength: htmlData?.length,
+                  containsImg: htmlData?.includes('<img'),
+                  htmlPreview: htmlData?.substring(0, 200) + '...'
+                });
+                
+                // Check if HTML contains image tags
+                if (htmlData && htmlData.includes('<img')) {
+                  console.log('🖼️ Found image in HTML content, processing...');
+                  
+                  // Process images but don't prevent text pasting
+                  handleHTMLImageContent(htmlData);
+                  
+                  // Don't prevent default - let text also be pasted
+                  // event.preventDefault(); // Removed this line
+                }
+              });
+              
+              // Don't return true - let other paste handlers process text content
+              // return true; // Removed this line
+            } catch (error) {
+              console.error('❌ Error processing HTML content:', error);
+            }
+          }
+        }
+
+        console.log('❌ No image found in clipboard items');
+        return false;
+      },
+      COMMAND_PRIORITY_LOW
+    );
+
+    console.log('✅ Paste handler registered');
+
+    // Cleanup function
+    return () => {
+      console.log('🗑️ Removing INSERT_IMAGE_COMMAND listener');
+      removeInsertImageCommand();
       
-      // Create a button in the toolbar to trigger image insertion
-      const toolbarElement = document.querySelector('.lexical-editor-toolbar');
-      if (toolbarElement) {
-        const imageButton = document.createElement('button');
-        imageButton.className = 'lexical-toolbar-button';
-        imageButton.textContent = '🖼️ Image';
-        imageButton.addEventListener('click', handleImageInsert);
-        toolbarElement.appendChild(imageButton);
+      console.log('🗑️ Removing paste handler');
+      removePasteCommand();
+      
+      if (rootElement) {
+        console.log('🗑️ Removing DOM paste listener');
+        rootElement.removeEventListener('paste', handleDOMPaste);
       }
-      
-      return () => {
-        // Clean up the button when the component unmounts
-        const imageButton = document.querySelector('.lexical-toolbar-button:last-child');
-        imageButton?.removeEventListener('click', handleImageInsert);
-        imageButton?.remove();
+    };
+  }, [editor]);
+
+  // Handle paste events for images
+  useEffect(() => {
+    console.log('📋 Registering paste handler...');
+    
+    // Add global debug function
+    if (typeof window !== 'undefined') {
+      (window as any).debugImagePlugin = () => {
+        console.log('🔍 ImagePlugin Debug Info:');
+        console.log('  - currentUser:', currentUser);
+        console.log('  - editor:', editor);
+        console.log('  - isUploading:', isUploading);
+        console.log('  - showImageDialog:', showImageDialog);
+        
+        const sessionId = localStorage.getItem('sessionId');
+        console.log('  - sessionId:', sessionId ? sessionId.substring(0, 8) + '...' : 'Not found');
+        
+        return {
+          currentUser,
+          hasEditor: !!editor,
+          isUploading,
+          showImageDialog,
+          sessionId: !!sessionId
+        };
       };
     }
     
-    return () => {};
-  }, [onImageSelect]);
+    // No duplicate PASTE_COMMAND handler needed - the main one handles everything
+    console.log('✅ Debug functions registered');
+  }, [handleImageUpload, currentUser]);
 
-  return null;
+  // Create image versions (thumbnail and medium)
+  const createImageVersions = async (file: File): Promise<{ thumbnail: File; medium: File }> => {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      
+      img.onload = () => {
+        try {
+          // Create thumbnail (150x150)
+          canvas.width = 150;
+          canvas.height = 150;
+          
+          const scale = Math.min(150 / img.width, 150 / img.height);
+          const scaledWidth = img.width * scale;
+          const scaledHeight = img.height * scale;
+          const offsetX = (150 - scaledWidth) / 2;
+          const offsetY = (150 - scaledHeight) / 2;
+          
+          ctx!.fillStyle = '#f0f0f0';
+          ctx!.fillRect(0, 0, 150, 150);
+          ctx!.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+          
+          canvas.toBlob((thumbnailBlob) => {
+            if (!thumbnailBlob) {
+              reject(new Error('Failed to create thumbnail'));
+              return;
+            }
+            
+            const thumbnailFile = new File([thumbnailBlob], `thumbnail_${file.name}`, {
+              type: file.type,
+              lastModified: Date.now()
+            });
+            
+            // Create medium version (800px max)
+            const maxDimension = 800;
+            let mediumWidth = img.width;
+            let mediumHeight = img.height;
+            
+            if (img.width > maxDimension || img.height > maxDimension) {
+              const scale = Math.min(maxDimension / img.width, maxDimension / img.height);
+              mediumWidth = img.width * scale;
+              mediumHeight = img.height * scale;
+            }
+            
+            canvas.width = mediumWidth;
+            canvas.height = mediumHeight;
+            ctx!.drawImage(img, 0, 0, mediumWidth, mediumHeight);
+            
+            canvas.toBlob((mediumBlob) => {
+              if (!mediumBlob) {
+                reject(new Error('Failed to create medium image'));
+                return;
+              }
+              
+              const mediumFile = new File([mediumBlob], `medium_${file.name}`, {
+                type: file.type,
+                lastModified: Date.now()
+              });
+              
+              resolve({ thumbnail: thumbnailFile, medium: mediumFile });
+            }, file.type, 0.9);
+          }, file.type, 0.9);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  // Add image button to toolbar
+  useEffect(() => {
+    const toolbarElement = document.querySelector('.lexical-toolbar');
+    if (toolbarElement && !toolbarElement.querySelector('.image-toolbar-button')) {
+      const imageButton = document.createElement('button');
+      imageButton.className = 'lexical-toolbar-button image-toolbar-button';
+      imageButton.innerHTML = '🖼️';
+      imageButton.title = 'Insert Image';
+      imageButton.type = 'button';
+      
+      imageButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        setShowImageDialog(true);
+      });
+      
+      toolbarElement.appendChild(imageButton);
+    }
+    
+    return () => {
+      const button = document.querySelector('.image-toolbar-button');
+      if (button) {
+        button.remove();
+      }
+    };
+  }, []);
+
+  return (
+    <>
+      {/* Image Upload Dialog */}
+      {showImageDialog && (
+        <div className="image-dialog-overlay" onClick={() => setShowImageDialog(false)}>
+          <div className="image-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="image-dialog-header">
+              <h3>Insert Image</h3>
+              <button 
+                className="close-button"
+                onClick={() => setShowImageDialog(false)}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="image-dialog-content">
+              <div className="image-upload-section">
+                <h4>Upload New Image</h4>
+                <div className="image-upload-area">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        handleImageUpload(file);
+                      }
+                    }}
+                    disabled={isUploading}
+                  />
+                  {isUploading && (
+                    <div className="upload-progress">
+                      <div className="progress-bar">
+                        <div 
+                          className="progress-fill" 
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <span>Uploading...</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="image-gallery-section">
+                <h4>Or Select from Gallery</h4>
+                <button 
+                  className="gallery-button"
+                  onClick={() => {
+                    setShowImageDialog(false);
+                    setShowGalleryDialog(true);
+                    loadGalleryImages();
+                  }}
+                >
+                  Browse Gallery
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Gallery Selection Dialog */}
+      {showGalleryDialog && (
+        <div className="image-dialog-overlay" onClick={() => setShowGalleryDialog(false)}>
+          <div className="image-dialog gallery-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="image-dialog-header">
+              <h3>Select Image from Gallery</h3>
+              <button 
+                className="close-button"
+                onClick={() => setShowGalleryDialog(false)}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="gallery-grid">
+              {galleryImages.map((image) => (
+                <div
+                  key={image.id}
+                  className="gallery-item"
+                  onClick={() => handleGalleryImageSelect(image)}
+                >
+                  <img
+                    src={image.thumbnailUrl || image.url}
+                    alt={image.fileName}
+                    className="gallery-thumbnail"
+                  />
+                  <div className="gallery-item-info">
+                    <span className="gallery-item-name">{image.fileName}</span>
+                    <span className="gallery-item-uploader">by {image.uploaderName}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          .image-dialog-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+          }
+
+          .image-dialog {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+          }
+
+          .gallery-dialog {
+            max-width: 800px;
+            width: 90%;
+          }
+
+          .image-dialog-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+          }
+
+          .close-button {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #666;
+          }
+
+          .image-upload-section, .image-gallery-section {
+            margin-bottom: 20px;
+          }
+
+          .image-upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin-top: 10px;
+          }
+
+          .upload-progress {
+            margin-top: 10px;
+          }
+
+          .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 5px;
+          }
+
+          .progress-fill {
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.3s ease;
+          }
+
+          .gallery-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+          }
+
+          .gallery-button:hover {
+            background: #0056b3;
+          }
+
+          .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+          }
+
+          .gallery-item {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            cursor: pointer;
+            transition: border-color 0.2s ease;
+          }
+
+          .gallery-item:hover {
+            border-color: #007bff;
+          }
+
+          .gallery-thumbnail {
+            width: 100%;
+            height: 100px;
+            object-fit: cover;
+            border-radius: 4px;
+          }
+
+          .gallery-item-info {
+            margin-top: 5px;
+          }
+
+          .gallery-item-name {
+            display: block;
+            font-size: 12px;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .gallery-item-uploader {
+            display: block;
+            font-size: 10px;
+            color: #666;
+          }
+
+          .image-toolbar-button {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 6px 12px;
+            margin: 0 2px;
+            cursor: pointer;
+            font-size: 14px;
+          }
+
+          .image-toolbar-button:hover {
+            background: #e9ecef;
+          }
+        `
+      }} />
+    </>
+  );
 }

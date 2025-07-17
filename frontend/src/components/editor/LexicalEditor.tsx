@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
@@ -92,6 +92,12 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   const editorRef = useRef<LexicalEditor | null>(null);
   const hasInitialized = useRef(false);
 
+  // Memoize currentUser to prevent unnecessary re-renders of ImagePlugin
+  const currentUser = useMemo(() => {
+    if (!currentUserId) return null;
+    return { id: currentUserId, name: currentUserId, email: currentUserId };
+  }, [currentUserId]);
+
   // Update editor state when readOnly changes
   useEffect(() => {
     if (editorRef.current) {
@@ -100,19 +106,21 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   }, [readOnly]);
 
   // Plugin to initialize editor reference
-  const EditorInitPlugin: React.FC = () => {
-    const [editor] = useLexicalComposerContext();
-    
-    useEffect(() => {
-      console.log('EditorInitPlugin: Setting editor reference');
-      editorRef.current = editor;
-    }, [editor]);
-    
-    return null;
-  };
+  const EditorInitPlugin: React.FC = useMemo(() => {
+    return () => {
+      const [editor] = useLexicalComposerContext();
+      
+      useEffect(() => {
+        console.log('EditorInitPlugin: Setting editor reference');
+        editorRef.current = editor;
+      }, [editor]);
+      
+      return null;
+    };
+  }, []);
 
   // Prevent form submission when interacting with editor
-  const handleEditorClick = (e: React.MouseEvent) => {
+  const handleEditorClick = useCallback((e: React.MouseEvent) => {
     // Allow normal text selection when suggestions are enabled
     if (canCreateSuggestions) {
       return;
@@ -123,17 +131,17 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       e.preventDefault();
       e.stopPropagation();
     }
-  };
+  }, [canCreateSuggestions, currentUserId]);
 
-  const handleEditorKeyDown = (e: React.KeyboardEvent) => {
+  const handleEditorKeyDown = useCallback((e: React.KeyboardEvent) => {
     // Only prevent Enter in edit mode, allow text selection in suggestion mode
     if (e.key === 'Enter' && !e.shiftKey && !readOnly) {
       e.preventDefault();
     }
-  };
+  }, [readOnly]);
 
   // Custom handling of state changes
-  const handleChange = (editorState: EditorState, editor: LexicalEditor) => {
+  const handleChange = useCallback((editorState: EditorState, editor: LexicalEditor) => {
     if (!editorRef.current) {
       editorRef.current = editor;
     }
@@ -149,7 +157,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       const json = JSON.stringify(editorState);
       onChange(editor, json);
     }
-  };
+  }, [onChange]);
 
   // Initialize editor content when component mounts or initialContent changes
   useEffect(() => {
@@ -271,8 +279,8 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
     }
   }, [content, isLoaded]);
 
-  // Create initialization config for Lexical
-  const initialConfig = {
+  // Memoize initialization config to prevent LexicalComposer recreation
+  const initialConfig = useMemo(() => ({
     namespace: 'DynamicContentEditor',
     theme: {
       paragraph: 'editor-paragraph',
@@ -330,7 +338,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       console.error('Lexical Editor Error:', error);
     },
     editable: !readOnly,
-  };
+  }), [readOnly]);
 
   useEffect(() => {
     setIsLoaded(true);
@@ -378,7 +386,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
           {initialContent && isValidDraftJs(initialContent) && (
             <DraftJsImportPlugin initialContent={initialContent} />
           )}
-          <ImagePlugin onImageSelect={onImageSelect} />
+          <ImagePlugin onImageSelect={onImageSelect} currentUser={currentUser} />
           <IndentationPlugin />
           <TextColorPlugin />
           <FontSizePlugin />
