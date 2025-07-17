@@ -1235,6 +1235,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             setRemoteUpdateStatus('none');
           }, 1000);
           
+          // Request cursor positions from all connected users after real-time update
+          if (webSocketClientRef.current) {
+            setTimeout(() => {
+              try {
+                webSocketClientRef.current.send({
+                  type: 'request_cursor_refresh_all',
+                  data: {
+                    requesterId: effectiveUserId,
+                    requesterName: currentUser.name || currentUser.email,
+                    timestamp: new Date().toISOString(),
+                    reason: 'realtime_update_specialized'
+                  }
+                });
+                console.log('📍 Requested cursor refresh from all users after specialized real-time update');
+              } catch (error) {
+                console.error('❌ Failed to request cursor refresh after specialized real-time update:', error);
+              }
+            }, 300); // Shorter delay for real-time updates
+          }
+          
           // Reset flag after a short delay to ensure the change event is processed
           setTimeout(() => {
             isApplyingRealTimeUpdateRef.current = false;
@@ -1258,6 +1278,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           setTimeout(() => {
             setRemoteUpdateStatus('none');
           }, 1000);
+          
+          // Request cursor positions from all connected users after real-time update
+          if (webSocketClientRef.current) {
+            setTimeout(() => {
+              try {
+                webSocketClientRef.current.send({
+                  type: 'request_cursor_refresh_all',
+                  data: {
+                    requesterId: effectiveUserId,
+                    requesterName: currentUser.name || currentUser.email,
+                    timestamp: new Date().toISOString(),
+                    reason: 'realtime_update_fallback'
+                  }
+                });
+                console.log('📍 Requested cursor refresh from all users after fallback real-time update');
+              } catch (error) {
+                console.error('❌ Failed to request cursor refresh after fallback real-time update:', error);
+              }
+            }, 300); // Shorter delay for real-time updates
+          }
           
           // Reset flag after a short delay to ensure the change event is processed
           setTimeout(() => {
@@ -1324,6 +1364,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         setTimeout(() => {
           setRemoteUpdateStatus('none');
         }, 2000);
+        
+        // Request cursor positions from all connected users after remote update
+        if (webSocketClientRef.current) {
+          setTimeout(() => {
+            try {
+              webSocketClientRef.current.send({
+                type: 'request_cursor_refresh_all',
+                data: {
+                  requesterId: effectiveUserId,
+                  requesterName: currentUser.name || currentUser.email,
+                  timestamp: new Date().toISOString(),
+                  reason: 'content_updated'
+                }
+              });
+              console.log('📍 Requested cursor refresh from all users after remote update');
+            } catch (error) {
+              console.error('❌ Failed to request cursor refresh:', error);
+            }
+          }, 500); // Wait for content to settle before requesting cursors
+        }
         
         // Show a notification about the update
         if (onRefreshNeeded) {

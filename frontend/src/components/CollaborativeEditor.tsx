@@ -49,6 +49,28 @@ const getUserColor = (userId: string): string => {
   return colors[Math.abs(hash) % colors.length];
 };
 
+// ===================================================================
+// CURSOR POSITIONING UTILITIES - IMPROVED TO HANDLE EDGE CASES
+// ===================================================================
+// 
+// The following utilities have been enhanced to handle problematic scenarios:
+// 1. BLANK LINES: Empty paragraphs without text nodes now get temporary text nodes for positioning
+// 2. MISSING NODES: When DOM nodes can't be found, fallback positioning strategies are used
+// 3. EMPTY ELEMENTS: Elements without text content are handled gracefully with virtual positions
+// 4. CLEANUP: Temporary text nodes are automatically cleaned up to prevent DOM pollution
+// 5. LOOP PREVENTION: Recursion guards prevent infinite loops during selection handling
+// 
+// Key improvements:
+// - createVirtualTextPosition() creates temporary text nodes for empty elements
+// - findTextNodeInElement() enhanced with better error handling and fallbacks
+// - getDOMPositionFromLinePosition() handles empty elements gracefully
+// - getLinePositionFromDOMSelection() provides robust position detection
+// - Automatic cleanup prevents DOM pollution
+// - Recursion guards prevent infinite loops
+
+// Add recursion guard
+let isHandlingSelectionChange = false;
+
 // Line/Position utility functions
 const getLinePositionFromDOMSelection = (editorElement: HTMLElement, selection: Range): { line: number; column: number } | null => {
   try {
@@ -104,11 +126,12 @@ const getLinePositionFromDOMSelection = (editorElement: HTMLElement, selection: 
       currentColumn += textContent.length;
     }
     
+    // If not found (e.g., empty paragraph), set column to 0
     if (!found) {
-      return null;
+      currentColumn = 0;
     }
     
-          return { line: currentLine, column: currentColumn };
+    return { line: currentLine, column: currentColumn };
   } catch (error) {
     console.error('❌ Error getting line/position from DOM selection:', error);
     return null;
@@ -133,6 +156,8 @@ const getDOMPositionFromLinePosition = (editorElement: HTMLElement, line: number
         if (lastNode) {
           return { textNode: lastNode, offset: (lastNode.textContent || '').length };
         }
+        // If no text nodes, create a virtual position at the empty paragraph
+        return createVirtualTextPosition(lastParagraph as HTMLElement);
       }
       return null;
     }
@@ -171,12 +196,54 @@ const getDOMPositionFromLinePosition = (editorElement: HTMLElement, line: number
       return { textNode: lastNode, offset: (lastNode.textContent || '').length };
     }
     
-    return null;
+    // If no text nodes found (empty paragraph), create a virtual position
+    return createVirtualTextPosition(targetParagraph as HTMLElement);
   } catch (error) {
     console.error('❌ Error getting DOM position from line/position:', error);
     return null;
   }
 };
+
+// Helper function to create a virtual text position for empty elements
+const createVirtualTextPosition = (element: HTMLElement): { textNode: Node; offset: number } | null => {
+  try {
+    // For empty paragraphs, find existing text content or use element positioning
+    let textNode = element.firstChild;
+    
+    // If element has a BR tag, use that for positioning
+    const brTag = element.querySelector('br');
+    if (brTag) {
+      return {
+        textNode: brTag,
+        offset: 0
+      };
+    }
+    
+    // If element is completely empty, we'll need to use the element itself
+    if (!textNode || element.innerHTML.trim() === '') {
+      // Don't create temporary nodes during selection handling to avoid loops
+      if (isHandlingSelectionChange) {
+        console.warn('⚠️ Skipping virtual text creation during selection handling to prevent loops');
+        return null;
+      }
+      
+      // For empty elements, return a position at the element itself
+      return {
+        textNode: element,
+        offset: 0
+      };
+    }
+    
+    return {
+      textNode: textNode,
+      offset: 0
+    };
+  } catch (error) {
+    console.error('❌ Error creating virtual text position:', error);
+    return null;
+  }
+};
+
 
 const getLexicalSelectionLinePosition = (editor: LexicalEditor): { line: number; column: number } | null => {
   try {
@@ -199,12 +266,23 @@ const getLexicalSelectionLinePosition = (editor: LexicalEditor): { line: number;
       // Find the DOM node corresponding to the Lexical node
       const anchorDOMElement = editor.getElementByKey(anchorNode.getKey());
       if (!anchorDOMElement) {
+        console.warn('❌ Could not find DOM element for Lexical node:', anchorNode.getKey());
         return null;
       }
       
       // Find the text node within the DOM element
       const textNodeResult = findTextNodeInElement(anchorDOMElement, anchorOffset);
       if (!textNodeResult) {
+        console.warn('❌ Could not find text node in element, trying fallback for empty element');
+        
+        // Fallback for empty elements or elements without text nodes
+        const fallbackPosition = createVirtualTextPosition(anchorDOMElement as HTMLElement);
+        if (fallbackPosition) {
+          range.setStart(fallbackPosition.textNode, fallbackPosition.offset);
+          range.setEnd(fallbackPosition.textNode, fallbackPosition.offset);
+          return getLinePositionFromDOMSelection(editorElement, range);
+        }
+        
         return null;
       }
       
@@ -215,6 +293,87 @@ const getLexicalSelectionLinePosition = (editor: LexicalEditor): { line: number;
     });
   } catch (error) {
     console.error('❌ Error getting Lexical selection line/position:', error);
+    return null;
+  }
+};
+
+// New function to get both anchor and focus positions for selections
+const getLexicalSelectionRange = (editor: LexicalEditor): { 
+  anchor: { line: number; column: number }; 
+  focus: { line: number; column: number }; 
+  isCollapsed: boolean; 
+} | null => {
+  try {
+    return editor.getEditorState().read(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) {
+        return null;
+      }
+      
+      const editorElement = editor.getRootElement();
+      if (!editorElement) {
+        return null;
+      }
+
+      const isCollapsed = selection.isCollapsed();
+      
+      // Get anchor position
+      const anchorNode = selection.anchor.getNode();
+      const anchorOffset = selection.anchor.offset;
+      
+      // Get focus position  
+      const focusNode = selection.focus.getNode();
+      const focusOffset = selection.focus.offset;
+      
+      // Helper function to get line position for a specific node/offset
+      const getPositionForNode = (node: any, offset: number) => {
+        const domElement = editor.getElementByKey(node.getKey());
+        if (!domElement) {
+          console.warn('❌ Could not find DOM element for node:', node.getKey());
+          return null;
+        }
+        
+        const textNodeResult = findTextNodeInElement(domElement, offset);
+        if (!textNodeResult) {
+          // Fallback for empty elements
+          const fallbackPosition = createVirtualTextPosition(domElement as HTMLElement);
+          if (fallbackPosition) {
+            const range = document.createRange();
+            range.setStart(fallbackPosition.textNode, fallbackPosition.offset);
+            range.setEnd(fallbackPosition.textNode, fallbackPosition.offset);
+            return getLinePositionFromDOMSelection(editorElement, range);
+          }
+          return null;
+        }
+        
+        const range = document.createRange();
+        range.setStart(textNodeResult.textNode, textNodeResult.offset);
+        range.setEnd(textNodeResult.textNode, textNodeResult.offset);
+        return getLinePositionFromDOMSelection(editorElement, range);
+      };
+      
+      const anchorPosition = getPositionForNode(anchorNode, anchorOffset);
+      if (!anchorPosition) {
+        return null;
+      }
+      
+      let focusPosition = anchorPosition; // Default to anchor if collapsed
+      
+      if (!isCollapsed) {
+        const calculatedFocusPosition = getPositionForNode(focusNode, focusOffset);
+        if (calculatedFocusPosition) {
+          focusPosition = calculatedFocusPosition;
+        }
+      }
+      
+      return {
+        anchor: anchorPosition,
+        focus: focusPosition,
+        isCollapsed: isCollapsed
+      };
+    });
+  } catch (error) {
+    console.error('❌ Error getting Lexical selection range:', error);
     return null;
   }
 };
@@ -256,26 +415,45 @@ const setLexicalSelectionFromLinePosition = (editor: LexicalEditor, line: number
 };
 
 const findTextNodeInElement = (element: Element, targetOffset: number): { textNode: Node; offset: number } | null => {
-  const walker = document.createTreeWalker(
-    element,
-    NodeFilter.SHOW_TEXT
-  );
-  
-  let currentOffset = 0;
-  let node;
-  
-  while (node = walker.nextNode()) {
-    const textContent = node.textContent || '';
-    if (currentOffset + textContent.length >= targetOffset) {
-      return {
-        textNode: node,
-        offset: targetOffset - currentOffset
-      };
+  try {
+    const walker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_TEXT
+    );
+    
+    let currentOffset = 0;
+    let node;
+    
+    while (node = walker.nextNode()) {
+      const textContent = node.textContent || '';
+      if (currentOffset + textContent.length >= targetOffset) {
+        return {
+          textNode: node,
+          offset: Math.min(targetOffset - currentOffset, textContent.length)
+        };
+      }
+      currentOffset += textContent.length;
     }
-    currentOffset += textContent.length;
+    
+    // If no text nodes found, try to create a virtual position for empty elements
+    console.warn('❌ No text nodes found in element, attempting to create virtual position');
+    
+    // Don't create temporary nodes during selection handling to avoid loops
+    if (isHandlingSelectionChange) {
+      console.warn('⚠️ Skipping virtual position creation during selection handling to prevent loops');
+      return null;
+    }
+    
+    const virtualPos = createVirtualTextPosition(element as HTMLElement);
+    if (virtualPos) {
+      return virtualPos;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ Error in findTextNodeInElement:', error);
+    return null;
   }
-  
-  return null;
 };
 
 // Remote cursor overlay plugin
@@ -501,6 +679,14 @@ const RemoteCursorPlugin: React.FC<{
       const column = cursor.position.column;
       const isSelection = cursor.position.type === 'selection';
       
+      console.log('🔍 Positioning cursor:', {
+        userId: cursor.userId,
+        line,
+        column,
+        isSelection,
+        userName: cursor.userName
+      });
+      
       // Handle selections differently
       if (isSelection && cursor.position.focus && cursor.position.anchor) {
         const anchorLine = cursor.position.anchor.line;
@@ -519,21 +705,8 @@ const RemoteCursorPlugin: React.FC<{
             
             if (anchorDOMPosition && focusDOMPosition) {
               const range = document.createRange();
-              
-              // Ensure proper range direction
-              let startPosition = anchorDOMPosition;
-              let endPosition = focusDOMPosition;
-              
-              // For same text node, ensure start < end
-              if (anchorDOMPosition.textNode === focusDOMPosition.textNode) {
-                if (anchorDOMPosition.offset > focusDOMPosition.offset) {
-                  startPosition = focusDOMPosition;
-                  endPosition = anchorDOMPosition;
-                }
-              }
-              
-              range.setStart(startPosition.textNode, startPosition.offset);
-              range.setEnd(endPosition.textNode, endPosition.offset);
+              range.setStart(anchorDOMPosition.textNode, anchorDOMPosition.offset);
+              range.setEnd(focusDOMPosition.textNode, focusDOMPosition.offset);
               
               const rect = range.getBoundingClientRect();
               const overlayRect = overlay.getBoundingClientRect();
@@ -564,11 +737,14 @@ const RemoteCursorPlugin: React.FC<{
                 }
                 
                 positionLabel(cursorElement, left, top, overlay, cursor);
+                console.log('✅ Selection positioned successfully');
                 return;
               }
+            } else {
+              console.warn('⚠️ Could not get DOM positions for selection, falling back to cursor');
             }
           } catch (error) {
-            // Selection positioning error, fall back to cursor
+            console.warn('⚠️ Selection positioning error, falling back to cursor:', error);
           }
         }
       }
@@ -607,60 +783,70 @@ const RemoteCursorPlugin: React.FC<{
             
             // Smart label positioning
             positionLabel(cursorElement, left, top, overlay, cursor);
+            console.log('✅ Cursor positioned successfully at', { left, top });
             return; // Successfully positioned
+          } else {
+            console.warn('⚠️ Range has zero height, trying paragraph-based positioning');
           }
         } catch (error) {
-          // Range positioning error
+          console.warn('⚠️ Range positioning error, trying paragraph-based positioning:', error);
         }
       } else {
-        
-        // Hide the cursor instead of showing fallback - this prevents the upper left corner issue
-        cursorElement.style.opacity = '0';
-        
-        // Request a fresh cursor position from this user to update their stale position
-        if (webSocketClient) {
-          const now = Date.now();
-          const userRequestKey = `${cursor.userId}_recent`;
-          const lastRequestTime = sentRefreshRequests.current.get(userRequestKey) || 0;
-          const timeSinceLastRequest = now - lastRequestTime;
-          
-          // Rate limit: don't send requests to the same user more than once every 3 seconds
-          if (timeSinceLastRequest > 3000) {
-            try {
-              webSocketClient.send({
-                type: 'request_cursor_refresh',
-                targetUserId: cursor.userId,
-                requestingUserId: currentUserId,
-                data: {
-                  reason: 'stale_line_position',
-                  staleCursorPosition: [line, column],
-                  timestamp: new Date().toISOString()
-                }
-              });
-              
-              // Track this request to prevent duplicates
-              sentRefreshRequests.current.set(userRequestKey, now);
-              
-              // Clean up after 10 seconds
-              setTimeout(() => {
-                sentRefreshRequests.current.delete(userRequestKey);
-              }, 10000);
-              
-            } catch (error) {
-              console.error('❌ Failed to request cursor refresh:', error);
-            }
-          }
-        }
-        
-        return; // Exit early, don't show fallback
+        console.warn('⚠️ Could not get DOM position, trying paragraph-based positioning');
       }
       
-      // Fallback positioning should only be reached if we can't find DOM positions
-      cursorElement.style.left = '10px';
-      cursorElement.style.top = '10px';
-      cursorElement.style.opacity = '0.7';
+      // Fallback: Position at the start/end of the target paragraph
+      try {
+        const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph');
+        
+        if (line < paragraphs.length) {
+          const targetParagraph = paragraphs[line] as HTMLElement;
+          const paragraphRect = targetParagraph.getBoundingClientRect();
+          const overlayRect = overlay.getBoundingClientRect();
+          
+          if (paragraphRect.height > 0) {
+            // Position at the start of the paragraph for column 0, or try to estimate column position
+            let left = paragraphRect.left - overlayRect.left;
+            const top = paragraphRect.top - overlayRect.top;
+            
+            // Try to estimate horizontal position based on column
+            if (column > 0) {
+              // Use approximate character width (this is rough but better than nothing)
+              const approxCharWidth = 8; // pixels per character (rough estimate)
+              left += Math.min(column * approxCharWidth, paragraphRect.width - 2);
+            }
+            
+            cursorElement.style.left = `${left}px`;
+            cursorElement.style.top = `${top}px`;
+            cursorElement.style.opacity = '1';
+            
+            // Show cursor line, hide selection
+            const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
+            if (selection) {
+              selection.style.display = 'none';
+            }
+            
+            const lineElement = cursorElement.querySelector('.cursor-line') as HTMLElement;
+            if (lineElement) {
+              lineElement.style.display = 'block';
+            }
+            
+            positionLabel(cursorElement, left, top, overlay, cursor);
+            console.log('✅ Cursor positioned using paragraph fallback at', { left, top });
+            return;
+          }
+        } else {
+          console.warn('⚠️ Line number exceeds available paragraphs');
+        }
+      } catch (error) {
+        console.error('❌ Paragraph-based positioning error:', error);
+      }
       
-      // For fallback, show cursor line and hide selection
+      // Last resort: hide the cursor
+      console.warn('❌ All positioning attempts failed, hiding cursor for', cursor.userId);
+      cursorElement.style.opacity = '0';
+      
+      // Still try to position the label somewhere reasonable
       const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
       if (selection) {
         selection.style.display = 'none';
@@ -677,32 +863,6 @@ const RemoteCursorPlugin: React.FC<{
       console.error('❌ RemoteCursorPlugin: Positioning error:', error);
       cursorElement.style.opacity = '0';
     }
-  };
-  
-  // Helper function to find text node within a DOM element at specific character offset
-  const findTextNodeInElement = (element: Element, targetOffset: number): { textNode: Node; offset: number } | null => {
-    let currentOffset = 0;
-    
-    const walker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_TEXT,
-      null
-    );
-    
-    let textNode: Node | null = null;
-    while (textNode = walker.nextNode()) {
-      const textContent = textNode.textContent || '';
-      const nodeEndOffset = currentOffset + textContent.length;
-      
-      if (nodeEndOffset >= targetOffset) {
-        const nodeOffset = targetOffset - currentOffset;
-        return { textNode, offset: Math.min(nodeOffset, textContent.length) };
-      }
-      
-      currentOffset += textContent.length;
-    }
-    
-    return null;
   };
   
   // Smart label positioning to keep within bounds
@@ -842,67 +1002,118 @@ const CursorTrackingPlugin: React.FC<{
     webSocketClient.on('request_cursor_refresh', handleCursorRefreshRequest);
     
     const handleSelectionChange = () => {
-      // This function is now always called from within editor.read() context
-      const selection = $getSelection();
+      // Prevent infinite loops
+      if (isHandlingSelectionChange) {
+        console.warn('⚠️ Skipping selection change handling to prevent recursion');
+        return;
+      }
       
-      if ($isRangeSelection(selection)) {
-        // Get line/position coordinates for the selection
-        const anchorLinePosition = getLexicalSelectionLinePosition(editor);
-        if (!anchorLinePosition) {
-          return;
-        }
+      isHandlingSelectionChange = true;
+      
+      try {
+        // This function is now always called from within editor.read() context
+        const selection = $getSelection();
         
-        const isCollapsed = selection.isCollapsed();
-        let focusLinePosition = anchorLinePosition;
-        
-        // For selections (not just cursors), we need to get focus position too
-        if (!isCollapsed) {
-          // Calculate the actual focus position for selections
-          const focusNode = selection.focus.getNode();
-          const focusOffset = selection.focus.offset;
-          const editorElement = editor.getRootElement();
-          
-          if (editorElement) {
-            // Find the DOM element for the focus node
-            const focusDOMElement = editor.getElementByKey(focusNode.getKey());
-            if (focusDOMElement) {
-              const focusTextNodeResult = findTextNodeInElement(focusDOMElement, focusOffset);
-              if (focusTextNodeResult) {
-                const focusRange = document.createRange();
-                focusRange.setStart(focusTextNodeResult.textNode, focusTextNodeResult.offset);
-                focusRange.setEnd(focusTextNodeResult.textNode, focusTextNodeResult.offset);
+        if ($isRangeSelection(selection)) {
+          // Get both anchor and focus positions for the selection
+          const selectionRange = getLexicalSelectionRange(editor);
+          if (!selectionRange) {
+            console.warn('⚠️ Could not get selection range, trying fallback approach');
+            
+            // Fallback approach: try to determine position differently
+            try {
+              const anchorNode = selection.anchor.getNode();
+              const anchorOffset = selection.anchor.offset;
+              const editorElement = editor.getRootElement();
+              
+              if (editorElement) {
+                // Try to find the paragraph containing this node
+                const anchorDOMElement = editor.getElementByKey(anchorNode.getKey());
+                let lineNumber = 0;
                 
-                const calculatedFocusPosition = getLinePositionFromDOMSelection(editorElement, focusRange);
-                if (calculatedFocusPosition) {
-                  focusLinePosition = calculatedFocusPosition;
+                if (anchorDOMElement) {
+                  // Find paragraphs and determine line number
+                  const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph]');
+                  lineNumber = Array.from(paragraphs).indexOf(anchorDOMElement as Element);
+                  if (lineNumber === -1) {
+                    // If not found directly, find parent paragraph
+                    let currentElement = anchorDOMElement.parentElement;
+                    while (currentElement && currentElement !== editorElement) {
+                      if (currentElement.tagName === 'P' || currentElement.tagName === 'DIV') {
+                        lineNumber = Array.from(paragraphs).indexOf(currentElement);
+                        break;
+                      }
+                      currentElement = currentElement.parentElement;
+                    }
+                  }
                 }
+                
+                // Create fallback cursor position
+                const fallbackPosition: CursorPosition = {
+                  userId: effectiveUserId,
+                  userName: currentUser.name || currentUser.email,
+                  userEmail: currentUser.email,
+                  position: {
+                    line: Math.max(0, lineNumber),
+                    column: anchorOffset,
+                    type: 'cursor',
+                    anchor: {
+                      line: Math.max(0, lineNumber),
+                      column: anchorOffset
+                    },
+                    focus: {
+                      line: Math.max(0, lineNumber),
+                      column: anchorOffset
+                    }
+                  },
+                  timestamp: new Date().toISOString()
+                };
+                
+                console.log('🔄 Using fallback position:', fallbackPosition);
+                
+                // Broadcast the position
+                onCursorUpdate(fallbackPosition);
               }
+            } catch (fallbackError) {
+              console.error('❌ Fallback position detection failed:', fallbackError);
             }
+            return;
           }
-        }
-        
-        // Create cursor position using line/column coordinates
-        const position: CursorPosition = {
-          userId: effectiveUserId,
-          userName: currentUser.name || currentUser.email,
-          userEmail: currentUser.email,
-          position: {
-            line: anchorLinePosition.line,
-            column: anchorLinePosition.column,
-            type: isCollapsed ? 'cursor' : 'selection',
-            anchor: {
-              line: anchorLinePosition.line,
-              column: anchorLinePosition.column
+          
+          // Create cursor position with proper anchor and focus
+          const cursorPosition: CursorPosition = {
+            userId: effectiveUserId,
+            userName: currentUser.name || currentUser.email,
+            userEmail: currentUser.email,
+            position: {
+              line: selectionRange.anchor.line,
+              column: selectionRange.anchor.column,
+              type: selectionRange.isCollapsed ? 'cursor' : 'selection',
+              anchor: {
+                line: selectionRange.anchor.line,
+                column: selectionRange.anchor.column
+              },
+              focus: {
+                line: selectionRange.focus.line,
+                column: selectionRange.focus.column
+              }
             },
-            focus: {
-              line: focusLinePosition.line,
-              column: focusLinePosition.column
-            }
-          },
-          timestamp: new Date().toISOString()
-        };
-        
-        onCursorUpdate(position);
+            timestamp: new Date().toISOString()
+          };
+          
+          console.log('🎯 Cursor position detected:', {
+            isCollapsed: selectionRange.isCollapsed,
+            anchor: selectionRange.anchor,
+            focus: selectionRange.focus,
+            cursorPosition
+          });
+          
+          // Broadcast the position change
+          onCursorUpdate(cursorPosition);
+        }
+      } finally {
+        // Always reset the guard
+        isHandlingSelectionChange = false;
       }
     };
     
@@ -1369,23 +1580,23 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           editorRef.current.getEditorState().read(() => {
             const selection = $getSelection();
             if ($isRangeSelection(selection)) {
-              const linePosition = getLexicalSelectionLinePosition(editorRef.current!);
-              if (linePosition) {
+              const selectionRange = getLexicalSelectionRange(editorRef.current!);
+              if (selectionRange) {
                 currentUserCursorPosition = {
                   userId: effectiveUserId,
                   userName: currentUser.name || currentUser.email,
                   userEmail: currentUser.email,
                   position: {
-                    line: linePosition.line,
-                    column: linePosition.column,
-                    type: selection.isCollapsed() ? 'cursor' : 'selection',
+                    line: selectionRange.anchor.line,
+                    column: selectionRange.anchor.column,
+                    type: selectionRange.isCollapsed ? 'cursor' : 'selection',
                     anchor: {
-                      line: linePosition.line,
-                      column: linePosition.column
+                      line: selectionRange.anchor.line,
+                      column: selectionRange.anchor.column
                     },
                     focus: {
-                      line: linePosition.line,
-                      column: linePosition.column
+                      line: selectionRange.focus.line,
+                      column: selectionRange.focus.column
                     }
                   },
                   timestamp: new Date().toISOString()
@@ -1550,23 +1761,23 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           editorRef.current.getEditorState().read(() => {
             const selection = $getSelection();
             if ($isRangeSelection(selection)) {
-              const linePosition = getLexicalSelectionLinePosition(editorRef.current!);
-              if (linePosition) {
+              const selectionRange = getLexicalSelectionRange(editorRef.current!);
+              if (selectionRange) {
                 currentUserCursorPosition = {
                   userId: effectiveUserId,
                   userName: currentUser.name || currentUser.email,
                   userEmail: currentUser.email,
                   position: {
-                    line: linePosition.line,
-                    column: linePosition.column,
-                    type: selection.isCollapsed() ? 'cursor' : 'selection',
+                    line: selectionRange.anchor.line,
+                    column: selectionRange.anchor.column,
+                    type: selectionRange.isCollapsed ? 'cursor' : 'selection',
                     anchor: {
-                      line: linePosition.line,
-                      column: linePosition.column
+                      line: selectionRange.anchor.line,
+                      column: selectionRange.anchor.column
                     },
                     focus: {
-                      line: linePosition.line,
-                      column: linePosition.column
+                      line: selectionRange.focus.line,
+                      column: selectionRange.focus.column
                     }
                   },
                   timestamp: new Date().toISOString()
@@ -1885,23 +2096,23 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                     editorRef.current.getEditorState().read(() => {
                       const selection = $getSelection();
                       if ($isRangeSelection(selection)) {
-                        const linePosition = editorRef.current ? getLexicalSelectionLinePosition(editorRef.current) : null;
-                        if (linePosition) {
+                        const selectionRange = getLexicalSelectionRange(editorRef.current!);
+                        if (selectionRange) {
                           const position: CursorPosition = {
                             userId: effectiveUserId,
                             userName: currentUser.name || currentUser.email,
                             userEmail: currentUser.email,
                             position: {
-                              line: linePosition.line,
-                              column: linePosition.column,
-                              type: selection.isCollapsed() ? 'cursor' : 'selection',
-                              anchor: selection.isCollapsed() ? undefined : {
-                                line: linePosition.line,
-                                column: linePosition.column
+                              line: selectionRange.anchor.line,
+                              column: selectionRange.anchor.column,
+                              type: selectionRange.isCollapsed ? 'cursor' : 'selection',
+                              anchor: {
+                                line: selectionRange.anchor.line,
+                                column: selectionRange.anchor.column
                               },
-                              focus: selection.isCollapsed() ? undefined : {
-                                line: linePosition.line,
-                                column: linePosition.column
+                              focus: {
+                                line: selectionRange.focus.line,
+                                column: selectionRange.focus.column
                               }
                             },
                             timestamp: new Date().toISOString()
@@ -1915,6 +2126,66 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                       }
                     });
                   }
+                }
+              }
+            }
+          });
+          
+          client.on('request_cursor_refresh_all', (message: any) => {
+            // Respond to requests for all users to refresh their cursor positions
+            // Rate limit responses to prevent spam
+            const now = Date.now();
+            if (now - lastCursorRefreshRequestTime.current > 500) { // At most twice per second for global requests
+              lastCursorRefreshRequestTime.current = now;
+              
+              console.log('📍 Received cursor refresh request from all users, responding with current position');
+              
+              // Send current cursor position if we have one
+              if (editorRef.current && lastCursorPositionRef.current) {
+                setTimeout(() => {
+                  // Re-send the last known cursor position
+                  client.send({
+                    type: 'cursor_position',
+                    data: lastCursorPositionRef.current
+                  });
+                }, Math.random() * 200 + 100); // Random delay 100-300ms to avoid thundering herd
+              } else {
+                // Try to get current cursor position from editor
+                if (editorRef.current) {
+                  editorRef.current.getEditorState().read(() => {
+                    const selection = $getSelection();
+                    if ($isRangeSelection(selection)) {
+                      const selectionRange = getLexicalSelectionRange(editorRef.current!);
+                      if (selectionRange) {
+                        const position: CursorPosition = {
+                          userId: effectiveUserId,
+                          userName: currentUser.name || currentUser.email,
+                          userEmail: currentUser.email,
+                          position: {
+                            line: selectionRange.anchor.line,
+                            column: selectionRange.anchor.column,
+                            type: selectionRange.isCollapsed ? 'cursor' : 'selection',
+                            anchor: {
+                              line: selectionRange.anchor.line,
+                              column: selectionRange.anchor.column
+                            },
+                            focus: {
+                              line: selectionRange.focus.line,
+                              column: selectionRange.focus.column
+                            }
+                          },
+                          timestamp: new Date().toISOString()
+                        };
+                      
+                        setTimeout(() => {
+                          client.send({
+                            type: 'cursor_position',
+                            data: position
+                          });
+                        }, Math.random() * 200 + 100); // Random delay to avoid thundering herd
+                      }
+                    }
+                  });
                 }
               }
             }
@@ -2050,26 +2321,23 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                     editorRef.current.getEditorState().read(() => {
                       const selection = $getSelection();
                       if ($isRangeSelection(selection)) {
-                        const anchorNode = selection.anchor.getNode();
-                        const focusNode = selection.focus.getNode();
-                        
-                        const linePosition = editorRef.current ? getLexicalSelectionLinePosition(editorRef.current) : null;
-                        if (linePosition) {
+                        const selectionRange = getLexicalSelectionRange(editorRef.current!);
+                        if (selectionRange) {
                           const position: CursorPosition = {
                             userId: effectiveUserId,
                             userName: currentUser.name || currentUser.email,
                             userEmail: currentUser.email,
                             position: {
-                              line: linePosition.line,
-                              column: linePosition.column,
-                              type: selection.isCollapsed() ? 'cursor' : 'selection',
-                              anchor: selection.isCollapsed() ? undefined : {
-                                line: linePosition.line,
-                                column: linePosition.column
+                              line: selectionRange.anchor.line,
+                              column: selectionRange.anchor.column,
+                              type: selectionRange.isCollapsed ? 'cursor' : 'selection',
+                              anchor: {
+                                line: selectionRange.anchor.line,
+                                column: selectionRange.anchor.column
                               },
-                              focus: selection.isCollapsed() ? undefined : {
-                                line: linePosition.line,
-                                column: linePosition.column
+                              focus: {
+                                line: selectionRange.focus.line,
+                                column: selectionRange.focus.column
                               }
                             },
                             timestamp: new Date().toISOString()
@@ -2083,6 +2351,66 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                       }
                     });
                   }
+                }
+              }
+            }
+          });
+          
+          client.on('request_cursor_refresh_all', (message: any) => {
+            // Respond to requests for all users to refresh their cursor positions
+            // Rate limit responses to prevent spam
+            const now = Date.now();
+            if (now - lastCursorRefreshRequestTime.current > 500) { // At most twice per second for global requests
+              lastCursorRefreshRequestTime.current = now;
+              
+              console.log('📍 Received cursor refresh request from all users, responding with current position');
+              
+              // Send current cursor position if we have one
+              if (editorRef.current && lastCursorPositionRef.current) {
+                setTimeout(() => {
+                  // Re-send the last known cursor position
+                  client.send({
+                    type: 'cursor_position',
+                    data: lastCursorPositionRef.current
+                  });
+                }, Math.random() * 200 + 100); // Random delay 100-300ms to avoid thundering herd
+              } else {
+                // Try to get current cursor position from editor
+                if (editorRef.current) {
+                  editorRef.current.getEditorState().read(() => {
+                    const selection = $getSelection();
+                    if ($isRangeSelection(selection)) {
+                      const selectionRange = getLexicalSelectionRange(editorRef.current!);
+                      if (selectionRange) {
+                        const position: CursorPosition = {
+                          userId: effectiveUserId,
+                          userName: currentUser.name || currentUser.email,
+                          userEmail: currentUser.email,
+                          position: {
+                            line: selectionRange.anchor.line,
+                            column: selectionRange.anchor.column,
+                            type: selectionRange.isCollapsed ? 'cursor' : 'selection',
+                            anchor: {
+                              line: selectionRange.anchor.line,
+                              column: selectionRange.anchor.column
+                            },
+                            focus: {
+                              line: selectionRange.focus.line,
+                              column: selectionRange.focus.column
+                            }
+                          },
+                          timestamp: new Date().toISOString()
+                        };
+                      
+                        setTimeout(() => {
+                          client.send({
+                            type: 'cursor_position',
+                            data: position
+                          });
+                        }, Math.random() * 200 + 100); // Random delay to avoid thundering herd
+                      }
+                    }
+                  });
                 }
               }
             }
@@ -2162,26 +2490,23 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           editorRef.current.getEditorState().read(() => {
             const selection = $getSelection();
             if ($isRangeSelection(selection)) {
-              const anchorNode = selection.anchor.getNode();
-              const focusNode = selection.focus.getNode();
-              
-              const linePosition = editorRef.current ? getLexicalSelectionLinePosition(editorRef.current) : null;
-              if (linePosition) {
+              const selectionRange = getLexicalSelectionRange(editorRef.current!);
+              if (selectionRange) {
                 cursorPosition = {
                   userId: effectiveUserId,
                   userName: currentUser.name || currentUser.email,
                   userEmail: currentUser.email,
                   position: {
-                    line: linePosition.line,
-                    column: linePosition.column,
-                    type: selection.isCollapsed() ? 'cursor' : 'selection',
-                    anchor: selection.isCollapsed() ? undefined : {
-                      line: linePosition.line,
-                      column: linePosition.column
+                    line: selectionRange.anchor.line,
+                    column: selectionRange.anchor.column,
+                    type: selectionRange.isCollapsed ? 'cursor' : 'selection',
+                    anchor: {
+                      line: selectionRange.anchor.line,
+                      column: selectionRange.anchor.column
                     },
-                    focus: selection.isCollapsed() ? undefined : {
-                      line: linePosition.line,
-                      column: linePosition.column
+                    focus: {
+                      line: selectionRange.focus.line,
+                      column: selectionRange.focus.column
                     }
                   },
                   timestamp: new Date().toISOString()

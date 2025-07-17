@@ -787,7 +787,6 @@ export class CollaborativeWebSocketClient {
 
     try {
       this.ws.send(JSON.stringify(pingMessage));
-      console.log('🏓 Ping sent');
       
       // Set timeout for pong response
       this.pongTimeoutId = setTimeout(() => {
@@ -824,7 +823,6 @@ export class CollaborativeWebSocketClient {
   }
 
   private handlePong(): void {
-    console.log('🏓 Pong received');
     this.lastPongReceived = Date.now();
     this.connectionHealthChecks = 0;
     
