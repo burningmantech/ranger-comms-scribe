@@ -343,7 +343,6 @@ export class SubmissionWebSocketServer {
 
       // Handle ping messages
       if (parsedMessage.type === 'ping') {
-        console.log('🏓 Ping received from user:', metadata.userId);
         
         // Send pong response directly to the sender
         const pongResponse: WebSocketMessage = {
@@ -358,7 +357,6 @@ export class SubmissionWebSocketServer {
         
         try {
           ws.send(JSON.stringify(pongResponse));
-          console.log('🏓 Pong response sent to user:', metadata.userId);
         } catch (error) {
           console.error('❌ Failed to send pong response:', error);
         }
@@ -368,8 +366,6 @@ export class SubmissionWebSocketServer {
 
       // Handle pong messages
       if (parsedMessage.type === 'pong') {
-        console.log('🏓 Pong received from user:', metadata.userId);
-        // Just log - no response needed for pong
         return; // Don't broadcast pong messages to other users
       }
 

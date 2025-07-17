@@ -331,14 +331,12 @@ export class SubmissionWebSocketClient {
 
     try {
       this.ws.send(JSON.stringify(pongMessage));
-      console.log('🏓 Pong sent in response to ping');
     } catch (error) {
       console.error('❌ Failed to send pong:', error);
     }
   }
 
   private handlePong(): void {
-    console.log('🏓 Pong received');
     this.lastPongReceived = Date.now();
     this.connectionHealthChecks = 0;
     
