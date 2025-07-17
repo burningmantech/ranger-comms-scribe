@@ -80,9 +80,12 @@ const getLinePositionFromDOMSelection = (editorElement: HTMLElement, selection: 
     // Find which paragraph/block element contains the selection
     let targetParagraph = startContainer.nodeType === Node.TEXT_NODE ? startContainer.parentElement : startContainer as Element;
     
-    // Walk up to find the paragraph element
+    // Walk up to find the paragraph or heading element
     while (targetParagraph && targetParagraph !== editorElement) {
       if (targetParagraph.tagName === 'P' || targetParagraph.tagName === 'DIV' || 
+          targetParagraph.tagName === 'H1' || targetParagraph.tagName === 'H2' || 
+          targetParagraph.tagName === 'H3' || targetParagraph.tagName === 'H4' || 
+          targetParagraph.tagName === 'H5' || targetParagraph.tagName === 'H6' ||
           targetParagraph.classList?.contains('paragraph') ||
           targetParagraph.getAttribute('data-lexical-paragraph') !== null) {
         break;
@@ -94,9 +97,9 @@ const getLinePositionFromDOMSelection = (editorElement: HTMLElement, selection: 
       return null;
     }
     
-    // Count which line (paragraph) this is
+    // Count which line (paragraph/heading) this is
     let currentLine = 0;
-    const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph');
+    const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph, h1, h2, h3, h4, h5, h6');
     
     for (let i = 0; i < paragraphs.length; i++) {
       if (paragraphs[i] === targetParagraph) {
@@ -140,8 +143,8 @@ const getLinePositionFromDOMSelection = (editorElement: HTMLElement, selection: 
 
 const getDOMPositionFromLinePosition = (editorElement: HTMLElement, line: number, column: number): { textNode: Node; offset: number } | null => {
   try {
-    // Find all paragraph elements
-    const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph');
+    // Find all paragraph and heading elements
+    const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph, h1, h2, h3, h4, h5, h6');
     
     if (line >= paragraphs.length) {
       // Fall back to last paragraph
@@ -525,7 +528,7 @@ const RemoteCursorPlugin: React.FC<{
     
     // Add/update remote cursors
     remoteCursors.forEach((cursor, userId) => {
-      if (userId === currentUserId) return; // Skip own cursor in remote cursors
+      if (userId === currentUserId) return; // Skip own cursor in remote cursors (will be handled separately)
       
       // Get or create cursor element
       let cursorElement = cursorsRef.current.get(userId);
@@ -539,12 +542,14 @@ const RemoteCursorPlugin: React.FC<{
       positionCursor(cursorElement, cursor, editorElement, overlay);
     });
     
-    // Add/update current user's cursor
+    // Always add/update current user's cursor (show own bubble)
     if (currentUserCursor) {
       const userId = currentUserCursor.userId;
       let cursorElement = cursorsRef.current.get(userId);
       if (!cursorElement) {
         cursorElement = createCursorElement(currentUserCursor);
+        // Add a special class to indicate this is the current user's cursor
+        cursorElement.classList.add('current-user-cursor');
         overlay.appendChild(cursorElement);
         cursorsRef.current.set(userId, cursorElement);
       }
@@ -742,6 +747,21 @@ const RemoteCursorPlugin: React.FC<{
               }
             } else {
               console.warn('⚠️ Could not get DOM positions for selection, falling back to cursor');
+              // Request cursor refresh since selection positioning failed
+              if (webSocketClient) {
+                console.log('📍 Requesting cursor refresh due to selection positioning failure for', cursor.userId);
+                try {
+                  webSocketClient.send({
+                    type: 'request_cursor_refresh',
+                    targetUserId: cursor.userId,
+                    requesterId: currentUserId,
+                    timestamp: new Date().toISOString(),
+                    reason: 'selection_positioning_failed'
+                  });
+                } catch (error) {
+                  console.error('❌ Failed to request cursor refresh:', error);
+                }
+              }
             }
           } catch (error) {
             console.warn('⚠️ Selection positioning error, falling back to cursor:', error);
@@ -793,11 +813,26 @@ const RemoteCursorPlugin: React.FC<{
         }
       } else {
         console.warn('⚠️ Could not get DOM position, trying paragraph-based positioning');
+        // Request cursor refresh since DOM positioning failed
+        if (webSocketClient) {
+          console.log('📍 Requesting cursor refresh due to DOM positioning failure for', cursor.userId);
+          try {
+            webSocketClient.send({
+              type: 'request_cursor_refresh',
+              targetUserId: cursor.userId,
+              requesterId: currentUserId,
+              timestamp: new Date().toISOString(),
+              reason: 'dom_positioning_failed'
+            });
+          } catch (error) {
+            console.error('❌ Failed to request cursor refresh:', error);
+          }
+        }
       }
       
-      // Fallback: Position at the start/end of the target paragraph
+      // Fallback: Position at the start/end of the target paragraph or heading
       try {
-        const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph');
+        const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], .paragraph, h1, h2, h3, h4, h5, h6');
         
         if (line < paragraphs.length) {
           const targetParagraph = paragraphs[line] as HTMLElement;
@@ -842,9 +877,25 @@ const RemoteCursorPlugin: React.FC<{
         console.error('❌ Paragraph-based positioning error:', error);
       }
       
-      // Last resort: hide the cursor
+      // Last resort: hide the cursor and request fresh position
       console.warn('❌ All positioning attempts failed, hiding cursor for', cursor.userId);
       cursorElement.style.opacity = '0';
+      
+      // Request cursor refresh from this specific user
+      if (webSocketClient) {
+        console.log('📍 Requesting cursor refresh from user', cursor.userId);
+        try {
+          webSocketClient.send({
+            type: 'request_cursor_refresh',
+            targetUserId: cursor.userId,
+            requesterId: currentUserId,
+            timestamp: new Date().toISOString(),
+            reason: 'positioning_failed'
+          });
+        } catch (error) {
+          console.error('❌ Failed to request cursor refresh:', error);
+        }
+      }
       
       // Still try to position the label somewhere reasonable
       const selection = cursorElement.querySelector('.selection-highlight') as HTMLElement;
@@ -1032,14 +1083,17 @@ const CursorTrackingPlugin: React.FC<{
                 let lineNumber = 0;
                 
                 if (anchorDOMElement) {
-                  // Find paragraphs and determine line number
-                  const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph]');
+                  // Find paragraphs and headings and determine line number
+                  const paragraphs = editorElement.querySelectorAll('p, div[data-lexical-paragraph], h1, h2, h3, h4, h5, h6');
                   lineNumber = Array.from(paragraphs).indexOf(anchorDOMElement as Element);
                   if (lineNumber === -1) {
-                    // If not found directly, find parent paragraph
+                    // If not found directly, find parent paragraph or heading
                     let currentElement = anchorDOMElement.parentElement;
                     while (currentElement && currentElement !== editorElement) {
-                      if (currentElement.tagName === 'P' || currentElement.tagName === 'DIV') {
+                      if (currentElement.tagName === 'P' || currentElement.tagName === 'DIV' ||
+                          currentElement.tagName === 'H1' || currentElement.tagName === 'H2' ||
+                          currentElement.tagName === 'H3' || currentElement.tagName === 'H4' ||
+                          currentElement.tagName === 'H5' || currentElement.tagName === 'H6') {
                         lineNumber = Array.from(paragraphs).indexOf(currentElement);
                         break;
                       }

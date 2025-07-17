@@ -592,3 +592,31 @@
   background-color: rgba(156, 39, 176, 0.25);
   border-color: rgba(156, 39, 176, 0.5);
 }
+
+/* Current user cursor styling */
+.lexical-remote-cursor.current-user-cursor {
+  z-index: 1002; /* Higher than remote cursors */
+}
+
+.lexical-remote-cursor.current-user-cursor .cursor-line {
+  background-color: #1a73e8 !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9), 0 0 6px rgba(26, 115, 232, 0.4) !important;
+  opacity: 0.8;
+}
+
+.lexical-remote-cursor.current-user-cursor .cursor-label {
+  background-color: #1a73e8 !important;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.lexical-remote-cursor.current-user-cursor .cursor-label::after {
+  content: " (you)";
+  font-weight: 400;
+  opacity: 0.9;
+}
+
+.lexical-remote-cursor.current-user-cursor .selection-highlight {
+  background-color: rgba(26, 115, 232, 0.15) !important;
+  border: 1px solid rgba(26, 115, 232, 0.4) !important;
+}

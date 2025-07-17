@@ -108,10 +108,16 @@ export const UserPresence: React.FC<UserPresenceProps> = ({
   const [expanded, setExpanded] = useState(false);
   const [showTooltip, setShowTooltip] = useState<string | null>(null);
 
-  // Filter out current user and sort by activity
-  const otherUsers = users
-    .filter(user => user.userId !== (currentUser.id || currentUser.email))
+  // Include current user and sort by activity, with current user first
+  const allUsers = users
     .sort((a, b) => {
+      // Current user always comes first
+      const aIsCurrent = a.userId === (currentUser.id || currentUser.email);
+      const bIsCurrent = b.userId === (currentUser.id || currentUser.email);
+      
+      if (aIsCurrent && !bIsCurrent) return -1;
+      if (!aIsCurrent && bIsCurrent) return 1;
+      
       // Sort by status priority: online > typing > idle > offline
       const statusPriority = { online: 3, typing: 4, idle: 2, offline: 1 };
       const aPriority = statusPriority[a.status] || 0;
@@ -125,8 +131,10 @@ export const UserPresence: React.FC<UserPresenceProps> = ({
       return new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime();
     });
 
-  const visibleUsers = expanded ? otherUsers : otherUsers.slice(0, maxVisible);
-  const hiddenCount = otherUsers.length - maxVisible;
+  const otherUsers = allUsers.filter(user => user.userId !== (currentUser.id || currentUser.email));
+
+  const visibleUsers = expanded ? allUsers : allUsers.slice(0, maxVisible);
+  const hiddenCount = allUsers.length - maxVisible;
 
   const handleUserClick = useCallback((userId: string) => {
     if (onUserClick) {
@@ -137,41 +145,48 @@ export const UserPresence: React.FC<UserPresenceProps> = ({
   if (compact) {
     return (
       <div className="user-presence-compact">
-        {visibleUsers.map(user => (
-          <div
-            key={user.userId}
-            className={`user-avatar-compact ${user.status}`}
-            style={{ 
-              backgroundColor: user.color || generateUserColor(user.userId),
-              borderColor: getStatusColor(user.status)
-            }}
-            onClick={() => handleUserClick(user.userId)}
-            onMouseEnter={() => setShowTooltip(user.userId)}
-            onMouseLeave={() => setShowTooltip(null)}
-            title={`${user.userName} - ${user.status}`}
-          >
-            <span className="avatar-text">{getInitials(user.userName)}</span>
-            <div className={`status-indicator ${user.status}`}></div>
+        {visibleUsers.map(user => {
+          const isCurrentUser = user.userId === (currentUser.id || currentUser.email);
+          return (
+            <div
+              key={user.userId}
+              className={`user-avatar-compact ${user.status} ${isCurrentUser ? 'current-user' : ''}`}
+              style={{ 
+                backgroundColor: user.color || generateUserColor(user.userId),
+                borderColor: isCurrentUser ? '#1a73e8' : getStatusColor(user.status),
+                borderWidth: isCurrentUser ? '2px' : '1px'
+              }}
+              onClick={() => handleUserClick(user.userId)}
+              onMouseEnter={() => setShowTooltip(user.userId)}
+              onMouseLeave={() => setShowTooltip(null)}
+              title={`${user.userName}${isCurrentUser ? ' (you)' : ''} - ${user.status}`}
+            >
+              <span className="avatar-text">{getInitials(user.userName)}</span>
+              <div className={`status-indicator ${user.status}`}></div>
+              {isCurrentUser && (
+                <div className="current-user-badge">You</div>
+              )}
             
-            {showTooltip === user.userId && (
-              <div className="user-tooltip">
-                <div className="tooltip-header">
-                  <span className="tooltip-name">{user.userName}</span>
-                  <span className="tooltip-status">{user.status}</span>
+              {showTooltip === user.userId && (
+                <div className="user-tooltip">
+                  <div className="tooltip-header">
+                    <span className="tooltip-name">{user.userName}</span>
+                    <span className="tooltip-status">{user.status}</span>
+                  </div>
+                  <div className="tooltip-details">
+                    <div className="tooltip-email">{user.userEmail}</div>
+                    <div className="tooltip-time">{getTimeAgo(user.lastSeen)}</div>
+                    {showActivity && user.currentActivity && (
+                      <div className="tooltip-activity">
+                        {getActivityIcon(user.currentActivity)} {user.currentActivity}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="tooltip-details">
-                  <div className="tooltip-email">{user.userEmail}</div>
-                  <div className="tooltip-time">{getTimeAgo(user.lastSeen)}</div>
-                  {showActivity && user.currentActivity && (
-                    <div className="tooltip-activity">
-                      {getActivityIcon(user.currentActivity)} {user.currentActivity}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          );
+        })}
         
         {hiddenCount > 0 && !expanded && (
           <div 
@@ -189,71 +204,81 @@ export const UserPresence: React.FC<UserPresenceProps> = ({
     <div className={`user-presence ${showDetailed ? 'detailed' : ''}`}>
       <div className="presence-header">
         <h3 className="presence-title">
-          {otherUsers.length === 0 ? 'No one else here' : 
-           otherUsers.length === 1 ? '1 person here' : 
-           `${otherUsers.length} people here`}
+          {allUsers.length === 0 ? 'No one here' : 
+           allUsers.length === 1 ? '1 person here' : 
+           `${allUsers.length} people here`}
         </h3>
         
-        {otherUsers.length > 0 && (
+        {allUsers.length > 0 && (
           <div className="presence-summary">
             <span className="online-count">
-              {otherUsers.filter(u => u.status === 'online' || u.status === 'typing').length} online
+              {allUsers.filter(u => u.status === 'online' || u.status === 'typing').length} online
             </span>
           </div>
         )}
       </div>
 
       <div className="presence-users">
-        {visibleUsers.map(user => (
-          <div
-            key={user.userId}
-            className={`presence-user ${user.status}`}
-            onClick={() => handleUserClick(user.userId)}
-          >
-            <div 
-              className={`user-avatar ${user.status}`}
-              style={{ backgroundColor: user.color || generateUserColor(user.userId) }}
+        {(expanded ? allUsers : allUsers.slice(0, maxVisible)).map(user => {
+          const isCurrentUser = user.userId === (currentUser.id || currentUser.email);
+          return (
+            <div
+              key={user.userId}
+              className={`presence-user ${user.status} ${isCurrentUser ? 'current-user' : ''}`}
+              onClick={() => handleUserClick(user.userId)}
             >
-              <span className="avatar-text">{getInitials(user.userName)}</span>
-              <div className={`status-dot ${user.status}`}></div>
-            </div>
-            
-            <div className="user-info">
-              <div className="user-name">{user.userName}</div>
-              <div className="user-details">
-                <span className={`user-status ${user.status}`}>
-                  {user.status === 'typing' && '✏️ '}
-                  {user.status === 'online' && '🟢 '}
-                  {user.status === 'idle' && '🟡 '}
-                  {user.status === 'offline' && '⚫ '}
-                  {user.status}
-                </span>
-                
-                {showActivity && user.currentActivity && (
-                  <span className="user-activity">
-                    {getActivityIcon(user.currentActivity)} {user.currentActivity}
-                  </span>
-                )}
-                
-                <span className="user-time">{getTimeAgo(user.lastSeen)}</span>
+              <div 
+                className={`user-avatar ${user.status}`}
+                style={{ 
+                  backgroundColor: user.color || generateUserColor(user.userId),
+                  borderColor: isCurrentUser ? '#1a73e8' : 'transparent',
+                  borderWidth: isCurrentUser ? '2px' : '0px'
+                }}
+              >
+                <span className="avatar-text">{getInitials(user.userName)}</span>
+                <div className={`status-dot ${user.status}`}></div>
               </div>
               
-              {showDetailed && (
-                <div className="user-email">{user.userEmail}</div>
+              <div className="user-info">
+                <div className="user-name">
+                  {user.userName}
+                  {isCurrentUser && <span className="current-user-indicator"> (you)</span>}
+                </div>
+                <div className="user-details">
+                  <span className={`user-status ${user.status}`}>
+                    {user.status === 'typing' && '✏️ '}
+                    {user.status === 'online' && '🟢 '}
+                    {user.status === 'idle' && '🟡 '}
+                    {user.status === 'offline' && '⚫ '}
+                    {user.status}
+                  </span>
+                  
+                  {showActivity && user.currentActivity && (
+                    <span className="user-activity">
+                      {getActivityIcon(user.currentActivity)} {user.currentActivity}
+                    </span>
+                  )}
+                  
+                  <span className="user-time">{getTimeAgo(user.lastSeen)}</span>
+                </div>
+                
+                {showDetailed && (
+                  <div className="user-email">{user.userEmail}</div>
+                )}
+              </div>
+              
+              {user.status === 'typing' && (
+                <div className="typing-indicator">
+                  <div className="typing-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
               )}
             </div>
-            
-            {user.status === 'typing' && (
-              <div className="typing-indicator">
-                <div className="typing-dots">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
         
         {hiddenCount > 0 && !expanded && (
           <div 
@@ -264,7 +289,7 @@ export const UserPresence: React.FC<UserPresenceProps> = ({
           </div>
         )}
         
-        {expanded && otherUsers.length > maxVisible && (
+        {expanded && allUsers.length > maxVisible && (
           <div 
             className="show-less-users"
             onClick={() => setExpanded(false)}
@@ -273,14 +298,6 @@ export const UserPresence: React.FC<UserPresenceProps> = ({
           </div>
         )}
       </div>
-      
-      {otherUsers.length === 0 && (
-        <div className="no-users-message">
-          <div className="no-users-icon">👤</div>
-          <p>You're the only one here right now</p>
-          <p className="no-users-subtitle">Share this document to collaborate</p>
-        </div>
-      )}
     </div>
   );
 };
