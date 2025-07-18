@@ -21,14 +21,25 @@ export function extractTextFromLexical(lexicalJson: string | object): string {
       
       // If it has children, recursively extract text from them
       if (node.children && Array.isArray(node.children)) {
-        return node.children.map(extractTextFromNode).join('');
+        // Join child text nodes with spaces to prevent words from running together
+        // Filter out empty strings first, then join with spaces
+        const childTexts = node.children
+          .map(extractTextFromNode)
+          .filter((text: string) => text.trim() !== '');
+        
+        return childTexts.join(' ');
       }
       
       return '';
     }
     
-    // Extract text from all root children
-    const text = data.root.children.map(extractTextFromNode).join('\n');
+    // Extract text from all root children (paragraphs/blocks)
+    // Join paragraphs with newlines to maintain structure
+    const text = data.root.children
+      .map(extractTextFromNode)
+      .filter((text: string) => text.trim() !== '')
+      .join('\n');
+    
     return text.trim();
   } catch (error) {
     console.error('Error extracting text from Lexical JSON:', error);

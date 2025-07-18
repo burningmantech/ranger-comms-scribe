@@ -12,7 +12,25 @@ const LexicalExtractionTest: React.FC = () => {
             "format": 0,
             "mode": "normal",
             "style": "",
-            "text": "foo",
+            "text": "Hello",
+            "type": "text",
+            "version": 1
+          },
+          {
+            "detail": 0,
+            "format": 1,
+            "mode": "normal",
+            "style": "",
+            "text": "world",
+            "type": "text",
+            "version": 1
+          },
+          {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "!",
             "type": "text",
             "version": 1
           }
@@ -32,27 +50,25 @@ const LexicalExtractionTest: React.FC = () => {
             "format": 0,
             "mode": "normal",
             "style": "",
-            "text": "Bar ",
+            "text": "This is a",
             "type": "text",
             "version": 1
-          }
-        ],
-        "direction": "ltr",
-        "format": "",
-        "indent": 0,
-        "type": "paragraph",
-        "version": 1,
-        "textFormat": 0,
-        "textStyle": ""
-      },
-      {
-        "children": [
+          },
+          {
+            "detail": 0,
+            "format": 2,
+            "mode": "normal",
+            "style": "",
+            "text": "test",
+            "type": "text",
+            "version": 1
+          },
           {
             "detail": 0,
             "format": 0,
             "mode": "normal",
             "style": "",
-            "text": "Baz",
+            "text": "sentence.",
             "type": "text",
             "version": 1
           }
@@ -132,7 +148,7 @@ const LexicalExtractionTest: React.FC = () => {
       </div>
 
       <div style={{ marginBottom: '20px' }}>
-        <h3>Expected Result:</h3>
+        <h3>Expected Result (Fixed):</h3>
         <div style={{ 
           padding: '10px', 
           border: '1px solid #ccc', 
@@ -140,9 +156,22 @@ const LexicalExtractionTest: React.FC = () => {
           whiteSpace: 'pre-wrap',
           fontFamily: 'monospace'
         }}>
-          foo
-Bar 
-Baz
+          Hello world !
+This is a test sentence.
+        </div>
+      </div>
+
+      <div style={{ marginBottom: '20px' }}>
+        <h3>What This Tests:</h3>
+        <div style={{ 
+          padding: '10px', 
+          border: '1px solid #ccc', 
+          backgroundColor: '#fff3cd',
+          fontSize: '14px'
+        }}>
+          <p><strong>Problem:</strong> Multiple text nodes within the same paragraph were being concatenated without spaces, causing words to run together like "Helloworld!" instead of "Hello world !"</p>
+          <p><strong>Solution:</strong> The extractTextFromLexical function now joins text nodes with spaces to maintain proper word separation.</p>
+          <p><strong>Test Case:</strong> This JSON has multiple text nodes with different formatting (bold, italic) within the same paragraph, which should be properly spaced when extracted.</p>
         </div>
       </div>
     </div>
