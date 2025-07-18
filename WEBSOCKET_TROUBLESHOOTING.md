@@ -5,7 +5,7 @@
 Based on the error logs you're seeing:
 
 ```
-WebSocket connection to 'wss://api.scrivenly.com/ws/submissions/...' failed
+WebSocket connection to 'wss://scrivenly.com/api/ws/submissions/...' failed
 WebSocket connection closed: 1006
 ```
 
@@ -19,7 +19,7 @@ First, test if the basic WebSocket infrastructure is working:
 
 ```bash
 # Test the WebSocket test endpoint
-curl https://api.scrivenly.com/ws/test
+curl https://scrivenly.com/api/ws/test
 ```
 
 This should return a JSON response indicating if the Durable Object binding is working.
@@ -58,7 +58,7 @@ The WebSocket connection requires a valid session. Test this in browser console:
 console.log('Session ID:', localStorage.getItem('sessionId'));
 
 // Test API access with current session
-fetch('https://api.scrivenly.com/user/profile', {
+fetch('https://scrivenly.com/api/user/profile', {
   headers: {
     'Authorization': `Bearer ${localStorage.getItem('sessionId')}`
   }
@@ -73,7 +73,7 @@ Test the WebSocket connection manually in browser console:
 // Test WebSocket connection
 const submissionId = '825b0eda-75d0-4840-9dfb-267f6e121af7';
 const sessionId = localStorage.getItem('sessionId');
-const wsUrl = `wss://api.scrivenly.com/ws/submissions/${submissionId}?submissionId=${submissionId}&userId=test&userName=Test&userEmail=test@example.com&sessionId=${sessionId}`;
+const wsUrl = `wss://scrivenly.com/api/ws/submissions/${submissionId}?submissionId=${submissionId}&userId=test&userName=Test&userEmail=test@example.com&sessionId=${sessionId}`;
 
 const ws = new WebSocket(wsUrl);
 ws.onopen = () => console.log('✅ Connected');
@@ -127,7 +127,7 @@ cd backend
 wrangler dev --local
 ```
 
-The WebSocket URL should be `ws://localhost:8787` instead of `wss://api.scrivenly.com`.
+The WebSocket URL should be `ws://localhost:8787` instead of `wss://scrivenly.com/api`.
 
 ## Debug Commands
 
@@ -143,14 +143,14 @@ wrangler tail --grep "825b0eda-75d0-4840-9dfb-267f6e121af7"
 ### Test API Endpoints
 ```bash
 # Test WebSocket infrastructure
-curl https://api.scrivenly.com/ws/test
+curl https://scrivenly.com/api/ws/test
 
 # Test submission access (with valid session)
-curl https://api.scrivenly.com/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7 \
+curl https://scrivenly.com/api/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7 \
   -H "Authorization: Bearer YOUR_SESSION_ID"
 
 # Test WebSocket room info
-curl https://api.scrivenly.com/ws/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7/room \
+curl https://scrivenly.com/api/ws/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7/room \
   -H "Authorization: Bearer YOUR_SESSION_ID"
 ```
 
@@ -159,7 +159,7 @@ curl https://api.scrivenly.com/ws/submissions/825b0eda-75d0-4840-9dfb-267f6e121a
 When working correctly, you should see:
 
 ```
-🔌 Attempting WebSocket connection to: wss://api.scrivenly.com/ws/submissions/...
+🔌 Attempting WebSocket connection to: wss://scrivenly.com/api/ws/submissions/...
 ✅ WebSocket connected to submission room: 825b0eda-75d0-4840-9dfb-267f6e121af7
 ```
 
@@ -167,12 +167,12 @@ When working correctly, you should see:
 
 1. **Test the infrastructure endpoint:**
    ```bash
-   curl https://api.scrivenly.com/ws/test
+   curl https://scrivenly.com/api/ws/test
    ```
 
 2. **Check if you can access the submission via API:**
    ```bash
-   curl https://api.scrivenly.com/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7 \
+   curl https://scrivenly.com/api/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7 \
      -H "Authorization: Bearer $(localStorage.getItem('sessionId'))"
    ```
 

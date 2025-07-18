@@ -5,7 +5,7 @@ import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
 import { getObject, putObject } from '../services/cacheService';
 
-export const router = AutoRouter({ base: '/users' });
+export const router = AutoRouter({ base: '/api/users' });
 
 // Update a user's type
 router.put('/:email/type', withAuth, async (request: Request, env: Env) => {

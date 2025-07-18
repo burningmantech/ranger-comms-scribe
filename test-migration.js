@@ -1,7 +1,7 @@
 // Test script to check tables and run migration
 // Run this in the browser console when logged in as an admin
 
-const API_URL = 'https://api.scrivenly.com';
+const API_URL = 'https://scrivenly.com/api';
 
 async function checkAndRunMigration() {
   console.log('🔍 Checking database tables...');

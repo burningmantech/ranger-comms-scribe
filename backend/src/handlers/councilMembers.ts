@@ -5,7 +5,7 @@ import { Env } from '../utils/sessionManager';
 import { getObject, putObject, listObjects } from '../services/cacheService';
 import { changeUserType } from '../services/userService';
 
-export const router = AutoRouter({ base: '/council' });
+export const router = AutoRouter({ base: '/api/council' });
 
 // Get all council members
 router.get('/members', withAuth, async (request: Request, env: Env) => {

@@ -12,7 +12,7 @@ Your worker has access to the following bindings:
 - R2 Buckets:
   - R2: vox-quietus-r2 [simulated locally]
 - Vars:
-  - PUBLIC_URL: "https://api.scrivenly.com"
+  - PUBLIC_URL: "https://scrivenly.com/api"
   - FRONTEND_URL: "https://scrivenly.com"
   - SESKey: "AKIA36OXS3SM4YRL76M4"
 ⎔ Starting local server...

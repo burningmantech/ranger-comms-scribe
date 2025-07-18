@@ -10,7 +10,7 @@ import { notifyAboutReply, notifyGroupAboutNewContent } from '../services/notifi
 import { sendReplyNotification } from '../utils/email';
 import { CustomRequest } from '../types';
 
-export const router = AutoRouter({ base: '/gallery' });
+export const router = AutoRouter({ base: '/api/gallery' });
 
 // Upload a new media item
 router.post('/upload', withAdminCheck, async (request: Request, env: Env) => {

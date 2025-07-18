@@ -1,8 +1,8 @@
-import { Router } from 'itty-router';
+import { AutoRouter } from 'itty-router';
 import { Reminder, User } from '../types';
 import { withAuth } from '../authWrappers';
 
-const router = Router();
+export const router = AutoRouter({ base: '/api/reminders' });
 
 // Get pending reminders for a user
 router.get('/reminders', withAuth, async (request: Request, env: any) => {

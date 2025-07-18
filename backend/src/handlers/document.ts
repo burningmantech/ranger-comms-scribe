@@ -21,7 +21,7 @@ import {
 } from '../services/documentService';
 import { broadcastToDocumentRoom } from './websocket';
 
-export const router = AutoRouter({ base: '/documents' });
+export const router = AutoRouter({ base: '/api/documents' });
 
 // Create a new document
 router.post('/', withAuth, async (request: Request, env: any) => {

@@ -26,7 +26,7 @@ interface ExtendedRequest extends Request {
     params: Record<string, string>;
 }
 
-export const router = AutoRouter({ base: '/blog' });
+export const router = AutoRouter({ base: '/api/blog' });
 
 router.options('*', preflight);
 

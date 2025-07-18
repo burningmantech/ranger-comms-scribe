@@ -1,7 +1,7 @@
 // Test script for R2-based tracked changes functionality
 // Run this in the browser console when logged in
 
-const API_URL = 'https://api.scrivenly.com';
+const API_URL = 'https://scrivenly.com/api';
 
 async function testR2TrackedChanges() {
   console.log('🧪 Testing R2-based tracked changes...');

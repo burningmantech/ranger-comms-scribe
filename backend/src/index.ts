@@ -146,7 +146,7 @@ export async function scheduled(env: Env) {
 }
 
 router
-    .get('/', async (request: Request, env: Env) => {
+    .get('/api', async (request: Request, env: Env) => {
         // Initialize app on first request
         try {
             console.log('Initializing application from root endpoint...');
@@ -157,27 +157,27 @@ router
         }
         return new Response('API is running');
     })
-    .all('/auth/*', authRouter.fetch) // Handle all auth routes
-    .all('/blog/*', blogRouter.fetch) // Handle all blog routes
-      .all('/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
-  .all('/gallery/*', galleryRouter.fetch) // Handle all gallery routes
-    .all('/page/*', withOptionalSession) // Allow page to identify users with a session
-    .all('/page/*', pageRouter.fetch) // Handle all page routes
-    .all('/admin/*', withValidSession) // Middleware to check session for admin routes
-    .all('/admin/*', adminRouter.fetch) // Handle all admin routes
-    .all('/user/*', withValidSession) // Middleware to check session for user routes
-    .all('/user/*', userRouter.fetch) // Handle all user routes
-    .all('/content/*', withValidSession) // Middleware to check session for content routes
-    .all('/content/*', contentSubmissionRouter.fetch) // Handle all content submission routes
-    .all('/council/*', withValidSession) // Middleware to check session for council routes
-    .all('/council/*', councilMemberRouter.fetch) // Handle all council member routes
-    .all('/reminders/*', withValidSession) // Middleware to check session for reminder routes
-    .all('/reminders/*', reminderRouter.fetch) // Handle all reminder routes
-    .all('/comms-cadre/*', withValidSession) // Middleware to check session for Comms Cadre routes
-    .all('/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
-    .all('/tracked-changes/*', withValidSession) // Middleware to check session for tracked changes routes
-    .all('/tracked-changes/*', trackedChangesRouter.fetch) // Handle all tracked changes routes
-    .all('/ws/*', websocketRouter.fetch) // Handle all WebSocket routes (auth is handled in the router)
+    .all('/api/auth/*', authRouter.fetch) // Handle all auth routes
+    .all('/api/blog/*', blogRouter.fetch) // Handle all blog routes
+    .all('/api/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
+    .all('/api/gallery/*', galleryRouter.fetch) // Handle all gallery routes
+    .all('/api/page/*', withOptionalSession) // Allow page to identify users with a session
+    .all('/api/page/*', pageRouter.fetch) // Handle all page routes
+    .all('/api/admin/*', withValidSession) // Middleware to check session for admin routes
+    .all('/api/admin/*', adminRouter.fetch) // Handle all admin routes
+    .all('/api/user/*', withValidSession) // Middleware to check session for user routes
+    .all('/api/user/*', userRouter.fetch) // Handle all user routes
+    .all('/api/content/*', withValidSession) // Middleware to check session for content routes
+    .all('/api/content/*', contentSubmissionRouter.fetch) // Handle all content submission routes
+    .all('/api/council/*', withValidSession) // Middleware to check session for council routes
+    .all('/api/council/*', councilMemberRouter.fetch) // Handle all council member routes
+    .all('/api/reminders/*', withValidSession) // Middleware to check session for reminder routes
+    .all('/api/reminders/*', reminderRouter.fetch) // Handle all reminder routes
+    .all('/api/comms-cadre/*', withValidSession) // Middleware to check session for Comms Cadre routes
+    .all('/api/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
+    .all('/api/tracked-changes/*', withValidSession) // Middleware to check session for tracked changes routes
+    .all('/api/tracked-changes/*', trackedChangesRouter.fetch) // Handle all tracked changes routes
+    .all('/api/ws/*', websocketRouter.fetch) // Handle all WebSocket routes (auth is handled in the router)
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);
         return new Response('Not Found', { status: 404 });

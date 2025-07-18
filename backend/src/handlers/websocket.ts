@@ -3,7 +3,7 @@ import { withAuth } from '../authWrappers';
 import { User } from '../types';
 import { WebSocketMessage } from '../services/websocketService';
 
-export const router = AutoRouter({ base: '/ws' });
+export const router = AutoRouter({ base: '/api/ws' });
 
 // Test endpoint to verify WebSocket infrastructure
 router.get('/test', async (request: Request, env: any) => {

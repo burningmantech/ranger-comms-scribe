@@ -389,7 +389,7 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
 }
 
 // Create the router
-export const router = AutoRouter({ base: '/tracked-changes' })
+export const router = AutoRouter({ base: '/api/tracked-changes' })
   .get('/submission/:submissionId', getTrackedChangesHandler)
   .post('/submission/:submissionId', createTrackedChangeHandler)
   .put('/submission/:submissionId', updateProposedVersionsHandler)

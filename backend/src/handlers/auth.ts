@@ -7,7 +7,7 @@ import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
 
-export const router = AutoRouter({ base : '/auth' });
+export const router = AutoRouter({ base : '/api/auth' });
 
 async function verify(token: string) {
     const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${token}`);

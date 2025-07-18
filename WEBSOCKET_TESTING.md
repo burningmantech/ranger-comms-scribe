@@ -83,7 +83,7 @@ Test WebSocket with different user parameters:
 ```javascript
 const submissionId = '825b0eda-75d0-4840-9dfb-267f6e121af7';
 const sessionId = localStorage.getItem('sessionId');
-const wsUrl = `wss://api.scrivenly.com/ws/submissions/${submissionId}?submissionId=${submissionId}&userId=user-a@example.com&userName=User+A&userEmail=user-a@example.com&sessionId=${sessionId}`;
+const wsUrl = `wss://scrivenly.com/api/ws/submissions/${submissionId}?submissionId=${submissionId}&userId=user-a@example.com&userName=User+A&userEmail=user-a@example.com&sessionId=${sessionId}`;
 
 const ws1 = new WebSocket(wsUrl);
 ws1.onmessage = (e) => console.log('User A received:', JSON.parse(e.data));
@@ -93,7 +93,7 @@ ws1.onmessage = (e) => console.log('User A received:', JSON.parse(e.data));
 ```javascript
 const submissionId = '825b0eda-75d0-4840-9dfb-267f6e121af7';
 const sessionId = localStorage.getItem('sessionId');
-const wsUrl = `wss://api.scrivenly.com/ws/submissions/${submissionId}?submissionId=${submissionId}&userId=user-b@example.com&userName=User+B&userEmail=user-b@example.com&sessionId=${sessionId}`;
+const wsUrl = `wss://scrivenly.com/api/ws/submissions/${submissionId}?submissionId=${submissionId}&userId=user-b@example.com&userName=User+B&userEmail=user-b@example.com&sessionId=${sessionId}`;
 
 const ws2 = new WebSocket(wsUrl);
 ws2.onmessage = (e) => console.log('User B received:', JSON.parse(e.data));
@@ -167,7 +167,7 @@ console.log('WebSocket status:', ws.readyState);
 ### Test Infrastructure
 ```bash
 # Test WebSocket endpoint
-curl https://api.scrivenly.com/ws/test
+curl https://scrivenly.com/api/ws/test
 
 # Check logs
 wrangler tail
@@ -176,10 +176,10 @@ wrangler tail
 ### Test User Access
 ```bash
 # Test if both users can access the submission
-curl "https://api.scrivenly.com/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7" \
+curl "https://scrivenly.com/api/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7" \
   -H "Authorization: Bearer USER_A_SESSION"
 
-curl "https://api.scrivenly.com/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7" \
+curl "https://scrivenly.com/api/content/submissions/825b0eda-75d0-4840-9dfb-267f6e121af7" \
   -H "Authorization: Bearer USER_B_SESSION"
 ```
 

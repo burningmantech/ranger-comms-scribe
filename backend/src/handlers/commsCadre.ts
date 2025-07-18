@@ -5,7 +5,7 @@ import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
 import { getObject, putObject, deleteObject } from '../services/cacheService';
 
-export const router = AutoRouter({ base: '/comms-cadre' });
+export const router = AutoRouter({ base: '/api/comms-cadre' });
 
 interface CommsCadreMember {
   id: string;

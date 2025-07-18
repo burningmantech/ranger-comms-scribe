@@ -8,7 +8,7 @@ import { broadcastToSubmissionRoom } from './websocket';
 import { uploadMedia } from '../services/mediaService';
 import { Env } from '../utils/sessionManager';
 
-export const router = AutoRouter({ base: '/content' });
+export const router = AutoRouter({ base: '/api/content' });
 
 // Create a new content submission
 router.post('/submissions', withAuth, async (request: Request, env: any) => {

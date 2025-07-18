@@ -10,7 +10,7 @@ interface ExtendedRequest extends Request {
   params: Record<string, string>;
 }
 
-export const router = AutoRouter({ base: '/user' });
+export const router = AutoRouter({ base: '/api/user' });
 
 // Get user settings
 router.get('/settings', withAuth, async (request: ExtendedRequest, env: Env) => {

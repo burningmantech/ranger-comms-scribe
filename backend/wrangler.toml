@@ -4,10 +4,10 @@ account_id = "e47c223ef39af0490164800057ef846f"
 workers_dev = true
 compatibility_date = "2023-10-01"
 main = "src/index.ts"
-route = "api.scrivenly.com/*"
+route = "scrivenly.com/api/*"
 
 [vars]
-PUBLIC_URL = "https://api.scrivenly.com"
+PUBLIC_URL = "https://scrivenly.com/api"
 FRONTEND_URL = "https://scrivenly.com"
 SESKey = "AKIA36OXS3SM4YRL76M4"
 

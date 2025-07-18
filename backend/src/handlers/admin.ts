@@ -40,7 +40,7 @@ interface RequestWithParams extends Request {
   };
 }
 
-export const router = AutoRouter({ base: '/admin' });
+export const router = AutoRouter({ base: '/api/admin' });
 
 // Get all users
 router.get('/users', withAdminCheck, async (request: Request, env: Env) => {

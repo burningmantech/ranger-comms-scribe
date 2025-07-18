@@ -21,7 +21,7 @@ interface ExtendedRequest extends Request {
   params: Record<string, string>;
 }
 
-export const router = AutoRouter({ base: '/page' });
+export const router = AutoRouter({ base: '/api/page' });
 
 // Get all published pages (public route)
 router.get('/', async (request: ExtendedRequest, env: Env) => {

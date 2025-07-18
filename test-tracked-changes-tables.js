@@ -1,7 +1,7 @@
 // Test script to check and create tracked changes tables
 // This can be run in the browser console or as a Node.js script
 
-const API_URL = 'https://api.scrivenly.com'; // Adjust this to your backend URL
+const API_URL = 'https://scrivenly.com/api'; // Adjust this to your backend URL
 
 async function testTrackedChangesTables() {
   console.log('Testing tracked changes tables...');
