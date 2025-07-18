@@ -1,5 +1,5 @@
 {
-  "name": "vox-quietus-cats-backend",
+  "name": "vox-quietus-backend",
   "version": "1.0.0",
   "main": "src/index.ts",
   "scripts": {
