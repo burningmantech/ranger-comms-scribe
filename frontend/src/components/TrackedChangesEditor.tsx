@@ -138,6 +138,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(window.innerWidth <= 768);
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState<boolean>(false); // Start with manual control
   
+  // Use refs to access current state values without causing re-renders
+  const sidebarCollapsedRef = useRef(sidebarCollapsed);
+  const sidebarAutoCollapsedRef = useRef(sidebarAutoCollapsed);
+  
+  // Update refs when state changes
+  useEffect(() => {
+    sidebarCollapsedRef.current = sidebarCollapsed;
+  }, [sidebarCollapsed]);
+  
+  useEffect(() => {
+    sidebarAutoCollapsedRef.current = sidebarAutoCollapsed;
+  }, [sidebarAutoCollapsed]);
+  
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
 
@@ -1446,16 +1459,20 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Handle sidebar auto-collapse based on available space
   useEffect(() => {
     let resizeTimeout: NodeJS.Timeout;
+    let lastResizeTime = 0;
+    const DEBOUNCE_DELAY = 300; // Increased debounce to prevent bouncing
+    const MIN_RESIZE_INTERVAL = 500; // Minimum time between auto-collapse/expand actions
     
     const handleResize = () => {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
+        const now = Date.now();
         const isSmallScreen = window.innerWidth <= 768;
         setIsSmallScreen(isSmallScreen);
         
         if (isSmallScreen) {
           // On mobile, only auto-collapse if it was previously auto-collapsed
-          if (!sidebarCollapsed && sidebarAutoCollapsed) {
+          if (!sidebarCollapsedRef.current && sidebarAutoCollapsedRef.current) {
             console.log('📱 Mobile: Keeping auto-collapsed');
             setSidebarCollapsed(true);
           }
@@ -1470,22 +1487,29 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             const availableWidth = containerWidth - sidebarWidth;
             const shouldCollapse = availableWidth < minEditorWidth;
             
-            console.log(`🖥️ Desktop: containerWidth=${containerWidth}, availableWidth=${availableWidth}, shouldCollapse=${shouldCollapse}, sidebarCollapsed=${sidebarCollapsed}, sidebarAutoCollapsed=${sidebarAutoCollapsed}`);
+            console.log(`🖥️ Desktop: containerWidth=${containerWidth}, availableWidth=${availableWidth}, shouldCollapse=${shouldCollapse}, sidebarCollapsed=${sidebarCollapsedRef.current}, sidebarAutoCollapsed=${sidebarAutoCollapsedRef.current}`);
             
-            if (shouldCollapse && !sidebarCollapsed) {
-              // Auto-collapse when space is limited
-              console.log('🖥️ Desktop: Auto-collapsing due to space constraints');
-              setSidebarAutoCollapsed(true);
-              setSidebarCollapsed(true);
-            } else if (!shouldCollapse && sidebarCollapsed && sidebarAutoCollapsed) {
-              // Auto-expand when space becomes available (only if it was auto-collapsed)
-              console.log('🖥️ Desktop: Auto-expanding due to sufficient space');
-              setSidebarAutoCollapsed(false);
-              setSidebarCollapsed(false);
+            // Only trigger auto-collapse/expand if enough time has passed since last action
+            if (now - lastResizeTime > MIN_RESIZE_INTERVAL) {
+              if (shouldCollapse && !sidebarCollapsedRef.current && !sidebarAutoCollapsedRef.current) {
+                // Auto-collapse when space is limited (only if not already auto-collapsed)
+                console.log('🖥️ Desktop: Auto-collapsing due to space constraints');
+                setSidebarAutoCollapsed(true);
+                setSidebarCollapsed(true);
+                lastResizeTime = now;
+              } else if (!shouldCollapse && sidebarCollapsedRef.current && sidebarAutoCollapsedRef.current) {
+                // Auto-expand when space becomes available (only if it was auto-collapsed)
+                console.log('🖥️ Desktop: Auto-expanding due to sufficient space');
+                setSidebarAutoCollapsed(false);
+                setSidebarCollapsed(false);
+                lastResizeTime = now;
+              }
+            } else {
+              console.log('⏱️ Skipping auto-collapse/expand due to minimum interval');
             }
           }
         }
-      }, 100); // Debounce resize events
+      }, DEBOUNCE_DELAY);
     };
 
     // Check initial screen size and available space
@@ -1498,7 +1522,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       window.removeEventListener('resize', handleResize);
       clearTimeout(resizeTimeout);
     };
-  }, [sidebarCollapsed, sidebarAutoCollapsed]); // Depend on both states to handle all cases
+  }, []); // Remove dependencies to prevent infinite loop
 
 
 
@@ -1540,6 +1564,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     setSidebarCollapsed(prev => {
       const newState = !prev;
       console.log('🔧 Setting sidebarCollapsed to:', newState);
+      
+      // If expanding on mobile, scroll to show the content
+      if (newState === false && isSmallScreen) {
+        // Use setTimeout to ensure the DOM has updated before scrolling
+        setTimeout(() => {
+          const mobileSidebarSection = document.querySelector('.mobile-sidebar-section');
+          if (mobileSidebarSection) {
+            mobileSidebarSection.scrollIntoView({ 
+              behavior: 'smooth', 
+              block: 'start',
+              inline: 'nearest'
+            });
+          }
+        }, 100);
+      }
+      
       return newState;
     });
     setSidebarAutoCollapsed(false); // Clear auto-collapse flag when manually toggled
