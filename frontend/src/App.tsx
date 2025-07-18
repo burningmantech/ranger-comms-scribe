@@ -16,6 +16,7 @@ import LexicalExtractionTest from './components/editor/tests/LexicalExtractionTe
 import { ContentManagement } from './pages/ContentManagement';
 import { MySubmissions } from './pages/MySubmissions';
 import { TrackedChangesView } from './pages/TrackedChangesView';
+import { TrackedChangesDemo } from './pages/TrackedChangesDemo';
 import { ContentProvider } from './contexts/ContentContext';
 import CommsRequest from './components/CommsRequest';
 
@@ -117,6 +118,15 @@ const App: React.FC = () => {
                   element={
                     <ProtectedRoute 
                       element={<TrackedChangesView />} 
+                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
+                    />
+                  } 
+                />
+                <Route 
+                  path="/tracked-changes-demo" 
+                  element={
+                    <ProtectedRoute 
+                      element={<TrackedChangesDemo />} 
                       allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
                     />
                   } 

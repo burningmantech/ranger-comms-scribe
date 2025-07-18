@@ -133,6 +133,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const autoSavePeriodStartTimeRef = useRef<Date | null>(null);
   const hasChangesInCurrentPeriodRef = useRef<boolean>(false);
 
+  // Sidebar collapse state - initialize based on screen size
+  const [isSmallScreen, setIsSmallScreen] = useState<boolean>(window.innerWidth <= 768);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(window.innerWidth <= 768);
+  const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState<boolean>(false); // Start with manual control
+  
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
 
@@ -1438,6 +1443,65 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     };
   }, []);
 
+  // Handle sidebar auto-collapse based on available space
+  useEffect(() => {
+    let resizeTimeout: NodeJS.Timeout;
+    
+    const handleResize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        const isSmallScreen = window.innerWidth <= 768;
+        setIsSmallScreen(isSmallScreen);
+        
+        if (isSmallScreen) {
+          // On mobile, only auto-collapse if it was previously auto-collapsed
+          if (!sidebarCollapsed && sidebarAutoCollapsed) {
+            console.log('📱 Mobile: Keeping auto-collapsed');
+            setSidebarCollapsed(true);
+          }
+        } else {
+          // On desktop, check if sidebar is impacting editor size
+          const editorContainer = editorRef.current;
+          if (editorContainer) {
+            const containerWidth = editorContainer.offsetWidth;
+            const sidebarWidth = 350; // Approximate sidebar width when expanded
+            const minEditorWidth = 600; // Minimum width needed for comfortable editing
+            
+            const availableWidth = containerWidth - sidebarWidth;
+            const shouldCollapse = availableWidth < minEditorWidth;
+            
+            console.log(`🖥️ Desktop: containerWidth=${containerWidth}, availableWidth=${availableWidth}, shouldCollapse=${shouldCollapse}, sidebarCollapsed=${sidebarCollapsed}, sidebarAutoCollapsed=${sidebarAutoCollapsed}`);
+            
+            if (shouldCollapse && !sidebarCollapsed) {
+              // Auto-collapse when space is limited
+              console.log('🖥️ Desktop: Auto-collapsing due to space constraints');
+              setSidebarAutoCollapsed(true);
+              setSidebarCollapsed(true);
+            } else if (!shouldCollapse && sidebarCollapsed && sidebarAutoCollapsed) {
+              // Auto-expand when space becomes available (only if it was auto-collapsed)
+              console.log('🖥️ Desktop: Auto-expanding due to sufficient space');
+              setSidebarAutoCollapsed(false);
+              setSidebarCollapsed(false);
+            }
+          }
+        }
+      }, 100); // Debounce resize events
+    };
+
+    // Check initial screen size and available space
+    handleResize();
+
+    // Add event listener
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      clearTimeout(resizeTimeout);
+    };
+  }, [sidebarCollapsed, sidebarAutoCollapsed]); // Depend on both states to handle all cases
+
+
+
   // Handle comment reply
   const handleCommentReply = useCallback((commentId: string) => {
     if (replyText.trim()) {
@@ -1469,6 +1533,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return newSet;
     });
   }, []);
+
+  // Toggle sidebar collapse
+  const toggleSidebar = useCallback(() => {
+    console.log('🔧 Manual toggle clicked. Current state:', { sidebarCollapsed, sidebarAutoCollapsed, isSmallScreen });
+    setSidebarCollapsed(prev => {
+      const newState = !prev;
+      console.log('🔧 Setting sidebarCollapsed to:', newState);
+      return newState;
+    });
+    setSidebarAutoCollapsed(false); // Clear auto-collapse flag when manually toggled
+    console.log('🔧 Cleared sidebarAutoCollapsed flag');
+  }, [sidebarCollapsed, sidebarAutoCollapsed, isSmallScreen]);
 
   // Check if user can approve the proposed version
   const canApproveProposedVersion = useCallback(() => {
@@ -1995,171 +2071,382 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        <div className="editor-sidebar">
-          <h3>Changes & Comments</h3>
-          <div className="changes-list">
-            {trackedChanges.map(change => (
-              <div 
-                key={change.id} 
-                className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
-                onClick={() => setSelectedChange(change.id)}
-                data-change-id={change.id}
-              >
-                <div className="change-header">
-                  <span className="change-author">{change.changedBy}</span>
-                  <span className="change-time">
-                    {new Date(change.timestamp).toLocaleString()}
-                  </span>
-                </div>
-                <div className="change-content">
-                  <div className="change-diff">
-                    {change.isIncremental ? (
-                      <>
-                        <div className="change-type-indicator">
-                          <span className="incremental-badge" style={{
-                            backgroundColor: '#e3f2fd',
-                            color: '#1976d2',
-                            padding: '2px 6px',
-                            borderRadius: '4px',
-                            fontSize: '11px',
-                            fontWeight: '500'
-                          }}>
-                            Incremental Change
-                          </span>
-                        </div>
-                        {change.oldValue && (
-                          <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>Removed:</strong> <span>{getChangeDisplayText(change.oldValue)}</span>
-                          </span>
-                        )}
-                        {change.newValue && (
-                          <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>Added:</strong> {getChangeDisplayText(change.newValue)}
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        {change.oldValue && (
-                          <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>Previous:</strong> {getChangeDisplayText(change.oldValue).substring(0, 100)}...
-                          </span>
-                        )}
-                        {change.newValue && (
-                          <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                            <strong>New:</strong> {getChangeDisplayText(change.newValue).substring(0, 100)}...
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="change-actions">
-                  {canMakeEditorialDecisions() && (
-                    <>
-                      <button
-                        className="btn btn-icon btn-sm btn-secondary action-button approve"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleChangeDecision(change.id, 'approve');
-                        }}
-                        title="Approve this change"
-                        disabled={change.status !== 'pending'}
-                        style={{ 
-                          opacity: change.status !== 'pending' ? 0.4 : 1
-                        }}
-                      >
-                        ✓
-                      </button>
-                      <button
-                        className="btn btn-icon btn-sm btn-danger action-button reject"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleChangeDecision(change.id, 'reject');
-                        }}
-                        title="Reject this change"
-                        disabled={change.status !== 'pending'}
-                        style={{ 
-                          opacity: change.status !== 'pending' ? 0.4 : 1
-                        }}
-                      >
-                        ✗
-                      </button>
-                      {(change.status === 'approved' || change.status === 'rejected') && (
-                        <button
-                          className="btn btn-icon btn-sm btn-neutral action-button undo"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleUndoChange(change.id);
-                          }}
-                          title="Undo this decision"
-                        >
-                          ↩
-                        </button>
-                      )}
-                    </>
-                  )}
+            {/* Mobile sidebar section - shown below content on small screens */}
+            {isSmallScreen && (
+              <div className="mobile-sidebar-section">
+                <div className="mobile-sidebar-header">
+                  <h3>Changes & Comments</h3>
                   <button
-                    className="btn btn-icon btn-sm btn-tertiary action-button comment"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedChange(change.id);
-                      setShowCommentDialog(true);
-                    }}
-                    title="Add comment"
+                    className="mobile-sidebar-toggle-btn"
+                    onClick={toggleSidebar}
+                    title={sidebarCollapsed ? "Expand changes" : "Collapse changes"}
                   >
-                    💬
+                    {sidebarCollapsed ? '▼' : '▲'}
                   </button>
-                  {/* Debug info */}
-                  <div style={{ fontSize: '10px', color: '#666', marginLeft: '8px' }}>
-                    Status: {change.status} | CanEdit: {canMakeEditorialDecisions() ? 'Yes' : 'No'}
-                  </div>
                 </div>
-                {change.status !== 'pending' && (
-                  <div className="change-status">
-                    {change.status === 'approved' && (
-                      <span className="status-label approved">
-                        ✓ Approved by {change.approvedBy}
-                      </span>
-                    )}
-                    {change.status === 'rejected' && (
-                      <span className="status-label rejected">
-                        ✗ Rejected by {change.rejectedBy}
-                      </span>
-                    )}
-                  </div>
-                )}
-                {change.comments.length > 0 && (
-                  <div className="change-comments">
-                    <div className="comments-header">
-                      <span className="comments-count">{change.comments.length} comment{change.comments.length !== 1 ? 's' : ''}</span>
-                      <button
-                        className="btn btn-icon btn-sm btn-neutral expand-comments-button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCommentExpansion(change.id);
-                        }}
-                      >
-                        {expandedComments.has(change.id) ? '▲' : '▼'}
-                      </button>
+                {!sidebarCollapsed && (
+                  <div className="mobile-sidebar-content">
+                    <div className="changes-list">
+                      {trackedChanges.map(change => (
+                        <div 
+                          key={change.id} 
+                          className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
+                          onClick={() => setSelectedChange(change.id)}
+                          data-change-id={change.id}
+                        >
+                          <div className="change-header">
+                            <span className="change-author">{change.changedBy}</span>
+                            <span className="change-time">
+                              {new Date(change.timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="change-content">
+                            <div className="change-diff">
+                              {change.isIncremental ? (
+                                <>
+                                  <div className="change-type-indicator">
+                                    <span className="incremental-badge" style={{
+                                      backgroundColor: '#e3f2fd',
+                                      color: '#1976d2',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      fontWeight: '500'
+                                    }}>
+                                      Incremental Change
+                                    </span>
+                                  </div>
+                                  {change.oldValue && (
+                                    <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                      <strong>Removed:</strong> <span>{getChangeDisplayText(change.oldValue)}</span>
+                                    </span>
+                                  )}
+                                  {change.newValue && (
+                                    <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                      <strong>Added:</strong> {getChangeDisplayText(change.newValue)}
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  {change.oldValue && (
+                                    <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                      <strong>Previous:</strong> {getChangeDisplayText(change.oldValue).substring(0, 100)}...
+                                    </span>
+                                  )}
+                                  {change.newValue && (
+                                    <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                      <strong>New:</strong> {getChangeDisplayText(change.newValue).substring(0, 100)}...
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="change-actions">
+                            {canMakeEditorialDecisions() && (
+                              <>
+                                <button
+                                  className="btn btn-icon btn-sm btn-secondary action-button approve"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleChangeDecision(change.id, 'approve');
+                                  }}
+                                  title="Approve this change"
+                                  disabled={change.status !== 'pending'}
+                                  style={{ 
+                                    opacity: change.status !== 'pending' ? 0.4 : 1
+                                  }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  className="btn btn-icon btn-sm btn-danger action-button reject"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleChangeDecision(change.id, 'reject');
+                                  }}
+                                  title="Reject this change"
+                                  disabled={change.status !== 'pending'}
+                                  style={{ 
+                                    opacity: change.status !== 'pending' ? 0.4 : 1
+                                  }}
+                                >
+                                  ✗
+                                </button>
+                                {(change.status === 'approved' || change.status === 'rejected') && (
+                                  <button
+                                    className="btn btn-icon btn-sm btn-neutral action-button undo"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUndoChange(change.id);
+                                    }}
+                                    title="Undo this decision"
+                                  >
+                                    ↩
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            <button
+                              className="btn btn-icon btn-sm btn-tertiary action-button comment"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedChange(change.id);
+                                setShowCommentDialog(true);
+                              }}
+                              title="Add comment"
+                            >
+                              💬
+                            </button>
+                          </div>
+                          {change.status !== 'pending' && (
+                            <div className="change-status">
+                              {change.status === 'approved' && (
+                                <span className="status-label approved">
+                                  ✓ Approved by {change.approvedBy}
+                                </span>
+                              )}
+                              {change.status === 'rejected' && (
+                                <span className="status-label rejected">
+                                  ✗ Rejected by {change.rejectedBy}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {change.comments.length > 0 && (
+                            <div className="change-comments">
+                              <div className="comments-header">
+                                <span className="comments-count">{change.comments.length} comment{change.comments.length !== 1 ? 's' : ''}</span>
+                                <button
+                                  className="btn btn-icon btn-sm btn-neutral expand-comments-button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleCommentExpansion(change.id);
+                                  }}
+                                  title={expandedComments.has(change.id) ? "Collapse comments" : "Expand comments"}
+                                >
+                                  {expandedComments.has(change.id) ? '▼' : '▶'}
+                                </button>
+                              </div>
+                              {expandedComments.has(change.id) && (
+                                <div className="comments-thread">
+                                  {organizeCommentsIntoTree(change.comments).map(comment => 
+                                    renderCommentTree(comment, change.id)
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    {expandedComments.has(change.id) && (
-                      <div className="comments-thread">
-                        {organizeCommentsIntoTree(change.comments).map(comment => 
-                          renderCommentTree(comment, change.id)
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
-            ))}
+            )}
           </div>
         </div>
+
+        {/* Desktop sidebar - only shown on larger screens */}
+        {!isSmallScreen && (
+          <div className={`editor-sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${sidebarAutoCollapsed ? 'auto-collapsed' : ''}`}>
+          <div className="sidebar-header">
+            <h3>Changes & Comments</h3>
+            <button
+              className="sidebar-toggle-btn"
+              onClick={toggleSidebar}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? '◀' : '▶'}
+            </button>
+          </div>
+          {sidebarCollapsed && !isSmallScreen && (
+            <div className="collapsed-sidebar-indicator">
+              <div className={`change-count-badge ${trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'has-pending' : ''}`}>
+                {trackedChanges.filter(c => c.status === 'pending').length || trackedChanges.length}
+              </div>
+              <div className="change-count-label">
+                {trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'pending' : 'changes'}
+              </div>
+              {sidebarAutoCollapsed && (
+                <div className="auto-collapsed-indicator">
+                  <span>📱</span>
+                </div>
+              )}
+            </div>
+          )}
+          {sidebarCollapsed && isSmallScreen && sidebarAutoCollapsed && (
+            <div className="mobile-auto-collapsed-indicator">
+              <span>💬 {trackedChanges.length} changes</span>
+            </div>
+          )}
+          <div className="sidebar-content">
+            <div className="changes-list">
+              {trackedChanges.map(change => (
+                <div 
+                  key={change.id} 
+                  className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
+                  onClick={() => setSelectedChange(change.id)}
+                  data-change-id={change.id}
+                >
+                  <div className="change-header">
+                    <span className="change-author">{change.changedBy}</span>
+                    <span className="change-time">
+                      {new Date(change.timestamp).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="change-content">
+                    <div className="change-diff">
+                      {change.isIncremental ? (
+                        <>
+                          <div className="change-type-indicator">
+                            <span className="incremental-badge" style={{
+                              backgroundColor: '#e3f2fd',
+                              color: '#1976d2',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: '500'
+                            }}>
+                              Incremental Change
+                            </span>
+                          </div>
+                          {change.oldValue && (
+                            <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                              <strong>Removed:</strong> <span>{getChangeDisplayText(change.oldValue)}</span>
+                            </span>
+                          )}
+                          {change.newValue && (
+                            <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                              <strong>Added:</strong> {getChangeDisplayText(change.newValue)}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {change.oldValue && (
+                            <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                              <strong>Previous:</strong> {getChangeDisplayText(change.oldValue).substring(0, 100)}...
+                            </span>
+                          )}
+                          {change.newValue && (
+                            <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                              <strong>New:</strong> {getChangeDisplayText(change.newValue).substring(0, 100)}...
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="change-actions">
+                    {canMakeEditorialDecisions() && (
+                      <>
+                        <button
+                          className="btn btn-icon btn-sm btn-secondary action-button approve"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeDecision(change.id, 'approve');
+                          }}
+                          title="Approve this change"
+                          disabled={change.status !== 'pending'}
+                          style={{ 
+                            opacity: change.status !== 'pending' ? 0.4 : 1
+                          }}
+                        >
+                          ✓
+                        </button>
+                        <button
+                          className="btn btn-icon btn-sm btn-danger action-button reject"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleChangeDecision(change.id, 'reject');
+                          }}
+                          title="Reject this change"
+                          disabled={change.status !== 'pending'}
+                          style={{ 
+                            opacity: change.status !== 'pending' ? 0.4 : 1
+                          }}
+                        >
+                          ✗
+                        </button>
+                        {(change.status === 'approved' || change.status === 'rejected') && (
+                          <button
+                            className="btn btn-icon btn-sm btn-neutral action-button undo"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUndoChange(change.id);
+                            }}
+                            title="Undo this decision"
+                          >
+                            ↩
+                          </button>
+                        )}
+                      </>
+                    )}
+                    <button
+                      className="btn btn-icon btn-sm btn-tertiary action-button comment"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedChange(change.id);
+                        setShowCommentDialog(true);
+                      }}
+                      title="Add comment"
+                    >
+                      💬
+                    </button>
+                    {/* Debug info */}
+                    <div style={{ fontSize: '10px', color: '#666', marginLeft: '8px' }}>
+                      Status: {change.status} | CanEdit: {canMakeEditorialDecisions() ? 'Yes' : 'No'}
+                    </div>
+                  </div>
+                  {change.status !== 'pending' && (
+                    <div className="change-status">
+                      {change.status === 'approved' && (
+                        <span className="status-label approved">
+                          ✓ Approved by {change.approvedBy}
+                        </span>
+                      )}
+                      {change.status === 'rejected' && (
+                        <span className="status-label rejected">
+                          ✗ Rejected by {change.rejectedBy}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {change.comments.length > 0 && (
+                    <div className="change-comments">
+                      <div className="comments-header">
+                        <span className="comments-count">{change.comments.length} comment{change.comments.length !== 1 ? 's' : ''}</span>
+                        <button
+                          className="btn btn-icon btn-sm btn-neutral expand-comments-button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCommentExpansion(change.id);
+                          }}
+                        >
+                          {expandedComments.has(change.id) ? '▲' : '▼'}
+                        </button>
+                      </div>
+                      {expandedComments.has(change.id) && (
+                        <div className="comments-thread">
+                          {organizeCommentsIntoTree(change.comments).map(comment => 
+                            renderCommentTree(comment, change.id)
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        )}
       </div>
+
+
 
       {/* Comment Dialog */}
       {showCommentDialog && (
