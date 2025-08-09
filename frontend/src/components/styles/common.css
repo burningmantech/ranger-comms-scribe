@@ -9,7 +9,7 @@
   align-items: center;
   justify-content: center;
   padding: 8px 16px;
-  border: none;
+  border: 1px solid rgba(0,0,0,0.15);
   border-radius: 4px;
   cursor: pointer;
   font-family: 'Poppins', sans-serif;
@@ -28,6 +28,7 @@
 .btn-primary {
   background-color: var(--accent-wine);
   color: var(--text-light);
+  border-color: var(--accent-wine);
 }
 
 .btn-primary:hover {
@@ -38,6 +39,7 @@
 .btn-secondary {
   background-color: var(--accent-gold);
   color: var(--text-dark);
+  border-color: var(--accent-gold);
 }
 
 .btn-secondary:hover {
@@ -48,6 +50,7 @@
 .btn-tertiary {
   background-color: var(--accent-teal);
   color: var(--text-light);
+  border-color: var(--accent-teal);
 }
 
 .btn-tertiary:hover {
@@ -58,6 +61,7 @@
 .btn-neutral {
   background-color: var(--text-medium);
   color: var(--text-light);
+  border-color: var(--text-medium);
 }
 
 .btn-neutral:hover {
@@ -68,6 +72,7 @@
 .btn-danger {
   background-color: var(--danger);
   color: var(--text-light);
+  border-color: var(--danger);
 }
 
 .btn-danger:hover {
