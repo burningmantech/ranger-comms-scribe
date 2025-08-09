@@ -22,6 +22,8 @@ interface TrackedChangesEditorProps {
   onApproveProposedVersion: (approverId: string, comment?: string) => void;
   onRejectProposedVersion: (rejecterId: string, comment?: string) => void;
   onRefreshNeeded?: () => void;
+  onSubmissionApprove?: (submission: ContentSubmission) => Promise<void> | void;
+  onSubmissionReject?: (submission: ContentSubmission) => Promise<void> | void;
 }
 
 interface ConnectedUser {
@@ -77,6 +79,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onApproveProposedVersion,
   onRejectProposedVersion,
   onRefreshNeeded,
+  onSubmissionApprove,
+  onSubmissionReject,
 }) => {
   
   // WebSocket state is now managed by CollaborativeEditor
@@ -153,6 +157,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
+
+  // Determine current user's existing approval decision on the submission
+  const mySubmissionApproval = useMemo(() => {
+    return (submission.approvals || []).find(a =>
+      (a as any).approverEmail === currentUser.email || a.approverId === currentUser.id || a.approverId === effectiveUserId
+    );
+  }, [submission.approvals, currentUser.email, currentUser.id, effectiveUserId]);
+  const hasApprovedSubmission = mySubmissionApproval?.status === 'APPROVED';
+  const hasRejectedSubmission = mySubmissionApproval?.status === 'REJECTED';
 
   // Real-time notifications are now handled by CollaborativeEditor
 
@@ -1850,7 +1863,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             <div className="proposed-version-section">
               <div className="section-header">
                 <h2 className="section-title">Proposed Version</h2>
-                <div className="section-actions">
+              <div className="section-actions">
+                {/* Submission-level Approve/Reject controls */}
+                {submission.status === 'in_review' && (
+                  <>
+                    <button
+                      className={`btn btn-primary btn-sm mr-2 ${hasApprovedSubmission ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      onClick={() => { if (!hasApprovedSubmission) { onSubmissionApprove ? onSubmissionApprove(submission) : undefined; } }}
+                      disabled={hasApprovedSubmission}
+                      title="Approve submission"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className={`btn btn-danger btn-sm mr-2 ${hasRejectedSubmission ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      onClick={() => { if (!hasRejectedSubmission) { onSubmissionReject ? onSubmissionReject(submission) : undefined; } }}
+                      disabled={hasRejectedSubmission}
+                      title="Reject submission"
+                    >
+                      Reject
+                    </button>
+                  </>
+                )}
                   {canApproveProposedVersion() && !isProposedVersionApproved && (
                     <button
                       className="btn btn-primary approve-button"

@@ -101,6 +101,8 @@ router.get('/submissions/:submissionId', async (request: Request, env: any) => {
   // Check if user has access to this submission
   const hasAccess = user.userType === UserType.Admin ||
                    submission.submittedBy === user.id ||
+                   user.userType === UserType.CouncilManager ||
+                   user.userType === UserType.CommsCadre ||
                    (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
   if (!hasAccess) {

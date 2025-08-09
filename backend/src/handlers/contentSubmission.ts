@@ -1,14 +1,73 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group } from '../types';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group, CouncilRole } from '../types';
 import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
 import { uploadMedia } from '../services/mediaService';
 import { Env } from '../utils/sessionManager';
+import { getCouncilManagersForRole } from '../services/councilManagerService';
 
 export const router = AutoRouter({ base: '/api/content' });
+
+// Helper: recompute approval status using unique latest decisions and membership lists
+async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
+  // Deduplicate by latest decision per approver
+  const approvalsByApprover = new Map<string, ContentApproval>();
+  for (const a of submission.approvals || []) {
+    const key = (a.approverEmail || a.approverId || '').trim().toLowerCase();
+    if (!key) continue;
+    const prev = approvalsByApprover.get(key);
+    if (!prev) {
+      approvalsByApprover.set(key, a);
+    } else {
+      const prevTime = new Date(prev.updatedAt || prev.createdAt).getTime();
+      const currTime = new Date(a.updatedAt || a.createdAt).getTime();
+      approvalsByApprover.set(key, currTime >= prevTime ? a : prev);
+    }
+  }
+  const uniqueApprovals = Array.from(approvalsByApprover.values());
+
+  // Normalize required approvers
+  const required = (submission.requiredApprovers || []).map(e => (e || '').trim().toLowerCase());
+
+  const allRequiredApproversApproved = required.every(email =>
+    uniqueApprovals.some(a => (a.approverEmail || '').trim().toLowerCase() === email && a.status === 'approved')
+  );
+
+  // Load comms cadre active list
+  const commsCadreList = (await getObject<any[]>('comms_cadre:active', env)) || [];
+  const commsCadreEmails = new Set((commsCadreList.filter(m => m.active).map(m => (m.email || '').trim().toLowerCase())));
+
+  // Load all council manager emails across roles
+  const councilEmails = new Set<string>();
+  for (const role of Object.values(CouncilRole)) {
+    try {
+      const members = await getCouncilManagersForRole(role as CouncilRole, env);
+      for (const m of members || []) {
+        if (m && m.email) councilEmails.add(m.email.trim().toLowerCase());
+      }
+    } catch {}
+  }
+
+  const hasCouncilApproval = uniqueApprovals.some(a => {
+    const email = (a.approverEmail || '').trim().toLowerCase();
+    return (a.approverType === UserType.CouncilManager) || (a.approverRoles || []).includes('CouncilManager') || councilEmails.has(email);
+  }) && uniqueApprovals.some(a => a.status === 'approved');
+
+  const hasCommsCadreApproval = uniqueApprovals.some(a => {
+    const email = (a.approverEmail || '').trim().toLowerCase();
+    return (a.approverType === UserType.CommsCadre) || (a.approverRoles || []).includes('CommsCadre') || commsCadreEmails.has(email);
+  }) && uniqueApprovals.some(a => a.status === 'approved');
+
+  if (allRequiredApproversApproved && hasCouncilApproval && hasCommsCadreApproval) {
+    submission.status = 'approved';
+    submission.finalApprovalDate = submission.finalApprovalDate || new Date().toISOString();
+  }
+
+  return submission;
+}
 
 // Create a new content submission
 router.post('/submissions', withAuth, async (request: Request, env: any) => {
@@ -110,6 +169,8 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   // Check if user has access to this submission
   const hasAccess = user.userType === UserType.Admin ||
                    submission.submittedBy === user.id ||
+                   user.userType === UserType.CouncilManager ||
+                   user.userType === UserType.CommsCadre ||
                    (submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
                    (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
@@ -163,6 +224,7 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
   }
 
   // Check if user has permission to edit this submission
+  // Allow editing required approvers by submitter, Council, or Comms Cadre
   const canEdit = user.userType === UserType.Admin ||
                  user.userType === UserType.CouncilManager ||
                  user.userType === UserType.CommsCadre ||
@@ -294,6 +356,7 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     approverEmail: user.email,
     approverName: user.name,
     approverType: user.userType,
+    approverRoles: user.roles || [],
     status,
     comment,
     createdAt: new Date().toISOString(),
@@ -307,6 +370,7 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
   }
 
   // Check if user has permission to approve this submission
+  // Any required reviewer, Comms Cadre, or Council Manager can approve
   const canApprove = user.userType === UserType.Admin ||
                     user.userType === UserType.CouncilManager ||
                     user.userType === UserType.CommsCadre ||
@@ -316,45 +380,28 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  // Add the approval
-  submission.approvals.push(approval);
-  
-  // Update approval counts
-  const commsCadreApprovals = submission.approvals.filter((a: ContentApproval) => 
-    a.approverType === UserType.CommsCadre && a.status === 'approved'
-  ).length;
-
-  const councilManagerApprovals = submission.approvals.filter((a: ContentApproval) => 
-    a.approverType === UserType.CouncilManager && a.status === 'approved'
+  // Add/update approval ensuring unique approver decision
+  const existingApprovalIndex = submission.approvals.findIndex((a: ContentApproval) =>
+    (a.approverId && a.approverId === user.id) || (a.approverEmail && a.approverEmail === user.email)
   );
 
-  // Check if all required approvers have approved
-  const allRequiredApproversApproved = submission.requiredApprovers?.every(approverEmail =>
-    submission.approvals.some(approval => 
-      approval.approverEmail === approverEmail && approval.status === 'approved'
-    ) ?? false
-  ) ?? true; // If no requiredApprovers specified, consider it approved
-
-  // Get total required approvers
-  const requiredCommsCadreApprovers = 2; // Minimum required CommsCadre approvers
-  const requiredCouncilManagers = submission.assignedCouncilManagers?.length || 0;
-
-  // Update status if needed - check both legacy logic and new requiredApprovers logic
-  const legacyApprovalMet = commsCadreApprovals >= requiredCommsCadreApprovers && 
-                           councilManagerApprovals.length >= requiredCouncilManagers;
-  
-  const newApprovalMet = allRequiredApproversApproved;
-
-  if (legacyApprovalMet && newApprovalMet) {
-    submission.status = 'approved';
-    submission.finalApprovalDate = new Date().toISOString();
-    // Send announcement email
-    await env.EMAIL.send({
-      to: 'announce@rangers.burningman.org',
-      subject: `New Approved Content: ${submission.title}`,
-      text: `A new piece of content has been approved and is ready for announcement.\n\nTitle: ${submission.title}\nContent: ${submission.content}`
-    });
+  if (existingApprovalIndex !== -1) {
+    const existingApproval = submission.approvals[existingApprovalIndex];
+    if (existingApproval.status === status) {
+      return json({ error: `You have already ${status} this submission` }, { status: 400 });
+    }
+    submission.approvals[existingApprovalIndex] = {
+      ...existingApproval,
+      status,
+      comment,
+      updatedAt: new Date().toISOString()
+    };
+  } else {
+    submission.approvals.push(approval);
   }
+  
+  // Recompute status with multi-role awareness and membership lists
+  await recomputeApprovalStatus(submission, env);
 
   // Update the submission in cache
   await putObject(`content_submissions/${id}`, submission, env);
@@ -376,6 +423,117 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
   }, env);
 
   return json(approval);
+});
+
+// Override approval by Communications Manager (Council) with confirmation
+router.post('/submissions/:id/override-approve', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const { confirm, reason } = await request.json();
+  const user = (request as any).user as User;
+
+  // Only Communications Manager (specific Council role) or Admin can override
+  let isCommsManagerRole = false;
+  try {
+    const commsManagers = await getCouncilManagersForRole(CouncilRole.CommunicationsManager, env);
+    isCommsManagerRole = commsManagers.some((m) => m.email === user.email || m.userId === user.id);
+  } catch (e) {
+    // Fallback: if user is CouncilManager and system cannot read council roles, deny unless Admin
+    isCommsManagerRole = false;
+  }
+  const canOverride = user.userType === UserType.Admin || isCommsManagerRole;
+  if (!canOverride) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  if (!confirm) {
+    return json({ error: 'Confirmation required' }, { status: 400 });
+  }
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  submission.status = 'approved';
+  submission.finalApprovalDate = new Date().toISOString();
+  submission.approvalOverride = true;
+  submission.approvalOverrideBy = user.id || user.email;
+  submission.approvalOverrideReason = reason;
+  submission.approvalOverrideAt = new Date().toISOString();
+
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  await broadcastToSubmissionRoom(id, {
+    type: 'status_changed',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: { status: submission.status, title: submission.title }
+  }, env);
+
+  return json(submission);
+});
+
+// Send announcement email after full approval; Comms Cadre can send
+router.post('/submissions/:id/send-email', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Must be approved first
+  if (submission.status !== 'approved') {
+    return json({ error: 'Submission not approved yet' }, { status: 400 });
+  }
+
+  // Only Comms Cadre or Admin can send
+  if (!(user.userType === UserType.CommsCadre || user.userType === UserType.Admin)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  // Send to appropriate list. For now, announcements go to rangers-announce
+  const toAddress = 'rangers-announce@burningman.org';
+  try {
+    if (!env.SESKey || !env.SESSecret) {
+      // Fall back to EMAIL provider if configured
+      if (env.EMAIL) {
+        await env.EMAIL.send({
+          to: toAddress,
+          subject: submission.title,
+          text: submission.content
+        });
+      } else {
+        return json({ error: 'Email service not configured' }, { status: 500 });
+      }
+    } else {
+      const { sendEmail } = await import('../utils/email');
+      await sendEmail(toAddress, submission.title, submission.content, env.SESKey, env.SESSecret);
+    }
+
+    submission.status = 'sent';
+    submission.sentBy = user.id || user.email;
+    submission.sentAt = new Date().toISOString();
+    submission.announcementSent = true;
+
+    await putObject(`content_submissions/${id}`, submission, env);
+    await deleteObject('content_submissions/list', env);
+
+    await broadcastToSubmissionRoom(id, {
+      type: 'status_changed',
+      userId: user.id || user.email,
+      userName: user.name,
+      userEmail: user.email,
+      data: { status: submission.status, title: submission.title }
+    }, env);
+
+    return json({ success: true });
+  } catch (e: any) {
+    return json({ error: e.message || 'Failed to send email' }, { status: 500 });
+  }
 });
 
 // Track changes to a submission

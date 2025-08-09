@@ -25,7 +25,8 @@ export const ContentManagement: React.FC = () => {
     sendReminder,
     createSuggestion,
     approveSuggestion,
-    rejectSuggestion
+    rejectSuggestion,
+    refreshSubmissions
   } = useContent();
 
   const [selectedSubmission, setSelectedSubmission] = useState<ContentSubmission | null>(null);
@@ -94,7 +95,7 @@ export const ContentManagement: React.FC = () => {
         <h1>Content Management</h1>
         {selectedSubmission && (
           <button
-            onClick={() => setSelectedSubmission(null)}
+            onClick={async () => { setSelectedSubmission(null); await refreshSubmissions(); }}
             className="back-button"
           >
             ← Back to Submissions

@@ -146,7 +146,23 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
                       {`${submission.comments?.length || 0} Comments `}
                     </span>
                     <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800">
-                      {`${submission.approvals?.length || 0} Approvals `}
+                      {`${(() => {
+                        // Compute unique approvers' latest decisions and count only APPROVED
+                        const approvals = submission.approvals || [];
+                        const byApprover = new Map<string, { status: string; timestamp: Date }>();
+                        approvals.forEach(a => {
+                          const key = (a as any).approverEmail || a.approverId;
+                          if (!key) return;
+                          const ts = a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp as any);
+                          const existing = byApprover.get(key);
+                          if (!existing || ts >= existing.timestamp) {
+                            byApprover.set(key, { status: a.status, timestamp: ts });
+                          }
+                        });
+                        let count = 0;
+                        byApprover.forEach(v => { if (v.status === 'APPROVED') count++; });
+                        return count;
+                      })()} Approvals `}
                     </span>
                     <span className="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
                       {`${submission.changes?.length || 0} Changes`}

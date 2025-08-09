@@ -9,6 +9,7 @@ interface ContentContextType {
   currentUser: User | null;
   userPermissions: any;
   saveSubmission: (submission: ContentSubmission) => Promise<void>;
+  refreshSubmissions: () => Promise<void>;
   approveSubmission: (submission: ContentSubmission) => Promise<void>;
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
   addComment: (submission: ContentSubmission, comment: Comment) => Promise<void>;
@@ -21,6 +22,8 @@ interface ContentContextType {
   createSuggestion: (submission: ContentSubmission, suggestion: SuggestedEdit) => Promise<void>;
   approveSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
   rejectSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
+  overrideApprove: (submission: ContentSubmission, reason?: string) => Promise<void>;
+  sendAnnouncementEmail: (submission: ContentSubmission) => Promise<void>;
 }
 
 const ContentContext = createContext<ContentContextType | null>(null);
@@ -105,6 +108,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           approvals: submission.approvals.map((approval: any) => ({
             ...approval,
             approverEmail: approval.approverEmail || approval.approverId, // Fallback for backward compatibility
+            status: typeof approval.status === 'string' ? approval.status.toUpperCase() : approval.status,
             createdAt: new Date(approval.createdAt),
             updatedAt: new Date(approval.updatedAt)
           })),
@@ -118,6 +122,10 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     } catch (err) {
       console.error('Error fetching submissions:', err);
     }
+  };
+
+  const refreshSubmissions = async () => {
+    await fetchSubmissions();
   };
 
   const fetchCouncilManagers = async () => {
@@ -219,6 +227,30 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const approveSubmission = async (submission: ContentSubmission) => {
     try {
+      // Optimistic update: add/update current user's approval as APPROVED
+      if (currentUser) {
+        setSubmissions(prev => prev.map(s => {
+          if (s.id !== submission.id) return s;
+          const existingIdx = (s.approvals || []).findIndex(a => a.approverEmail === currentUser.email || a.approverId === currentUser.id);
+          const now = new Date();
+          const approval = {
+            id: (existingIdx !== -1 ? s.approvals[existingIdx].id : crypto.randomUUID()),
+            approverId: currentUser.id || currentUser.email,
+            approverEmail: currentUser.email,
+            status: 'APPROVED' as const,
+            comment: undefined,
+            timestamp: now
+          };
+          const updatedApprovals = [...(s.approvals || [])];
+          if (existingIdx !== -1) {
+            updatedApprovals[existingIdx] = approval;
+          } else {
+            updatedApprovals.push(approval as any);
+          }
+          return { ...s, approvals: updatedApprovals };
+        }));
+      }
+
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
         method: 'POST',
         headers: {
@@ -230,10 +262,25 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         })
       });
       if (response.ok) {
-        const updatedSubmission = await response.json();
-        setSubmissions(prev => 
-          prev.map(s => s.id === submission.id ? updatedSubmission : s)
-        );
+        // Refetch the submission to get latest state
+        const refreshed = await fetch(`${API_URL}/content/submissions/${submission.id}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('sessionId')}` }
+        });
+        if (refreshed.ok) {
+          const data = await refreshed.json();
+          const normalized = {
+            ...data,
+            submittedAt: new Date(data.submittedAt),
+            comments: data.comments.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt), updatedAt: new Date(c.updatedAt) })),
+            approvals: data.approvals.map((a: any) => ({ ...a, status: typeof a.status === 'string' ? a.status.toUpperCase() : a.status, createdAt: new Date(a.createdAt), updatedAt: new Date(a.updatedAt) })),
+            changes: data.changes.map((ch: any) => ({ ...ch, timestamp: new Date(ch.changedAt || ch.timestamp) })),
+            approvalOverrideAt: data.approvalOverrideAt ? new Date(data.approvalOverrideAt) : undefined,
+            sentAt: data.sentAt ? new Date(data.sentAt) : undefined
+          } as ContentSubmission;
+          setSubmissions(prev => prev.map(s => s.id === submission.id ? normalized : s));
+        } else {
+          await fetchSubmissions();
+        }
       }
     } catch (err) {
       console.error('Error approving submission:', err);
@@ -243,6 +290,30 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
   const rejectSubmission = async (submission: ContentSubmission) => {
     try {
+      // Optimistic update: add/update current user's approval as REJECTED
+      if (currentUser) {
+        setSubmissions(prev => prev.map(s => {
+          if (s.id !== submission.id) return s;
+          const existingIdx = (s.approvals || []).findIndex(a => a.approverEmail === currentUser.email || a.approverId === currentUser.id);
+          const now = new Date();
+          const approval = {
+            id: (existingIdx !== -1 ? s.approvals[existingIdx].id : crypto.randomUUID()),
+            approverId: currentUser.id || currentUser.email,
+            approverEmail: currentUser.email,
+            status: 'REJECTED' as const,
+            comment: undefined,
+            timestamp: now
+          };
+          const updatedApprovals = [...(s.approvals || [])];
+          if (existingIdx !== -1) {
+            updatedApprovals[existingIdx] = approval;
+          } else {
+            updatedApprovals.push(approval as any);
+          }
+          return { ...s, approvals: updatedApprovals };
+        }));
+      }
+
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
         method: 'POST',
         headers: {
@@ -254,13 +325,81 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         })
       });
       if (response.ok) {
-        const updatedSubmission = await response.json();
-        setSubmissions(prev => 
-          prev.map(s => s.id === submission.id ? updatedSubmission : s)
-        );
+        // Refetch single submission to sync
+        const refreshed = await fetch(`${API_URL}/content/submissions/${submission.id}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('sessionId')}` }
+        });
+        if (refreshed.ok) {
+          const data = await refreshed.json();
+          const normalized = {
+            ...data,
+            submittedAt: new Date(data.submittedAt),
+            comments: data.comments.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt), updatedAt: new Date(c.updatedAt) })),
+            approvals: data.approvals.map((a: any) => ({ ...a, status: typeof a.status === 'string' ? a.status.toUpperCase() : a.status, createdAt: new Date(a.createdAt), updatedAt: new Date(a.updatedAt) })),
+            changes: data.changes.map((ch: any) => ({ ...ch, timestamp: new Date(ch.changedAt || ch.timestamp) })),
+            approvalOverrideAt: data.approvalOverrideAt ? new Date(data.approvalOverrideAt) : undefined,
+            sentAt: data.sentAt ? new Date(data.sentAt) : undefined
+          } as ContentSubmission;
+          setSubmissions(prev => prev.map(s => s.id === submission.id ? normalized : s));
+        } else {
+          await fetchSubmissions();
+        }
       }
     } catch (err) {
       console.error('Error rejecting submission:', err);
+      throw err;
+    }
+  };
+
+  const overrideApprove = async (submission: ContentSubmission, reason?: string) => {
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/override-approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        },
+        body: JSON.stringify({ confirm: true, reason })
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Failed to override approve');
+      }
+      const updated = await response.json();
+      // Normalize dates
+      const normalized = {
+        ...updated,
+        submittedAt: new Date(updated.submittedAt),
+        comments: updated.comments.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt), updatedAt: new Date(c.updatedAt) })),
+        approvals: updated.approvals.map((a: any) => ({ ...a, createdAt: new Date(a.createdAt), updatedAt: new Date(a.updatedAt) })),
+        changes: updated.changes.map((ch: any) => ({ ...ch, timestamp: new Date(ch.changedAt || ch.timestamp) })),
+        approvalOverrideAt: updated.approvalOverrideAt ? new Date(updated.approvalOverrideAt) : undefined,
+        sentAt: updated.sentAt ? new Date(updated.sentAt) : undefined
+      } as ContentSubmission;
+      setSubmissions(prev => prev.map(s => s.id === submission.id ? normalized : s));
+    } catch (err) {
+      console.error('Error overriding approval:', err);
+      throw err;
+    }
+  };
+
+  const sendAnnouncementEmail = async (submission: ContentSubmission) => {
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/send-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+        }
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Failed to send email');
+      }
+      // Refresh submissions list
+      await fetchSubmissions();
+    } catch (err) {
+      console.error('Error sending announcement email:', err);
       throw err;
     }
   };
@@ -749,6 +888,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     currentUser,
     userPermissions,
     saveSubmission,
+    refreshSubmissions,
     approveSubmission,
     rejectSubmission,
     addComment,
@@ -760,7 +900,9 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     sendReminder,
     createSuggestion,
     approveSuggestion,
-    rejectSuggestion
+    rejectSuggestion,
+    overrideApprove,
+    sendAnnouncementEmail
   };
 
   return (

@@ -19,7 +19,8 @@ export const MySubmissions: React.FC = () => {
     deleteSubmission,
     createSuggestion, 
     approveSuggestion, 
-    rejectSuggestion 
+    rejectSuggestion,
+    refreshSubmissions
   } = useContent();
   const [selectedSubmission, setSelectedSubmission] = React.useState<ContentSubmission | null>(null);
 
@@ -42,7 +43,7 @@ export const MySubmissions: React.FC = () => {
         <h1>Requests</h1>
         {selectedSubmission && (
           <button
-            onClick={() => setSelectedSubmission(null)}
+            onClick={async () => { setSelectedSubmission(null); await refreshSubmissions(); }}
             className="btn btn-neutral"
           >
             ← Back to Requests

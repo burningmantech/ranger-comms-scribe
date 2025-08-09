@@ -884,6 +884,33 @@ export const TrackedChangesView: React.FC = () => {
           onApproveProposedVersion={handleApproveProposedVersion}
           onRejectProposedVersion={handleRejectProposedVersion}
           onRefreshNeeded={handleRefreshNeeded}
+          onSubmissionApprove={async () => {
+            // Reuse ContentContext's approve flow via endpoint
+            const sessionId = localStorage.getItem('sessionId');
+            if (!sessionId) return;
+            await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${sessionId}`,
+              },
+              body: JSON.stringify({ status: 'approved' })
+            });
+            await fetchSubmission();
+          }}
+          onSubmissionReject={async () => {
+            const sessionId = localStorage.getItem('sessionId');
+            if (!sessionId) return;
+            await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${sessionId}`,
+              },
+              body: JSON.stringify({ status: 'rejected' })
+            });
+            await fetchSubmission();
+          }}
         />
       </div>
     </div>

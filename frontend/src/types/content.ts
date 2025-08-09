@@ -51,6 +51,10 @@ export interface ContentSubmission {
   sentBy?: string;
   sentAt?: Date;
   proposedVersions?: Record<string, string>;
+  approvalOverride?: boolean;
+  approvalOverrideBy?: string;
+  approvalOverrideReason?: string;
+  approvalOverrideAt?: Date;
 }
 
 export type SubmissionStatus =

@@ -159,6 +159,13 @@ export interface ContentSubmission {
   announcementSent: boolean;
   assignedCouncilManagers: string[];
   requiredApprovers?: string[]; // Array of email addresses of required approvers
+  // Optional metadata fields for overrides and sending
+  approvalOverride?: boolean;
+  approvalOverrideBy?: string; // user id or email
+  approvalOverrideReason?: string;
+  approvalOverrideAt?: string;
+  sentBy?: string;
+  sentAt?: string;
 }
 
 export interface FormField {
@@ -192,6 +199,7 @@ export interface ContentApproval {
   approverEmail: string; // Add email field for easier matching
   approverName: string;
   approverType: UserType;
+  approverRoles?: string[]; // Capture all roles to support multi-role approvers
   status: 'approved' | 'rejected';
   comment?: string;
   createdAt: string;

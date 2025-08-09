@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User, SuggestedEdit } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
@@ -6,6 +6,7 @@ import { SuggestionsList } from './SuggestionsList';
 import SubmissionCollaborators from './SubmissionCollaborators';
 import { WebSocketMessage } from '../services/websocketService';
 import { API_URL } from '../config';
+import { useContent } from '../contexts/ContentContext';
 
 interface ContentSubmissionComponentProps {
   submission: ContentSubmissionType;
@@ -45,6 +46,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   onSuggestionReject,
   users = []
 }) => {
+  const { councilManagers, overrideApprove, sendAnnouncementEmail } = useContent();
   const navigate = useNavigate();
   const [newComment, setNewComment] = useState('');
   const [isEditing, setIsEditing] = useState(false);
@@ -179,6 +181,15 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   // Use email as fallback for user ID since the id field is undefined
   const effectiveUserId = currentUser.email;
 
+  // Determine current user's existing approval decision (if any)
+  const myApproval = React.useMemo(() => {
+    return (submission.approvals || []).find(a =>
+      a.approverEmail === currentUser.email || a.approverId === currentUser.id || a.approverId === effectiveUserId
+    );
+  }, [submission.approvals, currentUser.email, currentUser.id, effectiveUserId]);
+  const hasApproved = myApproval?.status === 'APPROVED';
+  const hasRejected = myApproval?.status === 'REJECTED';
+
   // Check if all required approvers have approved
   const allRequiredApproversApproved = submission.requiredApprovers?.every(approverEmail =>
     submission.approvals?.some(approval => 
@@ -186,11 +197,20 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     ) ?? false
   ) ?? false;
 
-  // Check if user is a Comms Cadre member
+  // Check roles
   const isCommsCadre = currentUser.roles.includes('CommsCadre');
+  const isCouncilManager = currentUser.roles.includes('CouncilManager');
+  const isSubmitter = currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy;
+  const canEditRequiredApprovers = isSubmitter || isCommsCadre || isCouncilManager || currentUser.roles.includes('Admin');
+
+  // Determine if current user is Communications Manager (Council role)
+  const isCommunicationsManager = useMemo(() => {
+    return councilManagers?.some((cm: any) => cm.role === 'CommunicationsManager' && cm.email === currentUser.email);
+  }, [councilManagers, currentUser.email]);
 
   // Handle approval
   const handleApprove = async () => {
+    if (hasApproved) return; // prevent duplicate approve clicks
     if (allRequiredApproversApproved && submission.status === 'in_review') {
       // If all required approvers have approved, move to approved status
       await onApprove({
@@ -235,6 +255,26 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       required: false
     };
     setEditedFormFields([...editedFormFields, newField]);
+  };
+
+  // Manage required approvers list
+  const [newApproverEmail, setNewApproverEmail] = useState('');
+  const handleAddRequiredApprover = async () => {
+    const email = newApproverEmail.trim();
+    if (!email) return;
+    const updated = {
+      ...submission,
+      requiredApprovers: Array.from(new Set([...(submission.requiredApprovers || []), email]))
+    } as ContentSubmissionType;
+    await onSave(updated);
+    setNewApproverEmail('');
+  };
+  const handleRemoveRequiredApprover = async (email: string) => {
+    const updated = {
+      ...submission,
+      requiredApprovers: (submission.requiredApprovers || []).filter(e => e !== email)
+    } as ContentSubmissionType;
+    await onSave(updated);
   };
 
   const handleFormFieldChange = (id: string, field: keyof FormField, value: any) => {
@@ -617,25 +657,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         </div>
       </div>
 
-      {/* Approval buttons */}
-      {submission.status === 'in_review' && canApprove && (
-        <div className="mt-8 flex space-x-4">
-          <button
-            onClick={handleApprove}
-            className="btn btn-primary btn-with-icon"
-          >
-            <i className="fas fa-check"></i>
-            <span className="btn-text">Approve</span>
-          </button>
-          <button
-            onClick={() => onReject(submission)}
-            className="btn btn-danger btn-with-icon"
-          >
-            <i className="fas fa-times"></i>
-            <span className="btn-text">Reject</span>
-          </button>
-        </div>
-      )}
+      {/* Approval buttons removed from details view per request */}
 
       {/* Comms approval button */}
       {submission.status === 'approved' && isCommsCadre && (
@@ -667,6 +689,9 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       <div className="mt-4 p-4 bg-gray-50 rounded-lg">
         <h3 className="text-lg font-semibold mb-2">Status Information</h3>
         <p>Current Status: {submission.status}</p>
+        {submission.approvalOverride && (
+          <p className="text-amber-700">Approval overridden by {submission.approvalOverrideBy} on {submission.approvalOverrideAt ? new Date(submission.approvalOverrideAt as any).toLocaleString() : ''}</p>
+        )}
         {submission.commsApprovedBy && (
           <p>Comms Approved by: {submission.commsApprovedBy}</p>
         )}
@@ -686,10 +711,57 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
                       ({approval.status})
                     </span>
                   )}
+                  {canEditRequiredApprovers && (
+                    <button className="ml-3 btn btn-danger btn-sm" onClick={() => handleRemoveRequiredApprover(approverEmail)}>Remove</button>
+                  )}
                 </li>
               );
             }) || <li>No required approvers specified</li>}
           </ul>
+          {myApproval && (
+            <p className="mt-2 text-sm text-gray-600">Your decision: {myApproval.status}</p>
+          )}
+          {canEditRequiredApprovers && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="email"
+                className="border rounded px-2 py-1 flex-1"
+                placeholder="Add approver email"
+                value={newApproverEmail}
+                onChange={e => setNewApproverEmail(e.target.value)}
+              />
+              <button className="btn btn-primary btn-sm" onClick={handleAddRequiredApprover}>Add</button>
+            </div>
+          )}
+        </div>
+
+        {/* Actions for override and sending */}
+        <div className="mt-4 flex gap-3">
+          {isCommunicationsManager && submission.status !== 'approved' && (
+            <button
+              className="btn btn-secondary btn-with-icon"
+              onClick={async () => {
+                const confirmed = window.confirm('Are you sure you want to override and mark this item approved?');
+                if (!confirmed) return;
+                const reason = window.prompt('Optional: Provide a reason for the override');
+                await overrideApprove(submission as any, reason || undefined);
+              }}
+            >
+              <i className="fas fa-exclamation-circle"></i>
+              <span className="btn-text">Override Approve</span>
+            </button>
+          )}
+          {(isCommsCadre || isCouncilManager) && submission.status === 'approved' && (
+            <button
+              className="btn btn-success btn-with-icon"
+              onClick={async () => {
+                await sendAnnouncementEmail(submission as any);
+              }}
+            >
+              <i className="fas fa-paper-plane"></i>
+              <span className="btn-text">Send Announcement Email</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
