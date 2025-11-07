@@ -50,6 +50,7 @@ import {
 import { CheckboxNode, $createCheckboxNode, $isCheckboxNode } from '../nodes/CheckboxNode';
 import { createPortal } from 'react-dom';
 import { INSERT_IMAGE_COMMAND } from './ImagePlugin';
+import { INSERT_LINK_COMMAND } from './LinkPlugin';
 import { INDENT_COMMAND, OUTDENT_COMMAND } from './IndentationPlugin';
 import { TEXT_COLOR_COMMAND } from './TextColorPlugin';
 import { FONT_SIZE_COMMAND } from './FontSizePlugin';
@@ -246,21 +247,7 @@ export const ToolbarPlugin: React.FC = () => {
   }, [editor]);
 
   const insertLink = useCallback(() => {
-    // Simple link insertion
-    const url = prompt('Enter URL:');
-    if (url) {
-      // Just wrap the selected text with a link
-      editor.update(() => {
-        const selection = $getSelection();
-        if ($isRangeSelection(selection)) {
-          const selectedText = selection.getTextContent();
-          const linkText = selectedText || url;
-          const textNode = $createTextNode(linkText);
-          textNode.setFormat('underline' as TextFormatType);
-          selection.insertNodes([textNode]);
-        }
-      });
-    }
+    editor.dispatchCommand(INSERT_LINK_COMMAND, '');
   }, [editor]);
 
   const insertTable = useCallback(() => {
@@ -413,15 +400,19 @@ export const ToolbarPlugin: React.FC = () => {
       setIsStrikethrough(selection.hasFormat('strikethrough'));
       setIsList($isListNode(selection.anchor.getNode().getParent()));
       setIsQuote(selection.anchor.getNode().getParent()?.getType() === 'quote');
-      
-      // Get style values from the selection
+
+      // Check if selection is within a link
       const node = selection.anchor.getNode();
+      const parent = node.getParent();
+      setIsLink(parent?.getType() === 'link');
+
+      // Get style values from the selection
       const styleString = node.getStyle() || '';
       const color = getStyleValue(styleString, 'color', '#000000');
       const fontSize = getStyleValue(styleString, 'font-size', '16px');
       const fontFamily = getStyleValue(styleString, 'font-family', 'Arial');
       const alignment = getStyleValue(styleString, 'text-align', 'left');
-      
+
       setCurrentColor(color);
       setCurrentFontSize(fontSize);
       setCurrentFontFamily(fontFamily);
@@ -624,6 +615,19 @@ export const ToolbarPlugin: React.FC = () => {
             title="Quote"
           >
             <ChatBubbleLeftIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              insertLink();
+            }}
+            className={`toolbar-item ${isLink ? 'active' : ''}`}
+            title="Insert/Edit Link"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
           </button>
           <button
             onClick={(e) => {

@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
-import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR, COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getRoot, $createParagraphNode, $createTextNode } from 'lexical';
+import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR, COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getRoot, $createParagraphNode, $createTextNode, $createLineBreakNode, LexicalNode } from 'lexical';
 import { createCommand } from 'lexical';
 import { $createHeadingNode } from '@lexical/rich-text';
 import { $createListNode, $createListItemNode } from '@lexical/list';
@@ -212,7 +212,7 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
       const textContent = node.textContent?.trim();
       if (textContent) {
         const textNode = $createTextNode(textContent);
-        return [textNode]; // Return as array for consistency
+        return [textNode];
       }
       return [];
     } 
@@ -258,35 +258,85 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
           break;
           
         case 'ul':
-          // Unordered list
+          // Unordered list - handle nested lists properly
           const ulNode = $createListNode('bullet');
-          const listItems = element.querySelectorAll('li');
-          listItems.forEach(li => {
+          const directListItems = Array.from(element.children).filter(child => child.tagName.toLowerCase() === 'li');
+          directListItems.forEach(li => {
             const listItemNode = $createListItemNode();
-            const itemText = extractTextWithFormatting(li);
-            if (itemText.length > 0) {
-              listItemNode.append(...itemText);
+
+            // Process child nodes, handling nested lists
+            for (const child of Array.from(li.childNodes)) {
+              if (child.nodeType === Node.ELEMENT_NODE) {
+                const childElement = child as Element;
+                const childTag = childElement.tagName.toLowerCase();
+
+                if (childTag === 'ul' || childTag === 'ol') {
+                  // Nested list - recursively process it
+                  const nestedResults = convertHTMLNodeToLexical(child, context);
+                  nestedResults.forEach(nested => listItemNode.append(nested));
+                } else {
+                  // Other elements, extract with formatting
+                  const itemText = extractTextWithFormatting(li);
+                  if (itemText.length > 0) {
+                    itemText.forEach(text => listItemNode.append(text));
+                  }
+                  break; // Only process text once
+                }
+              } else if (child.nodeType === Node.TEXT_NODE && !listItemNode.getChildrenSize()) {
+                // Text node - only if we haven't added content yet
+                const itemText = extractTextWithFormatting(li);
+                if (itemText.length > 0) {
+                  itemText.forEach(text => listItemNode.append(text));
+                }
+                break;
+              }
             }
+
             ulNode.append(listItemNode);
           });
-          if (listItems.length > 0) {
+          if (directListItems.length > 0) {
             results.push(ulNode);
           }
           break;
-          
+
         case 'ol':
-          // Ordered list
+          // Ordered list - handle nested lists properly
           const olNode = $createListNode('number');
-          const orderedItems = element.querySelectorAll('li');
-          orderedItems.forEach(li => {
+          const directOrderedItems = Array.from(element.children).filter(child => child.tagName.toLowerCase() === 'li');
+          directOrderedItems.forEach(li => {
             const listItemNode = $createListItemNode();
-            const itemText = extractTextWithFormatting(li);
-            if (itemText.length > 0) {
-              listItemNode.append(...itemText);
+
+            // Process child nodes, handling nested lists
+            for (const child of Array.from(li.childNodes)) {
+              if (child.nodeType === Node.ELEMENT_NODE) {
+                const childElement = child as Element;
+                const childTag = childElement.tagName.toLowerCase();
+
+                if (childTag === 'ul' || childTag === 'ol') {
+                  // Nested list - recursively process it
+                  const nestedResults = convertHTMLNodeToLexical(child, context);
+                  nestedResults.forEach(nested => listItemNode.append(nested));
+                } else {
+                  // Other elements, extract with formatting
+                  const itemText = extractTextWithFormatting(li);
+                  if (itemText.length > 0) {
+                    itemText.forEach(text => listItemNode.append(text));
+                  }
+                  break; // Only process text once
+                }
+              } else if (child.nodeType === Node.TEXT_NODE && !listItemNode.getChildrenSize()) {
+                // Text node - only if we haven't added content yet
+                const itemText = extractTextWithFormatting(li);
+                if (itemText.length > 0) {
+                  itemText.forEach(text => listItemNode.append(text));
+                }
+                break;
+              }
             }
+
             olNode.append(listItemNode);
           });
-          if (orderedItems.length > 0) {
+          if (directOrderedItems.length > 0) {
             results.push(olNode);
           }
           break;
@@ -416,9 +466,17 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
           textNodes.push(textNode);
         }
       } else if (node.nodeType === Node.ELEMENT_NODE) {
-        // Recursively process child elements
-        for (const child of node.childNodes) {
-          processNode(child);
+        const element = node as Element;
+        const tagName = element.tagName?.toLowerCase();
+
+        // Handle BR tags as line breaks
+        if (tagName === 'br') {
+          textNodes.push($createLineBreakNode());
+        } else {
+          // Recursively process child elements
+          for (const child of node.childNodes) {
+            processNode(child);
+          }
         }
       }
     };
@@ -497,9 +555,20 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
       
       for (const child of element.childNodes) {
         if (child.nodeType === Node.TEXT_NODE) {
-          const text = child.textContent?.trim();
+          const text = child.textContent;
           if (text) {
-            nodes.push($createTextNode(text));
+            // Split on newlines and create line breaks between them
+            const lines = text.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (line) {
+                nodes.push($createTextNode(line));
+              }
+              // Add line break between lines (but not after the last line)
+              if (i < lines.length - 1) {
+                nodes.push($createLineBreakNode());
+              }
+            }
           }
         } else if (child.nodeType === Node.ELEMENT_NODE) {
           const childElement = child as Element;
@@ -1277,44 +1346,66 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
           }
           
           // Handle HTML content (which includes Google Docs images)
-          else if (item.kind === 'string' && item.type === 'text/html') {
+          if (item.kind === 'string' && item.type === 'text/html') {
             // Prevent default paste behavior immediately for HTML content
             event.preventDefault();
-            
+
             try {
               item.getAsString((htmlData) => {
-                // Check if HTML contains image tags
-                if (htmlData && htmlData.includes('<img')) {
-                  // Use comprehensive parser to maintain text/image order
-                  parseAndInsertHTML(htmlData);
-                } else {
-                  // If no images, just insert the text content
-                  const tempDiv = document.createElement('div');
-                  tempDiv.innerHTML = htmlData;
-                  const textContent = tempDiv.textContent || tempDiv.innerText || '';
-                  
-                  if (textContent.trim()) {
-                    editor.update(() => {
-                      const selection = $getSelection();
-                      if ($isRangeSelection(selection)) {
-                        const textNode = $createTextNode(textContent);
-                        selection.insertNodes([textNode]);
-                      }
-                    });
-                  }
-                }
+                // Always parse HTML to preserve paragraph structure and newlines
+                parseAndInsertHTML(htmlData);
               });
-              
-              return true; // Always return true to prevent further paste processing
             } catch (error) {
               console.error('❌ Error processing HTML content:', error);
             }
+
+            return true; // Return true immediately to prevent further paste processing
+          }
+
+          // Handle plain text paste with newlines
+          if (item.kind === 'string' && item.type === 'text/plain') {
+            event.preventDefault();
+
+            try {
+              item.getAsString((textData) => {
+                if (textData) {
+                  editor.update(() => {
+                    const selection = $getSelection();
+                    if ($isRangeSelection(selection)) {
+                      // Split text on newlines and create paragraph nodes
+                      const lines = textData.split(/\r?\n/);
+                      const paragraphs: LexicalNode[] = [];
+
+                      for (const line of lines) {
+                        const trimmedLine = line.trim();
+                        if (trimmedLine) {
+                          const paragraphNode = $createParagraphNode();
+                          paragraphNode.append($createTextNode(trimmedLine));
+                          paragraphs.push(paragraphNode);
+                        } else if (paragraphs.length > 0) {
+                          // Empty line becomes a paragraph break
+                          paragraphs.push($createParagraphNode());
+                        }
+                      }
+
+                      if (paragraphs.length > 0) {
+                        selection.insertNodes(paragraphs);
+                      }
+                    }
+                  });
+                }
+              });
+            } catch (error) {
+              console.error('❌ Error processing plain text:', error);
+            }
+
+            return true; // Return true immediately to prevent further paste processing
           }
         }
 
         return false;
       },
-      COMMAND_PRIORITY_LOW
+      COMMAND_PRIORITY_EDITOR
     );
 
     // Cleanup function

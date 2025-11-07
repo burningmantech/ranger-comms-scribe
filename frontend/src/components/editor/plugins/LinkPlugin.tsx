@@ -112,7 +112,7 @@ export default function LinkPlugin() {
           if ($isRangeSelection(selection)) {
             const node = selection.getNodes()[0];
             const linkNode = $isLinkNode(node) ? node : null;
-            
+
             if (linkNode) {
               handleLinkEdit(linkNode.getURL());
             } else {
@@ -126,21 +126,57 @@ export default function LinkPlugin() {
     );
   }, [editor]);
 
+  // Add click handler for links
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+
+      // Check if clicked element is a link
+      if (target.tagName === 'A' && target.closest('.ContentEditable__root')) {
+        event.preventDefault();
+
+        // Find the link node in Lexical
+        editor.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            const nodes = selection.getNodes();
+            const linkNode = nodes.find(node => $isLinkNode(node.getParent()));
+
+            if (linkNode) {
+              const parent = linkNode.getParent();
+              if (parent && $isLinkNode(parent)) {
+                handleLinkEdit(parent.getURL());
+              }
+            }
+          }
+        });
+      }
+    };
+
+    const editorElement = editor.getRootElement();
+    if (editorElement) {
+      editorElement.addEventListener('click', handleClick);
+      return () => {
+        editorElement.removeEventListener('click', handleClick);
+      };
+    }
+  }, [editor]);
+
   return (
     <>
       {isEditingLink && createPortal(
-        <div 
-          style={{ 
-            position: 'absolute', 
-            left: `${linkPosition.x}px`, 
+        <div
+          style={{
+            position: 'absolute',
+            left: `${linkPosition.x}px`,
             top: `${linkPosition.y}px`,
             zIndex: 100,
           }}
         >
-          <LinkEditor 
-            url={linkUrl} 
-            onSave={saveLinkEdit} 
-            onCancel={() => setIsEditingLink(false)} 
+          <LinkEditor
+            url={linkUrl}
+            onSave={saveLinkEdit}
+            onCancel={() => setIsEditingLink(false)}
           />
         </div>,
         document.body
