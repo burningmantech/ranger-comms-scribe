@@ -400,10 +400,19 @@
   border: 2px solid #1a73e8;
   border-radius: 4px;
   background-color: #fff;
+  outline: none;
 }
 
 .proposed-edit-editor:focus-within {
-  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+  box-shadow: none;
+  outline: none;
+}
+
+/* Remove any focus outline from editor */
+.proposed-edit-editor *:focus,
+.collaborative-editor *:focus,
+.lexical-editor-content-editable:focus {
+  outline: none !important;
 }
 
 .proposed-display-editor,
@@ -528,6 +537,7 @@
   min-height: 200px;
   max-height: 400px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .diff-segment {

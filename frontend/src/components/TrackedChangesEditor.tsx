@@ -492,19 +492,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Add scroll event listeners
   useEffect(() => {
-    const originalElement = originalDiffTextRef.current;
-    const proposedElement = proposedDiffTextRef.current;
-    
-    if (originalElement && proposedElement) {
-      originalElement.addEventListener('scroll', handleOriginalScroll);
-      proposedElement.addEventListener('scroll', handleProposedScroll);
-      
-      return () => {
+    // Use a timeout to ensure the DOM elements are fully rendered
+    const timeoutId = setTimeout(() => {
+      const originalElement = originalDiffTextRef.current;
+      const proposedElement = proposedDiffTextRef.current;
+
+      if (originalElement && proposedElement) {
+        originalElement.addEventListener('scroll', handleOriginalScroll, { passive: true });
+        proposedElement.addEventListener('scroll', handleProposedScroll, { passive: true });
+      }
+    }, 100);
+
+    return () => {
+      clearTimeout(timeoutId);
+      const originalElement = originalDiffTextRef.current;
+      const proposedElement = proposedDiffTextRef.current;
+
+      if (originalElement && proposedElement) {
         originalElement.removeEventListener('scroll', handleOriginalScroll);
         proposedElement.removeEventListener('scroll', handleProposedScroll);
-      };
-    }
-  }, [handleOriginalScroll, handleProposedScroll]);
+      }
+    };
+  }, [handleOriginalScroll, handleProposedScroll, submission.proposedVersions]);
 
   // Convert changes to tracked changes with status
   const trackedChanges: TrackedChange[] = useMemo(() => {
