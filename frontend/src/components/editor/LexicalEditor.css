@@ -28,15 +28,14 @@
 
 .editor-content-wrapper {
   flex-grow: 1;
-  overflow-y: auto;
-  max-height: calc(100vh - 150px); /* Limit height but allow scrolling */
+  /* Allow natural height - no scrolling container */
 }
 
 .lexical-editor-content-editable {
   min-height: 150px;
   padding: 15px;
   outline: none;
-  overflow-y: auto;
+  /* Allow natural height - no scrolling */
 }
 
 .lexical-editor-toolbar {
@@ -334,8 +333,8 @@
   min-height: 150px;
   padding: 15px;
   outline: none;
-  overflow-y: auto;
   background-color: white;
+  /* Allow natural height - no scrolling */
 }
 
 /* Success message styles */

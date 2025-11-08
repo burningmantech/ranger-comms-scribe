@@ -10,6 +10,22 @@ import './TrackedChangesEditor.css';
 
 const webSocketManager = new WebSocketManager();
 
+// Helper function to format relative time
+const formatRelativeTime = (date: Date): string => {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSecs < 60) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+};
+
 interface TrackedChangesEditorProps {
   submission: ContentSubmission;
   currentUser: User;
@@ -1837,13 +1853,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           </div>
           <div className="change-stats">
             <span className="stat pending">
-              {trackedChanges.filter(c => c.status === 'pending').length} pending
+              {`${trackedChanges.filter(c => c.status === 'pending').length} pending`}
             </span>
             <span className="stat approved">
-              {trackedChanges.filter(c => c.status === 'approved').length} approved
+              {`${trackedChanges.filter(c => c.status === 'approved').length} approved`}
             </span>
             <span className="stat rejected">
-              {trackedChanges.filter(c => c.status === 'rejected').length} rejected
+              {`${trackedChanges.filter(c => c.status === 'rejected').length} rejected`}
             </span>
           </div>
         </div>
@@ -2090,40 +2106,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           </div>
                         </div>
                       </div>
-                      
-                      {/* Unified diff view */}
-                      <div className="unified-diff">
-                        <h4>Unified Diff View</h4>
-                        <div className="unified-diff-content">
-                          {/* Text changes */}
-                          {diff.map((segment, index) => (
-                            <span
-                              key={index}
-                              className={`diff-segment ${segment.type}`}
-                            >
-                              {segment.type === 'delete' && <span className="diff-marker">-</span>}
-                              {segment.type === 'insert' && <span className="diff-marker">+</span>}
-                              {segment.value}
-                            </span>
-                          ))}
-                          
-                          {/* Image changes */}
-                          <div className="unified-diff-images">
-                            {removedImages.map(image => (
-                              <div key={`removed-${image.src}`} className="unified-diff-image removed">
-                                <span className="diff-marker">-</span>
-                                {renderImageInDiff(image, 'removed')}
-                              </div>
-                            ))}
-                            {addedImages.map(image => (
-                              <div key={`added-${image.src}`} className="unified-diff-image added">
-                                <span className="diff-marker">+</span>
-                                {renderImageInDiff(image, 'added')}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
                     </div>
                   );
                 })()}
@@ -2170,9 +2152,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           data-change-id={change.id}
                         >
                           <div className="change-header">
-                            <span className="change-author">{change.changedBy}</span>
-                            <span className="change-time">
-                              {new Date(change.timestamp).toLocaleString()}
+                            <span className="change-author" title={change.changedBy}>{change.changedBy}</span>
+                            <span className="change-time" title={new Date(change.timestamp).toLocaleString()}>
+                              {formatRelativeTime(new Date(change.timestamp))}
                             </span>
                           </div>
                           <div className="change-content">
@@ -2193,12 +2175,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                   </div>
                                   {change.oldValue && (
                                     <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                                      <strong>Removed:</strong> <span>{getChangeDisplayText(change.oldValue)}</span>
+                                      <strong style={{ marginRight: '6px' }}>Removed:</strong>
+                                      <span>{getChangeDisplayText(change.oldValue)}</span>
                                     </span>
                                   )}
                                   {change.newValue && (
                                     <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                                      <strong>Added:</strong> {getChangeDisplayText(change.newValue)}
+                                      <strong style={{ marginRight: '6px' }}>Added:</strong>
+                                      <span>{getChangeDisplayText(change.newValue)}</span>
                                     </span>
                                   )}
                                 </>
@@ -2206,12 +2190,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                 <>
                                   {change.oldValue && (
                                     <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                                      <strong>Previous:</strong> {getChangeDisplayText(change.oldValue).substring(0, 100)}...
+                                      <strong>Previous:</strong>{' '}{getChangeDisplayText(change.oldValue).substring(0, 100)}...
                                     </span>
                                   )}
                                   {change.newValue && (
                                     <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                                      <strong>New:</strong> {getChangeDisplayText(change.newValue).substring(0, 100)}...
+                                      <strong>New:</strong>{' '}{getChangeDisplayText(change.newValue).substring(0, 100)}...
                                     </span>
                                   )}
                                 </>
@@ -2338,17 +2322,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           </div>
           {sidebarCollapsed && !isSmallScreen && (
             <div className="collapsed-sidebar-indicator">
-              <div className={`change-count-badge ${trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'has-pending' : ''}`}>
+              <div
+                className={`change-count-badge ${trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'has-pending' : ''}`}
+                title={`${trackedChanges.filter(c => c.status === 'pending').length > 0 ? trackedChanges.filter(c => c.status === 'pending').length + ' pending' : trackedChanges.length + ' changes'}`}
+              >
                 {trackedChanges.filter(c => c.status === 'pending').length || trackedChanges.length}
               </div>
-              <div className="change-count-label">
-                {trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'pending' : 'changes'}
-              </div>
-              {sidebarAutoCollapsed && (
-                <div className="auto-collapsed-indicator">
-                  <span>📱</span>
-                </div>
-              )}
             </div>
           )}
           {sidebarCollapsed && isSmallScreen && sidebarAutoCollapsed && (
@@ -2356,9 +2335,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <span>💬 {trackedChanges.length} changes</span>
             </div>
           )}
-          <div className="sidebar-content">
-            <div className="changes-list">
-              {trackedChanges.map(change => (
+          {!sidebarCollapsed && (
+            <div className="sidebar-content">
+              <div className="changes-list">
+                {trackedChanges.map(change => (
                 <div 
                   key={change.id} 
                   className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
@@ -2366,9 +2346,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   data-change-id={change.id}
                 >
                   <div className="change-header">
-                    <span className="change-author">{change.changedBy}</span>
-                    <span className="change-time">
-                      {new Date(change.timestamp).toLocaleString()}
+                    <span className="change-author" title={change.changedBy}>{change.changedBy}</span>
+                    <span className="change-time" title={new Date(change.timestamp).toLocaleString()}>
+                      {formatRelativeTime(new Date(change.timestamp))}
                     </span>
                   </div>
                   <div className="change-content">
@@ -2389,12 +2369,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           </div>
                           {change.oldValue && (
                             <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong>Removed:</strong> <span>{getChangeDisplayText(change.oldValue)}</span>
+                              <strong style={{ marginRight: '6px' }}>Removed:</strong>
+                              <span>{getChangeDisplayText(change.oldValue)}</span>
                             </span>
                           )}
                           {change.newValue && (
                             <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong>Added:</strong> {getChangeDisplayText(change.newValue)}
+                              <strong style={{ marginRight: '6px' }}>Added:</strong>
+                              <span>{getChangeDisplayText(change.newValue)}</span>
                             </span>
                           )}
                         </>
@@ -2402,12 +2384,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         <>
                           {change.oldValue && (
                             <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong>Previous:</strong> {getChangeDisplayText(change.oldValue).substring(0, 100)}...
+                              <strong>Previous:</strong>{' '}{getChangeDisplayText(change.oldValue).substring(0, 100)}...
                             </span>
                           )}
                           {change.newValue && (
                             <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong>New:</strong> {getChangeDisplayText(change.newValue).substring(0, 100)}...
+                              <strong>New:</strong>{' '}{getChangeDisplayText(change.newValue).substring(0, 100)}...
                             </span>
                           )}
                         </>
@@ -2513,9 +2495,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     </div>
                   )}
                 </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
         )}
       </div>

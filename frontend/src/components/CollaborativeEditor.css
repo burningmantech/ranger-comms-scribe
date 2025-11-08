@@ -9,8 +9,6 @@
 .collaborative-editor-container {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  overflow: hidden;
 }
 
 .collaborative-toolbar-container {
@@ -21,7 +19,6 @@
 
 .collaborative-input-container {
   flex: 1;
-  overflow: auto;
 }
 
 /* Collaboration header */
@@ -260,7 +257,6 @@
 /* Collaborative editor wrapper */
 .collaborative-editor-wrapper {
   position: relative;
-  min-height: 400px;
 }
 
 .collaborative-editor-input {
@@ -274,7 +270,7 @@
 }
 
 .collaborative-lexical-editor .editor-content-wrapper {
-  min-height: 400px;
+  /* Allow natural height based on content */
 }
 
 /* Selection highlighting for collaborative editing */

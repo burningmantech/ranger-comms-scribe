@@ -14,6 +14,15 @@ export const TrackedChangesView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Set body background color for this page
+  useEffect(() => {
+    const originalBackground = document.body.style.backgroundColor;
+    document.body.style.backgroundColor = '#f8f9fa';
+    return () => {
+      document.body.style.backgroundColor = originalBackground;
+    };
+  }, []);
+
   const fetchSubmission = async () => {
     if (!submissionId) {
       setError('No submission ID provided');
@@ -855,7 +864,7 @@ export const TrackedChangesView: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="flex flex-col" style={{ backgroundColor: '#f8f9fa' }}>
       <div className="bg-white border-b border-gray-200 p-4">
         <div className="flex items-center justify-between">
           <div>
@@ -870,8 +879,8 @@ export const TrackedChangesView: React.FC = () => {
           </button>
         </div>
       </div>
-      
-      <div className="flex-1">
+
+      <div>
         <TrackedChangesEditor
           submission={submission}
           currentUser={currentUser}
