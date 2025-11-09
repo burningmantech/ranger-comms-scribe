@@ -74,7 +74,8 @@ export const withAuth = async (request: Request, env: Env) => {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  (request as any).user = user;
+  // Set user ID (string) not the user object
+  (request as any).user = session.userId;
   return undefined;
 };
 
