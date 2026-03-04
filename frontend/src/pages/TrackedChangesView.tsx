@@ -398,6 +398,19 @@ export const TrackedChangesView: React.FC = () => {
   };
 
   const handleApprove = async (changeId: string) => {
+    // Optimistic update: immediately reflect the approval in local state
+    const previousSubmission = submission;
+    if (submission) {
+      setSubmission({
+        ...submission,
+        changes: submission.changes.map(change =>
+          change.id === changeId
+            ? { ...change, status: 'approved' as const, approvedBy: currentUser?.email || currentUser?.id || '' }
+            : change
+        ),
+      });
+    }
+
     try {
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
@@ -412,100 +425,32 @@ export const TrackedChangesView: React.FC = () => {
       });
 
       if (!response.ok) {
+        // Revert on failure
+        setSubmission(previousSubmission);
         throw new Error(`Failed to approve change: ${response.status}`);
       }
 
-      // Refresh both submission and tracked changes data
-      const [submissionResponse, trackedChangesResponse] = await Promise.all([
-        fetch(`${API_URL}/content/submissions/${submissionId}`, {
-          headers: {
-            Authorization: `Bearer ${sessionId}`,
-          },
-        }),
-        fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
-          headers: {
-            Authorization: `Bearer ${sessionId}`,
-          },
-        })
-      ]);
-
-      if (submissionResponse.ok && trackedChangesResponse.ok) {
-        const data = await submissionResponse.json();
-        const trackedChanges = await trackedChangesResponse.json();
-        
-        // Transform tracked changes to the format expected by the frontend
-        const transformedChanges = trackedChanges.changes.map((change: any) => ({
-          id: change.id,
-          field: change.field,
-          oldValue: change.oldValue,
-          newValue: change.newValue,
-          changedBy: change.changedBy,
-          timestamp: new Date(change.timestamp),
-          status: change.status || 'pending',
-          approvedBy: change.approvedBy,
-          rejectedBy: change.rejectedBy,
-          approvedAt: change.approvedAt,
-          rejectedAt: change.rejectedAt,
-          isIncremental: change.isIncremental || false,
-          previousVersionId: change.previousVersionId,
-          completeProposedVersion: change.completeProposedVersion
-        }));
-        
-        // Transform backend data to frontend format
-        const transformedSubmission: ContentSubmission = {
-          id: data.id,
-          title: data.title,
-          content: data.content,
-          richTextContent: data.richTextContent,
-          status: data.status,
-          submittedBy: data.submittedBy,
-          submittedAt: new Date(data.submittedAt),
-          formFields: data.formFields || [],
-          comments: (data.comments || []).map((comment: any) => ({
-            id: comment.id,
-            content: comment.content,
-            authorId: comment.authorId,
-            createdAt: new Date(comment.createdAt),
-            type: comment.isSuggestion ? 'SUGGESTION' : 'COMMENT',
-            resolved: comment.resolved || false
-          })),
-          approvals: (data.approvals || []).map((approval: any) => ({
-            id: approval.id,
-            approverId: approval.approverId,
-            status: approval.status.toUpperCase(),
-            comment: approval.comment,
-            timestamp: new Date(approval.createdAt)
-          })),
-          changes: transformedChanges,
-          assignedReviewers: [],
-          assignedCouncilManagers: data.assignedCouncilManagers || [],
-          suggestedEdits: [],
-          requiredApprovers: [],
-          commsApprovedBy: data.commsApprovedBy,
-          sentBy: data.sentBy,
-          sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
-          // Add proposed versions with rich text support
-          proposedVersions: {
-            // Start with base proposed versions (plain text)
-            ...trackedChanges.proposedVersions,
-            // Override with rich text content if available (prioritize rich text)
-            ...(trackedChanges.proposedVersionsRichText && {
-              richTextContent: trackedChanges.proposedVersionsRichText.content
-            }),
-            // Also set content field from plain text versions if not already set
-            ...(trackedChanges.proposedVersions && {
-              content: trackedChanges.proposedVersions.content
-            })
-          }
-        };
-        setSubmission(transformedSubmission);
-      }
+      // Refresh data in the background to get server-authoritative state
+      fetchSubmission();
     } catch (err) {
       console.error('Error approving change:', err);
     }
   };
 
   const handleReject = async (changeId: string) => {
+    // Optimistic update: immediately reflect the rejection in local state
+    const previousSubmission = submission;
+    if (submission) {
+      setSubmission({
+        ...submission,
+        changes: submission.changes.map(change =>
+          change.id === changeId
+            ? { ...change, status: 'rejected' as const, rejectedBy: currentUser?.email || currentUser?.id || '' }
+            : change
+        ),
+      });
+    }
+
     try {
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
@@ -520,95 +465,13 @@ export const TrackedChangesView: React.FC = () => {
       });
 
       if (!response.ok) {
+        // Revert on failure
+        setSubmission(previousSubmission);
         throw new Error(`Failed to reject change: ${response.status}`);
       }
 
-      // Refresh both submission and tracked changes data
-      const [submissionResponse, trackedChangesResponse] = await Promise.all([
-        fetch(`${API_URL}/content/submissions/${submissionId}`, {
-          headers: {
-            Authorization: `Bearer ${sessionId}`,
-          },
-        }),
-        fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
-          headers: {
-            Authorization: `Bearer ${sessionId}`,
-          },
-        })
-      ]);
-
-      if (submissionResponse.ok && trackedChangesResponse.ok) {
-        const data = await submissionResponse.json();
-        const trackedChanges = await trackedChangesResponse.json();
-        
-        // Transform tracked changes to the format expected by the frontend
-        const transformedChanges = trackedChanges.changes.map((change: any) => ({
-          id: change.id,
-          field: change.field,
-          oldValue: change.oldValue,
-          newValue: change.newValue,
-          changedBy: change.changedBy,
-          timestamp: new Date(change.timestamp),
-          status: change.status || 'pending',
-          approvedBy: change.approvedBy,
-          rejectedBy: change.rejectedBy,
-          approvedAt: change.approvedAt,
-          rejectedAt: change.rejectedAt,
-          isIncremental: change.isIncremental || false,
-          previousVersionId: change.previousVersionId,
-          completeProposedVersion: change.completeProposedVersion
-        }));
-        
-        // Transform backend data to frontend format
-        const transformedSubmission: ContentSubmission = {
-          id: data.id,
-          title: data.title,
-          content: data.content,
-          richTextContent: data.richTextContent,
-          status: data.status,
-          submittedBy: data.submittedBy,
-          submittedAt: new Date(data.submittedAt),
-          formFields: data.formFields || [],
-          comments: (data.comments || []).map((comment: any) => ({
-            id: comment.id,
-            content: comment.content,
-            authorId: comment.authorId,
-            createdAt: new Date(comment.createdAt),
-            type: comment.isSuggestion ? 'SUGGESTION' : 'COMMENT',
-            resolved: comment.resolved || false
-          })),
-          approvals: (data.approvals || []).map((approval: any) => ({
-            id: approval.id,
-            approverId: approval.approverId,
-            approverEmail: approval.approverEmail || approval.approverId, // Fallback for backward compatibility
-            status: approval.status.toUpperCase(),
-            comment: approval.comment,
-            timestamp: new Date(approval.createdAt)
-          })),
-          changes: transformedChanges,
-          assignedReviewers: [],
-          assignedCouncilManagers: data.assignedCouncilManagers || [],
-          suggestedEdits: [],
-          requiredApprovers: data.requiredApprovers || [],
-          commsApprovedBy: data.commsApprovedBy,
-          sentBy: data.sentBy,
-          sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
-          // Add proposed versions with rich text support
-          proposedVersions: {
-            // Start with base proposed versions (plain text)
-            ...trackedChanges.proposedVersions,
-            // Override with rich text content if available (prioritize rich text)
-            ...(trackedChanges.proposedVersionsRichText && {
-              richTextContent: trackedChanges.proposedVersionsRichText.content
-            }),
-            // Also set content field from plain text versions if not already set
-            ...(trackedChanges.proposedVersions && {
-              content: trackedChanges.proposedVersions.content
-            })
-          }
-        };
-        setSubmission(transformedSubmission);
-      }
+      // Refresh data in the background to get server-authoritative state
+      fetchSubmission();
     } catch (err) {
       console.error('Error rejecting change:', err);
     }
@@ -823,18 +686,18 @@ export const TrackedChangesView: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-96">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '24rem' }}>
+        <div className="loading-container">Loading...</div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-4">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <h3 className="text-lg font-semibold text-red-800 mb-2">Error</h3>
-          <p className="text-red-700">{error}</p>
+      <div style={{ padding: '16px' }}>
+        <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '16px' }}>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#991b1b', marginBottom: '8px' }}>Error</h3>
+          <p style={{ color: '#b91c1c' }}>{error}</p>
           <button
             onClick={() => navigate('/requests')}
             className="btn btn-neutral"
@@ -848,10 +711,10 @@ export const TrackedChangesView: React.FC = () => {
 
   if (!submission || !currentUser) {
     return (
-      <div className="p-4">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <h3 className="text-lg font-semibold text-yellow-800 mb-2">Not Found</h3>
-          <p className="text-yellow-700">Submission not found or you don't have access to it.</p>
+      <div style={{ padding: '16px' }}>
+        <div style={{ backgroundColor: '#fefce8', border: '1px solid #fde68a', borderRadius: '8px', padding: '16px' }}>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#854d0e', marginBottom: '8px' }}>Not Found</h3>
+          <p style={{ color: '#a16207' }}>Submission not found or you don't have access to it.</p>
           <button
             onClick={() => navigate('/requests')}
             className="btn btn-neutral"
@@ -864,23 +727,7 @@ export const TrackedChangesView: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col" style={{ backgroundColor: '#f8f9fa' }}>
-      <div className="bg-white border-b border-gray-200 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">Tracked Changes Editor</h1>
-            <p className="text-sm text-gray-600">{submission.title}</p>
-          </div>
-          <button
-            onClick={() => navigate('/requests')}
-            className="btn btn-neutral"
-          >
-            ← Back to Requests
-          </button>
-        </div>
-      </div>
-
-      <div>
+    <div style={{ backgroundColor: '#f8f9fa' }}>
         <TrackedChangesEditor
           submission={submission}
           currentUser={currentUser}
@@ -893,6 +740,7 @@ export const TrackedChangesView: React.FC = () => {
           onApproveProposedVersion={handleApproveProposedVersion}
           onRejectProposedVersion={handleRejectProposedVersion}
           onRefreshNeeded={handleRefreshNeeded}
+          onBack={() => navigate('/requests')}
           onSubmissionApprove={async () => {
             // Reuse ContentContext's approve flow via endpoint
             const sessionId = localStorage.getItem('sessionId');
@@ -921,7 +769,6 @@ export const TrackedChangesView: React.FC = () => {
             await fetchSubmission();
           }}
         />
-      </div>
     </div>
   );
 }; 

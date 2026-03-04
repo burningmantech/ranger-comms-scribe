@@ -491,6 +491,25 @@ p {
   background-color: var(--primary-light);
 }
 
+/* Date input - make entire field clickable to open picker */
+input[type="date"] {
+  position: relative;
+  cursor: pointer;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  height: auto;
+  color: transparent;
+  background: transparent;
+  cursor: pointer;
+}
+
 /* Select Styling */
 .form-select,
 .user-type-select {
@@ -2736,11 +2755,8 @@ p {
   background: #ffdce0;
 }
 
-/* Diff View - Side by Side */
+/* Diff View - Side by Side with aligned rows */
 .diff-view {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
   margin-bottom: 2rem;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -2748,30 +2764,64 @@ p {
   box-shadow: var(--shadow-sm);
 }
 
-.diff-column {
-  background: #ffffff;
+.diff-headers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.diff-column h4 {
+.diff-headers h4 {
   margin: 0;
   padding: 0.75rem 1rem;
   background: var(--primary-light);
-  border-bottom: 1px solid var(--border-color);
   font-size: 14px;
   font-weight: 600;
   color: var(--text-dark);
 }
 
-.diff-text {
-  padding: 1rem;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  min-height: 200px;
-  max-height: 400px;
+.diff-headers h4:first-child {
+  border-right: 1px solid var(--border-color);
+}
+
+.diff-body {
+  max-height: 800px;
   overflow-y: auto;
-  font-family: 'SFMono-Regular', Menlo, monospace;
-  font-size: 14px;
-  line-height: 1.5;
+  overflow-x: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.diff-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.diff-row + .diff-row {
+  border-top: 1px solid var(--border-light, #eaeef2);
+}
+
+.diff-cell {
+  padding: 0.75em 1.25rem;
+  word-wrap: break-word;
+}
+
+.diff-cell:first-child {
+  border-right: 1px solid var(--border-color);
+}
+
+.diff-cell.spacer {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    var(--primary-light, #f6f8fa) 4px,
+    var(--primary-light, #f6f8fa) 8px
+  );
+}
+
+.diff-spacer-content {
+  min-height: 1em;
 }
 
 .diff-segment {

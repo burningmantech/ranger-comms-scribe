@@ -40,6 +40,7 @@ interface TrackedChangesEditorProps {
   onRefreshNeeded?: () => void;
   onSubmissionApprove?: (submission: ContentSubmission) => Promise<void> | void;
   onSubmissionReject?: (submission: ContentSubmission) => Promise<void> | void;
+  onBack?: () => void;
 }
 
 interface ConnectedUser {
@@ -97,6 +98,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onRefreshNeeded,
   onSubmissionApprove,
   onSubmissionReject,
+  onBack,
 }) => {
   
   // WebSocket state is now managed by CollaborativeEditor
@@ -155,7 +157,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Sidebar collapse state - initialize based on screen size
   const [isSmallScreen, setIsSmallScreen] = useState<boolean>(window.innerWidth <= 768);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(window.innerWidth <= 768);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState<boolean>(false); // Start with manual control
   
   // Use refs to access current state values without causing re-renders
@@ -217,6 +219,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Removed edit mode content state since we only have proposed version editing now
 
   const editorRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // Measure toolbar height and set CSS variable for sidebar positioning
+  useEffect(() => {
+    const updateSidebarTop = () => {
+      if (toolbarRef.current) {
+        const navbarHeight = 64;
+        const toolbarHeight = toolbarRef.current.offsetHeight;
+        document.documentElement.style.setProperty('--sidebar-top', `${navbarHeight + toolbarHeight}px`);
+      }
+    };
+    updateSidebarTop();
+    window.addEventListener('resize', updateSidebarTop);
+    return () => window.removeEventListener('resize', updateSidebarTop);
+  }, []);
 
   // Helper function to get displayable text from content
   const getDisplayableText = useCallback((content: string): string => {
@@ -945,6 +962,113 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Real-time status changes are now handled by CollaborativeEditor
   }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
 
+  // Scroll to and highlight matching text in the diff section when a change is clicked
+  const scrollToChangeInDiff = useCallback((change: TrackedChange) => {
+    const diffSection = document.querySelector('.diff-section');
+    if (!diffSection) return;
+
+    // Primary: find segment by data-change-id attribute
+    let targetElement: Element | null = diffSection.querySelector(`.diff-segment[data-change-id="${change.id}"]`);
+
+    // Fallback: text-based search if data-change-id mapping didn't find a match
+    if (!targetElement) {
+      const newText = change.newValue ? getChangeDisplayText(change.newValue) : '';
+      const oldText = change.oldValue ? getChangeDisplayText(change.oldValue) : '';
+      const segments = diffSection.querySelectorAll('.diff-segment');
+
+      // Try matching old text in removed segments, new text in added segments
+      const searches: [string, string][] = [];
+      if (oldText) searches.push([oldText.trim(), 'removed']);
+      if (newText) searches.push([newText.trim(), 'added']);
+      for (const [text, cls] of searches) {
+        if (!text) continue;
+        for (const seg of segments) {
+          if (!seg.classList.contains(cls)) continue;
+          const segText = seg.textContent || '';
+          if (segText.includes(text) || text.includes(segText.trim())) {
+            targetElement = seg;
+            break;
+          }
+        }
+        if (targetElement) break;
+      }
+
+      // Try any segment containing the text
+      if (!targetElement) {
+        for (const text of [newText, oldText]) {
+          if (!text || text.length < 2) continue;
+          for (const seg of segments) {
+            const segText = seg.textContent || '';
+            if (segText.includes(text)) {
+              const isChanged = seg.classList.contains('added') || seg.classList.contains('removed');
+              if (isChanged) { targetElement = seg; break; }
+              if (!targetElement) targetElement = seg;
+            }
+          }
+          if (targetElement) break;
+        }
+      }
+    }
+
+    if (targetElement) {
+      // Remove any existing highlight-pulse classes
+      diffSection.querySelectorAll('.highlight-pulse').forEach(el => {
+        el.classList.remove('highlight-pulse');
+      });
+
+      // First scroll the diff section into the page viewport
+      diffSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+      // Then scroll the inner .diff-text container after the page scroll settles
+      const capturedTarget = targetElement;
+      setTimeout(() => {
+        const scrollContainer = capturedTarget.closest('.diff-text');
+        if (scrollContainer) {
+          // Lock out sync handlers
+          isScrollingSyncedRef.current = true;
+
+          // Calculate position of target within the scroll container's content
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const targetRect = capturedTarget.getBoundingClientRect();
+          const targetTopInContent = targetRect.top - containerRect.top + scrollContainer.scrollTop;
+          const desiredScrollTop = Math.max(0, targetTopInContent - scrollContainer.clientHeight / 2 + targetRect.height / 2);
+
+          // Set scrollTop directly on both containers to avoid smooth-scroll event fighting
+          scrollContainer.scrollTop = desiredScrollTop;
+
+          const otherContainer = scrollContainer === originalDiffTextRef.current
+            ? proposedDiffTextRef.current
+            : originalDiffTextRef.current;
+          if (otherContainer) {
+            otherContainer.scrollTop = desiredScrollTop;
+          }
+
+          // Re-enable sync after scroll events settle
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              isScrollingSyncedRef.current = false;
+            });
+          });
+        }
+      }, 400);
+
+      // Add highlight animation
+      targetElement.classList.add('highlight-pulse');
+
+      // Remove the class after the animation ends
+      setTimeout(() => {
+        targetElement?.classList.remove('highlight-pulse');
+      }, 2000);
+    }
+  }, [getChangeDisplayText]);
+
+  // Handle clicking on a change item - select it and scroll to it in the diff
+  const handleChangeClick = useCallback((change: TrackedChange) => {
+    setSelectedChange(change.id);
+    // Small delay to ensure the UI has updated before scrolling
+    setTimeout(() => scrollToChangeInDiff(change), 100);
+  }, [scrollToChangeInDiff]);
+
   // Auto-save functionality with countdown timer
   const performAutoSave = useCallback(async () => {
     if (!isAutoSaveEnabledRef.current) {
@@ -1551,8 +1675,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }, DEBOUNCE_DELAY);
     };
 
-    // Check initial screen size and available space
-    handleResize();
+    // Check initial screen size (but skip auto-collapse on first render to honor default expanded state)
+    const initialSmallScreen = window.innerWidth <= 768;
+    setIsSmallScreen(initialSmallScreen);
 
     // Add event listener
     window.addEventListener('resize', handleResize);
@@ -1796,8 +1921,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     <div className="tracked-changes-editor">
       {/* Collaborative Editor handles its own WebSocket status and user presence */}
 
-      <div className="editor-toolbar">
+      <div className="editor-toolbar" ref={toolbarRef}>
         <div className="toolbar-left">
+          {onBack && (
+            <>
+              <button onClick={onBack} className="btn btn-neutral btn-sm">
+                ← Back to Requests
+              </button>
+              <div className="toolbar-separator" />
+            </>
+          )}
           <span className="toolbar-label">Viewing:</span>
           <span className="toolbar-value">
             Proposed version with tracked changes
@@ -2037,7 +2170,102 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   
                   // Generate word-level diff for text
                   const diff = smartDiff(originalText, proposedText);
-                  
+
+                  // Build position-based mapping of diff segments to tracked change IDs
+                  // Track character offsets in original text (for delete segments) and proposed text (for insert segments)
+                  const changePositionsInOriginal: Array<{ start: number; end: number; changeId: string }> = [];
+                  const changePositionsInProposed: Array<{ start: number; end: number; changeId: string }> = [];
+                  // Normalize whitespace helper for matching change text against document text
+                  const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
+                  const normalizedOriginal = normalizeWS(originalText);
+                  const normalizedProposed = normalizeWS(proposedText);
+                  // Build a char-index map from normalized positions back to original positions
+                  const buildNormMap = (text: string): number[] => {
+                    const map: number[] = [];
+                    let inWhitespace = false;
+                    let started = false;
+                    for (let i = 0; i < text.length; i++) {
+                      if (/\s/.test(text[i])) {
+                        if (started && !inWhitespace) {
+                          map.push(i); // the normalized space
+                          inWhitespace = true;
+                        }
+                      } else {
+                        started = true;
+                        inWhitespace = false;
+                        map.push(i);
+                      }
+                    }
+                    return map;
+                  };
+                  const origNormMap = buildNormMap(originalText);
+                  const propNormMap = buildNormMap(proposedText);
+                  for (const change of trackedChanges) {
+                    const oldDisplayText = change.oldValue ? getChangeDisplayText(change.oldValue) : '';
+                    const newDisplayText = change.newValue ? getChangeDisplayText(change.newValue) : '';
+                    if (oldDisplayText) {
+                      // Try direct match first, then normalized match
+                      let pos = originalText.indexOf(oldDisplayText);
+                      if (pos !== -1) {
+                        changePositionsInOriginal.push({ start: pos, end: pos + oldDisplayText.length, changeId: change.id });
+                      } else {
+                        const normPos = normalizedOriginal.indexOf(normalizeWS(oldDisplayText));
+                        if (normPos !== -1 && normPos < origNormMap.length) {
+                          const mappedStart = origNormMap[normPos];
+                          const endNorm = normPos + normalizeWS(oldDisplayText).length - 1;
+                          const mappedEnd = endNorm < origNormMap.length ? origNormMap[endNorm] + 1 : mappedStart + oldDisplayText.length;
+                          changePositionsInOriginal.push({ start: mappedStart, end: mappedEnd, changeId: change.id });
+                        }
+                      }
+                    }
+                    if (newDisplayText) {
+                      let pos = proposedText.indexOf(newDisplayText);
+                      if (pos !== -1) {
+                        changePositionsInProposed.push({ start: pos, end: pos + newDisplayText.length, changeId: change.id });
+                      } else {
+                        const normPos = normalizedProposed.indexOf(normalizeWS(newDisplayText));
+                        if (normPos !== -1 && normPos < propNormMap.length) {
+                          const mappedStart = propNormMap[normPos];
+                          const endNorm = normPos + normalizeWS(newDisplayText).length - 1;
+                          const mappedEnd = endNorm < propNormMap.length ? propNormMap[endNorm] + 1 : mappedStart + newDisplayText.length;
+                          changePositionsInProposed.push({ start: mappedStart, end: mappedEnd, changeId: change.id });
+                        }
+                      }
+                    }
+                  }
+
+                  // Compute per-segment change IDs by tracking running offsets through the diff
+                  let originalOffset = 0;
+                  let proposedOffset = 0;
+                  const segmentChangeIds: Map<number, string> = new Map();
+                  diff.forEach((segment, index) => {
+                    if (segment.type === 'delete') {
+                      const segStart = originalOffset;
+                      const segEnd = originalOffset + segment.value.length;
+                      for (const cp of changePositionsInOriginal) {
+                        if (segStart < cp.end && segEnd > cp.start) {
+                          segmentChangeIds.set(index, cp.changeId);
+                          break;
+                        }
+                      }
+                      originalOffset = segEnd;
+                    } else if (segment.type === 'insert') {
+                      const segStart = proposedOffset;
+                      const segEnd = proposedOffset + segment.value.length;
+                      for (const cp of changePositionsInProposed) {
+                        if (segStart < cp.end && segEnd > cp.start) {
+                          segmentChangeIds.set(index, cp.changeId);
+                          break;
+                        }
+                      }
+                      proposedOffset = segEnd;
+                    } else {
+                      // equal: advances both
+                      originalOffset += segment.value.length;
+                      proposedOffset += segment.value.length;
+                    }
+                  });
+
                   // Compare images
                   const addedImages = proposedImages.filter(pImg => 
                     !originalImages.some(oImg => oImg.src === pImg.src)
@@ -2049,6 +2277,156 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     proposedImages.some(pImg => pImg.src === oImg.src)
                   );
                   
+                  // Build aligned rows: each row has left and right content.
+                  // When a paragraph is deleted, right side gets a spacer (and vice versa).
+                  type Seg = { type: string; value: string; index: number };
+                  type AlignedRow = { left: Seg[]; right: Seg[] };
+
+                  const buildAlignedRows = (): AlignedRow[] => {
+                    const rows: AlignedRow[] = [];
+                    let leftPara: Seg[] = [];
+                    let rightPara: Seg[] = [];
+
+                    const flushRow = () => {
+                      if (leftPara.length > 0 || rightPara.length > 0) {
+                        rows.push({ left: [...leftPara], right: [...rightPara] });
+                        leftPara = [];
+                        rightPara = [];
+                      }
+                    };
+
+                    diff.forEach((segment, index) => {
+                      const parts = segment.value.split('\n');
+                      parts.forEach((part, partIndex) => {
+                        if (partIndex > 0) {
+                          if (segment.type === 'equal') {
+                            flushRow();
+                          } else if (segment.type === 'delete') {
+                            // If left has only delete content and right is empty, flush as left-only
+                            if (leftPara.length > 0 && leftPara.every(s => s.type === 'delete') && rightPara.length === 0) {
+                              rows.push({ left: [...leftPara], right: [] });
+                              leftPara = [];
+                            } else {
+                              flushRow();
+                            }
+                          } else if (segment.type === 'insert') {
+                            // If right has only insert content and left is empty, flush as right-only
+                            if (rightPara.length > 0 && rightPara.every(s => s.type === 'insert') && leftPara.length === 0) {
+                              rows.push({ left: [], right: [...rightPara] });
+                              rightPara = [];
+                            } else {
+                              flushRow();
+                            }
+                          }
+                        }
+                        if (part) {
+                          const seg: Seg = { type: segment.type, value: part, index };
+                          if (segment.type === 'equal') {
+                            leftPara.push(seg);
+                            rightPara.push(seg);
+                          } else if (segment.type === 'delete') {
+                            leftPara.push(seg);
+                          } else if (segment.type === 'insert') {
+                            rightPara.push(seg);
+                          }
+                        }
+                      });
+                    });
+                    flushRow();
+
+                    // Post-process: merge orphaned fragments (like stray punctuation)
+                    // into the preceding row. This handles cases where the diff splits
+                    // e.g. "people" and "." into separate segments across a paragraph break.
+                    for (let i = rows.length - 1; i > 0; i--) {
+                      const row = rows[i];
+                      const prevRow = rows[i - 1];
+
+                      const leftText = row.left.map(s => s.value).join('');
+                      const rightText = row.right.map(s => s.value).join('');
+
+                      // Right-only row with tiny content → merge into previous row's right side
+                      if (row.left.length === 0 && row.right.length > 0 && prevRow.right.length > 0) {
+                        if (rightText.length <= 3) {
+                          prevRow.right.push(...row.right);
+                          rows.splice(i, 1);
+                          continue;
+                        }
+                      }
+                      // Left-only row with tiny content → merge into previous row's left side
+                      if (row.right.length === 0 && row.left.length > 0 && prevRow.left.length > 0) {
+                        if (leftText.length <= 3) {
+                          prevRow.left.push(...row.left);
+                          rows.splice(i, 1);
+                          continue;
+                        }
+                      }
+                      // Row with substantial content on one side and tiny orphaned fragment
+                      // on the other: merge the fragment into the previous row.
+                      // E.g. diff splits "people" and "." across a paragraph boundary,
+                      // leaving "." as an equal segment alongside the deleted paragraph.
+                      if (row.left.length > 0 && row.right.length > 0) {
+                        if (rightText.length <= 3 && leftText.length > 10 && prevRow.right.length > 0) {
+                          prevRow.right.push(...row.right);
+                          row.right = [];
+                          // Also move equal segments from left to previous row's left,
+                          // replacing any duplicate delete/insert segments with the same text
+                          const equalSegs = row.left.filter(s => s.type === 'equal');
+                          if (equalSegs.length > 0 && prevRow.left.length > 0) {
+                            for (const eq of equalSegs) {
+                              const dupeIdx = prevRow.left.findIndex(
+                                s => s.type !== 'equal' && s.value === eq.value
+                              );
+                              if (dupeIdx >= 0) {
+                                prevRow.left[dupeIdx] = eq;
+                              } else {
+                                prevRow.left.push(eq);
+                              }
+                            }
+                            row.left = row.left.filter(s => s.type !== 'equal');
+                          }
+                          continue;
+                        }
+                        // Symmetric: substantial insert on right, tiny fragment on left
+                        if (leftText.length <= 3 && rightText.length > 10 && prevRow.left.length > 0) {
+                          prevRow.left.push(...row.left);
+                          row.left = [];
+                          const equalSegs = row.right.filter(s => s.type === 'equal');
+                          if (equalSegs.length > 0 && prevRow.right.length > 0) {
+                            for (const eq of equalSegs) {
+                              const dupeIdx = prevRow.right.findIndex(
+                                s => s.type !== 'equal' && s.value === eq.value
+                              );
+                              if (dupeIdx >= 0) {
+                                prevRow.right[dupeIdx] = eq;
+                              } else {
+                                prevRow.right.push(eq);
+                              }
+                            }
+                            row.right = row.right.filter(s => s.type !== 'equal');
+                          }
+                        }
+                      }
+                    }
+
+                    return rows;
+                  };
+
+                  const alignedRows = buildAlignedRows();
+
+                  const renderCell = (segments: Seg[]) => (
+                    <div className="diff-paragraph">
+                      {segments.map((seg, segIndex) => (
+                        <span
+                          key={`${seg.index}-${segIndex}`}
+                          className={`diff-segment ${seg.type === 'delete' ? 'removed' : seg.type === 'insert' ? 'added' : 'unchanged'}`}
+                          {...(segmentChangeIds.has(seg.index) ? { 'data-change-id': segmentChangeIds.get(seg.index) } : {})}
+                        >
+                          {seg.value}
+                        </span>
+                      ))}
+                    </div>
+                  );
+
                   return (
                     <div className="diff-comparison">
                       <div className="diff-legend">
@@ -2062,58 +2440,41 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           <span className="legend-color removed"></span> Removed
                         </span>
                       </div>
-                      
+
                       <div className="diff-view">
-                        <div className="diff-column">
+                        <div className="diff-headers">
                           <h4>Original Version</h4>
-                          <div className="diff-text" ref={originalDiffTextRef}>
-                            {/* Text content */}
-                            {diff.map((segment, index) => {
-                              if (segment.type === 'delete' || segment.type === 'equal') {
-                                return (
-                                  <span
-                                    key={index}
-                                    className={`diff-segment ${segment.type === 'delete' ? 'removed' : 'unchanged'}`}
-                                  >
-                                    {segment.value}
-                                  </span>
-                                );
-                              }
-                              return null;
-                            })}
-                            
-                            {/* Images */}
-                            <div className="diff-images">
-                              {unchangedImages.map(image => renderImageInDiff(image, 'unchanged'))}
-                              {removedImages.map(image => renderImageInDiff(image, 'removed'))}
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="diff-column">
                           <h4>Proposed Version</h4>
-                          <div className="diff-text" ref={proposedDiffTextRef}>
-                            {/* Text content */}
-                            {diff.map((segment, index) => {
-                              if (segment.type === 'insert' || segment.type === 'equal') {
-                                return (
-                                  <span
-                                    key={index}
-                                    className={`diff-segment ${segment.type === 'insert' ? 'added' : 'unchanged'}`}
-                                  >
-                                    {segment.value}
-                                  </span>
-                                );
-                              }
-                              return null;
-                            })}
-                            
-                            {/* Images */}
-                            <div className="diff-images">
-                              {unchangedImages.map(image => renderImageInDiff(image, 'unchanged'))}
-                              {addedImages.map(image => renderImageInDiff(image, 'added'))}
+                        </div>
+                        <div className="diff-body" ref={originalDiffTextRef}>
+                          {alignedRows.map((row, rowIndex) => (
+                            <div key={rowIndex} className="diff-row">
+                              <div className={`diff-cell${row.left.length === 0 ? ' spacer' : ''}`}>
+                                {row.left.length > 0 ? renderCell(row.left) : <div className="diff-spacer-content" />}
+                              </div>
+                              <div className={`diff-cell${row.right.length === 0 ? ' spacer' : ''}`}>
+                                {row.right.length > 0 ? renderCell(row.right) : <div className="diff-spacer-content" />}
+                              </div>
                             </div>
-                          </div>
+                          ))}
+
+                          {/* Images */}
+                          {(unchangedImages.length > 0 || removedImages.length > 0 || addedImages.length > 0) && (
+                            <div className="diff-row">
+                              <div className="diff-cell">
+                                <div className="diff-images">
+                                  {unchangedImages.map(image => renderImageInDiff(image, 'unchanged'))}
+                                  {removedImages.map(image => renderImageInDiff(image, 'removed'))}
+                                </div>
+                              </div>
+                              <div className="diff-cell">
+                                <div className="diff-images">
+                                  {unchangedImages.map(image => renderImageInDiff(image, 'unchanged'))}
+                                  {addedImages.map(image => renderImageInDiff(image, 'added'))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2158,7 +2519,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         <div 
                           key={change.id} 
                           className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
-                          onClick={() => setSelectedChange(change.id)}
+                          onClick={() => handleChangeClick(change)}
                           data-change-id={change.id}
                         >
                           <div className="change-header">
@@ -2352,7 +2713,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 <div 
                   key={change.id} 
                   className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
-                  onClick={() => setSelectedChange(change.id)}
+                  onClick={() => handleChangeClick(change)}
                   data-change-id={change.id}
                 >
                   <div className="change-header">

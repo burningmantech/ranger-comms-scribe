@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { ContentSubmission, User, CouncilManager, SubmissionStatus, Approval, Comment, SuggestedEdit } from '../types/content';
 import { API_URL } from '../config';
+import { USER_LOGIN_EVENT } from '../utils/userActions';
 
 function getAuthHeaders(includeContentType = false): Record<string, string> {
   const headers: Record<string, string> = {
@@ -105,6 +106,8 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         localStorage.removeItem('userPermissions');
         setCurrentUser(null);
         setUserPermissions(null);
+        // Notify Navbar and other listeners that user is logged out
+        window.dispatchEvent(new CustomEvent(USER_LOGIN_EVENT, { detail: null }));
       }
     } catch (err) {
       console.error('Error refreshing user:', err);
@@ -168,6 +171,8 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
             localStorage.removeItem('user');
             localStorage.removeItem('userPermissions');
             setCurrentUser(null);
+            // Notify Navbar and other listeners that user is logged out
+            window.dispatchEvent(new CustomEvent(USER_LOGIN_EVENT, { detail: null }));
           }
         } catch (err) {
           console.error('Error fetching current user:', err);

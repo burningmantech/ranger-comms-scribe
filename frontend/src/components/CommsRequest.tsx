@@ -480,6 +480,9 @@ export const CommsRequest: React.FC = () => {
                   <Form.Control
                     type="date"
                     {...register('publishBy')}
+                    onClick={(e: React.MouseEvent<HTMLInputElement>) => {
+                      try { e.currentTarget.showPicker(); } catch {}
+                    }}
                   />
                   {errors.publishBy && (
                     <Form.Text className="text-danger">{errors.publishBy.message}</Form.Text>

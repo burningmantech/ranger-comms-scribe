@@ -87,6 +87,8 @@ export const getTrackedChanges = async (submissionId: string, env: Env): Promise
 };
 
 // Calculate incremental changes between two versions
+// Uses character-level diff with word boundary expansion to find the
+// minimal changed region, even when there are multiple disjoint changes.
 export const calculateIncrementalChange = (
   previousVersion: string,
   currentVersion: string
@@ -95,60 +97,43 @@ export const calculateIncrementalChange = (
   if (previousVersion === currentVersion) {
     return { oldValue: '', newValue: '' };
   }
-  
-  // Split into words for better diff calculation
-  const previousWords = previousVersion.split(/\s+/);
-  const currentWords = currentVersion.split(/\s+/);
-  
-  // Find the longest common prefix
-  let prefixLength = 0;
-  while (prefixLength < previousWords.length && 
-         prefixLength < currentWords.length && 
-         previousWords[prefixLength] === currentWords[prefixLength]) {
-    prefixLength++;
+
+  // Character-level diff: find the first difference from the start
+  let firstDiff = 0;
+  while (firstDiff < previousVersion.length &&
+         firstDiff < currentVersion.length &&
+         previousVersion[firstDiff] === currentVersion[firstDiff]) {
+    firstDiff++;
   }
-  
-  // Find the longest common suffix
-  let suffixLength = 0;
-  while (suffixLength < previousWords.length - prefixLength && 
-         suffixLength < currentWords.length - prefixLength && 
-         previousWords[previousWords.length - 1 - suffixLength] === currentWords[currentWords.length - 1 - suffixLength]) {
-    suffixLength++;
+
+  // Character-level diff: find the last difference from the end
+  let endPrev = previousVersion.length;
+  let endCurr = currentVersion.length;
+  while (endPrev > firstDiff &&
+         endCurr > firstDiff &&
+         previousVersion[endPrev - 1] === currentVersion[endCurr - 1]) {
+    endPrev--;
+    endCurr--;
   }
-  
-  // Extract the changed portions
-  const oldWords = previousWords.slice(prefixLength, previousWords.length - suffixLength);
-  const newWords = currentWords.slice(prefixLength, currentWords.length - suffixLength);
-  
-  const oldValue = oldWords.join(' ');
-  const newValue = newWords.join(' ');
-  
-  // If we couldn't find meaningful differences, fall back to character-level diff
-  if (!oldValue && !newValue) {
-    // Find the first difference
-    let firstDiff = 0;
-    while (firstDiff < previousVersion.length && 
-           firstDiff < currentVersion.length && 
-           previousVersion[firstDiff] === currentVersion[firstDiff]) {
-      firstDiff++;
-    }
-    
-    // Find the last difference
-    let lastDiffPrev = previousVersion.length;
-    let lastDiffCurr = currentVersion.length;
-    while (lastDiffPrev > firstDiff && 
-           lastDiffCurr > firstDiff && 
-           previousVersion[lastDiffPrev - 1] === currentVersion[lastDiffCurr - 1]) {
-      lastDiffPrev--;
-      lastDiffCurr--;
-    }
-    
-    return {
-      oldValue: previousVersion.substring(firstDiff, lastDiffPrev),
-      newValue: currentVersion.substring(firstDiff, lastDiffCurr)
-    };
+
+  // Expand start backwards to include the full word
+  while (firstDiff > 0 && !/\s/.test(previousVersion[firstDiff - 1])) {
+    firstDiff--;
   }
-  
+
+  // Expand endPrev forward to include the full word in previous version
+  while (endPrev < previousVersion.length && !/\s/.test(previousVersion[endPrev])) {
+    endPrev++;
+  }
+
+  // Expand endCurr forward to include the full word in current version
+  while (endCurr < currentVersion.length && !/\s/.test(currentVersion[endCurr])) {
+    endCurr++;
+  }
+
+  const oldValue = previousVersion.substring(firstDiff, endPrev).trim();
+  const newValue = currentVersion.substring(firstDiff, endCurr).trim();
+
   return { oldValue, newValue };
 };
 
