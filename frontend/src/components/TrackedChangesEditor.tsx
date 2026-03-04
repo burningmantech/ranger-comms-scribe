@@ -182,6 +182,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [submission.approvals, currentUser.email, currentUser.id, effectiveUserId]);
   const hasApprovedSubmission = mySubmissionApproval?.status === 'APPROVED';
   const hasRejectedSubmission = mySubmissionApproval?.status === 'REJECTED';
+  const hasPendingTrackedChanges = trackedChanges.filter(c => c.status === 'pending').length > 0;
 
   // Real-time notifications are now handled by CollaborativeEditor
 
@@ -1893,10 +1894,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 {submission.status === 'in_review' && (
                   <>
                     <button
-                      className={`btn btn-primary btn-sm mr-2 ${hasApprovedSubmission ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      onClick={() => { if (!hasApprovedSubmission) { onSubmissionApprove ? onSubmissionApprove(submission) : undefined; } }}
-                      disabled={hasApprovedSubmission}
-                      title="Approve submission"
+                      className={`btn btn-primary btn-sm mr-2 ${hasApprovedSubmission || hasPendingTrackedChanges ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      onClick={() => { if (!hasApprovedSubmission && !hasPendingTrackedChanges) { onSubmissionApprove ? onSubmissionApprove(submission) : undefined; } }}
+                      disabled={hasApprovedSubmission || hasPendingTrackedChanges}
+                      title={hasPendingTrackedChanges ? 'Resolve all pending tracked changes before approving' : 'Approve submission'}
                     >
                       Approve
                     </button>

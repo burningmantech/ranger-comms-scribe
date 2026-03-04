@@ -8,6 +8,7 @@ import { broadcastToSubmissionRoom } from './websocket';
 import { uploadMedia } from '../services/mediaService';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
+import { getTrackedChanges } from '../services/trackedChangesService';
 
 export const router = AutoRouter({ base: '/api/content' });
 
@@ -51,17 +52,27 @@ async function recomputeApprovalStatus(submission: ContentSubmission, env: any):
     } catch {}
   }
 
+  // Check that a council manager specifically approved (not just that they exist AND someone approved)
   const hasCouncilApproval = uniqueApprovals.some(a => {
     const email = (a.approverEmail || '').trim().toLowerCase();
-    return (a.approverType === UserType.CouncilManager) || (a.approverRoles || []).includes('CouncilManager') || councilEmails.has(email);
-  }) && uniqueApprovals.some(a => a.status === 'approved');
+    const isCouncil = (a.approverType === UserType.CouncilManager) || (a.approverRoles || []).includes('CouncilManager') || councilEmails.has(email);
+    return isCouncil && a.status === 'approved';
+  });
 
   const hasCommsCadreApproval = uniqueApprovals.some(a => {
     const email = (a.approverEmail || '').trim().toLowerCase();
-    return (a.approverType === UserType.CommsCadre) || (a.approverRoles || []).includes('CommsCadre') || commsCadreEmails.has(email);
-  }) && uniqueApprovals.some(a => a.status === 'approved');
+    const isCommsCadre = (a.approverType === UserType.CommsCadre) || (a.approverRoles || []).includes('CommsCadre') || commsCadreEmails.has(email);
+    return isCommsCadre && a.status === 'approved';
+  });
 
   if (allRequiredApproversApproved && hasCouncilApproval && hasCommsCadreApproval) {
+    // Gate: all tracked changes must be resolved before approval
+    const changes = await getTrackedChanges(submission.id, env);
+    const pendingChanges = changes.filter(c => c.status === 'pending');
+    if (pendingChanges.length > 0) {
+      return submission; // Don't approve until all tracked changes are resolved
+    }
+
     submission.status = 'approved';
     submission.finalApprovalDate = submission.finalApprovalDate || new Date().toISOString();
   }
@@ -401,11 +412,19 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
   }
   
   // Recompute status with multi-role awareness and membership lists
+  const statusBefore = submission.status;
   await recomputeApprovalStatus(submission, env);
+
+  // Check if approval was blocked by pending tracked changes
+  let pendingTrackedChangesCount = 0;
+  if (status === 'approved' && submission.status !== 'approved' && statusBefore !== 'approved') {
+    const changes = await getTrackedChanges(id, env);
+    pendingTrackedChangesCount = changes.filter(c => c.status === 'pending').length;
+  }
 
   // Update the submission in cache
   await putObject(`content_submissions/${id}`, submission, env);
-  
+
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
 
@@ -422,7 +441,13 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     }
   }, env);
 
-  return json(approval);
+  const response: any = { ...approval };
+  if (pendingTrackedChangesCount > 0) {
+    response.pendingTrackedChanges = pendingTrackedChangesCount;
+    response.message = `Approval recorded, but submission cannot be fully approved until ${pendingTrackedChangesCount} pending tracked change(s) are resolved.`;
+  }
+
+  return json(response);
 });
 
 // Override approval by Communications Manager (Council) with confirmation
