@@ -1,7 +1,7 @@
 import { Env } from '../utils/sessionManager';
 import { CouncilRole, UserType, CouncilMember, User } from '../types';
 import { getObject, putObject, removeFromCache } from './cacheService';
-import { getUser } from './userService';
+import { getUser, saveUser } from './userService';
 
 interface OrgChartEntry {
   role: CouncilRole;
@@ -87,11 +87,7 @@ export async function identifyCouncilManagers(env: Env) {
           user.roles.push('CouncilManager');
         }
         user.userType = UserType.CouncilManager;
-        
-        await putObject(`user/${user.email}`, user, env, {
-          httpMetadata: { contentType: 'application/json' },
-          customMetadata: { userId: user.id }
-        });
+        await saveUser(user, env);
       }
     }
   }
@@ -172,12 +168,8 @@ export async function addCouncilMember(email: string, role: CouncilRole, env: En
       }
       
       user.userType = UserType.CouncilManager;
-      
-      await putObject(`user/${user.email}`, user, env, {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { userId: user.id }
-      });
-      
+      await saveUser(user, env);
+
       console.log('✅ Updated user roles:', user.roles);
     } else {
       console.log('👤 User is already CouncilManager type:', user.email);
@@ -209,17 +201,22 @@ export async function removeCouncilMember(email: string, role: CouncilRole, env:
     // Remove user-specific entry
     await removeFromCache(`council_members:${user.id}:${role}`, env);
 
-    // Check if user has any other council roles
-    const hasOtherRoles = await getObject<CouncilMember[]>(`council_members:${user.id}`, env);
-    if (!hasOtherRoles || hasOtherRoles.length === 0) {
-      // If no other roles, update user type back to Member and clear roles
+    // Check if user has any other active council roles by checking each role individually
+    let hasOtherRoles = false;
+    for (const otherRole of Object.values(CouncilRole)) {
+      if (otherRole === role) continue; // Skip the role we just removed
+      const member = await getObject<CouncilMember>(`council_members:${user.id}:${otherRole}`, env);
+      if (member && member.active) {
+        hasOtherRoles = true;
+        break;
+      }
+    }
+
+    if (!hasOtherRoles) {
+      // No other council roles - revert user type to Member
       user.userType = UserType.Member;
-      user.roles = ['Member']; // Set to Member role
-      
-      await putObject(`user/${user.email}`, user, env, {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { userId: user.id }
-      });
+      user.roles = ['Member'];
+      await saveUser(user, env);
     }
 
     return true;

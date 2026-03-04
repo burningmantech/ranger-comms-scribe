@@ -1,13 +1,84 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
-import { CreateSession, DeleteSession, GetSession } from '../utils/sessionManager';
+import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
 import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
 
 export const router = AutoRouter({ base : '/api/auth' });
+
+// Helper: create a session for a user and return the session ID
+async function createUserSession(user: User, env: Env): Promise<string> {
+  return CreateSession(user.email, {
+    email: user.email,
+    name: user.name,
+    isAdmin: user.isAdmin,
+    userType: user.userType,
+    approved: user.approved,
+    verified: user.verified
+  }, env);
+}
+
+// Helper: create a token, store it in R2, and return the token string
+async function createAndStoreToken(
+  userId: string,
+  tokenType: 'verification-token' | 'reset-token',
+  expirationMs: number,
+  env: Env
+): Promise<string> {
+  const token = crypto.randomUUID();
+  const expiresAt = Date.now() + expirationMs;
+
+  await env.R2.put(`${tokenType}/${token}`, JSON.stringify({ userId, expiresAt }), {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { userId }
+  });
+
+  return token;
+}
+
+// Helper: validate a token from R2, return data or null
+async function validateToken(
+  token: string,
+  tokenType: 'verification-token' | 'reset-token',
+  env: Env
+): Promise<{ userId: string; expiresAt: number } | null> {
+  const tokenObj = await env.R2.get(`${tokenType}/${token}`);
+  if (!tokenObj) return null;
+
+  const tokenData = await tokenObj.json() as { userId: string; expiresAt: number };
+  if (tokenData.expiresAt < Date.now()) {
+    await env.R2.delete(`${tokenType}/${token}`);
+    return null;
+  }
+
+  return tokenData;
+}
+
+// Helper: build a frontend URL for a token action
+function buildTokenUrl(token: string, route: string, env: Env): string {
+  const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://scrivenly.com';
+  return `${frontendUrl}/${route}?token=${token}`;
+}
+
+// Helper: send an email if SES is configured, return success boolean
+async function sendEmailIfConfigured(
+  to: string, subject: string, message: string, env: Env
+): Promise<boolean> {
+  if (!env.SESKey || !env.SESSecret) {
+    console.warn('Email service not configured');
+    return false;
+  }
+  try {
+    await sendEmail(to, subject, message, env.SESKey, env.SESSecret);
+    return true;
+  } catch (error) {
+    console.error('Error sending email:', error);
+    return false;
+  }
+}
 
 async function verify(token: string) {
     const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${token}`);
@@ -91,67 +162,26 @@ router.post('/register', async (request: Request, env) => {
         // Create the user with password
         const user = await getOrCreateUser({ name, email, password }, env);
 
-        // Generate verification token
-        const verificationToken = crypto.randomUUID();
-        const expiresAt = Date.now() + 86400000; // 24 hours expiration
-        
-        // Store the token in R2 with user ID
-        await env.R2.put(`verification-token/${verificationToken}`, JSON.stringify({
-            userId: user.id,
-            expiresAt
-        }), {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: { userId: user.id }
-        });
+        // Generate and store verification token
+        const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
+        const verificationUrl = buildTokenUrl(verificationToken, 'verify-email', env);
 
-        // Create verification URL
-        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://scrivenly.com';
-        const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
-
-        // Email content
-        const subject = 'Verify Your Email';
-        const message = `
+        // Send verification email
+        await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Welcome to our platform!</h1>
             <p>Hello ${user.name},</p>
             <p>Thank you for registering. Please click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
-        `;
+        `, env);
 
-        // Send verification email if email service is configured
-        if (env.SESKey && env.SESSecret) {
-            try {
-                await sendEmail(
-                    user.email,
-                    subject,
-                    message,
-                    env.SESKey,
-                    env.SESSecret
-                );
-                console.log('Verification email sent to:', user.email);
-            } catch (emailError) {
-                console.error('Error sending verification email:', emailError);
-                // Continue with registration even if email fails
-            }
-        } else {
-            console.log('Email service not configured, verification link:', verificationUrl);
-        }
-
-        // Create a session for the user
-        const sessionId = await CreateSession(user.id, { 
-          email, 
-          name,
-          isAdmin: user.isAdmin,
-          userType: user.userType,
-          approved: user.approved,
-          verified: user.verified
-        }, env);
+        const sessionId = await createUserSession(user, env);
 
         return json({
             message: 'User registered successfully. Please check your email to verify your account.',
             email,
             name,
-            userId: user.id,
+            userId: user.email,
             approved: user.approved,
             isAdmin: user.isAdmin,
             verified: false,
@@ -174,19 +204,9 @@ router.post('/verify-email', async (request: Request, env) => {
     }
 
     try {
-        // Retrieve token from R2
-        const tokenObj = await env.R2.get(`verification-token/${token}`);
-        if (!tokenObj) {
+        const tokenData = await validateToken(token, 'verification-token', env);
+        if (!tokenData) {
             return json({ error: 'Invalid or expired verification token' }, { status: 400 });
-        }
-
-        const tokenData = await tokenObj.json() as { userId: string; expiresAt: number };
-        
-        // Check if token has expired
-        if (tokenData.expiresAt < Date.now()) {
-            // Delete expired token
-            await env.R2.delete(`verification-token/${token}`);
-            return json({ error: 'Verification link has expired' }, { status: 400 });
         }
 
         // Mark user as verified
@@ -233,48 +253,24 @@ router.post('/resend-verification', async (request: Request, env) => {
         }
 
         // Generate new verification token
-        const verificationToken = crypto.randomUUID();
-        const expiresAt = Date.now() + 86400000; // 24 hours expiration
-        
-        // Store the token in R2 with user ID
-        await env.R2.put(`verification-token/${verificationToken}`, JSON.stringify({
-            userId: user.id,
-            expiresAt
-        }), {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: { userId: user.id }
-        });
+        const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
+        const verificationUrl = buildTokenUrl(verificationToken, 'verify-email', env);
 
-        // Create verification URL
-        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://scrivenly.com';
-        const verificationUrl = `${frontendUrl}/verify-email?token=${verificationToken}`;
-
-        // Email content
-        const subject = 'Verify Your Email';
-        const message = `
+        // Send verification email
+        const sent = await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Email Verification</h1>
             <p>Hello ${user.name},</p>
             <p>Please click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
-        `;
+        `, env);
 
-        // Check if email service is configured
-        if (!env.SESKey || !env.SESSecret) {
-            return json({ 
+        if (!sent) {
+            return json({
                 message: 'Verification email would have been sent.',
                 debug: 'Email service not configured - token: ' + verificationToken
             });
         }
-
-        // Send the email
-        await sendEmail(
-            user.email,
-            subject,
-            message,
-            env.SESKey,
-            env.SESSecret
-        );
 
         return json({ message: 'Verification email has been sent' });
     } catch (error) {
@@ -311,21 +307,13 @@ router.post('/login', async (request: Request, env) => {
             return json({ error: 'Invalid email or password' }, { status: 401 });
         }
 
-        // Create a session for the user
-        const sessionId = await CreateSession(user.id, { 
-          email, 
-          name,
-          isAdmin: user.isAdmin,
-          userType: user.userType,
-          approved: user.approved,
-          verified: user.verified
-        }, env);
+        const sessionId = await createUserSession(user, env);
 
         return json({
             message: 'Login successful',
             email: user.email,
             name: user.name,
-            userId: user.id,
+            userId: user.email,
             approved: user.approved,
             isAdmin: user.isAdmin,
             sessionId,
@@ -403,51 +391,26 @@ router.post('/forgot-password', async (request: Request, env) => {
             return json({ message: 'If an account with that email exists, a password reset link has been sent.' });
         }
 
-        // Generate a token for password reset (a simple UUID with expiration)
-        const resetToken = crypto.randomUUID();
-        const expiresAt = Date.now() + 3600000; // 1 hour expiration
-        
-        // Store the token in R2 with user ID
-        await env.R2.put(`reset-token/${resetToken}`, JSON.stringify({
-            userId: user.id,
-            expiresAt
-        }), {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: { userId: user.id }
-        });
+        // Generate and store reset token (1 hour expiration)
+        const resetToken = await createAndStoreToken(user.id, 'reset-token', 3600000, env);
+        const resetUrl = buildTokenUrl(resetToken, 'reset-password', env);
 
-        // Create reset URL (frontend should handle this route)
-        const frontendUrl = env.FRONTEND_URL || env.PUBLIC_URL || 'https://scrivenly.com';
-        const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
-
-        // Email content
-        const subject = 'Password Reset Request';
-        const message = `
+        // Send reset email
+        const sent = await sendEmailIfConfigured(user.email, 'Password Reset Request', `
             <h1>Password Reset Request</h1>
             <p>Hello ${user.name},</p>
             <p>You've requested to reset your password. Click the link below to create a new password:</p>
             <p><a href="${resetUrl}">Reset Password</a></p>
             <p>This link will expire in 1 hour.</p>
             <p>If you didn't request a password reset, please ignore this email.</p>
-        `;
+        `, env);
 
-        // Check if email service is configured
-        if (!env.SESKey || !env.SESSecret) {
-            console.error('Email service not configured');
-            return json({ 
+        if (!sent) {
+            return json({
                 message: 'If an account with that email exists, a password reset link has been sent.',
                 debug: 'Email service not configured - token: ' + resetToken
             });
         }
-
-        // Send the email
-        await sendEmail(
-            user.email,
-            subject,
-            message,
-            env.SESKey,
-            env.SESSecret
-        );
 
         return json({ message: 'If an account with that email exists, a password reset link has been sent.' });
     } catch (error) {
@@ -484,19 +447,9 @@ router.post('/reset-password', async (request: Request, env) => {
     }
 
     try {
-        // Retrieve token from R2
-        const tokenObj = await env.R2.get(`reset-token/${token}`);
-        if (!tokenObj) {
+        const tokenData = await validateToken(token, 'reset-token', env);
+        if (!tokenData) {
             return json({ error: 'Invalid or expired token' }, { status: 400 });
-        }
-
-        const tokenData = await tokenObj.json() as { userId: string; expiresAt: number };
-        
-        // Check if token has expired
-        if (tokenData.expiresAt < Date.now()) {
-            // Delete expired token
-            await env.R2.delete(`reset-token/${token}`);
-            return json({ error: 'Token has expired' }, { status: 400 });
         }
 
         // Set new password
@@ -526,19 +479,9 @@ router.post('/validate-reset-token', async (request: Request, env) => {
     }
 
     try {
-        // Retrieve token from R2
-        const tokenObj = await env.R2.get(`reset-token/${token}`);
-        if (!tokenObj) {
+        const tokenData = await validateToken(token, 'reset-token', env);
+        if (!tokenData) {
             return json({ error: 'Invalid or expired token' }, { status: 400 });
-        }
-
-        const tokenData = await tokenObj.json() as { userId: string; expiresAt: number };
-        
-        // Check if token has expired
-        if (tokenData.expiresAt < Date.now()) {
-            // Delete expired token
-            await env.R2.delete(`reset-token/${token}`);
-            return json({ error: 'Token has expired' }, { status: 400 });
         }
 
         return json({ valid: true });
@@ -564,24 +507,16 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         // Create or get the user
         const user = await getOrCreateUser({ name, email }, env);
 
-        // Create a session for the user
-        const sessionId = await CreateSession(user.id, { 
-          email, 
-          name,
-          isAdmin: user.isAdmin,
-          userType: user.userType,
-          approved: user.approved,
-          verified: user.verified
-        }, env);
+        const sessionId = await createUserSession(user, env);
 
         return json({
             message: 'Token verified',
             email,
             name,
-            userId: user.id,
+            userId: user.email,
             approved: user.approved,
             isAdmin: user.isAdmin,
-            sessionId, // Return the session ID to the client
+            sessionId,
         });
     } catch (error) {
         console.error('Error verifying token:', error);
@@ -601,6 +536,26 @@ router.get('/session', async (request: Request, env) => {
     }
 
     return json({ message: 'Session retrieved', session });
+});
+
+// Get current user from session
+router.get('/me', async (request: Request, env) => {
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+    if (!sessionId) {
+        return json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const session = await GetSession(sessionId, env);
+    if (!session) {
+        return json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const user = await getUser(session.userId, env);
+    if (!user) {
+        return json({ error: 'User not found' }, { status: 404 });
+    }
+
+    return json({ user });
 });
 
 router.post('/logout', async (request: Request, env) => {

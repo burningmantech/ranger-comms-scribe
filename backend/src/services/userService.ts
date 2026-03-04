@@ -4,6 +4,22 @@ import { hashPassword, verifyPassword } from '../utils/password';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
 import { DEFAULT_ROLES, Role } from './roleService';
 
+// Persist a user to R2 + cache (keyed by email)
+export async function saveUser(user: User, env: Env): Promise<void> {
+  await putObject(`user/${user.email}`, user, env, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { userId: user.id }
+  });
+}
+
+// Persist a group to R2 + cache
+async function saveGroup(group: Group, env: Env): Promise<void> {
+  await putObject(`group/${group.id}`, group, env, {
+    httpMetadata: { contentType: 'application/json' },
+    customMetadata: { updatedAt: group.updatedAt }
+  });
+}
+
 // Store users in R2 with prefix 'user:'
 export async function getOrCreateUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
   // Check if user already exists
@@ -11,9 +27,7 @@ export async function getOrCreateUser({ name, email, password }: { name: string;
   if (existingUser) {
     return existingUser;
   }
-  
-  const id = email
-  
+
   // Create new user
   const newUser: User = {
     id: crypto.randomUUID(),
@@ -30,65 +44,46 @@ export async function getOrCreateUser({ name, email, password }: { name: string;
   if (password) {
     newUser.passwordHash = await hashPassword(password);
   }
-  
-  // Store in R2 with caching
-  await putObject(`user/${email}`, newUser, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: id }
-  });
-  
+
+  await saveUser(newUser, env);
+
   return newUser;
 }
 
 export async function getUser(id: string, env: Env): Promise<User | null> {
   console.log('🔍 Getting user:', id);
-  
-  // Check if user already exists
+
+  if (!id) {
+    return null;
+  }
+
+  // Look up by the provided id (could be email or UUID)
   const existingUser = await getUserInternal(id, env);
-  console.log('👤 Existing user check:', existingUser);
-  
   if (existingUser) {
     return existingUser;
   }
 
-  // If id is an email, try looking up by email
-  if (id.includes('@')) {
-    console.log('📧 Looking up user by email');
-    const userByEmail = await getUserInternal(id, env);
-    console.log('👤 User by email:', userByEmail);
-    
-    if (userByEmail) {
-      return userByEmail;
-    }
-  }
-
+  // Auto-create first admin if needed
   const isFirstAdmin = id === 'alexander.young@gmail.com';
-  console.log('👑 Is first admin:', isFirstAdmin);
-
   if (isFirstAdmin) {
     console.log('👑 Creating first admin user');
-    const newUser: User = { 
-      id, 
-      name: "Alex Young", 
-      email: id, 
-      approved: true, 
+    const newUser: User = {
+      id: crypto.randomUUID(),
+      name: "Alex Young",
+      email: id,
+      approved: true,
       isAdmin: true,
       userType: UserType.Admin,
       groups: [],
-      roles: ['Admin'] // Initialize with Admin role
+      roles: ['Admin']
     };
-    
-    // Store in R2 with caching
-    console.log('💾 Storing first admin user');
-    await putObject(`user/${id}`, newUser, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: id }
-    });
-    
+
+    await saveUser(newUser, env);
+
     return newUser;
   }
 
-  console.log('❌ User not found');
+  console.log('❌ User not found:', id);
   return null;
 }
 
@@ -133,13 +128,8 @@ export async function approveUser(id: string, env: Env): Promise<User | null> {
   if (!user) return null;
   
   user.approved = true;
-  
-  // Update with caching
-  await putObject(`user/${user.email}`, user, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: id }
-  });
-  
+  await saveUser(user, env);
+
   return user;
 }
 
@@ -164,13 +154,8 @@ export async function makeAdmin(id: string, env: Env): Promise<User | null> {
   
   user.isAdmin = true;
   user.userType = UserType.Admin;
-  
-  // Update with caching
-  await putObject(`user/${user.email}`, user, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: id }
-  });
-  
+  await saveUser(user, env);
+
   return user;
 }
 
@@ -218,16 +203,12 @@ export async function changeUserType(id: string, userType: UserType, env: Env): 
     // Clear roles array for public users
     user.roles = [];
     
-    // Update user
     console.log('💾 Updating user:', user);
-    await putObject(`user/${user.email}`, user, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: id }
-    });
-    
+    await saveUser(user, env);
+
     return user;
   }
-  
+
   // For other types, find or create the role group
   let roleGroup = groups.find(group => group.name === roleName);
   console.log('🔍 Found role group:', roleGroup);
@@ -256,18 +237,15 @@ export async function changeUserType(id: string, userType: UserType, env: Env): 
     await addUserToGroup(id, roleGroup.id, env);
   }
 
-  // Update user type and roles
+  // Update user type, roles, and isAdmin flag
   console.log('🔄 Updating user type and roles');
   user.userType = userType;
   user.roles = [roleName]; // Set the roles array based on the role name
+  user.isAdmin = (userType === UserType.Admin);
   
-  // Update user
   console.log('💾 Saving updated user:', user);
-  await putObject(`user/${user.email}`, user, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: id }
-  });
-  
+  await saveUser(user, env);
+
   console.log('✅ Successfully updated user type and roles');
   return user;
 }
@@ -288,13 +266,9 @@ async function addGroupToUser(userId: string, groupId: string, env: Env): Promis
     // Add group to user's groups if not already there
     if (!user.groups.includes(groupId)) {
       user.groups.push(groupId);
-      
-      await putObject(`user/${user.email}`, user, env, {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { userId: user.id }
-      });
+      await saveUser(user, env);
     }
-    
+
     return true;
   } catch (error) {
     console.error(`Error adding group ${groupId} to user ${userId}:`, error);
@@ -414,12 +388,8 @@ export async function addUserToGroup(userId: string, groupId: string, env: Env):
     group.members.push(userId);
     group.updatedAt = new Date().toISOString();
     
-    // Update group with caching
-    await putObject(`group/${groupId}`, group, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { updatedAt: group.updatedAt }
-    });
-    
+    await saveGroup(group, env);
+
     // Ensure user.groups exists and add group to user's groups
     if (!user.groups) {
       user.groups = [];
@@ -427,14 +397,9 @@ export async function addUserToGroup(userId: string, groupId: string, env: Env):
     
     if (!user.groups.includes(groupId)) {
       user.groups.push(groupId);
-      
-      // Update user with caching
-      await putObject(`user/${user.email}`, user, env, {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { userId: user.id }
-      });
+      await saveUser(user, env);
     }
-    
+
     return true;
   } catch (error) {
     console.error(`Error adding user ${userId} to group ${groupId}:`, error);
@@ -459,12 +424,8 @@ export async function removeUserFromGroup(userId: string, groupId: string, env: 
     group.members = group.members.filter(id => id !== userId);
     group.updatedAt = new Date().toISOString();
     
-    // Update group with caching
-    await putObject(`group/${groupId}`, group, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { updatedAt: group.updatedAt }
-    });
-    
+    await saveGroup(group, env);
+
     // Ensure user.groups exists before filtering
     if (!user.groups) {
       user.groups = [];
@@ -473,12 +434,8 @@ export async function removeUserFromGroup(userId: string, groupId: string, env: 
       user.groups = user.groups.filter(id => id !== groupId);
     }
     
-    // Update user with caching
-    await putObject(`user/${user.email}`, user, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: user.id }
-    });
-    
+    await saveUser(user, env);
+
     return true;
   } catch (error) {
     console.error(`Error removing user ${userId} from group ${groupId}:`, error);
@@ -502,44 +459,14 @@ export async function deleteGroup(groupId: string, env: Env): Promise<boolean> {
     // Get all users who might have this group in their groups array
     const allUsers = await getAllUsers(env);
     
-    // Special handling for tests - directly modify the users in memory for tests
-    if (process.env.NODE_ENV === 'test') {
-      // For tests, we need to ensure the users' groups arrays are updated immediately
-      for (const user of allUsers) {
-        if (user.groups && user.groups.includes(groupId)) {
-          user.groups = user.groups.filter(id => id !== groupId);
-          
-          // Update using cache service for test environment
-          await putObject(`user/${user.email}`, user, env, {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: { userId: user.id }
-          });
-          
-          // Override any cached version to ensure tests see the updated state
-          await putObject(`user/${user.id}`, user, env, {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: { userId: user.id }
-          });
-        }
+    // Remove group from all users' groups arrays
+    const updatePromises = allUsers.map(async (user) => {
+      if (user.groups && user.groups.includes(groupId)) {
+        user.groups = user.groups.filter(id => id !== groupId);
+        await saveUser(user, env);
       }
-    } else {
-      // Regular production code
-      const updatePromises = allUsers.map(async (user) => {
-        if (user.groups && user.groups.includes(groupId)) {
-          // Remove the group from user's groups array
-          user.groups = user.groups.filter(id => id !== groupId);
-          
-          // Update using cache service
-          await putObject(`user/${user.email}`, user, env, {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: { userId: user.id }
-          });
-        }
-      });
-      
-      // Wait for all users to be updated
-      await Promise.all(updatePromises);
-    }
+    });
+    await Promise.all(updatePromises);
     
     // Delete the group from storage - use both formats for backward compatibility
     await deleteObject(`group/${groupId}`, env);
@@ -565,12 +492,7 @@ export async function deleteUser(userId: string, env: Env): Promise<boolean> {
         // Remove user from group members
         group.members = group.members.filter(id => id !== userId);
         group.updatedAt = new Date().toISOString();
-        
-        // Update group with caching
-        await putObject(`group/${groupId}`, group, env, {
-          httpMetadata: { contentType: 'application/json' },
-          customMetadata: { updatedAt: group.updatedAt }
-        });
+        await saveGroup(group, env);
       }
     }
   }
@@ -627,12 +549,7 @@ export async function initializeFirstAdmin(env: Env): Promise<void> {
       newAdmin.isAdmin = true;
       newAdmin.approved = true;
       newAdmin.userType = UserType.Admin;
-      
-      // Update admin with caching
-      await putObject(`user/${adminEmail}`, newAdmin, env, {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { userId: newAdmin.id }
-      });
+      await saveUser(newAdmin, env);
     }
   }
 }
@@ -651,13 +568,8 @@ export async function updateUserNotificationSettings(
   
   // Update notification settings
   user.notificationSettings = notificationSettings;
-  
-  // Update in R2 with caching
-  await putObject(`user/${user.email}`, user, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: user.id }
-  });
-  
+  await saveUser(user, env);
+
   return user;
 }
 
@@ -691,13 +603,8 @@ export async function setUserPassword(userId: string, password: string, env: Env
     
     // Hash the password
     user.passwordHash = await hashPassword(password);
-    
-    // Update user in storage with caching
-    await putObject(`user/${user.email}`, user, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: user.id }
-    });
-    
+    await saveUser(user, env);
+
     return true;
   } catch (error) {
     console.error(`Error setting password for user ${userId}:`, error);
@@ -729,13 +636,8 @@ export async function markUserAsVerified(userId: string, env: Env): Promise<User
   
   // Mark as verified
   user.verified = true;
-  
-  // Update in R2 with caching
-  await putObject(`user/${user.email}`, user, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: user.id }
-  });
-  
+  await saveUser(user, env);
+
   return user;
 }
 
@@ -747,13 +649,8 @@ export async function updateUserName(userId: string, newName: string, env: Env):
     
     // Update the name
     user.name = newName;
-    
-    // Update in R2 with caching
-    await putObject(`user/${user.email}`, user, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: user.id }
-    });
-    
+    await saveUser(user, env);
+
     return user;
   } catch (error) {
     console.error(`Error updating name for user ${userId}:`, error);

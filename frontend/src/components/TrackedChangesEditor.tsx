@@ -182,8 +182,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [submission.approvals, currentUser.email, currentUser.id, effectiveUserId]);
   const hasApprovedSubmission = mySubmissionApproval?.status === 'APPROVED';
   const hasRejectedSubmission = mySubmissionApproval?.status === 'REJECTED';
-  const hasPendingTrackedChanges = trackedChanges.filter(c => c.status === 'pending').length > 0;
-
   // Real-time notifications are now handled by CollaborativeEditor
 
   // Helper function to request refresh from parent
@@ -552,6 +550,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     });
     return result;
   }, [submission.changes, submission.comments]);
+
+  const hasPendingTrackedChanges = trackedChanges.filter(c => c.status === 'pending').length > 0;
 
   // Check if user can make editorial decisions
   const canMakeEditorialDecisions = useCallback(() => {

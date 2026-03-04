@@ -32,10 +32,21 @@ export const MySubmissions: React.FC = () => {
     return <div className="error-message">Please log in to view requests.</div>;
   }
 
+  // Debug logging
+  console.log('MySubmissions Debug:', {
+    totalSubmissions: submissions.length,
+    currentUserEmail: currentUser.email,
+    userPermissions,
+    canViewFiltered: userPermissions?.canViewFilteredSubmissions,
+    submissions: submissions.map(s => ({ id: s.id, submittedBy: s.submittedBy, title: s.title }))
+  });
+
   // Filter submissions based on user permissions
   const filteredSubmissions = userPermissions?.canViewFilteredSubmissions
     ? submissions // Show all submissions if user has permission
     : submissions.filter(submission => submission.submittedBy === currentUser.email); // Show only user's submissions
+
+  console.log('Filtered submissions count:', filteredSubmissions.length);
 
   return (
     <div className="content-management">

@@ -15,19 +15,18 @@ export const withAdminCheck = async (request: Request, env: Env) => {
     return json({ error: 'Session not found or expired' }, { status: 403 });
   }
 
-  const userData = session.data as { 
-    email: string; 
-    name: string;
-    isAdmin: boolean;
-    userType: string;
-  };
+  // Look up the current user from storage (not stale session data) to get fresh role info
+  const user = await getUser(session.userId, env);
+  if (!user) {
+    return json({ error: 'User not found' }, { status: 403 });
+  }
 
-  if (!userData.isAdmin && userData.userType !== 'Admin') {
+  if (!user.isAdmin && user.userType !== UserType.Admin) {
     return json({ error: 'Unauthorized: Admin access required' }, { status: 403 });
   }
 
-  // Add user data to request for use in route handlers
-  request.user = session.userId;
+  // Set the full User object so handlers can access user properties
+  (request as any).user = user;
 };
 
 // Middleware to check if the user is a Lead or Admin
@@ -51,8 +50,8 @@ export const withLeadCheck = async (request: Request, env: Env) => {
     return json({ error: 'Unauthorized: Lead or Admin access required' }, { status: 403 });
   }
 
-  // Add user data to request for use in route handlers
-  request.user = session.userId;
+  // Set the full User object so handlers can access user properties
+  (request as any).user = user;
 };
 
 // Middleware to check if the user is authenticated
@@ -68,14 +67,14 @@ export const withAuth = async (request: Request, env: Env) => {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Get user by userId instead of email
+  // Get user by userId (which is the email, the R2 storage key)
   const user = await getUser(session.userId, env);
   if (!user) {
     return json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Set user ID (string) not the user object
-  (request as any).user = session.userId;
+  // Set the full User object so handlers can access user.id, user.email, user.userType, etc.
+  (request as any).user = user;
   return undefined;
 };
 
@@ -108,7 +107,7 @@ export const withGroupAccessCheck = async (request: Request, env: Env) => {
   }
 
   if (user.userType === UserType.Admin) {
-    request.user = session.userId;
+    (request as any).user = user;
     return; // Admins have access to everything
   }
 
@@ -118,6 +117,6 @@ export const withGroupAccessCheck = async (request: Request, env: Env) => {
     return json({ error: 'You do not have access to this group content' }, { status: 403 });
   }
 
-  // Add user data to request for use in route handlers
-  request.user = session.userId;
+  // Set the full User object so handlers can access user properties
+  (request as any).user = user;
 };

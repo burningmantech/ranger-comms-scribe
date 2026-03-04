@@ -98,9 +98,10 @@ const withOptionalSession = async (request: Request, env: Env) => {
     if (sessionId) {
         const session = await GetSession(sessionId, env);
         if (session) {
-            const user = session.data.email;
-            request.user = user
-            request.userId = session.userId
+            const user = await getUser(session.userId, env);
+            if (user) {
+                (request as any).user = user;
+            }
         }
     }
 }

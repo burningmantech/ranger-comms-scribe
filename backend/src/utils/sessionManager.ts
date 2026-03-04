@@ -23,6 +23,7 @@ export interface Env {
     TURNSTILESECRET: any;
     R2: R2Bucket;
     PUBLIC_URL?: string;
+    FRONTEND_URL?: string;
     SESKey?: string;
     SESSecret?: string;
     TURSTILESECRET?: string; // Added Turnstile secret binding

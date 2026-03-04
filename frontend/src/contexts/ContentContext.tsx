@@ -2,6 +2,41 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { ContentSubmission, User, CouncilManager, SubmissionStatus, Approval, Comment, SuggestedEdit } from '../types/content';
 import { API_URL } from '../config';
 
+function getAuthHeaders(includeContentType = false): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
+  };
+  if (includeContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+}
+
+function normalizeSubmission(data: any): ContentSubmission {
+  return {
+    ...data,
+    submittedAt: new Date(data.submittedAt),
+    comments: (data.comments || []).map((c: any) => ({
+      ...c,
+      createdAt: new Date(c.createdAt),
+      updatedAt: new Date(c.updatedAt),
+    })),
+    approvals: (data.approvals || []).map((a: any) => ({
+      ...a,
+      approverEmail: a.approverEmail || a.approverId,
+      status: typeof a.status === 'string' ? a.status.toUpperCase() : a.status,
+      createdAt: new Date(a.createdAt),
+      updatedAt: new Date(a.updatedAt),
+    })),
+    changes: (data.changes || []).map((ch: any) => ({
+      ...ch,
+      timestamp: new Date(ch.changedAt || ch.timestamp),
+    })),
+    approvalOverrideAt: data.approvalOverrideAt ? new Date(data.approvalOverrideAt) : undefined,
+    sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
+  } as ContentSubmission;
+}
+
 interface ContentContextType {
   submissions: ContentSubmission[];
   councilManagers: CouncilManager[];
@@ -47,22 +82,120 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userPermissions, setUserPermissions] = useState<any>(null);
 
-  useEffect(() => {
-    const userJson = localStorage.getItem('user');
-    if (userJson) {
-      try {
-        const user = JSON.parse(userJson);
-        setCurrentUser(user);
-      } catch (err) {
-        console.error('Error parsing user data:', err);
+  // Refresh user data and permissions from the backend
+  const refreshCurrentUser = async () => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) return;
+
+    try {
+      const response = await fetch(`${API_URL}/auth/me`, {
+        headers: { 'Authorization': `Bearer ${sessionId}` }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.user) {
+          setCurrentUser(data.user);
+          localStorage.setItem('user', JSON.stringify(data.user));
+        }
+      } else if (response.status === 401) {
+        // Session expired
+        localStorage.removeItem('sessionId');
+        localStorage.removeItem('user');
+        localStorage.removeItem('userPermissions');
+        setCurrentUser(null);
+        setUserPermissions(null);
       }
+    } catch (err) {
+      console.error('Error refreshing user:', err);
     }
+  };
+
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      const userJson = localStorage.getItem('user');
+      const sessionId = localStorage.getItem('sessionId');
+
+      // If we have user data in localStorage, use it temporarily
+      if (userJson) {
+        try {
+          const user = JSON.parse(userJson);
+          setCurrentUser(user);
+        } catch (err) {
+          console.error('Error parsing user from localStorage:', err);
+          localStorage.removeItem('user');
+        }
+      }
+
+      // Always fetch fresh user data from backend if we have a session
+      if (sessionId) {
+        try {
+          const response = await fetch(`${API_URL}/auth/me`, {
+            headers: {
+              'Authorization': `Bearer ${sessionId}`
+            }
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.user) {
+              // Also fetch and update user roles
+              try {
+                const rolesResponse = await fetch(`${API_URL}/admin/user-roles`, {
+                  headers: {
+                    'Authorization': `Bearer ${sessionId}`
+                  }
+                });
+
+                if (rolesResponse.ok) {
+                  const rolesData = await rolesResponse.json();
+                  const updatedUser = { ...data.user, roles: rolesData.roles || [] };
+                  setCurrentUser(updatedUser);
+                  localStorage.setItem('user', JSON.stringify(updatedUser));
+                } else {
+                  setCurrentUser(data.user);
+                  localStorage.setItem('user', JSON.stringify(data.user));
+                }
+              } catch (err) {
+                console.error('Error fetching user roles:', err);
+                setCurrentUser(data.user);
+                localStorage.setItem('user', JSON.stringify(data.user));
+              }
+            }
+          } else {
+            // Session is invalid, clear it
+            localStorage.removeItem('sessionId');
+            localStorage.removeItem('user');
+            localStorage.removeItem('userPermissions');
+            setCurrentUser(null);
+          }
+        } catch (err) {
+          console.error('Error fetching current user:', err);
+        }
+      }
+    };
+
+    fetchCurrentUser();
 
     // Fetch initial data
     fetchSubmissions();
     fetchCouncilManagers();
     fetchCommsCadreMembers();
     fetchUserPermissions();
+
+    // Refresh user data and permissions when tab becomes visible again
+    // This handles the case where a user's role was changed while they were away
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshCurrentUser();
+        fetchUserPermissions();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const fetchUserPermissions = async () => {
@@ -90,34 +223,11 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
   const fetchSubmissions = async () => {
     try {
       const response = await fetch(`${API_URL}/content/submissions`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
-        // Convert date strings to Date objects
-        const submissionsWithDates = data.map((submission: any) => ({
-          ...submission,
-          submittedAt: new Date(submission.submittedAt),
-          comments: submission.comments.map((comment: any) => ({
-            ...comment,
-            createdAt: new Date(comment.createdAt),
-            updatedAt: new Date(comment.updatedAt)
-          })),
-          approvals: submission.approvals.map((approval: any) => ({
-            ...approval,
-            approverEmail: approval.approverEmail || approval.approverId, // Fallback for backward compatibility
-            status: typeof approval.status === 'string' ? approval.status.toUpperCase() : approval.status,
-            createdAt: new Date(approval.createdAt),
-            updatedAt: new Date(approval.updatedAt)
-          })),
-          changes: submission.changes.map((change: any) => ({
-            ...change,
-            timestamp: new Date(change.changedAt || change.timestamp)
-          }))
-        }));
-        setSubmissions(submissionsWithDates);
+        setSubmissions(data.map(normalizeSubmission));
       }
     } catch (err) {
       console.error('Error fetching submissions:', err);
@@ -131,9 +241,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
   const fetchCouncilManagers = async () => {
     try {
       const response = await fetch(`${API_URL}/council/members`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
@@ -147,9 +255,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
   const fetchCommsCadreMembers = async () => {
     try {
       const response = await fetch(`${API_URL}/comms-cadre`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
       if (response.ok) {
         const data = await response.json();
@@ -173,10 +279,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       
       const response = await fetch(url, {
         method: isNewSubmission ? 'POST' : 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify(submission),
       });
       
@@ -186,30 +289,12 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       if (response.ok) {
         const data = await response.json();
         console.log('📥 Response data:', data);
-        // Convert date strings to Date objects
-        const updatedSubmission = {
-          ...data,
-          submittedAt: new Date(data.submittedAt),
-          comments: data.comments.map((comment: any) => ({
-            ...comment,
-            createdAt: new Date(comment.createdAt),
-            updatedAt: new Date(comment.updatedAt)
-          })),
-          approvals: data.approvals.map((approval: any) => ({
-            ...approval,
-            createdAt: new Date(approval.createdAt),
-            updatedAt: new Date(approval.updatedAt)
-          })),
-          changes: data.changes.map((change: any) => ({
-            ...change,
-            timestamp: new Date(change.changedAt || change.timestamp)
-          }))
-        };
+        const updatedSubmission = normalizeSubmission(data);
 
         if (isNewSubmission) {
           setSubmissions(prev => [...prev, updatedSubmission]);
         } else {
-          setSubmissions(prev => 
+          setSubmissions(prev =>
             prev.map(s => s.id === submission.id ? updatedSubmission : s)
           );
         }
@@ -253,10 +338,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({
           status: 'approved'
         })
@@ -264,19 +346,11 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       if (response.ok) {
         // Refetch the submission to get latest state
         const refreshed = await fetch(`${API_URL}/content/submissions/${submission.id}`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('sessionId')}` }
+          headers: getAuthHeaders()
         });
         if (refreshed.ok) {
           const data = await refreshed.json();
-          const normalized = {
-            ...data,
-            submittedAt: new Date(data.submittedAt),
-            comments: data.comments.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt), updatedAt: new Date(c.updatedAt) })),
-            approvals: data.approvals.map((a: any) => ({ ...a, status: typeof a.status === 'string' ? a.status.toUpperCase() : a.status, createdAt: new Date(a.createdAt), updatedAt: new Date(a.updatedAt) })),
-            changes: data.changes.map((ch: any) => ({ ...ch, timestamp: new Date(ch.changedAt || ch.timestamp) })),
-            approvalOverrideAt: data.approvalOverrideAt ? new Date(data.approvalOverrideAt) : undefined,
-            sentAt: data.sentAt ? new Date(data.sentAt) : undefined
-          } as ContentSubmission;
+          const normalized = normalizeSubmission(data);
           setSubmissions(prev => prev.map(s => s.id === submission.id ? normalized : s));
         } else {
           await fetchSubmissions();
@@ -316,10 +390,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({
           status: 'rejected'
         })
@@ -327,19 +398,11 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       if (response.ok) {
         // Refetch single submission to sync
         const refreshed = await fetch(`${API_URL}/content/submissions/${submission.id}`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('sessionId')}` }
+          headers: getAuthHeaders()
         });
         if (refreshed.ok) {
           const data = await refreshed.json();
-          const normalized = {
-            ...data,
-            submittedAt: new Date(data.submittedAt),
-            comments: data.comments.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt), updatedAt: new Date(c.updatedAt) })),
-            approvals: data.approvals.map((a: any) => ({ ...a, status: typeof a.status === 'string' ? a.status.toUpperCase() : a.status, createdAt: new Date(a.createdAt), updatedAt: new Date(a.updatedAt) })),
-            changes: data.changes.map((ch: any) => ({ ...ch, timestamp: new Date(ch.changedAt || ch.timestamp) })),
-            approvalOverrideAt: data.approvalOverrideAt ? new Date(data.approvalOverrideAt) : undefined,
-            sentAt: data.sentAt ? new Date(data.sentAt) : undefined
-          } as ContentSubmission;
+          const normalized = normalizeSubmission(data);
           setSubmissions(prev => prev.map(s => s.id === submission.id ? normalized : s));
         } else {
           await fetchSubmissions();
@@ -355,10 +418,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     try {
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/override-approve`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({ confirm: true, reason })
       });
       if (!response.ok) {
@@ -366,16 +426,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         throw new Error(errorText || 'Failed to override approve');
       }
       const updated = await response.json();
-      // Normalize dates
-      const normalized = {
-        ...updated,
-        submittedAt: new Date(updated.submittedAt),
-        comments: updated.comments.map((c: any) => ({ ...c, createdAt: new Date(c.createdAt), updatedAt: new Date(c.updatedAt) })),
-        approvals: updated.approvals.map((a: any) => ({ ...a, createdAt: new Date(a.createdAt), updatedAt: new Date(a.updatedAt) })),
-        changes: updated.changes.map((ch: any) => ({ ...ch, timestamp: new Date(ch.changedAt || ch.timestamp) })),
-        approvalOverrideAt: updated.approvalOverrideAt ? new Date(updated.approvalOverrideAt) : undefined,
-        sentAt: updated.sentAt ? new Date(updated.sentAt) : undefined
-      } as ContentSubmission;
+      const normalized = normalizeSubmission(updated);
       setSubmissions(prev => prev.map(s => s.id === submission.id ? normalized : s));
     } catch (err) {
       console.error('Error overriding approval:', err);
@@ -387,10 +438,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     try {
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/send-email`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        }
+        headers: getAuthHeaders(true)
       });
       if (!response.ok) {
         const errorText = await response.text();
@@ -434,9 +482,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     try {
       const response = await fetch(`${API_URL}/content/submissions/${submissionId}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
       
       if (response.ok) {
@@ -465,10 +511,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           // Create the user
           const createUserResponse = await fetch(`${API_URL}/admin/bulk-create-users`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-            },
+            headers: getAuthHeaders(true),
             body: JSON.stringify({
               users: [{
                 name: manager.name,
@@ -486,10 +529,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
           // Change user type to CouncilManager which will add them to the group
           const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-            },
+            headers: getAuthHeaders(true),
             body: JSON.stringify({
               userId: manager.email,
               userType: 'CouncilManager'
@@ -505,10 +545,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         // Add/update the council member
         const response = await fetch(url, {
           method,
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-          },
+          headers: getAuthHeaders(true),
           body: JSON.stringify(manager),
         });
 
@@ -522,6 +559,10 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       }));
 
       setCouncilManagers(results);
+
+      // Refresh permissions in case the current user's role changed
+      await fetchUserPermissions();
+      await refreshCurrentUser();
     } catch (err) {
       console.error('Error saving council managers:', err);
       throw err;
@@ -538,9 +579,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
       // First remove from the CouncilManager group
       const groupsResponse = await fetch(`${API_URL}/admin/groups`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (!groupsResponse.ok) {
@@ -553,9 +592,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       if (councilManagerGroup) {
         const removeFromGroupResponse = await fetch(`${API_URL}/admin/groups/${councilManagerGroup.id}/members/${manager.email}`, {
           method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-          },
+          headers: getAuthHeaders(),
         });
 
         if (!removeFromGroupResponse.ok) {
@@ -566,19 +603,14 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       // Then remove from council members
       const response = await fetch(`${API_URL}/council/members/${managerId}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
         // Finally change user type to Public
         const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-          },
+          headers: getAuthHeaders(true),
           body: JSON.stringify({
             userId: manager.email,
             userType: 'Public'
@@ -590,6 +622,9 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         }
 
         setCouncilManagers(prev => prev.filter(m => m.id !== managerId));
+
+        // Refresh permissions after role change
+        await fetchUserPermissions();
       } else {
         throw new Error('Failed to remove council manager');
       }
@@ -604,10 +639,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       // First create the user
       const createUserResponse = await fetch(`${API_URL}/admin/bulk-create-users`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({
           users: [{
             name: member.name,
@@ -624,10 +656,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       // Change user type to CommsCadre which will add them to the group
       const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({
           userId: member.email,
           userType: 'CommsCadre'
@@ -641,16 +670,17 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       // Then add them to the comms cadre
       const response = await fetch(`${API_URL}/comms-cadre`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({ email: member.email, name: member.name }),
       });
 
       if (response.ok) {
         const newMember = await response.json();
         setCommsCadreMembers(prev => [...prev, newMember]);
+
+        // Refresh permissions in case the current user's role changed
+        await fetchUserPermissions();
+        await refreshCurrentUser();
       } else {
         throw new Error('Failed to add comms cadre member');
       }
@@ -670,9 +700,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
 
       // First remove from the CommsCadre group
       const groupsResponse = await fetch(`${API_URL}/admin/groups`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (!groupsResponse.ok) {
@@ -685,9 +713,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       if (commsCadreGroup) {
         const removeFromGroupResponse = await fetch(`${API_URL}/admin/groups/${commsCadreGroup.id}/members/${member.email}`, {
           method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-          },
+          headers: getAuthHeaders(),
         });
 
         if (!removeFromGroupResponse.ok) {
@@ -698,19 +724,14 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       // Then remove from comms cadre
       const response = await fetch(`${API_URL}/comms-cadre/${memberId}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
         // Finally change user type to Public
         const changeTypeResponse = await fetch(`${API_URL}/admin/change-user-type`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-          },
+          headers: getAuthHeaders(true),
           body: JSON.stringify({
             userId: member.email,
             userType: 'Public'
@@ -722,6 +743,9 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
         }
 
         setCommsCadreMembers(prev => prev.filter(m => m.id !== memberId));
+
+        // Refresh permissions after role change
+        await fetchUserPermissions();
       } else {
         throw new Error('Failed to remove comms cadre member');
       }
@@ -735,10 +759,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     try {
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/remind`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({ managerId: manager.id }),
       });
       if (!response.ok) {
@@ -759,10 +780,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       /*
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify(suggestion),
       });
       
@@ -794,10 +812,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       /*
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions/${suggestionId}/approve`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({ reason }),
       });
       
@@ -842,10 +857,7 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       /*
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/suggestions/${suggestionId}/reject`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sessionId')}`,
-        },
+        headers: getAuthHeaders(true),
         body: JSON.stringify({ reason }),
       });
       
