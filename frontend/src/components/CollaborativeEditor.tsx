@@ -17,6 +17,8 @@ import { ListPlugin } from '@lexical/react/LexicalListPlugin';
 import { LinkPlugin } from '@lexical/react/LexicalLinkPlugin';
 import { ToolbarPlugin } from './editor/plugins/ToolbarPlugin';
 import { ImagePlugin } from './editor/plugins/ImagePlugin';
+import ImageDragPlugin from './editor/plugins/ImageDragPlugin';
+import ImageResizePlugin from './editor/plugins/ImageResizePlugin';
 import { ImageNode } from './editor/nodes/ImageNode';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { UserPresence, UserPresenceData } from './UserPresence';
@@ -2066,6 +2068,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         bold: 'collaborative-editor-bold',
         italic: 'collaborative-editor-italic',
         underline: 'collaborative-editor-underline',
+        strikethrough: 'collaborative-editor-strikethrough',
+        underlineStrikethrough: 'collaborative-editor-underlineStrikethrough',
       },
     },
     nodes: [
@@ -2947,6 +2951,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <ListPlugin />
               <LinkPlugin />
               <ImagePlugin currentUser={currentUser} />
+              <ImageDragPlugin />
+              <ImageResizePlugin />
               <EditorRefPlugin editorRef={editorRef} />
               {/* Always render CursorTrackingPlugin but let it handle WebSocket client internally */}
               <CursorTrackingPlugin 

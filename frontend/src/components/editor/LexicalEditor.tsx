@@ -20,6 +20,8 @@ import { $getRoot, $createParagraphNode, $createTextNode } from 'lexical';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { ToolbarPlugin } from './plugins/ToolbarPlugin';
 import { ImagePlugin } from './plugins/ImagePlugin';
+import ImageDragPlugin from './plugins/ImageDragPlugin';
+import ImageResizePlugin from './plugins/ImageResizePlugin';
 import { ImageNode } from './nodes/ImageNode';
 import { CheckboxNode } from './nodes/CheckboxNode';
 import { DraftJsImportPlugin } from './plugins/DraftJsImportPlugin';
@@ -40,6 +42,7 @@ import './styles/TableControlsPlugin.css';
 import './styles/IndentationStyles.css';
 import './styles/SuggestionStyles.css';
 import './styles/ContextMenuStyles.css';
+import './styles/ImageResizePlugin.css';
 
 import { CursorPosition } from '../../services/websocketService';
 import CollaborativeCursorPlugin, { RemoteCursor } from './plugins/CollaborativeCursorPlugin';
@@ -349,6 +352,8 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
             <DraftJsImportPlugin initialContent={initialContent} />
           )}
           <ImagePlugin onImageSelect={onImageSelect} currentUser={currentUser} />
+          {!readOnly && <ImageDragPlugin />}
+          {!readOnly && <ImageResizePlugin />}
           <IndentationPlugin />
           <TextColorPlugin />
           <FontSizePlugin />

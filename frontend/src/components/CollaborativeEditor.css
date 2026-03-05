@@ -6,6 +6,19 @@
   overflow: hidden;
 }
 
+/* Lexical text format theme classes */
+.collaborative-editor-underline {
+  text-decoration: underline;
+}
+
+.collaborative-editor-strikethrough {
+  text-decoration: line-through;
+}
+
+.collaborative-editor-underlineStrikethrough {
+  text-decoration: underline line-through;
+}
+
 .collaborative-editor-container {
   display: flex;
   flex-direction: column;

@@ -277,6 +277,29 @@
   cursor: pointer;
 }
 
+.editor-image:hover {
+  cursor: grab;
+}
+
+.editor-image:active {
+  cursor: grabbing;
+}
+
+.editor-image-dragging {
+  opacity: 0.4;
+}
+
+.editor-image-drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: #3182ce;
+  pointer-events: none;
+  z-index: 100;
+  border-radius: 2px;
+}
+
 /* Table editor controls */
 .table-controls {
   display: flex;
@@ -334,6 +357,7 @@
   padding: 15px;
   outline: none;
   background-color: white;
+  position: relative;
   /* Allow natural height - no scrolling */
 }
 
