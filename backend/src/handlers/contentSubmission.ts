@@ -152,7 +152,7 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   
   // Filter based on user's groups and permissions
   let submissions;
-  if (hasContentManagementGroup || user.userType === UserType.Admin) {
+  if (hasContentManagementGroup || user.userType === UserType.Admin || user.userType === UserType.CouncilManager || user.userType === UserType.CommsCadre) {
     submissions = allSubmissions;
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 
