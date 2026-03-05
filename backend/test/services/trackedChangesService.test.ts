@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { undoChange, TrackedChange } from '../../src/services/trackedChangesService';
+import { undoChange, TrackedChange, calculateIncrementalChange } from '../../src/services/trackedChangesService';
 import { createCacheServiceMock } from './cache-mock-helpers';
 
 describe('trackedChangesService', () => {
@@ -152,4 +152,71 @@ describe('trackedChangesService', () => {
       expect(result).toBeNull();
     });
   });
-}); 
+
+  describe('calculateIncrementalChange', () => {
+    it('should return empty for identical texts', () => {
+      const result = calculateIncrementalChange('hello world', 'hello world');
+      expect(result).toEqual({ oldValue: '', newValue: '' });
+    });
+
+    it('should handle single word change', () => {
+      const result = calculateIncrementalChange('the quick fox', 'the slow fox');
+      expect(result.oldValue).toBe('quick');
+      expect(result.newValue).toBe('slow');
+    });
+
+    it('should handle disjoint changes without including unchanged text between them', () => {
+      const result = calculateIncrementalChange(
+        'Despotism, it is their right, it is their duty, to throw off such Government,',
+        'despotism, it is their right, it is their duty, to throw off such government,'
+      );
+      expect(result.oldValue).toBe('Despotism, \u2026 Government,');
+      expect(result.newValue).toBe('despotism, \u2026 government,');
+    });
+
+    it('should handle adjacent changes as a single group', () => {
+      const result = calculateIncrementalChange(
+        'the big red fox',
+        'the small blue fox'
+      );
+      expect(result.oldValue).toBe('big red');
+      expect(result.newValue).toBe('small blue');
+    });
+
+    it('should handle word insertion', () => {
+      const result = calculateIncrementalChange(
+        'the fox jumps',
+        'the quick fox jumps'
+      );
+      expect(result.oldValue).toBe('');
+      expect(result.newValue).toBe('quick');
+    });
+
+    it('should handle word deletion', () => {
+      const result = calculateIncrementalChange(
+        'the quick fox jumps',
+        'the fox jumps'
+      );
+      expect(result.oldValue).toBe('quick');
+      expect(result.newValue).toBe('');
+    });
+
+    it('should handle empty previous version', () => {
+      const result = calculateIncrementalChange('', 'new text');
+      expect(result.oldValue).toBe('');
+      expect(result.newValue).toBe('new text');
+    });
+
+    it('should handle empty current version', () => {
+      const result = calculateIncrementalChange('old text', '');
+      expect(result.oldValue).toBe('old text');
+      expect(result.newValue).toBe('');
+    });
+
+    it('should handle complete replacement', () => {
+      const result = calculateIncrementalChange('hello world', 'goodbye earth');
+      expect(result.oldValue).toBe('hello world');
+      expect(result.newValue).toBe('goodbye earth');
+    });
+  });
+});

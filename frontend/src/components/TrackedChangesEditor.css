@@ -991,6 +991,11 @@
   display: inline-block;
 }
 
+.diff-new span {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 /* Change Actions */
 .change-actions {
   display: flex;

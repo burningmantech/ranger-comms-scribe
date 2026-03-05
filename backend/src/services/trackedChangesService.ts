@@ -86,53 +86,111 @@ export const getTrackedChanges = async (submissionId: string, env: Env): Promise
   }
 };
 
+// Word-level LCS to produce diff segments
+const wordLcsDiff = (
+  prevWords: string[],
+  currWords: string[]
+): Array<{ type: 'equal' | 'delete' | 'insert'; words: string[] }> => {
+  const m = prevWords.length;
+  const n = currWords.length;
+
+  // Build LCS table
+  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (prevWords[i - 1] === currWords[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Traceback to produce segments
+  const segments: Array<{ type: 'equal' | 'delete' | 'insert'; words: string[] }> = [];
+  let i = m, j = n;
+
+  while (i > 0 || j > 0) {
+    let type: 'equal' | 'delete' | 'insert';
+    let word: string;
+
+    if (i > 0 && j > 0 && prevWords[i - 1] === currWords[j - 1]) {
+      type = 'equal';
+      word = prevWords[i - 1];
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      type = 'insert';
+      word = currWords[j - 1];
+      j--;
+    } else {
+      type = 'delete';
+      word = prevWords[i - 1];
+      i--;
+    }
+
+    if (segments.length > 0 && segments[0].type === type) {
+      segments[0].words.unshift(word);
+    } else {
+      segments.unshift({ type, words: [word] });
+    }
+  }
+
+  return segments;
+};
+
 // Calculate incremental changes between two versions
-// Uses character-level diff with word boundary expansion to find the
-// minimal changed region, even when there are multiple disjoint changes.
+// Uses word-level LCS diff to identify only the words that actually changed,
+// separating disjoint change groups with "…".
 export const calculateIncrementalChange = (
   previousVersion: string,
   currentVersion: string
 ): { oldValue: string; newValue: string } => {
-  // If the texts are identical, return empty changes
   if (previousVersion === currentVersion) {
     return { oldValue: '', newValue: '' };
   }
 
-  // Character-level diff: find the first difference from the start
-  let firstDiff = 0;
-  while (firstDiff < previousVersion.length &&
-         firstDiff < currentVersion.length &&
-         previousVersion[firstDiff] === currentVersion[firstDiff]) {
-    firstDiff++;
+  // Handle empty strings
+  if (!previousVersion) {
+    return { oldValue: '', newValue: currentVersion };
+  }
+  if (!currentVersion) {
+    return { oldValue: previousVersion, newValue: '' };
   }
 
-  // Character-level diff: find the last difference from the end
-  let endPrev = previousVersion.length;
-  let endCurr = currentVersion.length;
-  while (endPrev > firstDiff &&
-         endCurr > firstDiff &&
-         previousVersion[endPrev - 1] === currentVersion[endCurr - 1]) {
-    endPrev--;
-    endCurr--;
-  }
+  const prevWords = previousVersion.split(/\s+/).filter(w => w !== '');
+  const currWords = currentVersion.split(/\s+/).filter(w => w !== '');
 
-  // Expand start backwards to include the full word
-  while (firstDiff > 0 && !/\s/.test(previousVersion[firstDiff - 1])) {
-    firstDiff--;
-  }
+  const segments = wordLcsDiff(prevWords, currWords);
 
-  // Expand endPrev forward to include the full word in previous version
-  while (endPrev < previousVersion.length && !/\s/.test(previousVersion[endPrev])) {
-    endPrev++;
-  }
+  // Group adjacent changes, separated by 'equal' segments
+  type ChangeGroup = { deleted: string[]; inserted: string[] };
+  const changeGroups: ChangeGroup[] = [];
+  let currentGroup: ChangeGroup | null = null;
 
-  // Expand endCurr forward to include the full word in current version
-  while (endCurr < currentVersion.length && !/\s/.test(currentVersion[endCurr])) {
-    endCurr++;
+  for (const seg of segments) {
+    if (seg.type === 'equal') {
+      if (currentGroup) {
+        changeGroups.push(currentGroup);
+        currentGroup = null;
+      }
+    } else if (seg.type === 'delete') {
+      if (!currentGroup) currentGroup = { deleted: [], inserted: [] };
+      currentGroup.deleted.push(...seg.words);
+    } else {
+      if (!currentGroup) currentGroup = { deleted: [], inserted: [] };
+      currentGroup.inserted.push(...seg.words);
+    }
   }
+  if (currentGroup) changeGroups.push(currentGroup);
 
-  const oldValue = previousVersion.substring(firstDiff, endPrev).trim();
-  const newValue = currentVersion.substring(firstDiff, endCurr).trim();
+  const oldValue = changeGroups
+    .map(g => g.deleted.join(' '))
+    .filter(s => s)
+    .join(' \u2026 ');
+  const newValue = changeGroups
+    .map(g => g.inserted.join(' '))
+    .filter(s => s)
+    .join(' \u2026 ');
 
   return { oldValue, newValue };
 };

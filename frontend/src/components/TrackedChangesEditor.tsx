@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
-import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges } from '../utils/diffAlgorithm';
+import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical } from '../utils/lexicalUtils';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { CollaborativeEditor } from './CollaborativeEditor';
@@ -362,6 +362,32 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     
     return content;
   }, []);
+
+  // Render character-level diff: only changed characters get <span> (styled via CSS)
+  const renderCharDiff = useCallback((
+    oldRaw: string,
+    newRaw: string,
+    mode: 'old' | 'new'
+  ): React.ReactNode => {
+    const oldText = getChangeDisplayText(oldRaw);
+    const newText = getChangeDisplayText(newRaw);
+
+    // Fall back to full-span rendering when char diff isn't useful
+    if (!oldText || !newText || oldText.length > 500 || newText.length > 500) {
+      const text = mode === 'old' ? oldText : newText;
+      return <span>{text}</span>;
+    }
+
+    const segments = diffChars(oldText, newText);
+
+    return <>{segments
+      .filter(seg => mode === 'old' ? seg.type !== 'insert' : seg.type !== 'delete')
+      .map((seg, idx) =>
+        seg.type === 'equal'
+          ? <React.Fragment key={idx}>{seg.value}</React.Fragment>
+          : <span key={idx}>{seg.value}</span>
+      )}</>;
+  }, [getChangeDisplayText]);
 
   // Helper function to get the correct rich text content for display/editing
   const getRichTextContent = useCallback((content: string): string => {
@@ -1019,10 +1045,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       // First scroll the diff section into the page viewport
       diffSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-      // Then scroll the inner .diff-text container after the page scroll settles
+      // Then scroll the inner .diff-body container after the page scroll settles
       const capturedTarget = targetElement;
       setTimeout(() => {
-        const scrollContainer = capturedTarget.closest('.diff-text');
+        const scrollContainer = capturedTarget.closest('.diff-body');
         if (scrollContainer) {
           // Lock out sync handlers
           isScrollingSyncedRef.current = true;
@@ -2547,13 +2573,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                   {change.oldValue && (
                                     <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
                                       <strong style={{ marginRight: '6px' }}>Removed:</strong>
-                                      <span>{getChangeDisplayText(change.oldValue)}</span>
+                                      {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
                                     </span>
                                   )}
                                   {change.newValue && (
                                     <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
                                       <strong style={{ marginRight: '6px' }}>Added:</strong>
-                                      <span>{getChangeDisplayText(change.newValue)}</span>
+                                      {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
                                     </span>
                                   )}
                                 </>
@@ -2741,13 +2767,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           {change.oldValue && (
                             <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
                               <strong style={{ marginRight: '6px' }}>Removed:</strong>
-                              <span>{getChangeDisplayText(change.oldValue)}</span>
+                              {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
                             </span>
                           )}
                           {change.newValue && (
                             <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
                               <strong style={{ marginRight: '6px' }}>Added:</strong>
-                              <span>{getChangeDisplayText(change.newValue)}</span>
+                              {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
                             </span>
                           )}
                         </>
