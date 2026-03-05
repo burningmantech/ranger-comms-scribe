@@ -21,6 +21,14 @@ const AUDIENCE_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+// Display names for tracked change field types
+const FIELD_DISPLAY_NAMES: Record<string, string> = {
+  title: 'Subject',
+  audience: 'Audience',
+  replyToAddress: 'Reply-To',
+  signatureText: 'Signature',
+};
+
 // Reverse map: label -> key (for converting stored label strings back to keys)
 const AUDIENCE_LABEL_TO_KEY: Record<string, string> = Object.fromEntries(
   Object.entries(AUDIENCE_LABELS).map(([key, label]) => [label, key])
@@ -1175,11 +1183,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     await onSuggestion(change);
   }, [currentUser.email, currentUser.id, onSuggestion]);
 
-  // Handle clicking on a change item - select it and scroll to it in the diff
+  // Handle clicking on a change item - scroll to field or diff
   const handleChangeClick = useCallback((change: TrackedChange) => {
     setSelectedChange(change.id);
-    // Small delay to ensure the UI has updated before scrolling
-    setTimeout(() => scrollToChangeInDiff(change), 100);
+    // For metadata field changes, scroll to the editable field element
+    if (FIELD_DISPLAY_NAMES[change.field]) {
+      setTimeout(() => {
+        const fieldEl = document.querySelector(`[data-field-id="${change.field}"]`);
+        if (fieldEl) {
+          fieldEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          fieldEl.classList.add('field-highlight');
+          setTimeout(() => fieldEl.classList.remove('field-highlight'), 2000);
+        }
+      }, 100);
+    } else {
+      // For content changes, scroll to the diff
+      setTimeout(() => scrollToChangeInDiff(change), 100);
+    }
   }, [scrollToChangeInDiff]);
 
   // Auto-save functionality with countdown timer
@@ -2123,7 +2143,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       <div className="editor-container">
         <div className="editor-content" ref={editorRef}>
-          <div className="document-title-row">
+          <div className="document-title-row" data-field-id="title">
             {editingTitle ? (
               <div className="field-edit-row">
                 <input
@@ -2158,7 +2178,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             )}
           </div>
 
-          <div className="document-field-row">
+          <div className="document-field-row" data-field-id="replyToAddress">
             <span className="field-row-label">Reply-To:</span>
             {editingReplyTo ? (
               <div className="field-edit-row">
@@ -2196,7 +2216,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             )}
           </div>
 
-          <div className="document-field-row">
+          <div className="document-field-row" data-field-id="audience">
             <span className="field-row-label">Audience:</span>
             {editingAudience ? (
               <div className="audience-edit-container">
@@ -2388,7 +2408,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
                 {/* Signature at bottom of proposed version */}
                 <div className="document-signature-section">
-                  <div className="document-field-row">
+                  <div className="document-field-row" data-field-id="signatureText">
                     <span className="field-row-label">Signature:</span>
                     {editingSignature ? (
                       <div className="field-edit-row">
@@ -2826,6 +2846,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               {formatRelativeTime(new Date(change.timestamp))}
                             </span>
                           </div>
+                          {FIELD_DISPLAY_NAMES[change.field] && (
+                            <div className="change-field-tag">
+                              <span className="field-tag-badge">{FIELD_DISPLAY_NAMES[change.field]}</span>
+                            </div>
+                          )}
                           <div className="change-content">
                             <div className="change-diff">
                               {change.isIncremental ? (
@@ -2844,13 +2869,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                   </div>
                                   {change.oldValue && (
                                     <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                                      <strong style={{ marginRight: '6px' }}>Removed:</strong>
+                                      <strong style={{ marginRight: '6px' }}>From:</strong>
                                       {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
                                     </span>
                                   )}
                                   {change.newValue && (
                                     <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                                      <strong style={{ marginRight: '6px' }}>Added:</strong>
+                                      <strong style={{ marginRight: '6px' }}>To:</strong>
                                       {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
                                     </span>
                                   )}
@@ -3020,6 +3045,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       {formatRelativeTime(new Date(change.timestamp))}
                     </span>
                   </div>
+                  {FIELD_DISPLAY_NAMES[change.field] && (
+                    <div className="change-field-tag">
+                      <span className="field-tag-badge">{FIELD_DISPLAY_NAMES[change.field]}</span>
+                    </div>
+                  )}
                   <div className="change-content">
                     <div className="change-diff">
                       {change.isIncremental ? (
@@ -3038,13 +3068,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           </div>
                           {change.oldValue && (
                             <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong style={{ marginRight: '6px' }}>Removed:</strong>
+                              <strong style={{ marginRight: '6px' }}>From:</strong>
                               {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
                             </span>
                           )}
                           {change.newValue && (
                             <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong style={{ marginRight: '6px' }}>Added:</strong>
+                              <strong style={{ marginRight: '6px' }}>To:</strong>
                               {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
                             </span>
                           )}
