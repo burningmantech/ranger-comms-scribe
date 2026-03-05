@@ -10,6 +10,38 @@ import './TrackedChangesEditor.css';
 
 const webSocketManager = new WebSocketManager();
 
+const AUDIENCE_LABELS: Record<string, string> = {
+  newsletter: 'Include in Ranger Newsletter (sent over Ranger Announce)',
+  singular: 'Singular announcement (outside of Ranger Newsletter)',
+  allcom: 'Allcom',
+  website_fix: 'Website - fix',
+  website_update: 'Website - update',
+  jrs: 'JRS/Event Ops/Other BMP Audience',
+  event: "Let's plan an event",
+  other: 'Other',
+};
+
+// Reverse map: label -> key (for converting stored label strings back to keys)
+const AUDIENCE_LABEL_TO_KEY: Record<string, string> = Object.fromEntries(
+  Object.entries(AUDIENCE_LABELS).map(([key, label]) => [label, key])
+);
+
+// Convert a stored audience value (which may be keys OR labels) to an array of keys
+const parseAudienceToKeys = (value: string | string[]): string[] => {
+  const parts = Array.isArray(value)
+    ? value
+    : value.split(',').map(s => s.trim()).filter(Boolean);
+  return parts.map(part => {
+    // If it's already a key, keep it
+    if (AUDIENCE_LABELS[part]) return part;
+    // If it's a label, convert to key
+    if (AUDIENCE_LABEL_TO_KEY[part]) return AUDIENCE_LABEL_TO_KEY[part];
+    // Handle "Other: ..." pattern
+    if (part.startsWith('Other:')) return 'other';
+    return part;
+  });
+};
+
 // Helper function to format relative time
 const formatRelativeTime = (date: Date): string => {
   const now = new Date();
@@ -173,6 +205,46 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     sidebarAutoCollapsedRef.current = sidebarAutoCollapsed;
   }, [sidebarAutoCollapsed]);
   
+  // Editable title/audience/replyTo/signature state
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editingAudience, setEditingAudience] = useState(false);
+  const [editingReplyTo, setEditingReplyTo] = useState(false);
+  const [editingSignature, setEditingSignature] = useState(false);
+
+  // Extract original form field values as arrays/strings
+  const audienceArray = useMemo(() => {
+    const field = submission.formFields?.find(f => f.id === 'audience');
+    if (!field?.value) return [] as string[];
+    return parseAudienceToKeys(field.value);
+  }, [submission.formFields]);
+  const audienceDisplay = useMemo(() => audienceArray.map(k => AUDIENCE_LABELS[k] || k).join(', '), [audienceArray]);
+
+  const replyToValue = useMemo(() => {
+    const field = submission.formFields?.find(f => f.id === 'replyToAddress');
+    return (field?.value as string) || '';
+  }, [submission.formFields]);
+
+  const signatureValue = useMemo(() => {
+    const field = submission.formFields?.find(f => f.id === 'signatureText');
+    return (field?.value as string) || '';
+  }, [submission.formFields]);
+
+  const [proposedTitle, setProposedTitle] = useState(
+    submission.proposedVersions?.title || submission.title
+  );
+  // Audience proposed state as array of keys
+  const [proposedAudienceArr, setProposedAudienceArr] = useState<string[]>(() => {
+    const proposed = submission.proposedVersions?.audience;
+    if (proposed) return parseAudienceToKeys(proposed);
+    return audienceArray;
+  });
+  const [proposedReplyTo, setProposedReplyTo] = useState(
+    submission.proposedVersions?.replyToAddress || replyToValue
+  );
+  const [proposedSignature, setProposedSignature] = useState(
+    submission.proposedVersions?.signatureText || signatureValue
+  );
+
   // Get effective user ID (fallback to email if id is not available)
   const effectiveUserId = currentUser.id || currentUser.email;
 
@@ -1087,6 +1159,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }, 2000);
     }
   }, [getChangeDisplayText]);
+
+  // Handle saving title or audience as a tracked change
+  const handleFieldChange = useCallback(async (field: string, oldValue: string, newValue: string) => {
+    if (oldValue === newValue) return;
+    const change: Change = {
+      id: `${field}-${Date.now()}`,
+      field,
+      oldValue,
+      newValue,
+      changedBy: currentUser.email || currentUser.id || '',
+      timestamp: new Date(),
+      status: 'pending' as const,
+    };
+    await onSuggestion(change);
+  }, [currentUser.email, currentUser.id, onSuggestion]);
 
   // Handle clicking on a change item - select it and scroll to it in the diff
   const handleChangeClick = useCallback((change: TrackedChange) => {
@@ -2036,7 +2123,142 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       <div className="editor-container">
         <div className="editor-content" ref={editorRef}>
-          <h1 className="document-title">{submission.title}</h1>
+          <div className="document-title-row">
+            {editingTitle ? (
+              <div className="field-edit-row">
+                <input
+                  className="field-edit-input title-edit-input"
+                  value={proposedTitle}
+                  onChange={(e) => setProposedTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleFieldChange('title', submission.title, proposedTitle);
+                      setEditingTitle(false);
+                    } else if (e.key === 'Escape') {
+                      setProposedTitle(submission.proposedVersions?.title || submission.title);
+                      setEditingTitle(false);
+                    }
+                  }}
+                  onBlur={() => {
+                    handleFieldChange('title', submission.title, proposedTitle);
+                    setEditingTitle(false);
+                  }}
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <h1
+                className="document-title editable-field"
+                onClick={() => setEditingTitle(true)}
+                title="Click to edit title"
+              >
+                {proposedTitle}
+                <i className="fas fa-pencil-alt field-edit-icon"></i>
+              </h1>
+            )}
+          </div>
+
+          <div className="document-field-row">
+            <span className="field-row-label">Reply-To:</span>
+            {editingReplyTo ? (
+              <div className="field-edit-row">
+                <input
+                  className="field-edit-input reply-to-edit-input"
+                  type="email"
+                  value={proposedReplyTo}
+                  onChange={(e) => setProposedReplyTo(e.target.value)}
+                  placeholder="Reply-to email address"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleFieldChange('replyToAddress', replyToValue, proposedReplyTo);
+                      setEditingReplyTo(false);
+                    } else if (e.key === 'Escape') {
+                      setProposedReplyTo(submission.proposedVersions?.replyToAddress || replyToValue);
+                      setEditingReplyTo(false);
+                    }
+                  }}
+                  onBlur={() => {
+                    handleFieldChange('replyToAddress', replyToValue, proposedReplyTo);
+                    setEditingReplyTo(false);
+                  }}
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <span
+                className="field-row-value editable-field"
+                onClick={() => setEditingReplyTo(true)}
+                title="Click to edit reply-to address"
+              >
+                {proposedReplyTo || 'Not specified'}
+                <i className="fas fa-pencil-alt field-edit-icon"></i>
+              </span>
+            )}
+          </div>
+
+          <div className="document-field-row">
+            <span className="field-row-label">Audience:</span>
+            {editingAudience ? (
+              <div className="audience-edit-container">
+                <div className="tce-audience-grid">
+                  {Object.entries(AUDIENCE_LABELS).map(([value, label]) => {
+                    const checked = proposedAudienceArr.includes(value);
+                    return (
+                      <label key={value} className={`tce-audience-option ${checked ? 'selected' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const next = checked
+                              ? proposedAudienceArr.filter(v => v !== value)
+                              : [...proposedAudienceArr, value];
+                            setProposedAudienceArr(next);
+                          }}
+                        />
+                        <span className="tce-audience-label">{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="audience-edit-actions">
+                  <button
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      const newVal = proposedAudienceArr.join(', ');
+                      handleFieldChange('audience', audienceDisplay, newVal);
+                      setEditingAudience(false);
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="btn btn-neutral btn-sm"
+                    onClick={() => {
+                      const proposed = submission.proposedVersions?.audience;
+                      if (proposed) {
+                        setProposedAudienceArr(parseAudienceToKeys(proposed));
+                      } else {
+                        setProposedAudienceArr(audienceArray);
+                      }
+                      setEditingAudience(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <span
+                className="field-row-value editable-field"
+                onClick={() => setEditingAudience(true)}
+                title="Click to edit audience"
+              >
+                {proposedAudienceArr.map(v => AUDIENCE_LABELS[v] || v).join(', ') || 'Not specified'}
+                <i className="fas fa-pencil-alt field-edit-icon"></i>
+              </span>
+            )}
+          </div>
+
           <div className="document-meta">
             <span>Submitted by {submission.submittedBy}</span>
             <span className="separator">•</span>
@@ -2162,6 +2384,46 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     className="proposed-collaborative-editor"
                     useSubmissionWebSocket={true}
                   />
+                </div>
+
+                {/* Signature at bottom of proposed version */}
+                <div className="document-signature-section">
+                  <div className="document-field-row">
+                    <span className="field-row-label">Signature:</span>
+                    {editingSignature ? (
+                      <div className="field-edit-row">
+                        <input
+                          className="field-edit-input signature-edit-input"
+                          value={proposedSignature}
+                          onChange={(e) => setProposedSignature(e.target.value)}
+                          placeholder="Signature text"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleFieldChange('signatureText', signatureValue, proposedSignature);
+                              setEditingSignature(false);
+                            } else if (e.key === 'Escape') {
+                              setProposedSignature(submission.proposedVersions?.signatureText || signatureValue);
+                              setEditingSignature(false);
+                            }
+                          }}
+                          onBlur={() => {
+                            handleFieldChange('signatureText', signatureValue, proposedSignature);
+                            setEditingSignature(false);
+                          }}
+                          autoFocus
+                        />
+                      </div>
+                    ) : (
+                      <span
+                        className="field-row-value editable-field"
+                        onClick={() => setEditingSignature(true)}
+                        title="Click to edit signature"
+                      >
+                        {proposedSignature || 'Not specified'}
+                        <i className="fas fa-pencil-alt field-edit-icon"></i>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2513,6 +2775,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             <div className="original-version-section">
               <h2 className="section-title">Original Version</h2>
               <div className="original-content">
+                <h3 className="original-title">{submission.title}</h3>
+                {replyToValue && (
+                  <p className="original-field">Reply-To: {replyToValue}</p>
+                )}
+                {audienceDisplay && (
+                  <p className="original-field">Audience: {audienceDisplay}</p>
+                )}
                 <div className="rich-text-display">
                   <LexicalEditorComponent
                     key="original-display-editor"
@@ -2522,6 +2791,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     className="original-display-editor"
                   />
                 </div>
+                {signatureValue && (
+                  <p className="original-field original-signature">Signature: {signatureValue}</p>
+                )}
               </div>
             </div>
 
