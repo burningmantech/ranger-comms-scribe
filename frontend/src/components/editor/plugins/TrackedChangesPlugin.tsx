@@ -5,13 +5,14 @@ import {
   $isTextNode,
   TextNode,
   LexicalEditor,
+  NodeKey,
 } from 'lexical';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
 import { getUserColorIndex, getUserColor } from '../../../utils/userColors';
 
-interface TrackedChange {
+export interface TrackedChange {
   id: string;
   field: string;
   oldValue: string;
@@ -36,11 +37,195 @@ const ADDITION_HIGHLIGHT_PREFIX = 'tracked-addition-';
 // Per-change highlight prefix
 const CHANGE_HIGHLIGHT_PREFIX = 'tracked-change-';
 
+// ---- Types for incremental decoration state ----
+
+/** Describes the addition highlight ranges associated with a single change. */
+interface ChangeHighlightRecord {
+  colorIndex: number;
+  /** Character ranges in cleanText space. DOM Range objects are ephemeral and
+   *  rebuilt after each DOM reconciliation, so we store logical ranges here. */
+  charRanges: Array<{ start: number; end: number }>;
+}
+
+/** Describes the DeletedTextNode(s) inserted for a single change. */
+interface ChangeDeletionRecord {
+  /** Lexical node keys for the DeletedTextNodes we inserted. */
+  nodeKeys: NodeKey[];
+  /** The deletion specs, kept for potential re-insertion after DOM changes. */
+  specs: Array<{
+    proposedCharOffset: number;
+    deletedText: string;
+    authorName?: string;
+    authorColor?: string;
+  }>;
+}
+
+// ---- Singleton decoration registry (module-level for public API access) ----
+
+/** Map of changeId -> highlight records for additions. */
+const highlightRegistry = new Map<string, ChangeHighlightRecord>();
+
+/** Map of changeId -> deletion records for DeletedTextNodes. */
+const deletionRegistry = new Map<string, ChangeDeletionRecord>();
+
+/** Reference to the active editor instance (set by the plugin). */
+let activeEditorRef: LexicalEditor | null = null;
+
+// ---- Public API ----
+
+/**
+ * Remove all decorations (highlights + DeletedTextNodes) for a specific changeId.
+ * Used by TransactionHistoryPlugin and cascade rejection.
+ */
+export function removeDecorationsForChange(changeId: string): void {
+  // Remove CSS highlights for this change
+  removeHighlightsForChange(changeId);
+  highlightRegistry.delete(changeId);
+
+  // Remove DeletedTextNodes for this change
+  const deletionRecord = deletionRegistry.get(changeId);
+  if (deletionRecord && activeEditorRef) {
+    const editor = activeEditorRef;
+    editor.update(
+      () => {
+        for (const nodeKey of deletionRecord.nodeKeys) {
+          const root = $getRoot();
+          const node = findNodeByKey(root, nodeKey);
+          if (node && $isDeletedTextNode(node)) {
+            node.remove();
+          }
+        }
+      },
+      { tag: 'historic' }
+    );
+  }
+  deletionRegistry.delete(changeId);
+}
+
+/**
+ * Remove decorations for a change with a fade-out animation (for acceptance).
+ * Fades opacity over 200ms, then collapses height over 200ms, then removes nodes.
+ */
+export function removeDecorationsForChangeAnimated(changeId: string): Promise<void> {
+  return new Promise((resolve) => {
+    // Remove CSS highlights immediately (they don't animate)
+    removeHighlightsForChange(changeId);
+    highlightRegistry.delete(changeId);
+
+    const deletionRecord = deletionRegistry.get(changeId);
+    if (!deletionRecord || !activeEditorRef) {
+      deletionRegistry.delete(changeId);
+      resolve();
+      return;
+    }
+
+    const editor = activeEditorRef;
+    const rootElement = editor.getRootElement();
+    if (!rootElement) {
+      deletionRegistry.delete(changeId);
+      resolve();
+      return;
+    }
+
+    // Find DOM elements for this change's DeletedTextNodes
+    const wrappers = rootElement.querySelectorAll(
+      `.tracked-deletion-wrapper[data-change-id="${changeId}"]`
+    );
+
+    if (wrappers.length === 0) {
+      // No DOM elements — just remove from registry and editor state
+      removeDecorationsForChange(changeId);
+      resolve();
+      return;
+    }
+
+    // Phase 1: Fade out opacity (200ms)
+    wrappers.forEach((wrapper) => {
+      const el = wrapper as HTMLElement;
+      el.style.transition = 'opacity 200ms ease-out';
+      el.style.opacity = '0';
+    });
+
+    setTimeout(() => {
+      // Phase 2: Collapse height (200ms)
+      wrappers.forEach((wrapper) => {
+        const el = wrapper as HTMLElement;
+        el.style.transition = 'max-height 200ms ease-out, margin 200ms ease-out, padding 200ms ease-out';
+        el.style.overflow = 'hidden';
+        el.style.maxHeight = '0';
+        el.style.margin = '0';
+        el.style.padding = '0';
+      });
+
+      setTimeout(() => {
+        // Phase 3: Remove from editor state
+        editor.update(
+          () => {
+            for (const nodeKey of deletionRecord.nodeKeys) {
+              const root = $getRoot();
+              const node = findNodeByKey(root, nodeKey);
+              if (node && $isDeletedTextNode(node)) {
+                node.remove();
+              }
+            }
+          },
+          { tag: 'historic' }
+        );
+        deletionRegistry.delete(changeId);
+        resolve();
+      }, 200);
+    }, 200);
+  });
+}
+
+/**
+ * Add decorations for a specific change. Used when receiving WebSocket events
+ * for changes made by other users.
+ */
+export function addDecorationsForChange(
+  change: TrackedChange,
+  editor: LexicalEditor,
+): void {
+  // This triggers a full re-diff for just this one change, inserting it
+  // into the registry and the editor. We delegate to the internal logic.
+  if (!editor) return;
+  applyDecorationsForSingleChange(editor, change);
+}
+
+/**
+ * Get the set of change IDs that currently have decorations applied.
+ */
+export function getDecoratedChangeIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const id of highlightRegistry.keys()) ids.add(id);
+  for (const id of deletionRegistry.keys()) ids.add(id);
+  return ids;
+}
+
+// ---- Helper to find a Lexical node by key in the tree ----
+
+function findNodeByKey(root: any, key: NodeKey): any {
+  if (root.__key === key) return root;
+  if ('getChildren' in root && typeof root.getChildren === 'function') {
+    for (const child of root.getChildren()) {
+      const found = findNodeByKey(child, key);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// ---- Plugin component ----
+
 /**
  * TrackedChangesPlugin manages inline tracked changes in the Lexical editor.
  *
- * - Additions: styled via CSS Custom Highlight API (zero impact on editor state)
+ * Refactored for incremental decoration rendering:
+ * - Additions: styled via CSS Custom Highlight API (zero DOM impact)
  * - Deletions: inserted as DeletedTextNode DecoratorNodes (getTextContent() returns '')
+ * - Decorations are applied incrementally: only NEW changes get decorations,
+ *   existing decorations are left untouched (no strip-and-rebuild).
+ * - When a change is removed, only THAT change's decorations are cleaned up.
  * - Click handling: deletions via DecoratorNode onClick, additions via editor click handler
  */
 export default function TrackedChangesPlugin({
@@ -55,6 +240,20 @@ export default function TrackedChangesPlugin({
   const lastCleanTextRef = useRef<string>('');
   const isUpdatingRef = useRef(false);
   const changeIdMapRef = useRef<Map<string, { type: 'addition' | 'deletion'; start: number; end: number }>>(new Map());
+  // Track which change IDs were decorated in the previous render cycle
+  const previousChangeIdsRef = useRef<Set<string>>(new Set());
+  // Track the previous liveBaseline to detect changes
+  const previousLiveBaselineRef = useRef<string | undefined>(undefined);
+
+  // Register this editor as the active one for public API
+  useEffect(() => {
+    activeEditorRef = editor;
+    return () => {
+      if (activeEditorRef === editor) {
+        activeEditorRef = null;
+      }
+    };
+  }, [editor]);
 
   // Listen for tracked-change-click events from DeletedTextNode components
   useEffect(() => {
@@ -131,7 +330,7 @@ export default function TrackedChangesPlugin({
     return content;
   }, []);
 
-  // Core decoration logic — per-change character-level diffing
+  // Core incremental decoration logic
   const applyDecorations = useCallback(() => {
     if (isUpdatingRef.current) return;
     isUpdatingRef.current = true;
@@ -139,31 +338,88 @@ export default function TrackedChangesPlugin({
     try {
       editor.update(
         () => {
-          // Step 1: Remove existing DeletedTextNodes
           const root = $getRoot();
-          const deletedNodes: DeletedTextNode[] = [];
-          const walkNode = (node: any) => {
-            if ($isDeletedTextNode(node)) {
-              deletedNodes.push(node);
-            }
-            if ('getChildren' in node && typeof node.getChildren === 'function') {
-              for (const child of node.getChildren()) {
-                walkNode(child);
-              }
-            }
-          };
-          walkNode(root);
 
-          for (const dn of deletedNodes) {
-            dn.remove();
+          // Determine which formal change IDs are currently active
+          const contentChanges = pendingChanges.filter(c => c.field === 'content' && c.status === 'pending');
+          const currentChangeIds = new Set(contentChanges.map(c => c.id));
+
+          // Add special IDs for live baseline changes
+          const hasLiveBaseline = !!liveBaseline;
+          if (hasLiveBaseline) {
+            currentChangeIds.add('__live__addition');
+            currentChangeIds.add('__live__deletion');
           }
 
-          // Step 2: Build clean text by walking TextNodes directly.
-          // This avoids the \n separators that $getRoot().getTextContent() includes
-          // between paragraphs, keeping positions aligned with the TextNode walk
-          // used by insertDeletedTextNodeAtOffset and the DOM TreeWalker.
-          // Also track paragraph boundaries so we can insert \n separators for
-          // paragraph-aware diffing while keeping cleanText offset-aligned.
+          // Determine which change IDs are NEW (not yet decorated)
+          const previousIds = previousChangeIdsRef.current;
+          const newChangeIds = new Set<string>();
+          const removedChangeIds = new Set<string>();
+
+          for (const id of currentChangeIds) {
+            if (!previousIds.has(id)) {
+              newChangeIds.add(id);
+            }
+          }
+          for (const id of previousIds) {
+            if (!currentChangeIds.has(id)) {
+              removedChangeIds.add(id);
+            }
+          }
+
+          // Live baseline changes are always re-computed (they change on every keystroke)
+          const liveBaselineChanged = liveBaseline !== previousLiveBaselineRef.current;
+          const mustRefreshLive = liveBaselineChanged || hasLiveBaseline;
+          if (mustRefreshLive) {
+            // Always recompute live decorations
+            newChangeIds.add('__live__addition');
+            newChangeIds.add('__live__deletion');
+          }
+
+          // Step 1: Remove decorations for changes that are no longer present
+          for (const removedId of removedChangeIds) {
+            // Remove DeletedTextNodes for this change
+            const deletionRecord = deletionRegistry.get(removedId);
+            if (deletionRecord) {
+              for (const nodeKey of deletionRecord.nodeKeys) {
+                const node = findNodeByKey(root, nodeKey);
+                if (node && $isDeletedTextNode(node)) {
+                  node.remove();
+                }
+              }
+              deletionRegistry.delete(removedId);
+            }
+            // Remove highlights
+            removeHighlightsForChange(removedId);
+            highlightRegistry.delete(removedId);
+          }
+
+          // Also remove live decorations if we're refreshing them
+          if (mustRefreshLive) {
+            for (const liveId of ['__live__addition', '__live__deletion']) {
+              const deletionRecord = deletionRegistry.get(liveId);
+              if (deletionRecord) {
+                for (const nodeKey of deletionRecord.nodeKeys) {
+                  const node = findNodeByKey(root, nodeKey);
+                  if (node && $isDeletedTextNode(node)) {
+                    node.remove();
+                  }
+                }
+                deletionRegistry.delete(liveId);
+              }
+              removeHighlightsForChange(liveId);
+              highlightRegistry.delete(liveId);
+            }
+          }
+
+          // If no new changes and no removals and no live refresh needed, we still
+          // need to rebuild highlights after editor text changes (DOM reconciliation
+          // invalidates Range objects). But we can skip the diffing step for
+          // already-decorated formal changes and just recompute DOM ranges from
+          // the stored charRanges.
+          const needsNewDiff = newChangeIds.size > 0 || removedChangeIds.size > 0;
+
+          // Step 2: Build clean text (excluding DeletedTextNodes)
           let cleanText = '';
           const paragraphBoundaries: number[] = [];
           for (const child of root.getChildren()) {
@@ -180,16 +436,13 @@ export default function TrackedChangesPlugin({
               }
             };
             collectParaText(child);
-            // Record boundary for non-empty paragraphs (skip first)
             if (cleanText.length > startOffset && startOffset > 0) {
               paragraphBoundaries.push(startOffset);
             }
           }
           lastCleanTextRef.current = cleanText;
 
-          // Build cleanText with \n between paragraphs for paragraph-aware diffing.
-          // extractTextFromLexical joins paragraphs with \n, so liveBaseline has \n.
-          // By inserting \n at the same boundaries, the diff sees paragraph structure.
+          // Build cleanText with \n between paragraphs for paragraph-aware diffing
           let cleanTextWithNewlines = '';
           {
             let lastIdx = 0;
@@ -201,7 +454,6 @@ export default function TrackedChangesPlugin({
           }
 
           // Convert offset in cleanTextWithNewlines to offset in cleanText
-          // (subtract the number of inserted \n characters before the position)
           const newlinedToClean = (nlOffset: number): number => {
             let nlCount = 0;
             for (const boundary of paragraphBoundaries) {
@@ -215,24 +467,27 @@ export default function TrackedChangesPlugin({
           };
 
           if (!cleanText) {
-            clearHighlights();
+            clearAllDecorations();
+            previousChangeIdsRef.current = new Set();
+            previousLiveBaselineRef.current = liveBaseline;
             isUpdatingRef.current = false;
             return;
           }
 
-          const contentChanges = pendingChanges.filter(c => c.field === 'content' && c.status === 'pending');
           if (contentChanges.length === 0 && !liveBaseline) {
-            clearHighlights();
+            clearAllDecorations();
+            previousChangeIdsRef.current = new Set();
+            previousLiveBaselineRef.current = liveBaseline;
             isUpdatingRef.current = false;
             return;
           }
 
-          // Step 3: For each tracked change, diff oldValue vs newValue at char level
-          // and map the changed characters to editor positions.
+          // Step 3: Compute additions/deletions ONLY for new changes
           const normalizeWS = (s: string) => s.replace(/\s+/g, ' ').trim();
+          const SEGMENT_SEPARATOR = ' \u2026 ';
 
-          const additionRanges: Array<{ start: number; end: number; changeId: string; colorIndex: number }> = [];
-          const deletionInsertions: Array<{
+          const newAdditionRanges: Array<{ start: number; end: number; changeId: string; colorIndex: number }> = [];
+          const newDeletionInsertions: Array<{
             proposedCharOffset: number;
             changeId: string;
             deletedText: string;
@@ -240,29 +495,20 @@ export default function TrackedChangesPlugin({
             authorColor?: string;
           }> = [];
 
-          // Ellipsis separator used by backend to join disjoint change segments
-          const SEGMENT_SEPARATOR = ' \u2026 ';
+          // Only diff changes that need new decorations
+          const changesToProcess = contentChanges.filter(c => newChangeIds.has(c.id));
 
-          for (const change of contentChanges) {
-            // Prefer richText values (full Lexical JSON) when available.
-            // The backend's calculateIncrementalChange transforms oldValue/newValue
-            // to only contain changed portions, which breaks indexOf-based positioning.
-            // richTextOldValue/richTextNewValue contain the full document and
-            // produce correct diffs.
+          for (const change of changesToProcess) {
             const rawOld = change.richTextOldValue || change.oldValue || '';
             const rawNew = change.richTextNewValue || change.newValue || '';
-            // Keep \n between paragraphs for paragraph-aware diffing.
-            // getDisplayableText (extractTextFromLexical) joins paragraphs with \n.
             const fullNewDisplay = rawNew ? getDisplayableText(rawNew) : '';
             const fullOldDisplay = rawOld ? getDisplayableText(rawOld) : '';
 
             if (!fullNewDisplay && !fullOldDisplay) continue;
 
-            // Split by ellipsis separator to handle grouped disjoint changes
             const newSegments = fullNewDisplay.split(SEGMENT_SEPARATOR);
             const oldSegments = fullOldDisplay.split(SEGMENT_SEPARATOR);
 
-            // Process each segment pair independently
             const segCount = Math.max(newSegments.length, oldSegments.length);
             for (let si = 0; si < segCount; si++) {
               const newDisplayText = (newSegments[si] || '').trim();
@@ -270,16 +516,11 @@ export default function TrackedChangesPlugin({
 
               if (!newDisplayText && !oldDisplayText) continue;
 
-              // Find where the segment's newValue text appears in the editor.
-              // Use cleanTextWithNewlines since display text includes \n.
               let newTextStart = cleanTextWithNewlines.indexOf(newDisplayText);
               if (newTextStart === -1) {
-                // Fallback: try without newlines (handles plain-text oldValue/newValue)
                 const stripped = newDisplayText.replace(/\n/g, '');
                 newTextStart = cleanText.indexOf(stripped);
                 if (newTextStart !== -1) {
-                  // Found in cleanText — use cleanText offsets directly below
-                  // (skip newlinedToClean conversion since already in cleanText space)
                   const charDiff = diffCharsOptimized(
                     oldDisplayText.replace(/\n/g, ''), stripped,
                   );
@@ -290,7 +531,7 @@ export default function TrackedChangesPlugin({
                     if (seg.type === 'equal') {
                       newOffset += seg.value.length;
                     } else if (seg.type === 'insert') {
-                      additionRanges.push({
+                      newAdditionRanges.push({
                         start: newTextStart + newOffset,
                         end: newTextStart + newOffset + seg.value.length,
                         changeId: change.id,
@@ -298,7 +539,7 @@ export default function TrackedChangesPlugin({
                       });
                       newOffset += seg.value.length;
                     } else if (seg.type === 'delete') {
-                      deletionInsertions.push({
+                      newDeletionInsertions.push({
                         proposedCharOffset: newTextStart + newOffset,
                         changeId: change.id,
                         deletedText: seg.value,
@@ -307,9 +548,8 @@ export default function TrackedChangesPlugin({
                       });
                     }
                   }
-                  continue; // Done with this segment
+                  continue;
                 }
-                // Fallback: normalized whitespace match
                 const normalizedClean = normalizeWS(cleanText);
                 const normalizedNew = normalizeWS(newDisplayText.replace(/\n/g, ''));
                 const normPos = normalizedClean.indexOf(normalizedNew);
@@ -331,10 +571,6 @@ export default function TrackedChangesPlugin({
               }
 
               if (newTextStart === -1) {
-                // Context-based fallback for incremental changes whose newDisplayText
-                // is an intermediate state that doesn't match the current editor.
-                // Diff old vs new to find what this change did, then use surrounding
-                // context from newDisplayText to locate each change in the editor.
                 const ctxDiff = diffCharsOptimized(
                   oldDisplayText, newDisplayText, { paragraphAligned: true },
                 );
@@ -346,14 +582,13 @@ export default function TrackedChangesPlugin({
                   if (seg.type === 'equal') {
                     ctxNewOff += seg.value.length;
                   } else if (seg.type === 'insert') {
-                    // Find insertion in current editor using leading context
                     const ctxBefore = newDisplayText.slice(Math.max(0, ctxNewOff - CTX_LEN), ctxNewOff);
                     const needle = ctxBefore + seg.value;
                     const pos = cleanTextWithNewlines.indexOf(needle);
                     if (pos !== -1) {
                       const start = pos + ctxBefore.length;
                       const end = start + seg.value.length;
-                      additionRanges.push({
+                      newAdditionRanges.push({
                         start: newlinedToClean(start),
                         end: newlinedToClean(end),
                         changeId: change.id,
@@ -364,26 +599,22 @@ export default function TrackedChangesPlugin({
                   } else if (seg.type === 'delete') {
                     const deleted = seg.value.replace(/^\n+|\n+$/g, '');
                     if (deleted) {
-                      // Match surrounding context in current editor to place the ghost
                       const ctxBefore = newDisplayText.slice(Math.max(0, ctxNewOff - CTX_LEN), ctxNewOff);
                       const ctxAfter = newDisplayText.slice(ctxNewOff, Math.min(newDisplayText.length, ctxNewOff + CTX_LEN));
                       let pos = -1;
-                      // Try combined context first (before + after deletion point)
                       if (ctxBefore.length > 0 && ctxAfter.length > 0) {
                         pos = cleanTextWithNewlines.indexOf(ctxBefore + ctxAfter);
                         if (pos !== -1) pos += ctxBefore.length;
                       }
-                      // Fallback: just leading context
                       if (pos === -1 && ctxBefore.length >= 10) {
                         const p = cleanTextWithNewlines.indexOf(ctxBefore);
                         if (p !== -1) pos = p + ctxBefore.length;
                       }
-                      // Fallback: just trailing context
                       if (pos === -1 && ctxAfter.length >= 10) {
                         pos = cleanTextWithNewlines.indexOf(ctxAfter);
                       }
                       if (pos !== -1) {
-                        deletionInsertions.push({
+                        newDeletionInsertions.push({
                           proposedCharOffset: newlinedToClean(pos),
                           changeId: change.id,
                           deletedText: deleted,
@@ -392,19 +623,15 @@ export default function TrackedChangesPlugin({
                         });
                       }
                     }
-                    // deletions don't advance ctxNewOff (deleted text is in old, not new)
                   }
                 }
                 continue;
               }
 
-              // Paragraph-aware character-level diff between old and new segment values
               const charDiff = diffCharsOptimized(
                 oldDisplayText, newDisplayText, { paragraphAligned: true },
               );
 
-              // Walk char diff segments and map to editor positions.
-              // newTextStart is in cleanTextWithNewlines space, so convert to cleanText.
               let newOffset = 0;
               const changeColorIndex = getUserColorIndex(change.changedBy || '');
               const changeColor = getUserColor(change.changedBy || '');
@@ -414,7 +641,7 @@ export default function TrackedChangesPlugin({
                 } else if (seg.type === 'insert') {
                   const cleanStart = newlinedToClean(newTextStart + newOffset);
                   const cleanEnd = newlinedToClean(newTextStart + newOffset + seg.value.length);
-                  additionRanges.push({
+                  newAdditionRanges.push({
                     start: cleanStart,
                     end: cleanEnd,
                     changeId: change.id,
@@ -424,7 +651,7 @@ export default function TrackedChangesPlugin({
                 } else if (seg.type === 'delete') {
                   const deletedText = seg.value.replace(/^\n+|\n+$/g, '');
                   if (deletedText) {
-                    deletionInsertions.push({
+                    newDeletionInsertions.push({
                       proposedCharOffset: newlinedToClean(newTextStart + newOffset),
                       changeId: change.id,
                       deletedText,
@@ -437,74 +664,83 @@ export default function TrackedChangesPlugin({
             }
           }
 
-          // Step 3b: Live diff layer — diff liveBaseline vs current editor text
-          // to show unsaved additions/deletions in real-time as the user types.
-          // Ranges that overlap with formal-change ranges are skipped.
-          // Both liveBaseline and cleanTextWithNewlines use \n between paragraphs,
-          // and we pass paragraphAligned to diffCharsOptimized so the prefix/suffix
-          // matching snaps to paragraph boundaries instead of bleeding across them.
-          if (liveBaseline) {
-            if (liveBaseline && cleanTextWithNewlines !== liveBaseline) {
-              // Build a set of character positions already covered by formal changes
-              const coveredPositions = new Set<number>();
-              for (const ar of additionRanges) {
-                for (let i = ar.start; i < ar.end; i++) coveredPositions.add(i);
+          // Step 3b: Live diff layer (always recomputed when liveBaseline is present)
+          if (mustRefreshLive && liveBaseline && cleanTextWithNewlines !== liveBaseline) {
+            // Build a set of character positions covered by ALL formal changes
+            // (both existing and newly added)
+            const coveredPositions = new Set<number>();
+            // From existing registry
+            for (const [cid, record] of highlightRegistry) {
+              if (cid.startsWith('__live__')) continue;
+              for (const cr of record.charRanges) {
+                for (let i = cr.start; i < cr.end; i++) coveredPositions.add(i);
               }
-              for (const di of deletionInsertions) {
-                coveredPositions.add(di.proposedCharOffset);
+            }
+            // From newly computed addition ranges
+            for (const ar of newAdditionRanges) {
+              if (ar.changeId.startsWith('__live__')) continue;
+              for (let i = ar.start; i < ar.end; i++) coveredPositions.add(i);
+            }
+            // From existing deletion registry
+            for (const [cid, record] of deletionRegistry) {
+              if (cid.startsWith('__live__')) continue;
+              for (const spec of record.specs) {
+                coveredPositions.add(spec.proposedCharOffset);
               }
+            }
+            // From newly computed deletions
+            for (const di of newDeletionInsertions) {
+              if (di.changeId.startsWith('__live__')) continue;
+              coveredPositions.add(di.proposedCharOffset);
+            }
 
-              const liveDiff = diffCharsOptimized(
-                liveBaseline, cleanTextWithNewlines, { paragraphAligned: true },
-              );
-              let newOff = 0; // offset in cleanTextWithNewlines (the "new" side)
-              for (const seg of liveDiff) {
-                if (seg.type === 'equal') {
-                  newOff += seg.value.length;
-                } else if (seg.type === 'insert') {
-                  const cleanStart = newlinedToClean(newOff);
-                  const cleanEnd = newlinedToClean(newOff + seg.value.length);
-                  let overlaps = false;
-                  for (let i = cleanStart; i < cleanEnd; i++) {
-                    if (coveredPositions.has(i)) { overlaps = true; break; }
-                  }
-                  if (!overlaps) {
-                    additionRanges.push({
-                      start: cleanStart,
-                      end: cleanEnd,
-                      changeId: '__live__addition',
-                      colorIndex: currentUserId ? getUserColorIndex(currentUserId) : 0,
+            const liveDiff = diffCharsOptimized(
+              liveBaseline, cleanTextWithNewlines, { paragraphAligned: true },
+            );
+            let newOff = 0;
+            for (const seg of liveDiff) {
+              if (seg.type === 'equal') {
+                newOff += seg.value.length;
+              } else if (seg.type === 'insert') {
+                const cleanStart = newlinedToClean(newOff);
+                const cleanEnd = newlinedToClean(newOff + seg.value.length);
+                let overlaps = false;
+                for (let i = cleanStart; i < cleanEnd; i++) {
+                  if (coveredPositions.has(i)) { overlaps = true; break; }
+                }
+                if (!overlaps) {
+                  newAdditionRanges.push({
+                    start: cleanStart,
+                    end: cleanEnd,
+                    changeId: '__live__addition',
+                    colorIndex: currentUserId ? getUserColorIndex(currentUserId) : 0,
+                  });
+                }
+                newOff += seg.value.length;
+              } else if (seg.type === 'delete') {
+                const cleanOffset = newlinedToClean(newOff);
+                if (!coveredPositions.has(cleanOffset)) {
+                  const deletedText = seg.value.replace(/^\n+|\n+$/g, '');
+                  if (deletedText) {
+                    newDeletionInsertions.push({
+                      proposedCharOffset: cleanOffset,
+                      changeId: '__live__deletion',
+                      deletedText,
+                      authorColor: currentUserId ? getUserColor(currentUserId) : undefined,
                     });
                   }
-                  newOff += seg.value.length;
-                } else if (seg.type === 'delete') {
-                  const cleanOffset = newlinedToClean(newOff);
-                  if (!coveredPositions.has(cleanOffset)) {
-                    // seg.value already includes \n from liveBaseline;
-                    // trim leading/trailing \n to avoid blank lines at edges.
-                    const deletedText = seg.value.replace(/^\n+|\n+$/g, '');
-                    if (deletedText) {
-                      deletionInsertions.push({
-                        proposedCharOffset: cleanOffset,
-                        changeId: '__live__deletion',
-                        deletedText,
-                        authorColor: currentUserId ? getUserColor(currentUserId) : undefined,
-                      });
-                    }
-                  }
-                  // Deletions don't advance newOff
                 }
               }
             }
           }
 
-          // Step 4: Insert DeletedTextNodes in REVERSE offset order
-          const sortedDeletions = [...deletionInsertions].sort(
+          // Step 4: Insert new DeletedTextNodes in REVERSE offset order
+          const sortedDeletions = [...newDeletionInsertions].sort(
             (a, b) => b.proposedCharOffset - a.proposedCharOffset
           );
 
           for (const deletion of sortedDeletions) {
-            insertDeletedTextNodeAtOffset(
+            const nodeKey = insertDeletedTextNodeAtOffset(
               deletion.proposedCharOffset,
               deletion.changeId,
               deletion.deletedText,
@@ -512,30 +748,67 @@ export default function TrackedChangesPlugin({
               deletion.authorColor,
               paragraphBoundaries,
             );
-          }
 
-          // Step 5: Update the change ID map for click handling
-          const newChangeIdMap = new Map<string, { type: 'addition' | 'deletion'; start: number; end: number }>();
-          for (const addition of additionRanges) {
-            const existing = newChangeIdMap.get(addition.changeId);
-            if (existing && existing.type === 'addition') {
-              existing.start = Math.min(existing.start, addition.start);
-              existing.end = Math.max(existing.end, addition.end);
-            } else {
-              newChangeIdMap.set(addition.changeId, { type: 'addition', start: addition.start, end: addition.end });
+            // Register in deletion registry
+            if (nodeKey) {
+              let record = deletionRegistry.get(deletion.changeId);
+              if (!record) {
+                record = { nodeKeys: [], specs: [] };
+                deletionRegistry.set(deletion.changeId, record);
+              }
+              record.nodeKeys.push(nodeKey);
+              record.specs.push({
+                proposedCharOffset: deletion.proposedCharOffset,
+                deletedText: deletion.deletedText,
+                authorName: deletion.authorName,
+                authorColor: deletion.authorColor,
+              });
             }
           }
-          for (const deletion of deletionInsertions) {
-            if (!newChangeIdMap.has(deletion.changeId)) {
-              newChangeIdMap.set(deletion.changeId, { type: 'deletion', start: deletion.proposedCharOffset, end: deletion.proposedCharOffset });
+
+          // Step 5: Register new highlight records
+          for (const addition of newAdditionRanges) {
+            let record = highlightRegistry.get(addition.changeId);
+            if (!record) {
+              record = { colorIndex: addition.colorIndex, charRanges: [] };
+              highlightRegistry.set(addition.changeId, record);
+            }
+            record.charRanges.push({ start: addition.start, end: addition.end });
+          }
+
+          // Step 6: Update the change ID map for click handling
+          // Merge existing registry entries with new ones
+          const newChangeIdMap = new Map<string, { type: 'addition' | 'deletion'; start: number; end: number }>();
+          for (const [cid, record] of highlightRegistry) {
+            for (const cr of record.charRanges) {
+              const existing = newChangeIdMap.get(cid);
+              if (existing && existing.type === 'addition') {
+                existing.start = Math.min(existing.start, cr.start);
+                existing.end = Math.max(existing.end, cr.end);
+              } else {
+                newChangeIdMap.set(cid, { type: 'addition', start: cr.start, end: cr.end });
+              }
+            }
+          }
+          for (const [cid, record] of deletionRegistry) {
+            if (!newChangeIdMap.has(cid)) {
+              const firstSpec = record.specs[0];
+              if (firstSpec) {
+                newChangeIdMap.set(cid, { type: 'deletion', start: firstSpec.proposedCharOffset, end: firstSpec.proposedCharOffset });
+              }
             }
           }
           changeIdMapRef.current = newChangeIdMap;
 
-          // Step 6: Schedule highlight application and spellcheck suppression
-          // after DOM reconciliation
+          // Update previous state tracking
+          previousChangeIdsRef.current = currentChangeIds;
+          previousLiveBaselineRef.current = liveBaseline;
+
+          // Step 7: Schedule highlight application and spellcheck suppression
+          // ALL highlights must be rebuilt on every update because DOM reconciliation
+          // invalidates Range objects. But this is cheap (no editor state mutation).
           requestAnimationFrame(() => {
-            applyAdditionHighlights(editor, additionRanges);
+            rebuildAllHighlightsFromRegistry(editor);
             suppressSpellcheckNearDeletions(editor);
             isUpdatingRef.current = false;
           });
@@ -563,8 +836,6 @@ export default function TrackedChangesPlugin({
     });
     return () => {
       unregister();
-      // Cancel pending debounced invocation so stale closures don't fire
-      // after applyDecorations is recreated with updated pendingChanges
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
@@ -574,7 +845,6 @@ export default function TrackedChangesPlugin({
 
   // Re-apply when pendingChanges or originalText change
   useEffect(() => {
-    // Small delay to let the editor settle
     const timer = setTimeout(() => {
       applyDecorations();
     }, 150);
@@ -587,7 +857,7 @@ export default function TrackedChangesPlugin({
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
-      clearHighlights();
+      clearAllDecorations();
     };
   }, []);
 
@@ -597,6 +867,7 @@ export default function TrackedChangesPlugin({
 /**
  * Insert a DeletedTextNode at a given character offset in the proposed text.
  * Must be called within an editor.update() callback.
+ * Returns the Lexical node key of the inserted node, or null if insertion failed.
  */
 function insertDeletedTextNodeAtOffset(
   charOffset: number,
@@ -605,7 +876,7 @@ function insertDeletedTextNodeAtOffset(
   authorName?: string,
   authorColor?: string,
   paragraphBoundaries?: number[],
-): void {
+): NodeKey | null {
   const root = $getRoot();
   let cumulativeOffset = 0;
 
@@ -633,33 +904,26 @@ function insertDeletedTextNodeAtOffset(
     if (charOffset >= nodeStart && charOffset < nodeEnd) {
       const localOffset = charOffset - nodeStart;
       if (localOffset === 0) {
-        // Check if this offset is a paragraph boundary — the deleted text
-        // likely came from a paragraph that was removed or emptied.
-        // If a preceding empty paragraph exists (Lexical leaves these behind
-        // when the user deletes a line's text), insert the ghost there so it
-        // stays on its own line instead of merging inline with the next paragraph.
         const isAtParagraphBoundary = paragraphBoundaries?.includes(charOffset) || charOffset === 0;
         if (isAtParagraphBoundary) {
-          // Paragraph-level deletion: insert as block-level element before
-          // the text node so it renders on its own line above the next content.
           const deletedNode = $createDeletedTextNode({ changeId, deletedText, authorName, authorColor, isBlockLevel: true });
           textNode.insertBefore(deletedNode);
+          return deletedNode.getKey();
         } else {
-          // Inline deletion: insert before this text node
           const deletedNode = $createDeletedTextNode({ changeId, deletedText, authorName, authorColor });
           textNode.insertBefore(deletedNode);
+          return deletedNode.getKey();
         }
       } else if (localOffset >= nodeTextLength) {
-        // Insert after this text node
         const deletedNode = $createDeletedTextNode({ changeId, deletedText, authorName, authorColor });
         textNode.insertAfter(deletedNode);
+        return deletedNode.getKey();
       } else {
-        // Split the text node and insert between
         const [_left] = textNode.splitText(localOffset);
         const deletedNode = $createDeletedTextNode({ changeId, deletedText, authorName, authorColor });
         _left.insertAfter(deletedNode);
+        return deletedNode.getKey();
       }
-      return;
     }
 
     cumulativeOffset = nodeEnd;
@@ -670,27 +934,25 @@ function insertDeletedTextNodeAtOffset(
     const lastNode = textNodes[textNodes.length - 1];
     const deletedNode = $createDeletedTextNode({ changeId, deletedText, authorName, authorColor });
     lastNode.insertAfter(deletedNode);
+    return deletedNode.getKey();
   }
+
+  return null;
 }
 
 /**
  * After DOM reconciliation, suppress spellcheck on Lexical text spans
- * adjacent to tracked deletion markers. When a word like "Despotism" has
- * its "D" shown as a deleted ghost, the remaining fragments "d" and "espotism"
- * would be flagged by the browser spellchecker. Setting spellcheck=false on
- * those sibling spans prevents the red underlines.
+ * adjacent to tracked deletion markers.
  */
 function suppressSpellcheckNearDeletions(editor: LexicalEditor): void {
   const rootElement = editor.getRootElement();
   if (!rootElement) return;
 
-  // First, reset any previously suppressed spans
   rootElement.querySelectorAll('[data-spellcheck-suppressed]').forEach((el) => {
     el.removeAttribute('spellcheck');
     el.removeAttribute('data-spellcheck-suppressed');
   });
 
-  // For each tracked deletion wrapper, suppress spellcheck on adjacent text spans
   rootElement.querySelectorAll('.tracked-deletion-wrapper').forEach((wrapper) => {
     const prev = wrapper.previousElementSibling;
     const next = wrapper.nextElementSibling;
@@ -707,20 +969,17 @@ function suppressSpellcheckNearDeletions(editor: LexicalEditor): void {
 }
 
 /**
- * Apply CSS Custom Highlight API ranges for addition segments.
- * Called after DOM reconciliation (in requestAnimationFrame).
- * Groups ranges by colorIndex so each user's additions get their own highlight color.
+ * Rebuild all CSS Custom Highlight API ranges from the registry.
+ * Called after every DOM reconciliation because Range objects become invalid.
+ * This is a DOM-only operation — no editor state mutation.
  */
-function applyAdditionHighlights(
-  editor: LexicalEditor,
-  additionRanges: Array<{ start: number; end: number; changeId: string; colorIndex: number }>,
-): void {
+function rebuildAllHighlightsFromRegistry(editor: LexicalEditor): void {
   if (typeof CSS === 'undefined' || !('highlights' in CSS)) return;
 
-  // Clear existing highlights
+  // Clear all existing tracked highlights
   clearHighlights();
 
-  if (additionRanges.length === 0) return;
+  if (highlightRegistry.size === 0) return;
 
   const rootElement = editor.getRootElement();
   if (!rootElement) return;
@@ -734,12 +993,10 @@ function applyAdditionHighlights(
     NodeFilter.SHOW_TEXT,
     {
       acceptNode: (node: Node) => {
-        // Skip text nodes inside tracked-deletion spans
         const parent = node.parentElement;
         if (parent?.closest('.tracked-deletion')) {
           return NodeFilter.FILTER_REJECT;
         }
-        // Skip text nodes inside tracked-deletion-wrapper spans
         if (parent?.closest('.tracked-deletion-wrapper')) {
           return NodeFilter.FILTER_REJECT;
         }
@@ -765,30 +1022,32 @@ function applyAdditionHighlights(
   const perColorRanges = new Map<number, Range[]>();
   const perChangeRanges = new Map<string, Range[]>();
 
-  for (const addition of additionRanges) {
-    const ranges = createDOMRangesForCharRange(domTextNodes, addition.start, addition.end);
+  for (const [changeId, record] of highlightRegistry) {
+    for (const charRange of record.charRanges) {
+      const ranges = createDOMRangesForCharRange(domTextNodes, charRange.start, charRange.end);
 
-    // Accumulate by color index
-    if (!perColorRanges.has(addition.colorIndex)) {
-      perColorRanges.set(addition.colorIndex, []);
-    }
-    perColorRanges.get(addition.colorIndex)!.push(...ranges);
+      // Accumulate by color index
+      if (!perColorRanges.has(record.colorIndex)) {
+        perColorRanges.set(record.colorIndex, []);
+      }
+      perColorRanges.get(record.colorIndex)!.push(...ranges);
 
-    // Accumulate per-change for click detection
-    if (!perChangeRanges.has(addition.changeId)) {
-      perChangeRanges.set(addition.changeId, []);
+      // Accumulate per-change for click detection
+      if (!perChangeRanges.has(changeId)) {
+        perChangeRanges.set(changeId, []);
+      }
+      perChangeRanges.get(changeId)!.push(...ranges);
     }
-    perChangeRanges.get(addition.changeId)!.push(...ranges);
   }
 
-  // Apply per-color highlights for styling (tracked-addition-0 … tracked-addition-9)
+  // Apply per-color highlights for styling
   for (const [colorIndex, ranges] of perColorRanges) {
     if (ranges.length > 0) {
       try {
         const highlight = new (window as any).Highlight(...ranges);
         (CSS as any).highlights.set(ADDITION_HIGHLIGHT_PREFIX + colorIndex, highlight);
       } catch (err) {
-        // Graceful fallback: CSS Highlight API not supported
+        // Graceful fallback
       }
     }
   }
@@ -817,7 +1076,6 @@ function createDOMRangesForCharRange(
   const ranges: Range[] = [];
 
   for (const entry of domTextNodes) {
-    // Check if this text node overlaps with [start, end)
     if (entry.cumEnd <= start || entry.cumStart >= end) continue;
 
     const rangeStart = Math.max(0, start - entry.cumStart);
@@ -839,13 +1097,33 @@ function createDOMRangesForCharRange(
 }
 
 /**
- * Clear all tracked change highlights.
+ * Remove CSS highlights for a specific changeId.
+ */
+function removeHighlightsForChange(changeId: string): void {
+  if (typeof CSS === 'undefined' || !('highlights' in CSS)) return;
+
+  try {
+    // Remove the per-change highlight
+    const changeKey = CHANGE_HIGHLIGHT_PREFIX + changeId;
+    if ((CSS as any).highlights.has(changeKey)) {
+      (CSS as any).highlights.delete(changeKey);
+    }
+
+    // We don't remove per-color highlights here because they aggregate
+    // across all changes with the same color. They will be rebuilt by
+    // rebuildAllHighlightsFromRegistry on the next update cycle.
+  } catch (err) {
+    // Graceful fallback
+  }
+}
+
+/**
+ * Clear all tracked change highlights from the CSS Highlight API.
  */
 function clearHighlights(): void {
   if (typeof CSS === 'undefined' || !('highlights' in CSS)) return;
 
   try {
-    // Clear per-color addition highlights and per-change highlights
     const keysToDelete: string[] = [];
     (CSS as any).highlights.forEach((_: any, key: string) => {
       if (key.startsWith(ADDITION_HIGHLIGHT_PREFIX) || key.startsWith(CHANGE_HIGHLIGHT_PREFIX)) {
@@ -858,4 +1136,192 @@ function clearHighlights(): void {
   } catch (err) {
     // Graceful fallback
   }
+}
+
+/**
+ * Clear all decorations — highlights, registry, and DeletedTextNodes.
+ * Used on unmount and when the editor has no content.
+ */
+function clearAllDecorations(): void {
+  clearHighlights();
+  highlightRegistry.clear();
+  deletionRegistry.clear();
+}
+
+/**
+ * Apply decorations for a single change to the editor.
+ * Used by the public addDecorationsForChange API.
+ */
+function applyDecorationsForSingleChange(
+  editor: LexicalEditor,
+  change: TrackedChange,
+): void {
+  if (change.field !== 'content' || change.status !== 'pending') return;
+
+  editor.update(
+    () => {
+      const root = $getRoot();
+
+      // Build clean text
+      let cleanText = '';
+      const paragraphBoundaries: number[] = [];
+      for (const child of root.getChildren()) {
+        const startOffset = cleanText.length;
+        const collectParaText = (node: any) => {
+          if ($isTextNode(node)) {
+            cleanText += node.getTextContent();
+          }
+          if ('getChildren' in node && typeof node.getChildren === 'function') {
+            for (const grandchild of node.getChildren()) {
+              if ($isDeletedTextNode(grandchild)) continue;
+              collectParaText(grandchild);
+            }
+          }
+        };
+        collectParaText(child);
+        if (cleanText.length > startOffset && startOffset > 0) {
+          paragraphBoundaries.push(startOffset);
+        }
+      }
+
+      let cleanTextWithNewlines = '';
+      {
+        let lastIdx = 0;
+        for (const boundary of paragraphBoundaries) {
+          cleanTextWithNewlines += cleanText.slice(lastIdx, boundary) + '\n';
+          lastIdx = boundary;
+        }
+        cleanTextWithNewlines += cleanText.slice(lastIdx);
+      }
+
+      const newlinedToClean = (nlOffset: number): number => {
+        let nlCount = 0;
+        for (const boundary of paragraphBoundaries) {
+          if (boundary + nlCount < nlOffset) {
+            nlCount++;
+          } else {
+            break;
+          }
+        }
+        return nlOffset - nlCount;
+      };
+
+      if (!cleanText) return;
+
+      const getDisplayableText = (content: string): string => {
+        if (!content) return '';
+        if (isLexicalJson(content)) {
+          return extractTextFromLexical(content);
+        }
+        return content;
+      };
+
+      const rawOld = change.richTextOldValue || change.oldValue || '';
+      const rawNew = change.richTextNewValue || change.newValue || '';
+      const fullNewDisplay = rawNew ? getDisplayableText(rawNew) : '';
+      const fullOldDisplay = rawOld ? getDisplayableText(rawOld) : '';
+
+      if (!fullNewDisplay && !fullOldDisplay) return;
+
+      const SEGMENT_SEPARATOR = ' \u2026 ';
+      const newSegments = fullNewDisplay.split(SEGMENT_SEPARATOR);
+      const oldSegments = fullOldDisplay.split(SEGMENT_SEPARATOR);
+
+      const additionRanges: Array<{ start: number; end: number; colorIndex: number }> = [];
+      const deletionInsertions: Array<{
+        proposedCharOffset: number;
+        deletedText: string;
+        authorName?: string;
+        authorColor?: string;
+      }> = [];
+
+      const segCount = Math.max(newSegments.length, oldSegments.length);
+      for (let si = 0; si < segCount; si++) {
+        const newDisplayText = (newSegments[si] || '').trim();
+        const oldDisplayText = (oldSegments[si] || '').trim();
+        if (!newDisplayText && !oldDisplayText) continue;
+
+        let newTextStart = cleanTextWithNewlines.indexOf(newDisplayText);
+        if (newTextStart === -1) {
+          const stripped = newDisplayText.replace(/\n/g, '');
+          newTextStart = cleanText.indexOf(stripped);
+        }
+        if (newTextStart === -1) continue;
+
+        const charDiff = diffCharsOptimized(
+          oldDisplayText, newDisplayText, { paragraphAligned: true },
+        );
+
+        let newOffset = 0;
+        const changeColorIndex = getUserColorIndex(change.changedBy || '');
+        const changeColor = getUserColor(change.changedBy || '');
+        for (const seg of charDiff) {
+          if (seg.type === 'equal') {
+            newOffset += seg.value.length;
+          } else if (seg.type === 'insert') {
+            const cleanStart = newlinedToClean(newTextStart + newOffset);
+            const cleanEnd = newlinedToClean(newTextStart + newOffset + seg.value.length);
+            additionRanges.push({
+              start: cleanStart,
+              end: cleanEnd,
+              colorIndex: changeColorIndex,
+            });
+            newOffset += seg.value.length;
+          } else if (seg.type === 'delete') {
+            const deletedText = seg.value.replace(/^\n+|\n+$/g, '');
+            if (deletedText) {
+              deletionInsertions.push({
+                proposedCharOffset: newlinedToClean(newTextStart + newOffset),
+                deletedText,
+                authorName: change.changedBy,
+                authorColor: changeColor,
+              });
+            }
+          }
+        }
+      }
+
+      // Insert DeletedTextNodes
+      const sortedDeletions = [...deletionInsertions].sort(
+        (a, b) => b.proposedCharOffset - a.proposedCharOffset
+      );
+
+      for (const deletion of sortedDeletions) {
+        const nodeKey = insertDeletedTextNodeAtOffset(
+          deletion.proposedCharOffset,
+          change.id,
+          deletion.deletedText,
+          deletion.authorName,
+          deletion.authorColor,
+          paragraphBoundaries,
+        );
+
+        if (nodeKey) {
+          let record = deletionRegistry.get(change.id);
+          if (!record) {
+            record = { nodeKeys: [], specs: [] };
+            deletionRegistry.set(change.id, record);
+          }
+          record.nodeKeys.push(nodeKey);
+          record.specs.push(deletion);
+        }
+      }
+
+      // Register highlight records
+      if (additionRanges.length > 0) {
+        const record: ChangeHighlightRecord = {
+          colorIndex: additionRanges[0].colorIndex,
+          charRanges: additionRanges.map(r => ({ start: r.start, end: r.end })),
+        };
+        highlightRegistry.set(change.id, record);
+      }
+
+      // Rebuild highlights after DOM reconciliation
+      requestAnimationFrame(() => {
+        rebuildAllHighlightsFromRegistry(editor);
+        suppressSpellcheckNearDeletions(editor);
+      });
+    },
+    { tag: 'historic' }
+  );
 }

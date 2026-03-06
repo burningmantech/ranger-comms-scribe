@@ -94,6 +94,10 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     element.className = 'tracked-deletion-wrapper';
     element.setAttribute('data-change-id', this.__changeId);
     element.setAttribute('spellcheck', 'false');
+    // Set initial transition-ready properties for smooth acceptance animation.
+    // opacity and max-height are animated by removeDecorationsForChangeAnimated().
+    element.style.opacity = '1';
+    element.style.overflow = 'visible';
     return element;
   }
 

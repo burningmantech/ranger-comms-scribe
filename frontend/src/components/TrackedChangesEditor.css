@@ -2812,9 +2812,13 @@
   margin: 4px 0;
 }
 
-/* Wrapper for DeletedTextNode — no visual styling, just a container */
+/* Wrapper for DeletedTextNode — no visual styling, just a container.
+   opacity and max-height transitions support smooth acceptance animation
+   driven by removeDecorationsForChangeAnimated(). */
 .tracked-deletion-wrapper {
   display: inline;
+  /* Transition-ready: acceptance animation uses opacity then height collapse */
+  transition: opacity 200ms ease-out, max-height 200ms ease-out, margin 200ms ease-out, padding 200ms ease-out;
 }
 
 /* Active highlight pulse when a change is clicked (in editor) */
