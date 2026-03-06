@@ -123,6 +123,141 @@ export function diffChars(oldText: string, newText: string): DiffSegment[] {
   return generateDiff(oldChars, newChars, dp);
 }
 
+// Optimized character-level diff for large texts.
+// Finds common prefix and suffix in O(n), only diffs the small changed middle.
+// This keeps keystroke-driven diffs fast even on long documents.
+export function diffCharsOptimized(
+  oldText: string,
+  newText: string,
+  options?: { paragraphAligned?: boolean },
+): DiffSegment[] {
+  if (oldText === newText) {
+    return oldText.length > 0
+      ? [{ type: 'equal', value: oldText, startIndex: 0, endIndex: oldText.length }]
+      : [];
+  }
+
+  // Find common prefix
+  const minLen = Math.min(oldText.length, newText.length);
+  let prefixLen = 0;
+  while (prefixLen < minLen && oldText[prefixLen] === newText[prefixLen]) {
+    prefixLen++;
+  }
+
+  // Find common suffix (not overlapping with prefix)
+  let suffixLen = 0;
+  while (
+    suffixLen < (minLen - prefixLen) &&
+    oldText[oldText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
+  ) {
+    suffixLen++;
+  }
+
+  // When paragraphAligned, snap prefix/suffix to nearest \n boundary so that
+  // the diff engine doesn't match partial text across paragraph boundaries
+  // (e.g. "He has " shared between two different paragraphs).
+  if (options?.paragraphAligned) {
+    // Back up prefix to the last \n (keep the \n in the prefix)
+    let adj = prefixLen;
+    while (adj > 0 && oldText[adj - 1] !== '\n') {
+      adj--;
+    }
+    if (adj > 0) prefixLen = adj;
+
+    // Back up suffix so it starts at a \n
+    adj = suffixLen;
+    while (adj > 0 && oldText[oldText.length - adj] !== '\n') {
+      adj--;
+    }
+    if (adj > 0) suffixLen = adj;
+  }
+
+  const oldMiddle = oldText.slice(prefixLen, oldText.length - suffixLen);
+  const newMiddle = newText.slice(prefixLen, newText.length - suffixLen);
+
+  const result: DiffSegment[] = [];
+
+  // Add prefix as equal segment
+  if (prefixLen > 0) {
+    result.push({
+      type: 'equal',
+      value: oldText.slice(0, prefixLen),
+      startIndex: 0,
+      endIndex: prefixLen,
+    });
+  }
+
+  // Diff the changed middle
+  if (oldMiddle.length > 0 || newMiddle.length > 0) {
+    if (oldMiddle.length === 0) {
+      // Pure insertion
+      result.push({ type: 'insert', value: newMiddle, startIndex: prefixLen, endIndex: prefixLen });
+    } else if (newMiddle.length === 0) {
+      // Pure deletion
+      result.push({ type: 'delete', value: oldMiddle, startIndex: prefixLen, endIndex: prefixLen + oldMiddle.length });
+    } else if (oldMiddle.length < 500 && newMiddle.length < 500) {
+      // Small middle — char-level diff
+      const middleDiff = diffChars(oldMiddle, newMiddle);
+      for (const seg of middleDiff) {
+        result.push({
+          type: seg.type,
+          value: seg.value,
+          startIndex: prefixLen + seg.startIndex,
+          endIndex: prefixLen + seg.endIndex,
+        });
+      }
+    } else {
+      // Large middle — word-level diff with char-level refinement.
+      // Run diffWords for speed, then refine adjacent delete+insert pairs
+      // (word replacements like "States" → "states") into char-level diffs.
+      const wordDiff = diffWords(oldMiddle, newMiddle);
+      let idx = prefixLen;
+      for (let w = 0; w < wordDiff.length; w++) {
+        const seg = wordDiff[w];
+        // Detect adjacent delete+insert (word replacement) and refine
+        if (seg.type === 'delete' && w + 1 < wordDiff.length && wordDiff[w + 1].type === 'insert') {
+          const ins = wordDiff[w + 1];
+          const charRefine = diffChars(seg.value, ins.value);
+          for (const cs of charRefine) {
+            result.push({
+              type: cs.type,
+              value: cs.value,
+              startIndex: idx,
+              endIndex: idx + cs.value.length,
+            });
+            if (cs.type !== 'delete') {
+              idx += cs.value.length;
+            }
+          }
+          w++; // skip the insert, already processed
+        } else {
+          result.push({
+            type: seg.type,
+            value: seg.value,
+            startIndex: idx,
+            endIndex: idx + seg.value.length,
+          });
+          if (seg.type !== 'delete') {
+            idx += seg.value.length;
+          }
+        }
+      }
+    }
+  }
+
+  // Add suffix as equal segment
+  if (suffixLen > 0) {
+    result.push({
+      type: 'equal',
+      value: oldText.slice(oldText.length - suffixLen),
+      startIndex: oldText.length - suffixLen,
+      endIndex: oldText.length,
+    });
+  }
+
+  return result;
+}
+
 // Smart diff that chooses the best algorithm based on text size
 export function smartDiff(oldText: string, newText: string): WordDiff[] {
   // For very short texts, use character diff

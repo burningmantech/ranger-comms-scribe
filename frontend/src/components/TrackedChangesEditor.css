@@ -15,10 +15,9 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 24px;
+  padding: 8px 24px;
   background-color: #fff;
-  border-bottom: 1px solid #e0e0e0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid #e8eaed;
   position: sticky;
   top: 64px; /* Stick below navbar */
   z-index: 101;
@@ -28,6 +27,26 @@
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.toolbar-back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  color: #5f6368;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.toolbar-back-btn:hover {
+  background-color: #f1f3f4;
+  color: #202124;
 }
 
 .toolbar-button {
@@ -58,14 +77,20 @@
 }
 
 .toolbar-label {
-  font-size: 14px;
-  color: #5f6368;
+  font-size: 12px;
+  color: #80868b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .toolbar-value {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 18px;
+  font-weight: 400;
   color: #202124;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 400px;
 }
 
 .toolbar-right {
@@ -81,52 +106,40 @@
 }
 
 .save-status {
-  font-size: 0.875rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 0.375rem;
-  font-weight: 500;
+  font-size: 12px;
+  padding: 0;
+  font-weight: 400;
   display: flex;
   align-items: center;
   gap: 0.25rem;
   white-space: nowrap;
   transition: all 0.2s ease;
+  color: #5f6368;
 }
 
 .save-status.pending {
-  background-color: #fff3cd;
-  color: #856404;
-  border: 1px solid #ffeaa7;
+  color: #80868b;
 }
 
 .save-status.saving {
-  background-color: #e3f2fd;
-  color: #1976d2;
-  border: 1px solid #bbdefb;
+  color: #1a73e8;
 }
 
 .save-status.saved {
-  background-color: #d4edda;
-  color: #155724;
-  border: 1px solid #c3e6cb;
+  color: #5f6368;
 }
 
 .save-status.error {
-  background-color: #f8d7da;
-  color: #721c24;
-  border: 1px solid #f5c6cb;
+  color: #d93025;
 }
 
 .save-status.applying {
-  background-color: #fff8e1;
-  color: #f57c00;
-  border: 1px solid #ffcc02;
+  color: #e37400;
   animation: pulse-applying 1.5s ease-in-out infinite;
 }
 
 .save-status.applied {
-  background-color: #e8f5e8;
-  color: #2e7d32;
-  border: 1px solid #a5d6a7;
+  color: #1e8e3e;
 }
 
 @keyframes pulse-applying {
@@ -141,54 +154,46 @@
 .manual-save-button {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem 0.75rem;
-  border: 1px solid #dadce0;
-  background-color: #fff;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
+  padding: 4px 12px;
+  border: none;
+  background-color: transparent;
+  border-radius: 4px;
+  font-size: 13px;
   font-weight: 500;
-  color: #202124;
+  color: #1a73e8;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   white-space: nowrap;
 }
 
 .manual-save-button:hover:not(:disabled) {
-  background-color: #f8f9fa;
-  border-color: #5f6368;
+  background-color: #e8f0fe;
 }
 
 .manual-save-button:disabled {
-  opacity: 0.5;
+  opacity: 0.35;
   cursor: not-allowed;
-  background-color: #f8f9fa;
+  color: #5f6368;
 }
 
 .change-stats {
   display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
 }
 
 .stat {
   display: inline-block;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
-  padding: 6px 14px;
-  border-radius: 16px;
+  padding: 2px 10px;
+  border-radius: 12px;
   white-space: nowrap;
-  margin-right: 16px !important;
-}
-
-.stat:last-child {
-  margin-right: 0 !important;
 }
 
 .stat.pending {
   background-color: #fef7e0;
-  color: #f9ab00;
+  color: #e37400;
 }
 
 .stat.approved {
@@ -198,7 +203,7 @@
 
 .stat.rejected {
   background-color: #fce8e6;
-  color: #d33b2c;
+  color: #d93025;
 }
 
 /* Editor Container */
@@ -209,21 +214,17 @@
 /* Editor Content */
 .editor-content {
   background-color: #fff;
-  margin: 24px;
-  margin-left: auto;
-  margin-right: auto;
-  padding: 48px 96px;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  max-width: calc(100vw - 340px - 48px);
-  width: 816px;
+  margin: 0 auto;
+  padding: 32px 96px 48px;
+  width: 900px;
+  max-width: calc(100vw - 400px);
+  min-height: calc(100vh - 130px);
   transition: all 0.3s ease;
 }
 
-/* Adjust margin when sidebar is collapsed */
-.editor-sidebar.collapsed ~ .editor-content,
-.tracked-changes-editor:has(.editor-sidebar.collapsed) .editor-content {
-  max-width: calc(100vw - 80px - 48px);
+/* Expand when sidebar is collapsed */
+.editor-content.sidebar-collapsed {
+  max-width: calc(100vw - 120px);
 }
 
 .document-title-row {
@@ -231,11 +232,11 @@
 }
 
 .document-title {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 400;
   color: #202124;
-  margin: 0 0 16px 0;
-  line-height: 1.3;
+  margin: 0 0 12px 0;
+  line-height: 1.35;
 }
 
 .document-title.editable-field {
@@ -255,19 +256,19 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 14px;
+  font-size: 13px;
   color: #5f6368;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .field-row-label {
   font-weight: 500;
-  color: #5f6368;
+  color: #80868b;
   white-space: nowrap;
 }
 
 .field-row-value {
-  color: #202124;
+  color: #3c4043;
 }
 
 .field-row-value.editable-field {
@@ -346,9 +347,9 @@
 
 /* Signature section spacing */
 .document-signature-section {
-  margin-top: 24px;
+  margin-top: 32px;
   padding-top: 16px;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid #e8eaed;
 }
 
 .editable-field .field-edit-icon {
@@ -443,11 +444,10 @@
 .document-meta {
   display: flex;
   align-items: center;
-  font-size: 14px;
-  color: #5f6368;
-  margin-bottom: 32px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #e0e0e0;
+  font-size: 13px;
+  color: #80868b;
+  margin-bottom: 24px;
+  padding-bottom: 0;
 }
 
 .document-meta .separator {
@@ -558,16 +558,18 @@
 
 /* Proposed Version Section */
 .proposed-version-section {
-  margin-bottom: 48px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid #e0e0e0;
+  margin-bottom: 16px;
+}
+
+.proposed-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 
 .proposed-content {
-  background-color: #f8f9fa;
-  padding: 24px;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
+  background-color: transparent;
   white-space: pre-wrap;
   word-wrap: break-word;
   line-height: 1.75;
@@ -640,28 +642,17 @@
 .proposed-display-editor .editor-content-wrapper,
 .original-display-editor .editor-content-wrapper {
   background-color: transparent;
+  max-height: none;
+  overflow: visible;
 }
 
 /* Diff Section */
 .diff-section {
-  margin: 2rem 0;
-  border: 1px solid #e1e5e9;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.diff-section .section-title {
-  background: #f6f8fa;
-  padding: 1rem 1.5rem;
   margin: 0;
-  border-bottom: 1px solid #e1e5e9;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: #24292f;
 }
 
 .diff-content {
-  padding: 1.5rem;
+  padding: 0;
 }
 
 .no-changes {
@@ -741,8 +732,6 @@
 }
 
 .diff-body {
-  max-height: 800px;
-  overflow-y: auto;
   overflow-x: hidden;
 }
 
@@ -861,15 +850,11 @@
 
 /* Original Version Section */
 .original-version-section {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 
 .original-content {
-  background-color: #f8f9fa;
-  padding: 24px;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
-  opacity: 0.8;
+  background-color: transparent;
   white-space: pre-wrap;
   word-wrap: break-word;
   line-height: 1.75;
@@ -926,8 +911,8 @@
 .editor-sidebar {
   width: 320px;
   background-color: #fff;
-  border-left: 1px solid #e0e0e0;
-  padding: 24px;
+  border-left: 1px solid #e8eaed;
+  padding: 16px;
   transition: all 0.3s ease;
   position: fixed;
   top: var(--sidebar-top, 120px); /* Set dynamically by JS */
@@ -935,7 +920,6 @@
   bottom: 0;
   overflow-y: auto;
   z-index: 100;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
 }
 
 .editor-sidebar.collapsed {
@@ -1432,8 +1416,9 @@
 /* Responsive Design */
 @media (max-width: 1024px) {
   .editor-content {
-    margin: 16px;
-    padding: 32px 48px;
+    margin: 16px auto;
+    padding: 24px 32px;
+    max-width: calc(100vw - 340px);
   }
   
   .editor-sidebar {
@@ -1452,9 +1437,10 @@
   
   .editor-content {
     margin: 16px;
+    max-width: none;
     padding: 24px;
   }
-  
+
   /* Desktop sidebar is hidden on mobile - mobile sidebar section is used instead */
   .editor-sidebar {
     display: none !important;
@@ -2784,8 +2770,124 @@
   .editor-sidebar {
     display: none !important;
   }
-  
+
   .floating-sidebar-toggle {
     display: none !important;
   }
+}
+
+/* =============================================
+   Inline Tracked Changes Styles
+   ============================================= */
+
+/* CSS Custom Highlight API for additions — per-user color (0–9) */
+::highlight(tracked-addition-0) { background-color: rgba(26, 115, 232, 0.12); color: #1a73e8; }
+::highlight(tracked-addition-1) { background-color: rgba(234, 67, 53, 0.12); color: #ea4335; }
+::highlight(tracked-addition-2) { background-color: rgba(52, 168, 83, 0.12); color: #34a853; }
+::highlight(tracked-addition-3) { background-color: rgba(251, 188, 4, 0.12); color: #fbbc04; }
+::highlight(tracked-addition-4) { background-color: rgba(255, 109, 1, 0.12); color: #ff6d01; }
+::highlight(tracked-addition-5) { background-color: rgba(156, 39, 176, 0.12); color: #9c27b0; }
+::highlight(tracked-addition-6) { background-color: rgba(0, 188, 212, 0.12); color: #00bcd4; }
+::highlight(tracked-addition-7) { background-color: rgba(121, 85, 72, 0.12); color: #795548; }
+::highlight(tracked-addition-8) { background-color: rgba(96, 125, 139, 0.12); color: #607d8b; }
+::highlight(tracked-addition-9) { background-color: rgba(233, 30, 99, 0.12); color: #e91e63; }
+
+/* Deleted text inline markers (per-user color via inline styles, strikethrough here) */
+.tracked-deletion {
+  text-decoration: line-through;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+.tracked-deletion:hover {
+  filter: brightness(0.92);
+}
+
+/* Block-level deleted text (multi-paragraph deletions) */
+.tracked-deletion-block {
+  display: block;
+  margin: 4px 0;
+}
+
+/* Wrapper for DeletedTextNode — no visual styling, just a container */
+.tracked-deletion-wrapper {
+  display: inline;
+}
+
+/* Active highlight pulse when a change is clicked (in editor) */
+.tracked-change-active {
+  animation: tracked-change-pulse 2s ease-out;
+}
+
+@keyframes tracked-change-pulse {
+  0% {
+    background-color: rgba(26, 115, 232, 0.35);
+    outline: 2px solid rgba(26, 115, 232, 0.5);
+    outline-offset: 1px;
+  }
+  50% {
+    background-color: rgba(26, 115, 232, 0.15);
+    outline: 2px solid rgba(26, 115, 232, 0.25);
+    outline-offset: 1px;
+  }
+  100% {
+    background-color: transparent;
+    outline: 2px solid transparent;
+    outline-offset: 1px;
+  }
+}
+
+/* Sidebar card highlight when editor change is clicked */
+.change-item.sidebar-highlighted {
+  animation: sidebar-highlight-pulse 2s ease-out;
+}
+
+@keyframes sidebar-highlight-pulse {
+  0% {
+    background-color: rgba(26, 115, 232, 0.2);
+    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.3);
+  }
+  50% {
+    background-color: rgba(26, 115, 232, 0.1);
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.15);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+/* Tab bar for Proposed / Comparison / Original navigation */
+.tce-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #e0e0e0;
+  margin-bottom: 24px;
+}
+
+.tce-tab {
+  padding: 12px 24px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  color: #5f6368;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  text-align: center;
+  margin-bottom: -1px;
+}
+
+.tce-tab:hover {
+  color: #202124;
+}
+
+.tce-tab.active {
+  color: #1a73e8;
+  font-weight: 600;
+  border-bottom-color: #1a73e8;
 }

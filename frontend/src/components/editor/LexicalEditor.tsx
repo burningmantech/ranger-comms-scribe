@@ -36,6 +36,7 @@ import FontFamilyPlugin from './plugins/FontFamilyPlugin';
 import AlignmentPlugin from './plugins/AlignmentPlugin';
 import QuotePlugin from './plugins/QuotePlugin';
 import { SuggestionNode } from './nodes/SuggestionNode';
+import { DeletedTextNode } from './nodes/DeletedTextNode';
 import SuggestionPlugin from './plugins/SuggestionPlugin';
 import './LexicalEditor.css';
 import './styles/TableControlsPlugin.css';
@@ -298,6 +299,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       ImageNode,
       CheckboxNode,
       SuggestionNode,
+      DeletedTextNode,
     ],
     onError: (error: Error) => {
       console.error('Lexical Editor Error:', error);

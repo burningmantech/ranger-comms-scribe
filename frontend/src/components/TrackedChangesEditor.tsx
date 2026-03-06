@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars } from '../utils/diffAlgorithm';
-import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical } from '../utils/lexicalUtils';
+import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
+import { API_URL } from '../config';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { CollaborativeEditor } from './CollaborativeEditor';
 import { $isImageNode } from './editor/nodes/ImageNode';
@@ -194,6 +195,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const autoSavePeriodStartContentRef = useRef<string>('');
   const autoSavePeriodStartTimeRef = useRef<Date | null>(null);
   const hasChangesInCurrentPeriodRef = useRef<boolean>(false);
+
+  // Tab navigation state for Proposed / Comparison / Original sections
+  const [activeTab, setActiveTab] = useState<'proposed' | 'comparison' | 'original'>('proposed');
 
   // Sidebar collapse state - initialize based on screen size
   const [isSmallScreen, setIsSmallScreen] = useState<boolean>(window.innerWidth <= 768);
@@ -718,6 +722,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     );
   }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
 
+  // Compute props for inline tracked changes in the editor
+  const pendingContentChanges = useMemo(() => {
+    return trackedChanges
+      .filter(c => c.status === 'pending' && c.field === 'content')
+      .map(c => ({
+        id: c.id,
+        field: c.field,
+        oldValue: c.oldValue,
+        newValue: c.newValue,
+        changedBy: c.changedBy,
+        status: c.status as 'pending' | 'approved' | 'rejected',
+        richTextOldValue: c.richTextOldValue,
+        richTextNewValue: c.richTextNewValue,
+      }));
+  }, [trackedChanges]);
+
+  const originalTextForInlineChanges = useMemo(() => {
+    const originalContent = submission.richTextContent || submission.content || '';
+    return getDisplayableText(originalContent);
+  }, [submission.richTextContent, submission.content, getDisplayableText]);
+
   const handleTextSelection = useCallback(() => {
     const selection = window.getSelection();
     if (selection && selection.toString().trim()) {
@@ -729,44 +754,48 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     console.log('Edit mode change requested but collaborative editing is always on');
   }, []);
 
-  // Dedicated save function for reverted content that bypasses change detection
+  // Dedicated save function for reverted content.
+  // Saves proposed content directly via tracked-changes API instead of onSave,
+  // which avoids the race condition where handleSave's setSubmission(savedSubmission)
+  // overwrites the optimistic rejection with stale data from the server.
   const saveRevertedContent = useCallback(async (revertedContent: string) => {
     try {
       setAutoSaveStatus('saving');
-      
-      // Update the submission with the reverted content
-      const updatedSubmission = {
-        ...submission,
-        proposedVersions: {
-          ...submission.proposedVersions,
-          richTextContent: revertedContent,
-          lastModified: new Date().toISOString(),
-          lastModifiedBy: currentUser.id || currentUser.email
-        }
-      };
-      
-      await onSave(updatedSubmission);
-      
+
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) throw new Error('Not authenticated');
+
+      await fetch(`${API_URL}/tracked-changes/submission/${submission.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({
+          proposedVersionsRichText: revertedContent,
+        }),
+      });
+
       // Update the last saved content after successful save
       setLastSavedProposedContent(revertedContent);
       setAutoSaveStatus('saved');
       setLastAutoSaveTime(new Date());
-      
+
       // Reset to idle after 3 seconds
       setTimeout(() => {
         setAutoSaveStatus('idle');
       }, 3000);
-      
+
     } catch (error) {
       console.error('❌ Failed to save reverted content:', error);
       setAutoSaveStatus('error');
-      
+
       // Reset to idle after 5 seconds
       setTimeout(() => {
         setAutoSaveStatus('idle');
       }, 5000);
     }
-  }, [submission, currentUser.id, currentUser.email, onSave]);
+  }, [submission.id]);
 
   const handleProposedEditSubmit = useCallback(async () => {
     const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
@@ -860,135 +889,73 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Helper function to revert a change in the content
   const revertChangeInContent = useCallback((change: TrackedChange) => {
-
-    // Get current content
-    const currentContent = editedProposedContent || 
-                          submission.proposedVersions?.richTextContent || 
-                          submission.richTextContent || 
+    // Use ref for current content so concurrent calls see the latest value
+    const currentContent = editedProposedContentRef.current ||
+                          editedProposedContent ||
+                          submission.proposedVersions?.richTextContent ||
+                          submission.richTextContent ||
                           submission.content || '';
+
+    // Original content for position context when restoring deletions
+    const originalContent = submission.richTextContent || submission.content || '';
 
     // Try to revert using rich text values first, then fall back to plain text
     const valueToRevert = change.richTextNewValue !== undefined ? change.richTextNewValue : change.newValue;
     const revertToValue = change.richTextOldValue !== undefined ? change.richTextOldValue : change.oldValue;
 
     if (valueToRevert === undefined || revertToValue === undefined) {
-      console.warn('⚠️ Cannot revert change: missing old or new value', {
-        oldValue: change.oldValue,
-        newValue: change.newValue,
-        richTextOldValue: change.richTextOldValue,
-        richTextNewValue: change.richTextNewValue,
-        valueToRevert,
-        revertToValue
-      });
       return;
     }
 
+    const applyRevert = (revertedContent: string) => {
+      // Update ref immediately so concurrent calls see the latest content
+      editedProposedContentRef.current = revertedContent;
+      setEditedProposedContent(revertedContent);
+      if (remoteUpdateFunctionRef.current) {
+        remoteUpdateFunctionRef.current(revertedContent);
+      }
+      setTimeout(() => { saveRevertedContent(revertedContent); }, 100);
+    };
+
+    // Ellipsis separator used by backend to join disjoint change segments
+    const SEGMENT_SEPARATOR = ' \u2026 ';
+
     // For incremental changes, find and replace the specific part
     if (change.isIncremental) {
-      // Work directly with Lexical JSON to preserve formatting
-      if (isLexicalJson(currentContent)) {
-        // Use Lexical utilities to preserve formatting
-        const newText = getDisplayableText(valueToRevert);
-        const oldText = getDisplayableText(revertToValue);
-        
-        let revertedContent = currentContent;
-        
-        // Handle deletion case where newValue is empty (text was deleted)
-        if (newText === '') {
-          // This is a deletion - restore the deleted text
-          // Insert the deleted text back into the Lexical structure
-          revertedContent = insertTextInLexical(currentContent, oldText);
-        } else {
-          // Handle replacement case - replace newText with oldText
-          revertedContent = findAndReplaceInLexical(currentContent, newText, oldText);
-        }
-        
-        setEditedProposedContent(revertedContent);
-        
-        if (remoteUpdateFunctionRef.current) {
-          remoteUpdateFunctionRef.current(revertedContent);
-        }
-        
-        // Immediately save the reverted content to ensure backend persistence
-        setTimeout(() => {
-          saveRevertedContent(revertedContent);
-        }, 100);
-      } else {
+      // Prefer richTextOldValue when available — it's the full Lexical JSON
+      // document state before this change was applied. Using it directly is
+      // like reverting a git commit: simple, correct, and avoids the complex
+      // text-surgery positioning that restoreDeletedTextInLexical attempts.
+      if (change.richTextOldValue && isLexicalJson(change.richTextOldValue)) {
+        applyRevert(change.richTextOldValue);
+      } else if (isLexicalJson(currentContent)) {
         // Fallback to plain text handling for non-Lexical content
         const currentText = getDisplayableText(currentContent);
         const newText = getDisplayableText(valueToRevert);
         const oldText = getDisplayableText(revertToValue);
-        
-        // Handle deletion case where newValue is empty (text was deleted)
+
         if (newText === '') {
-          // Simple append for plain text (could be improved with better positioning)
           const revertedText = currentText + (currentText.endsWith(' ') ? '' : ' ') + oldText;
-          const revertedRichContent = getRichTextContent(revertedText);
-          
-           setEditedProposedContent(revertedRichContent);
-           
-           if (remoteUpdateFunctionRef.current) {
-             remoteUpdateFunctionRef.current(revertedRichContent);
-           }
-           
-           // Immediately save the reverted content to ensure backend persistence
-           setTimeout(() => {
-             saveRevertedContent(revertedRichContent);
-           }, 100);
+          applyRevert(getRichTextContent(revertedText));
         } else {
-          // Handle replacement case
           const index = currentText.indexOf(newText);
           if (index !== -1) {
-            const revertedText = currentText.substring(0, index) + 
-                                oldText + 
+            const revertedText = currentText.substring(0, index) +
+                                oldText +
                                 currentText.substring(index + newText.length);
-            
-            const revertedRichContent = getRichTextContent(revertedText);
-            
-            setEditedProposedContent(revertedRichContent);
-            
-            if (remoteUpdateFunctionRef.current) {
-              remoteUpdateFunctionRef.current(revertedRichContent);
-            }
-            
-            // Immediately save the reverted content to ensure backend persistence
-            setTimeout(() => {
-              saveRevertedContent(revertedRichContent);
-            }, 100);
-          } else {
-            console.warn('⚠️ Could not find text to revert in incremental change', {
-              searchingFor: newText,
-              inContent: currentText.substring(0, 200) + '...'
-            });
+            applyRevert(getRichTextContent(revertedText));
           }
         }
       }
     } else {
-      // For non-incremental changes, check if the current content matches the new value
-      // and if so, revert it to the old value
+      // For non-incremental changes, revert entire content to old value
       const currentText = getDisplayableText(currentContent);
       const newText = getDisplayableText(valueToRevert);
-      
+
       if (currentText === newText) {
-        // Content matches the new value, revert to old value
-        const revertedRichContent = getRichTextContent(revertToValue);
-        
-        // Update the editor content
-        setEditedProposedContent(revertedRichContent);
-        
-        // If we have a remote update function, use it to update the editor
-        if (remoteUpdateFunctionRef.current) {
-          remoteUpdateFunctionRef.current(revertedRichContent);
-        }
-        
-        // Immediately save the reverted content to ensure backend persistence
-        setTimeout(() => {
-          saveRevertedContent(revertedRichContent);
-        }, 100);
+        applyRevert(getRichTextContent(revertToValue));
       }
     }
-
-    // Auto-save will be triggered by the content change
   }, [editedProposedContent, submission, getDisplayableText, getRichTextContent, saveRevertedContent]);
 
   // Handle change decision (approve/reject)
@@ -1183,11 +1150,45 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     await onSuggestion(change);
   }, [currentUser.email, currentUser.id, onSuggestion]);
 
-  // Handle clicking on a change item - scroll to field or diff
+  // Handle clicking on an inline tracked change in the editor → highlight sidebar card
+  const handleEditorTrackedChangeClick = useCallback((changeId: string) => {
+    // Ignore live (unsaved) change IDs — they have no sidebar card
+    if (changeId.startsWith('__live__')) return;
+    setSelectedChange(changeId);
+    // Find and highlight the sidebar card
+    setTimeout(() => {
+      const card = document.querySelector(`.change-item[data-change-id="${changeId}"]`);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('sidebar-highlighted');
+        setTimeout(() => card.classList.remove('sidebar-highlighted'), 2000);
+      }
+    }, 50);
+  }, []);
+
+  // Scroll to an inline tracked change in the proposed editor
+  const scrollToChangeInProposed = useCallback((change: TrackedChange) => {
+    const editorRoot = document.querySelector('.proposed-collaborative-editor');
+    if (editorRoot) {
+      const inlineElement = editorRoot.querySelector(`[data-change-id="${change.id}"]`);
+      if (inlineElement) {
+        inlineElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        inlineElement.classList.add('tracked-change-active');
+        setTimeout(() => inlineElement.classList.remove('tracked-change-active'), 2000);
+        return;
+      }
+    }
+  }, []);
+
+  // Handle clicking on a change item in the sidebar - scroll/highlight on current tab
   const handleChangeClick = useCallback((change: TrackedChange) => {
     setSelectedChange(change.id);
-    // For metadata field changes, scroll to the editable field element
+
+    // Field changes (title, audience, etc.) always live on the proposed tab
     if (FIELD_DISPLAY_NAMES[change.field]) {
+      if (activeTab !== 'proposed') {
+        setActiveTab('proposed');
+      }
       setTimeout(() => {
         const fieldEl = document.querySelector(`[data-field-id="${change.field}"]`);
         if (fieldEl) {
@@ -1196,11 +1197,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           setTimeout(() => fieldEl.classList.remove('field-highlight'), 2000);
         }
       }, 100);
-    } else {
-      // For content changes, scroll to the diff
-      setTimeout(() => scrollToChangeInDiff(change), 100);
+      return;
     }
-  }, [scrollToChangeInDiff]);
+
+    // Content changes - behaviour depends on the active tab
+    if (activeTab === 'comparison') {
+      // Already on comparison tab - scroll to the diff segment
+      setTimeout(() => scrollToChangeInDiff(change), 100);
+    } else {
+      // On proposed or original tab - switch to proposed and scroll to inline change
+      if (activeTab !== 'proposed') {
+        setActiveTab('proposed');
+      }
+      setTimeout(() => scrollToChangeInProposed(change), 100);
+    }
+  }, [activeTab, scrollToChangeInDiff, scrollToChangeInProposed]);
 
   // Auto-save functionality with countdown timer
   const performAutoSave = useCallback(async () => {
@@ -2057,16 +2068,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       <div className="editor-toolbar" ref={toolbarRef}>
         <div className="toolbar-left">
           {onBack && (
-            <>
-              <button onClick={onBack} className="btn btn-neutral btn-sm">
-                ← Back to Requests
-              </button>
-              <div className="toolbar-separator" />
-            </>
+            <button onClick={onBack} className="toolbar-back-btn" title="Back to requests">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            </button>
           )}
-          <span className="toolbar-label">Viewing:</span>
           <span className="toolbar-value">
-            Proposed version with tracked changes
+            {proposedTitle || submission.title}
           </span>
         </div>
         <div className="toolbar-right">
@@ -2074,57 +2081,57 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             {/* Remote update status */}
             {remoteUpdateStatus === 'applying' && (
               <span className="save-status applying">
-                🔄 Applying remote changes...
+                Syncing...
               </span>
             )}
             {remoteUpdateStatus === 'applied' && (
               <span className="save-status applied">
-                ✅ Remote changes applied
+                Synced
               </span>
             )}
-            
+
             {/* Auto-save status with countdown */}
             {autoSaveStatus === 'pending' && remoteUpdateStatus === 'none' && (
               <span className="save-status pending">
-                ⏰ Auto-save in {autoSaveCountdown}s...
+                Saving in {autoSaveCountdown}s
               </span>
             )}
             {autoSaveStatus === 'saving' && (
               <span className="save-status saving">
-                💾 Saving...
+                Saving...
               </span>
             )}
             {autoSaveStatus === 'saved' && remoteUpdateStatus === 'none' && (
               <span className="save-status saved">
-                ✅ Saved{lastAutoSaveTime && ` at ${lastAutoSaveTime.toLocaleTimeString()}`}
+                Saved{lastAutoSaveTime && ` ${lastAutoSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
               </span>
             )}
             {autoSaveStatus === 'error' && (
               <span className="save-status error">
-                ❌ Save failed
+                Save failed
               </span>
             )}
-            
+
             {/* Manual save button */}
             <button
-              className="btn btn-sm btn-primary manual-save-button"
-                          onClick={() => {
-              // Cancel auto-save and perform immediate save
-              if (autoSaveTimeoutRef.current) {
-                clearTimeout(autoSaveTimeoutRef.current);
-              }
-              if (autoSaveCountdownIntervalRef.current) {
-                clearInterval(autoSaveCountdownIntervalRef.current);
-                autoSaveCountdownIntervalRef.current = null;
-              }
-              setAutoSaveCountdown(null);
-              
-              performAutoSave();
-            }}
+              className="manual-save-button"
+              onClick={() => {
+                // Cancel auto-save and perform immediate save
+                if (autoSaveTimeoutRef.current) {
+                  clearTimeout(autoSaveTimeoutRef.current);
+                }
+                if (autoSaveCountdownIntervalRef.current) {
+                  clearInterval(autoSaveCountdownIntervalRef.current);
+                  autoSaveCountdownIntervalRef.current = null;
+                }
+                setAutoSaveCountdown(null);
+
+                performAutoSave();
+              }}
               disabled={autoSaveStatus === 'saving' || editedProposedContent === lastSavedProposedContent}
               title="Save changes now"
             >
-              💾 Save Now
+              Save
             </button>
           </div>
           <div className="change-stats">
@@ -2142,7 +2149,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       </div>
 
       <div className="editor-container">
-        <div className="editor-content" ref={editorRef}>
+        <div className={`editor-content ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} ref={editorRef}>
           <div className="document-title-row" data-field-id="title">
             {editingTitle ? (
               <div className="field-edit-row">
@@ -2286,45 +2293,67 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           </div>
           
           <div className="document-body">
-            {/* Always show proposed version at the top */}
-            <div className="proposed-version-section">
-              <div className="section-header">
-                <h2 className="section-title">Proposed Version</h2>
-              <div className="section-actions">
-                {/* Submission-level Approve/Reject controls */}
-                {submission.status === 'in_review' && (
-                  <>
-                    <button
-                      className={`btn btn-primary btn-sm mr-2 ${hasApprovedSubmission || hasPendingTrackedChanges ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      onClick={() => { if (!hasApprovedSubmission && !hasPendingTrackedChanges) { onSubmissionApprove ? onSubmissionApprove(submission) : undefined; } }}
-                      disabled={hasApprovedSubmission || hasPendingTrackedChanges}
-                      title={hasPendingTrackedChanges ? 'Resolve all pending tracked changes before approving' : 'Approve submission'}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      className={`btn btn-danger btn-sm mr-2 ${hasRejectedSubmission ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      onClick={() => { if (!hasRejectedSubmission) { onSubmissionReject ? onSubmissionReject(submission) : undefined; } }}
-                      disabled={hasRejectedSubmission}
-                      title="Reject submission"
-                    >
-                      Reject
-                    </button>
-                  </>
-                )}
+            {/* Tab bar for switching between sections */}
+            <div className="tce-tab-bar">
+              <button
+                className={`tce-tab ${activeTab === 'proposed' ? 'active' : ''}`}
+                onClick={() => setActiveTab('proposed')}
+              >
+                Proposed Version
+              </button>
+              <button
+                className={`tce-tab ${activeTab === 'comparison' ? 'active' : ''}`}
+                onClick={() => setActiveTab('comparison')}
+              >
+                Content Comparison
+              </button>
+              <button
+                className={`tce-tab ${activeTab === 'original' ? 'active' : ''}`}
+                onClick={() => setActiveTab('original')}
+              >
+                Original Version
+              </button>
+            </div>
+
+            {/* Proposed Version */}
+            {activeTab === 'proposed' && <div className="proposed-version-section">
+              {/* Action bar - only shown when there are actions available */}
+              {(submission.status === 'in_review' || (canApproveProposedVersion() && !isProposedVersionApproved) || (isProposedVersionApproved && proposedVersionApprovalInfo)) && (
+                <div className="proposed-actions-bar">
+                  {/* Submission-level Approve/Reject controls */}
+                  {submission.status === 'in_review' && (
+                    <>
+                      <button
+                        className={`btn btn-primary btn-sm ${hasApprovedSubmission || hasPendingTrackedChanges ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        onClick={() => { if (!hasApprovedSubmission && !hasPendingTrackedChanges) { onSubmissionApprove ? onSubmissionApprove(submission) : undefined; } }}
+                        disabled={hasApprovedSubmission || hasPendingTrackedChanges}
+                        title={hasPendingTrackedChanges ? 'Resolve all pending tracked changes before approving' : 'Approve submission'}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className={`btn btn-danger btn-sm ${hasRejectedSubmission ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        onClick={() => { if (!hasRejectedSubmission) { onSubmissionReject ? onSubmissionReject(submission) : undefined; } }}
+                        disabled={hasRejectedSubmission}
+                        title="Reject submission"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
                   {canApproveProposedVersion() && !isProposedVersionApproved && (
                     <button
                       className="btn btn-primary approve-button"
                       onClick={() => setShowProposedVersionApprovalDialog(true)}
                       title="Approve proposed version"
                     >
-                      ✓ Approve
+                      Approve Proposed
                     </button>
                   )}
                   {isProposedVersionApproved && proposedVersionApprovalInfo && (
                     <div className="approval-info">
                       <span className="approved-badge">
-                        ✅ Approved by {proposedVersionApprovalInfo.approverId}
+                        Approved by {proposedVersionApprovalInfo.approverId}
                       </span>
                       {proposedVersionApprovalInfo.comment && (
                         <span className="approval-comment">
@@ -2334,7 +2363,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     </div>
                   )}
                 </div>
-              </div>
+              )}
               <div className="proposed-content">
                 <div className="rich-text-editor-container">
                   <CollaborativeEditor
@@ -2403,6 +2432,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     showToolbar={true}
                     className="proposed-collaborative-editor"
                     useSubmissionWebSocket={true}
+                    trackedChanges={pendingContentChanges.length > 0 ? pendingContentChanges : undefined}
+                    originalText={pendingContentChanges.length > 0 ? originalTextForInlineChanges : undefined}
+                    onTrackedChangeClick={handleEditorTrackedChangeClick}
+                    liveBaseline={originalTextForInlineChanges}
                   />
                 </div>
 
@@ -2446,11 +2479,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   </div>
                 </div>
               </div>
-            </div>
+            </div>}
 
-            {/* Always show diff with tracked changes below */}
-            <div className="diff-section">
-              <h2 className="section-title">Content Comparison</h2>
+            {/* Content Comparison */}
+            {activeTab === 'comparison' && <div className="diff-section">
               <div className="diff-content">
                 {(() => {
                   // Get the original and proposed content for comparison
@@ -2789,11 +2821,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   );
                 })()}
               </div>
-            </div>
+            </div>}
 
-            {/* Always show original version at the bottom */}
-            <div className="original-version-section">
-              <h2 className="section-title">Original Version</h2>
+            {/* Original Version */}
+            {activeTab === 'original' && <div className="original-version-section">
               <div className="original-content">
                 <h3 className="original-title">{submission.title}</h3>
                 {replyToValue && (
@@ -2815,7 +2846,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   <p className="original-field original-signature">Signature: {signatureValue}</p>
                 )}
               </div>
-            </div>
+            </div>}
 
             {/* Mobile sidebar section - shown below content on small screens */}
             {isSmallScreen && (
@@ -3151,10 +3182,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     >
                       💬
                     </button>
-                    {/* Debug info */}
-                    <div style={{ fontSize: '10px', color: '#666', marginLeft: '8px' }}>
-                      Status: {change.status} | CanEdit: {canMakeEditorialDecisions() ? 'Yes' : 'No'}
-                    </div>
                   </div>
                   {change.status !== 'pending' && (
                     <div className="change-status">

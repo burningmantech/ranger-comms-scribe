@@ -20,36 +20,35 @@ import { ImagePlugin } from './editor/plugins/ImagePlugin';
 import ImageDragPlugin from './editor/plugins/ImageDragPlugin';
 import ImageResizePlugin from './editor/plugins/ImageResizePlugin';
 import { ImageNode } from './editor/nodes/ImageNode';
+import { DeletedTextNode } from './editor/nodes/DeletedTextNode';
+import TrackedChangesPlugin from './editor/plugins/TrackedChangesPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { UserPresence, UserPresenceData } from './UserPresence';
 import { User } from '../types/content';
 import { WebSocketManager, CursorPosition, WebSocketMessage } from '../services/websocketService';
 import { isLexicalJson, extractTextFromLexical } from '../utils/lexicalUtils';
+import { getUserColor } from '../utils/userColors';
 import './CollaborativeEditor.css';
 
-// User color assignment function
-const getUserColor = (userId: string): string => {
-  // Generate consistent colors based on user ID
-  const colors = [
-    '#1a73e8', // Blue
-    '#ea4335', // Red  
-    '#34a853', // Green
-    '#fbbc04', // Yellow
-    '#ff6d01', // Orange
-    '#9c27b0', // Purple
-    '#00bcd4', // Cyan
-    '#795548', // Brown
-    '#607d8b', // Blue Grey
-    '#e91e63', // Pink
-  ];
-  
-  // Simple hash function to get consistent color for user
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = ((hash << 5) - hash + userId.charCodeAt(i)) & 0xffffffff;
+/**
+ * Strip DeletedTextNode entries from serialized Lexical JSON state.
+ * Ensures auto-save/WebSocket never sees decoration-only nodes.
+ */
+function stripDeletedTextNodes(jsonState: string): string {
+  try {
+    const state = JSON.parse(jsonState);
+    function processChildren(node: any): void {
+      if (node.children) {
+        node.children = node.children.filter((child: any) => child.type !== 'deleted-text');
+        node.children.forEach(processChildren);
+      }
+    }
+    processChildren(state.root);
+    return JSON.stringify(state);
+  } catch {
+    return jsonState;
   }
-  return colors[Math.abs(hash) % colors.length];
-};
+}
 
 // ===================================================================
 // CURSOR POSITIONING UTILITIES - IMPROVED TO HANDLE EDGE CASES
@@ -586,7 +585,12 @@ const RemoteCursorPlugin: React.FC<{
   
   // Create cursor element with nice design
   const createCursorElement = (cursor: CursorPosition): HTMLElement => {
-    const userColor = getUserColor(cursor.userId);
+    // Strip browser session suffix (effectiveUserId = baseUserId_sessionId) so
+    // cursor colors match the presence-avatar colors which use the base userId.
+    const baseUserId = cursor.userId.includes('_')
+      ? cursor.userId.split('_')[0]
+      : cursor.userId;
+    const userColor = getUserColor(baseUserId);
     
     const cursorEl = document.createElement('div');
     cursorEl.className = 'lexical-remote-cursor';
@@ -935,20 +939,22 @@ const RemoteCursorPlugin: React.FC<{
     // Reset triangle to default
     const triangle = label.querySelector('div') as HTMLElement;
     if (triangle) {
-      triangle.style.borderTop = `4px solid ${getUserColor(cursor.userId)}`;
+      const triBaseId = cursor.userId.includes('_') ? cursor.userId.split('_')[0] : cursor.userId;
+      triangle.style.borderTop = `4px solid ${getUserColor(triBaseId)}`;
       triangle.style.borderBottom = 'none';
       triangle.style.top = '-2px';
     }
-    
+
     // Check if label would go off the top
     if (cursorTop < labelHeight + 10) {
       // Position below cursor instead
       label.style.top = '25px';
-      
+
       // Flip the triangle
       if (triangle) {
+        const triBaseId = cursor.userId.includes('_') ? cursor.userId.split('_')[0] : cursor.userId;
         triangle.style.borderTop = 'none';
-        triangle.style.borderBottom = `4px solid ${getUserColor(cursor.userId)}`;
+        triangle.style.borderBottom = `4px solid ${getUserColor(triBaseId)}`;
         triangle.style.top = '-6px';
       }
     }
@@ -1543,6 +1549,37 @@ export interface CollaborativeEditorProps {
   className?: string;
   readOnly?: boolean;
   showToolbar?: boolean;
+  trackedChanges?: Array<{
+    id: string;
+    field: string;
+    oldValue: string;
+    newValue: string;
+    changedBy: string;
+    status: 'pending' | 'approved' | 'rejected';
+    richTextOldValue?: string;
+    richTextNewValue?: string;
+  }>;
+  originalText?: string;
+  onTrackedChangeClick?: (changeId: string) => void;
+  liveBaseline?: string;
+}
+
+/**
+ * Small plugin that detects tracked-changes-decoration update tags
+ * and sets a ref flag so handleEditorChange can skip propagation.
+ */
+function TrackedChangeTagDetector({ flagRef }: { flagRef: React.MutableRefObject<boolean> }): null {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerUpdateListener(({ tags }) => {
+      if (tags.has('tracked-changes-decoration')) {
+        flagRef.current = true;
+      }
+    });
+  }, [editor, flagRef]);
+
+  return null;
 }
 
 export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
@@ -1557,7 +1594,11 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   useSubmissionWebSocket = false,
   className = '',
   readOnly = false,
-  showToolbar = true
+  showToolbar = true,
+  trackedChanges,
+  originalText,
+  onTrackedChangeClick,
+  liveBaseline,
 }) => {
   // Create a unique browser session identifier for collaborative editing
   const browserSessionId = useMemo(() => {
@@ -1590,6 +1631,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const editorRef = useRef<LexicalEditor | null>(null);
   const contentChangedRef = useRef(false);
   const isInitializedRef = useRef(false);
+  const isTrackedChangeDecorationRef = useRef(false);
   const webSocketClientRef = useRef<any>(null);
   const lastCursorPositionRef = useRef<CursorPosition | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -2084,6 +2126,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       TableRowNode,
       LinkNode,
       ImageNode,
+      DeletedTextNode,
     ],
     onError: (error: Error) => {
       console.error('Lexical editor error:', error);
@@ -2528,19 +2571,27 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   
   // Handle content changes
   const handleEditorChange = useCallback((editorState: EditorState) => {
+    // Skip propagation for tracked-changes-decoration updates
+    if (isTrackedChangeDecorationRef.current) {
+      isTrackedChangeDecorationRef.current = false;
+      return;
+    }
+
     editorState.read(() => {
       const root = $getRoot();
       const textContent = root.getTextContent();
-      
+
       // Get the full JSON representation for rich text
-      const jsonContent = JSON.stringify(editorState);
-      
+      // Strip DeletedTextNodes to ensure clean content for auto-save/WebSocket
+      const rawJsonContent = JSON.stringify(editorState);
+      const jsonContent = stripDeletedTextNodes(rawJsonContent);
+
       // Only update if content actually changed
       if (jsonContent !== currentContent) {
-        
+
         setCurrentContent(jsonContent);
         contentChangedRef.current = true;
-        
+
         // Get cursor position information before notifying parent
         let cursorPosition: CursorPosition | undefined;
         // Wrap cursor position logic in proper editor context
@@ -2573,7 +2624,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             }
           });
         }
-        
+
         // Only notify parent component if this is NOT a remote update
         // This prevents auto-save from triggering when remote content is applied
         if (!isApplyingRemoteUpdate.current) {
@@ -2882,55 +2933,29 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   
   return (
     <div className={`collaborative-editor ${className}`}>
-      {/* Header with user presence and connection status */}
-      <div className="collaborative-editor-header">
-        <div className="editor-info">
-          <span className="connection-status">
-            {getConnectionStatusIcon()} {getConnectionStatusText()}
-          </span>
-          {/* Removed unsaved changes indicator - handled by TrackedChangesEditor auto-save */}
-          {/* Typing indicators */}
-          {typingUsers.size > 0 && (
-            <div className="typing-indicators">
-              <span className="typing-text">
-                {Array.from(typingUsers).slice(0, 3).map(userId => 
-                  users.find(u => u.userId === userId)?.userName || userId
-                ).join(', ')} 
-                {typingUsers.size > 3 && ` and ${typingUsers.size - 3} others`}
-                {typingUsers.size === 1 ? ' is' : ' are'} typing
-              </span>
-              <div className="typing-dots">
-                <div className="dot"></div>
-                <div className="dot"></div>
-                <div className="dot"></div>
-              </div>
+      {/* Minimal user presence - Google Docs style */}
+      {users.length > 0 && (
+        <div className="collaborative-presence-bar">
+          {users.map(user => (
+            <div
+              key={user.userId}
+              className={`presence-avatar ${user.status}${user.userId === (currentUser.id || currentUser.email) ? ' is-you' : ''}`}
+              style={{ backgroundColor: getUserColor(user.userId) }}
+              title={`${user.userName}${user.userId === (currentUser.id || currentUser.email) ? ' (you)' : ''}`}
+            >
+              {user.userName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
             </div>
+          ))}
+          {typingUsers.size > 0 && (
+            <span className="presence-typing-hint">
+              {Array.from(typingUsers).slice(0, 2).map(uid =>
+                users.find(u => u.userId === uid)?.userName?.split(' ')[0] || ''
+              ).filter(Boolean).join(', ')} typing...
+            </span>
           )}
         </div>
-        
-        <div className="editor-actions">
-          <UserPresence 
-            users={users}
-            currentUser={currentUser}
-            compact={true}
-            onUserClick={() => setShowPresencePanel(!showPresencePanel)}
-          />
-          
-          {/* Removed Save Locally button - TrackedChangesEditor handles all saving via auto-save */}
-        </div>
-      </div>
-      
-      {/* Expandable user presence panel */}
-      {showPresencePanel && (
-        <div className="presence-panel">
-          <UserPresence 
-            users={users}
-            currentUser={currentUser}
-            compact={false}
-          />
-        </div>
       )}
-      
+
       {/* Lexical Editor */}
       <LexicalComposer initialConfig={editorConfig}>
         <div className="collaborative-editor-container">
@@ -2954,6 +2979,16 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <ImageDragPlugin />
               <ImageResizePlugin />
               <EditorRefPlugin editorRef={editorRef} />
+              <TrackedChangeTagDetector flagRef={isTrackedChangeDecorationRef} />
+              {(trackedChanges || liveBaseline) && onTrackedChangeClick && (
+                <TrackedChangesPlugin
+                  pendingChanges={trackedChanges || []}
+                  originalText={originalText || ''}
+                  onChangeClick={onTrackedChangeClick}
+                  liveBaseline={liveBaseline}
+                  currentUserId={currentUser.id || currentUser.email}
+                />
+              )}
               {/* Always render CursorTrackingPlugin but let it handle WebSocket client internally */}
               <CursorTrackingPlugin 
                 webSocketClient={webSocketClientRef.current}
@@ -2974,46 +3009,6 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         </div>
       </LexicalComposer>
       
-      {/* Connection status and user presence */}
-      <div className="collaborative-editor-status">
-        <div className="connection-status">
-          <span className={`status-indicator ${connectionStatus}`}>
-            {getConnectionStatusIcon()}
-          </span>
-          <span className="status-text">{getConnectionStatusText()}</span>
-        </div>
-        
-        {users.length > 0 && (
-          <div className="user-presence">
-            <button
-              className="presence-toggle"
-              onClick={() => setShowPresencePanel(!showPresencePanel)}
-            >
-              👥 {users.length} {users.length === 1 ? 'user' : 'users'} online
-            </button>
-            {showPresencePanel && (
-              <UserPresence 
-                users={users} 
-                currentUser={currentUser}
-              />
-            )}
-          </div>
-        )}
-      </div>
-      
-      {/* Typing indicators */}
-      {typingUsers.size > 0 && (
-        <div className="typing-indicators">
-          {Array.from(typingUsers).map(userId => (
-            <div key={userId} className="typing-indicator">
-              <span className="typing-user">{userId}</span>
-              <span className="typing-dots">
-                <span>•</span><span>•</span><span>•</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }; 

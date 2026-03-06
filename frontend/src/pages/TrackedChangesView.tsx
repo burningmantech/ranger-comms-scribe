@@ -125,7 +125,9 @@ export const TrackedChangesView: React.FC = () => {
           rejectedAt: change.rejectedAt,
           isIncremental: change.isIncremental || false,
           previousVersionId: change.previousVersionId,
-          completeProposedVersion: change.completeProposedVersion
+          completeProposedVersion: change.completeProposedVersion,
+          richTextOldValue: change.richTextOldValue,
+          richTextNewValue: change.richTextNewValue,
         }));
         
         // Transform backend data to frontend format
@@ -203,6 +205,14 @@ export const TrackedChangesView: React.FC = () => {
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
+      // Safely convert date-like values (Date objects or strings) to ISO strings
+      const toISO = (val: any): string => {
+        if (!val) return new Date().toISOString();
+        if (val instanceof Date) return val.toISOString();
+        if (typeof val === 'string') return val;
+        try { return new Date(val).toISOString(); } catch { return new Date().toISOString(); }
+      };
+
       // Transform frontend data to backend format
       const backendSubmission = {
         id: updatedSubmission.id,
@@ -211,13 +221,13 @@ export const TrackedChangesView: React.FC = () => {
         richTextContent: updatedSubmission.richTextContent, // Keep the original Lexical data
         status: updatedSubmission.status,
         submittedBy: updatedSubmission.submittedBy,
-        submittedAt: updatedSubmission.submittedAt.toISOString(),
+        submittedAt: toISO(updatedSubmission.submittedAt),
         formFields: updatedSubmission.formFields,
         comments: updatedSubmission.comments.map(comment => ({
           id: comment.id,
           content: comment.content,
           authorId: comment.authorId,
-          createdAt: comment.createdAt.toISOString(),
+          createdAt: toISO(comment.createdAt),
           isSuggestion: comment.type === 'SUGGESTION',
           resolved: comment.resolved
         })),
@@ -226,7 +236,7 @@ export const TrackedChangesView: React.FC = () => {
           approverId: approval.approverId,
           status: approval.status.toLowerCase(),
           comment: approval.comment,
-          createdAt: approval.timestamp.toISOString()
+          createdAt: toISO(approval.timestamp)
         })),
         changes: updatedSubmission.changes.map(change => ({
           id: change.id,
@@ -234,12 +244,12 @@ export const TrackedChangesView: React.FC = () => {
           oldValue: change.oldValue,
           newValue: change.newValue,
           changedBy: change.changedBy,
-          changedAt: change.timestamp.toISOString()
+          changedAt: toISO(change.timestamp)
         })),
         assignedCouncilManagers: updatedSubmission.assignedCouncilManagers,
         commsApprovedBy: updatedSubmission.commsApprovedBy,
         sentBy: updatedSubmission.sentBy,
-        sentAt: updatedSubmission.sentAt?.toISOString(),
+        sentAt: updatedSubmission.sentAt ? toISO(updatedSubmission.sentAt) : undefined,
         // Include the proposed versions data
         proposedVersions: updatedSubmission.proposedVersions
       };
@@ -535,7 +545,9 @@ export const TrackedChangesView: React.FC = () => {
           rejectedAt: change.rejectedAt,
           isIncremental: change.isIncremental || false,
           previousVersionId: change.previousVersionId,
-          completeProposedVersion: change.completeProposedVersion
+          completeProposedVersion: change.completeProposedVersion,
+          richTextOldValue: change.richTextOldValue,
+          richTextNewValue: change.richTextNewValue,
         }));
         
         // Transform backend data to frontend format

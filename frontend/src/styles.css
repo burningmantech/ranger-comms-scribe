@@ -816,7 +816,6 @@ input[type="date"]::-webkit-calendar-picker-indicator {
    FLAT DESIGN MODALS
    ============================================================================= */
 
-.modal,
 .modal-overlay,
 .delete-confirmation-modal,
 .email-dialog-overlay {
@@ -833,7 +832,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   backdrop-filter: blur(2px);
 }
 
-.modal-content,
+.modal-overlay > .modal-content,
 .delete-confirmation-content,
 .email-dialog {
   background-color: white;
@@ -858,7 +857,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   }
 }
 
-.modal-header,
+.modal-overlay .modal-header,
 .email-dialog-header {
   display: flex;
   justify-content: space-between;
@@ -868,13 +867,13 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   margin-bottom: 20px;
 }
 
-.modal-header h3 {
+.modal-overlay .modal-header h3 {
   margin: 0;
   color: var(--text-dark);
   font-size: 1.25rem;
 }
 
-.modal-close {
+.modal-overlay .modal-close {
   background: none;
   border: none;
   font-size: 24px;
@@ -889,17 +888,17 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   transition: all var(--transition-fast);
 }
 
-.modal-close:hover {
+.modal-overlay .modal-close:hover {
   background-color: var(--primary-light);
   color: var(--text-dark);
 }
 
-.modal-body,
+.modal-overlay .modal-body,
 .email-dialog-content {
   padding: 4px 0;
 }
 
-.modal-footer,
+.modal-overlay .modal-footer,
 .email-dialog-footer,
 .delete-confirmation-buttons {
   display: flex;
@@ -1530,7 +1529,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     min-height: 36px;
   }
 
-  .modal-content,
+  .modal-overlay > .modal-content,
   .delete-confirmation-content {
     padding: 20px;
     border-radius: var(--radius-lg);
