@@ -394,23 +394,32 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
 
 // Permanently delete a tracked change
 export async function deleteChangeHandler(request: CustomRequest, env: any): Promise<Response> {
-  const { changeId } = request.params!;
+  const { submissionId, changeId } = request.params!;
 
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
 
   try {
-    // Check permissions - same as approve/reject
-    const hasPermission = request.user.userType === 'Admin' ||
-                         request.user.userType === 'CommsCadre' ||
-                         request.user.userType === 'CouncilManager';
+    // Fetch the change first to check permissions before deleting
+    const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
+    const change = await getObject(changeKey, env) as TrackedChange | null;
 
-    if (!hasPermission) {
+    if (!change) {
+      return new Response('Change not found', { status: 404 });
+    }
+
+    // Allow deletion if user is the change author OR has elevated permissions
+    const isAuthor = change.changedBy === request.user.id;
+    const hasElevatedPermission = request.user.userType === 'Admin' ||
+                                  request.user.userType === 'CommsCadre' ||
+                                  request.user.userType === 'CouncilManager';
+
+    if (!isAuthor && !hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
     }
 
-    const result = await deleteChange(changeId, env);
+    const result = await deleteChange(submissionId, changeId, env);
 
     if (!result) {
       return new Response('Change not found', { status: 404 });
@@ -460,6 +469,10 @@ export async function batchCreateHandler(request: CustomRequest, env: any): Prom
       return new Response('Missing or empty changes array', { status: 400 });
     }
 
+    if (changes.length > 50) {
+      return new Response('Batch size exceeds maximum of 50 changes', { status: 400 });
+    }
+
     // Validate each change has required fields
     for (const change of changes) {
       if (!change.field || !change.oldValue || !change.newValue) {
@@ -498,8 +511,8 @@ export const router = AutoRouter({ base: '/api/tracked-changes' })
   .put('/submission/:submissionId', updateProposedVersionsHandler)
   .post('/submission/:submissionId/batch', batchCreateHandler)
   .get('/submission/:submissionId/cascade/:changeId', getCascadeHandler)
+  .delete('/submission/:submissionId/change/:changeId', deleteChangeHandler)
   .put('/change/:changeId/status', updateChangeStatusHandler)
-  .delete('/change/:changeId', deleteChangeHandler)
   .post('/change/:changeId/comment', addChangeCommentHandler)
   .post('/:changeId/undo', undoChangeHandler)
   .get('/history', getChangeHistoryHandler);

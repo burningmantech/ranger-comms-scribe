@@ -702,32 +702,23 @@ export const undoChange = async (
   }
 };
 
-// Permanently delete a tracked change from R2 storage
+// Permanently delete a tracked change from R2 storage.
+// Accepts submissionId to construct the R2 key directly instead of scanning.
 export const deleteChange = async (
+  submissionId: string,
   changeId: string,
   env: Env
 ): Promise<{ submissionId: string } | null> => {
   try {
-    // Find the change by scanning R2
-    const allChanges = await listObjects('tracked-changes/', env);
+    // Construct the key directly from submissionId + changeId
+    const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
 
-    let targetChange: TrackedChange | null = null;
-    let changeKey: string | null = null;
+    // Fetch the change to verify it exists
+    const targetChange = await getObject<TrackedChange>(changeKey, env);
 
-    for (const object of allChanges.objects) {
-      const change = await getObject<TrackedChange>(object.key, env);
-      if (change && change.id === changeId) {
-        targetChange = change;
-        changeKey = object.key;
-        break;
-      }
-    }
-
-    if (!targetChange || !changeKey) {
+    if (!targetChange) {
       return null;
     }
-
-    const submissionId = targetChange.submissionId;
 
     // Delete the change from R2 and cache
     await deleteObject(changeKey, env);

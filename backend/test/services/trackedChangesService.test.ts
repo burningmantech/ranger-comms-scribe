@@ -221,10 +221,9 @@ describe('trackedChangesService', () => {
   });
 
   describe('deleteChange', () => {
-    it('should successfully delete an existing change', async () => {
+    it('should successfully delete an existing change using direct key lookup', async () => {
       const changeId = 'test-change-id';
       const submissionId = 'test-submission-id';
-      const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
 
       const mockChange: TrackedChange = {
         id: changeId,
@@ -238,17 +237,14 @@ describe('trackedChangesService', () => {
         status: 'pending'
       };
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
-        objects: [{ key: changeKey }]
-      });
-
+      // Mock R2.get to return the change when fetched by constructed key
       mockEnv.R2.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
       mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
 
-      const result = await deleteChange(changeId, mockEnv);
+      const result = await deleteChange(submissionId, changeId, mockEnv);
 
       expect(result).not.toBeNull();
       expect(result?.submissionId).toBe(submissionId);
@@ -257,11 +253,10 @@ describe('trackedChangesService', () => {
     });
 
     it('should return null for non-existent change', async () => {
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
-        objects: []
-      });
+      // Mock R2.get to return null (change doesn't exist at constructed key)
+      mockEnv.R2.get = jest.fn().mockResolvedValue(null);
 
-      const result = await deleteChange('non-existent-id', mockEnv);
+      const result = await deleteChange('test-submission-id', 'non-existent-id', mockEnv);
 
       expect(result).toBeNull();
     });
@@ -269,7 +264,6 @@ describe('trackedChangesService', () => {
     it('should delete changes regardless of status', async () => {
       const changeId = 'approved-change-id';
       const submissionId = 'test-submission-id';
-      const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
 
       const mockChange: TrackedChange = {
         id: changeId,
@@ -286,20 +280,45 @@ describe('trackedChangesService', () => {
         approvedAt: new Date().toISOString()
       };
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
-        objects: [{ key: changeKey }]
-      });
-
       mockEnv.R2.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
       mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
 
-      const result = await deleteChange(changeId, mockEnv);
+      const result = await deleteChange(submissionId, changeId, mockEnv);
 
       expect(result).not.toBeNull();
       expect(result?.submissionId).toBe(submissionId);
+    });
+
+    it('should construct the R2 key from submissionId and changeId without scanning', async () => {
+      const changeId = 'test-change-id';
+      const submissionId = 'test-submission-id';
+
+      const mockChange: TrackedChange = {
+        id: changeId,
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: new Date().toISOString(),
+        status: 'pending'
+      };
+
+      mockEnv.R2.get = jest.fn().mockResolvedValue({
+        json: jest.fn().mockResolvedValue(mockChange)
+      });
+
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.list = jest.fn();
+
+      await deleteChange(submissionId, changeId, mockEnv);
+
+      // R2.list should NOT have been called — we construct the key directly
+      expect(mockEnv.R2.list).not.toHaveBeenCalled();
     });
   });
 
