@@ -117,22 +117,6 @@
   color: #5f6368;
 }
 
-.save-status.pending {
-  color: #80868b;
-}
-
-.save-status.saving {
-  color: #1a73e8;
-}
-
-.save-status.saved {
-  color: #5f6368;
-}
-
-.save-status.error {
-  color: #d93025;
-}
-
 .save-status.applying {
   color: #e37400;
   animation: pulse-applying 1.5s ease-in-out infinite;

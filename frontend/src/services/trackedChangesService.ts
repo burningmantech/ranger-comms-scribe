@@ -151,6 +151,40 @@ class TrackedChangesService {
     }
   }
 
+  /**
+   * Send multiple tracked changes in a single request.
+   * Used by orphaned-transaction recovery (save-on-close flow).
+   */
+  async batchCreate(
+    submissionId: string,
+    changes: Array<{
+      field: string;
+      oldValue: string;
+      newValue: string;
+      regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
+    }>,
+  ): Promise<TrackedChangeResponse[]> {
+    try {
+      const response = await fetch(
+        `${API_URL}/tracked-changes/submission/${submissionId}/batch`,
+        {
+          method: 'POST',
+          headers: this.getAuthHeaders(),
+          body: JSON.stringify({ changes }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to batch-create tracked changes: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error batch-creating tracked changes:', error);
+      throw error;
+    }
+  }
+
   // Helper method to convert API response to frontend Change type
   convertToChange(apiChange: TrackedChangeResponse): Change {
     return {

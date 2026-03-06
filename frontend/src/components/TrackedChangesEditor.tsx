@@ -167,13 +167,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const proposedDiffTextRef = useRef<HTMLDivElement>(null);
   const isScrollingSyncedRef = useRef(false);
   
-  // Auto-save state
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
-  const [lastAutoSaveTime, setLastAutoSaveTime] = useState<Date | null>(null);
-  const [autoSaveCountdown, setAutoSaveCountdown] = useState<number | null>(null);
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const autoSaveCountdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isAutoSaveEnabledRef = useRef(true);
+  // Content initialization tracking
   const hasInitializedContentRef = useRef(false);
   
   // Remote update state
@@ -190,11 +184,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const pendingRealTimeUpdateRef = useRef<boolean>(false);
   const realTimeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isApplyingRealTimeUpdateRef = useRef<boolean>(false);
-
-  // Auto-save period change consolidation state
-  const autoSavePeriodStartContentRef = useRef<string>('');
-  const autoSavePeriodStartTimeRef = useRef<Date | null>(null);
-  const hasChangesInCurrentPeriodRef = useRef<boolean>(false);
 
   // Tab navigation state for Proposed / Comparison / Original sections
   const [activeTab, setActiveTab] = useState<'proposed' | 'comparison' | 'original'>('proposed');
@@ -583,11 +572,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Mark as initialized after a short delay to ensure all state is set
     setTimeout(() => {
       hasInitializedContentRef.current = true;
-      
-      // Reset auto-save period tracking on initialization
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
     }, 100);
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
@@ -760,8 +744,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // overwrites the optimistic rejection with stale data from the server.
   const saveRevertedContent = useCallback(async (revertedContent: string) => {
     try {
-      setAutoSaveStatus('saving');
-
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
@@ -778,68 +760,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       // Update the last saved content after successful save
       setLastSavedProposedContent(revertedContent);
-      setAutoSaveStatus('saved');
-      setLastAutoSaveTime(new Date());
-
-      // Reset to idle after 3 seconds
-      setTimeout(() => {
-        setAutoSaveStatus('idle');
-      }, 3000);
-
     } catch (error) {
       console.error('❌ Failed to save reverted content:', error);
-      setAutoSaveStatus('error');
-
-      // Reset to idle after 5 seconds
-      setTimeout(() => {
-        setAutoSaveStatus('idle');
-      }, 5000);
     }
   }, [submission.id]);
 
   const handleProposedEditSubmit = useCallback(async () => {
     const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
     const hasActualChanges = editedProposedContent !== currentContent;
-    
-    if (!hasActualChanges) {
-      setAutoSaveStatus('idle');
-      // Reset auto-save period tracking
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
-      return;
-    }
 
-    // Create a consolidated tracked change for manual save if there are changes in the current period
-    if (hasChangesInCurrentPeriodRef.current && autoSavePeriodStartContentRef.current) {
-      const periodStartContent = autoSavePeriodStartContentRef.current;
-      const periodStartTime = autoSavePeriodStartTimeRef.current;
-      
-      // Create a single consolidated change for the entire period
-      const periodStartText = getDisplayableText(periodStartContent);
-      const currentText = getDisplayableText(editedProposedContent);
-      
-      if (periodStartText !== currentText) {
-        const consolidatedChange: Change = {
-          id: `manual-save-${Date.now()}`,
-          field: 'content' as const,
-          oldValue: periodStartText,
-          newValue: currentText,
-          changedBy: currentUser.id,
-          timestamp: periodStartTime || new Date(),
-          isIncremental: false, // This is a consolidated change, not incremental
-          richTextOldValue: periodStartContent,
-          richTextNewValue: editedProposedContent
-        };
-        
-        // Add the consolidated change to the tracked changes sidebar
-        onSuggestion(consolidatedChange);
-      }
-      
-      // Reset auto-save period tracking
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
+    if (!hasActualChanges) {
+      return;
     }
 
     try {
@@ -853,39 +784,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           lastModifiedBy: currentUser.id || currentUser.email
         }
       };
-      
+
       await onSave(updatedSubmission);
-      
+
       // Update the last saved content after successful save
       setLastSavedProposedContent(editedProposedContent);
-      setAutoSaveStatus('saved');
-      setLastAutoSaveTime(new Date());
-      
-      // Reset auto-save period tracking after successful manual save
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
-      
-      // Reset to idle after 3 seconds
-      setTimeout(() => {
-        setAutoSaveStatus('idle');
-      }, 3000);
-      
     } catch (error) {
       console.error('❌ Save failed:', error);
-      setAutoSaveStatus('error');
-      
-      // Reset auto-save period tracking on error (changes will be tracked again on next edit)
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
-      
-      // Reset to idle after 5 seconds
-      setTimeout(() => {
-        setAutoSaveStatus('idle');
-      }, 5000);
     }
-  }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email, getDisplayableText, onSuggestion]);
+  }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email]);
 
   // Helper function to revert a change in the content
   const revertChangeInContent = useCallback((change: TrackedChange) => {
@@ -1213,141 +1120,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [activeTab, scrollToChangeInDiff, scrollToChangeInProposed]);
 
-  // Auto-save functionality with countdown timer
-  const performAutoSave = useCallback(async () => {
-    if (!isAutoSaveEnabledRef.current) {
-      return;
-    }
-
-    // Clear countdown timer
-    if (autoSaveCountdownIntervalRef.current) {
-      clearInterval(autoSaveCountdownIntervalRef.current);
-      autoSaveCountdownIntervalRef.current = null;
-    }
-    setAutoSaveCountdown(null);
-
-    // Get the most current content from the editor state
-    const currentEditorContent = editedProposedContentRef.current || editedProposedContent;
-    const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
-    const hasActualChanges = currentEditorContent !== currentContent;
-    
-    if (!hasActualChanges) {
-      setAutoSaveStatus('idle');
-      // Reset auto-save period tracking
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
-      return;
-    }
-
-    setAutoSaveStatus('saving');
-
-    // Create a consolidated tracked change for this auto-save period
-    if (hasChangesInCurrentPeriodRef.current && autoSavePeriodStartContentRef.current) {
-      const periodStartContent = autoSavePeriodStartContentRef.current;
-      const periodStartTime = autoSavePeriodStartTimeRef.current;
-      
-      // Create a single consolidated change for the entire auto-save period
-      const periodStartText = getDisplayableText(periodStartContent);
-      const currentText = getDisplayableText(currentEditorContent);
-      
-      if (periodStartText !== currentText) {
-        const consolidatedChange: Change = {
-          id: `autosave-${Date.now()}`,
-          field: 'content' as const,
-          oldValue: periodStartText,
-          newValue: currentText,
-          changedBy: currentUser.id,
-          timestamp: periodStartTime || new Date(),
-          isIncremental: false, // This is a consolidated change, not incremental
-          richTextOldValue: periodStartContent,
-          richTextNewValue: currentEditorContent
-        };
-        
-        // Add the consolidated change to the tracked changes sidebar
-        onSuggestion(consolidatedChange);
-      }
-      
-      // Reset auto-save period tracking
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
-    }
-    
-    try {
-      // Create the updated submission using the current editor content
-      const updatedSubmission = {
-        ...submission,
-        proposedVersions: {
-          ...submission.proposedVersions,
-          richTextContent: currentEditorContent,
-          lastModified: new Date().toISOString(),
-          lastModifiedBy: currentUser.id || currentUser.email
-        }
-      };
-      
-      // Send WebSocket notification with lexical updates
-      if (webSocketClientRef.current) {
-        const updateMessage = {
-          type: 'content_updated' as const,
-          data: {
-            field: 'proposedVersions.richTextContent',
-            oldValue: currentContent,
-            newValue: currentEditorContent,
-            lexicalContent: currentEditorContent,
-            isAutoSave: true,
-            timestamp: new Date().toISOString(),
-            changeSummary: generateChangeSummary(currentContent, currentEditorContent),
-            // Include current cursor/selection position for other users
-            cursorPosition: lastCursorPositionRef.current,
-            preserveEditingState: true // Flag to help other users maintain their editing state
-          }
-        };
-        
-        if (webSocketClientRef.current) {
-          try {
-            webSocketClientRef.current.send(updateMessage);
-          } catch (error) {
-            console.error('❌ Failed to send WebSocket update for auto-save:', error);
-          }
-        }
-      }
-      
-      // Call the save function
-      await onSave(updatedSubmission);
-      
-      // Update state with the content that was actually saved
-      setLastSavedProposedContent(currentEditorContent);
-      setEditedProposedContent(currentEditorContent); // Ensure state is in sync
-      setAutoSaveStatus('saved');
-      setLastAutoSaveTime(new Date());
-      
-      // Reset auto-save period tracking after successful save
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
-      
-      // Reset to idle after 3 seconds
-      setTimeout(() => {
-        setAutoSaveStatus('idle');
-      }, 3000);
-      
-    } catch (error) {
-      console.error('❌ Auto-save failed:', error);
-      setAutoSaveStatus('error');
-      
-      // Reset auto-save period tracking on error (changes will be tracked again on next edit)
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
-      
-      // Reset to idle after 5 seconds
-      setTimeout(() => {
-        setAutoSaveStatus('idle');
-      }, 5000);
-    }
-  }, [editedProposedContent, submission, currentUser.id, currentUser.email, onSave, getDisplayableText, onSuggestion]);
-
   // Generate a summary of changes for WebSocket notifications
   const generateChangeSummary = useCallback((oldContent: string, newContent: string) => {
     const oldText = getDisplayableText(oldContent);
@@ -1470,60 +1242,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       console.log('⏰ Real-time update already pending, updating content for next send');
     }
   }, [sendRealTimeUpdate]);
-
-  // Debounced auto-save (7 seconds after typing stops) with countdown timer
-  const scheduleAutoSave = useCallback(() => {
-    if (!isAutoSaveEnabledRef.current) {
-      return;
-    }
-
-    // Clear existing timeout and countdown
-    if (autoSaveTimeoutRef.current) {
-      clearTimeout(autoSaveTimeoutRef.current);
-    }
-    
-    if (autoSaveCountdownIntervalRef.current) {
-      clearInterval(autoSaveCountdownIntervalRef.current);
-      autoSaveCountdownIntervalRef.current = null;
-    }
-    
-    // Set status to pending and start countdown
-    setAutoSaveStatus('pending');
-    setAutoSaveCountdown(7);
-    
-    // Start countdown timer
-    autoSaveCountdownIntervalRef.current = setInterval(() => {
-      setAutoSaveCountdown(prev => {
-        if (prev === null || prev <= 1) {
-          return null;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    
-    // Schedule auto-save for 7 seconds later
-    autoSaveTimeoutRef.current = setTimeout(() => {
-      performAutoSave();
-    }, 7000);
-  }, [performAutoSave]);
-
-  // Fallback auto-save check - ensures auto-save happens even if scheduling is missed
-  useEffect(() => {
-    if (!isAutoSaveEnabledRef.current) return;
-    
-    const fallbackInterval = setInterval(() => {
-      const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
-      const hasChanges = editedProposedContent !== currentContent;
-      const hasUnsavedChanges = editedProposedContent !== lastSavedProposedContent;
-      
-      // Only auto-save if there are changes and we're not already saving
-      if (hasChanges && hasUnsavedChanges && autoSaveStatus === 'idle') {
-        performAutoSave();
-      }
-    }, 10000); // Check every 10 seconds as fallback
-    
-    return () => clearInterval(fallbackInterval);
-  }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.richTextContent, submission.content, lastSavedProposedContent, autoSaveStatus, performAutoSave]);
 
   // Handle incoming WebSocket updates
   const handleWebSocketUpdate = useCallback((message: WebSocketMessage) => {
@@ -1657,15 +1375,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       const { field, newValue, lexicalContent, isAutoSave, cursorPosition, preserveEditingState } = message.data;
       
       if (field === 'proposedVersions.richTextContent' && lexicalContent) {
-              // More intelligent handling of when to apply updates
-      const now = Date.now();
-      const timeSinceLastAutoSave = lastAutoSaveTime ? now - lastAutoSaveTime.getTime() : Infinity;
-      
-      // Determine if the user is actively editing
-      const isActivelyEditing = timeSinceLastAutoSave < 15000; // 15 seconds since last auto-save
-      const shouldPreserveEditing = preserveEditingState && isActivelyEditing;
-      
-      if (!shouldPreserveEditing) {
+      // Apply remote content updates
+      {
         // Show visual feedback that a remote update is being applied
         setRemoteUpdateStatus('applying');
         
@@ -1717,7 +1428,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
       }
     }
-  }, [currentUser.id, currentUser.email, lastAutoSaveTime, onRefreshNeeded]);
+  }, [currentUser.id, currentUser.email, onRefreshNeeded]);
 
   // Store WebSocket client reference
   const handleWebSocketClientRef = useCallback((client: any) => {
@@ -1740,26 +1451,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [handleWebSocketUpdate, currentUser.id, currentUser.email]);
 
-  // Cleanup auto-save timeout on unmount
+  // Cleanup real-time update timers on unmount
   useEffect(() => {
     return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
-      if (autoSaveCountdownIntervalRef.current) {
-        clearInterval(autoSaveCountdownIntervalRef.current);
-      }
       if (realTimeUpdateTimeoutRef.current) {
         clearTimeout(realTimeUpdateTimeoutRef.current);
       }
       if (realTimeUpdateIntervalRef.current) {
         clearInterval(realTimeUpdateIntervalRef.current);
       }
-      
-      // Reset auto-save period tracking on unmount
-      hasChangesInCurrentPeriodRef.current = false;
-      autoSavePeriodStartContentRef.current = '';
-      autoSavePeriodStartTimeRef.current = null;
     };
   }, []);
 
@@ -2090,45 +1790,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               </span>
             )}
 
-            {/* Auto-save status with countdown */}
-            {autoSaveStatus === 'pending' && remoteUpdateStatus === 'none' && (
-              <span className="save-status pending">
-                Saving in {autoSaveCountdown}s
-              </span>
-            )}
-            {autoSaveStatus === 'saving' && (
-              <span className="save-status saving">
-                Saving...
-              </span>
-            )}
-            {autoSaveStatus === 'saved' && remoteUpdateStatus === 'none' && (
-              <span className="save-status saved">
-                Saved{lastAutoSaveTime && ` ${lastAutoSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
-              </span>
-            )}
-            {autoSaveStatus === 'error' && (
-              <span className="save-status error">
-                Save failed
-              </span>
-            )}
-
             {/* Manual save button */}
             <button
               className="manual-save-button"
               onClick={() => {
-                // Cancel auto-save and perform immediate save
-                if (autoSaveTimeoutRef.current) {
-                  clearTimeout(autoSaveTimeoutRef.current);
-                }
-                if (autoSaveCountdownIntervalRef.current) {
-                  clearInterval(autoSaveCountdownIntervalRef.current);
-                  autoSaveCountdownIntervalRef.current = null;
-                }
-                setAutoSaveCountdown(null);
-
-                performAutoSave();
+                handleProposedEditSubmit();
               }}
-              disabled={autoSaveStatus === 'saving' || editedProposedContent === lastSavedProposedContent}
+              disabled={editedProposedContent === lastSavedProposedContent}
               title="Save changes now"
             >
               Save
@@ -2392,34 +2060,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           throttledRealTimeUpdate(json, cursorPosition);
                         }
                         
-                                                      if (hasChangesFromLastSaved) {
-        // Start tracking the auto-save period if not already started
-        if (!hasChangesInCurrentPeriodRef.current) {
-          hasChangesInCurrentPeriodRef.current = true;
-          autoSavePeriodStartContentRef.current = originalContent;
-          autoSavePeriodStartTimeRef.current = new Date();
-        }
-        
-        // Schedule auto-save (7 seconds after typing stops)
-        scheduleAutoSave();
-      }
       }
                     }}
                         onSave={(content) => {
       // Update the edited content with the saved content
       setEditedProposedContent(content);
-                      
-                      // Cancel auto-save since user is manually saving
-                      if (autoSaveTimeoutRef.current) {
-                        clearTimeout(autoSaveTimeoutRef.current);
-                      }
-                      if (autoSaveCountdownIntervalRef.current) {
-                        clearInterval(autoSaveCountdownIntervalRef.current);
-                        autoSaveCountdownIntervalRef.current = null;
-                      }
-                      setAutoSaveCountdown(null);
-                      setAutoSaveStatus('saving');
-                      
                       handleProposedEditSubmit();
                     }}
                     onWebSocketClientReady={handleWebSocketClientRef}
