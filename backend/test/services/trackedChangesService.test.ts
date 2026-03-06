@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { undoChange, deleteChange, getCascadeDependencies, batchCreateTrackedChanges, TrackedChange, calculateIncrementalChange, RegionMap } from '../../src/services/trackedChangesService';
+import { undoChange, deleteChange, getCascadeDependencies, batchCreateTrackedChanges, createTrackedChange, TrackedChange, calculateIncrementalChange, RegionMap } from '../../src/services/trackedChangesService';
 import { createCacheServiceMock } from './cache-mock-helpers';
 
 describe('trackedChangesService', () => {
@@ -406,7 +406,7 @@ describe('trackedChangesService', () => {
       expect(result).not.toContain('change-3');
     });
 
-    it('should not include accepted changes in cascade', async () => {
+    it('should stop cascade at an accepted change with overlapping region', async () => {
       const submissionId = 'test-submission-id';
       const change1: TrackedChange = {
         id: 'change-1',
@@ -430,7 +430,7 @@ describe('trackedChangesService', () => {
         changedBy: 'user1',
         changedByName: 'User One',
         timestamp: '2024-01-01T01:00:00Z',
-        status: 'approved', // Accepted - should be excluded
+        status: 'approved', // Accepted - acts as boundary, not included in result
         regionMap: { field: 'content', ranges: [{ start: 15, end: 25 }] }
       };
 
@@ -453,7 +453,99 @@ describe('trackedChangesService', () => {
 
       const result = await getCascadeDependencies(submissionId, 'change-1', mockEnv);
 
+      // Accepted change is not included, and it terminates the cascade
       expect(result).toEqual([]);
+    });
+
+    it('should exclude pending changes that come after an accepted boundary', async () => {
+      const submissionId = 'test-submission-id';
+      // Target change
+      const change1: TrackedChange = {
+        id: 'change-1',
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T00:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 10, end: 20 }] }
+      };
+
+      // Pending change overlapping — should be included
+      const change2: TrackedChange = {
+        id: 'change-2',
+        submissionId,
+        field: 'content',
+        oldValue: 'old2',
+        newValue: 'new2',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T01:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 15, end: 25 }] }
+      };
+
+      // Accepted change overlapping — acts as boundary
+      const change3: TrackedChange = {
+        id: 'change-3',
+        submissionId,
+        field: 'content',
+        oldValue: 'old3',
+        newValue: 'new3',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T02:00:00Z',
+        status: 'approved',
+        regionMap: { field: 'content', ranges: [{ start: 12, end: 18 }] }
+      };
+
+      // Pending change overlapping — but comes AFTER accepted boundary, should be excluded
+      const change4: TrackedChange = {
+        id: 'change-4',
+        submissionId,
+        field: 'content',
+        oldValue: 'old4',
+        newValue: 'new4',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T03:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 10, end: 20 }] }
+      };
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [
+          { key: `tracked-changes/submission/${submissionId}/change-1` },
+          { key: `tracked-changes/submission/${submissionId}/change-2` },
+          { key: `tracked-changes/submission/${submissionId}/change-3` },
+          { key: `tracked-changes/submission/${submissionId}/change-4` }
+        ]
+      });
+
+      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+        if (key.endsWith('change-1')) {
+          return Promise.resolve({ json: () => Promise.resolve(change1) });
+        }
+        if (key.endsWith('change-2')) {
+          return Promise.resolve({ json: () => Promise.resolve(change2) });
+        }
+        if (key.endsWith('change-3')) {
+          return Promise.resolve({ json: () => Promise.resolve(change3) });
+        }
+        if (key.endsWith('change-4')) {
+          return Promise.resolve({ json: () => Promise.resolve(change4) });
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await getCascadeDependencies(submissionId, 'change-1', mockEnv);
+
+      // change-2 is pending and overlapping — included
+      // change-3 is accepted and overlapping — boundary, stops cascade
+      // change-4 is pending and overlapping — but after the boundary, excluded
+      expect(result).toEqual(['change-2']);
     });
 
     it('should not include changes for different fields', async () => {
@@ -742,6 +834,61 @@ describe('trackedChangesService', () => {
       expect(change.regionMap!.field).toBe('content');
       expect(change.regionMap!.ranges).toHaveLength(2);
       expect(change.regionMap!.ranges[0]).toEqual({ start: 0, end: 10 });
+    });
+  });
+
+  describe('createTrackedChange with regionMap', () => {
+    it('should store regionMap when provided', async () => {
+      const submissionId = 'test-submission-id';
+
+      // Mock R2 and list for getLatestProposedVersion (returns no prior changes)
+      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+
+      const regionMap: RegionMap = {
+        field: 'content',
+        ranges: [{ start: 5, end: 15 }]
+      };
+
+      const result = await createTrackedChange(
+        submissionId,
+        'content',
+        'old value',
+        'new value',
+        'user1',
+        'User One',
+        mockEnv,
+        undefined, // richTextOldValue
+        undefined, // richTextNewValue
+        regionMap
+      );
+
+      expect(result.regionMap).toEqual(regionMap);
+      expect(result.submissionId).toBe(submissionId);
+      expect(result.status).toBe('pending');
+    });
+
+    it('should create change without regionMap when not provided', async () => {
+      const submissionId = 'test-submission-id';
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+
+      const result = await createTrackedChange(
+        submissionId,
+        'content',
+        'old value',
+        'new value',
+        'user1',
+        'User One',
+        mockEnv
+      );
+
+      expect(result.regionMap).toBeUndefined();
+      expect(result.submissionId).toBe(submissionId);
+      expect(result.status).toBe('pending');
     });
   });
 });

@@ -243,7 +243,8 @@ export const createTrackedChange = async (
   changedByName: string,
   env: Env,
   richTextOldValue?: string,
-  richTextNewValue?: string
+  richTextNewValue?: string,
+  regionMap?: RegionMap
 ): Promise<TrackedChange> => {
   try {
     const changeId = uuidv4();
@@ -298,9 +299,10 @@ export const createTrackedChange = async (
       previousVersionId,
       completeProposedVersion: isIncremental ? newValue : undefined,
       richTextOldValue,
-      richTextNewValue
+      richTextNewValue,
+      regionMap
     };
-    
+
     // Store the change in R2 and cache
     const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
     await putObject(changeKey, newChange, env);
@@ -774,12 +776,14 @@ export const getCascadeDependencies = async (
       return [];
     }
 
-    // Get all subsequent pending changes for the same field, ordered by timestamp ascending
+    // Get all subsequent changes for the same field (pending AND accepted),
+    // ordered by timestamp ascending. We need accepted changes to act as
+    // cascade boundaries — the chain stops at any accepted change.
     const subsequentChanges = changes
       .filter(c =>
         c.id !== changeId &&
         c.field === targetChange.field &&
-        c.status === 'pending' &&
+        (c.status === 'pending' || c.status === 'approved') &&
         new Date(c.timestamp).getTime() > new Date(targetChange.timestamp).getTime()
       )
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -810,6 +814,10 @@ export const getCascadeDependencies = async (
       }
 
       if (hasOverlap) {
+        // Accepted changes are immutable boundaries — stop the cascade
+        if (change.status === 'approved') {
+          break;
+        }
         dependentIds.push(change.id);
       }
     }

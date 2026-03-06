@@ -144,7 +144,7 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
   }
 
   try {
-    const { field, oldValue, newValue, richTextOldValue, richTextNewValue } = await request.json();
+    const { field, oldValue, newValue, richTextOldValue, richTextNewValue, regionMap } = await request.json();
 
     if (!field || !oldValue || !newValue) {
       return new Response('Missing required fields', { status: 400 });
@@ -160,7 +160,8 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
       request.user.name,
       env,
       richTextOldValue,
-      richTextNewValue
+      richTextNewValue,
+      regionMap
     );
 
     return new Response(JSON.stringify(newChange), {
