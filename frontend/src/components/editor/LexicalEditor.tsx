@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
-import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
+import TransactionHistoryPlugin from './plugins/TransactionHistoryPlugin';
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin';
 import { AutoFocusPlugin } from '@lexical/react/LexicalAutoFocusPlugin';
 import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
@@ -342,7 +342,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
             />
             {!readOnly && <TableControlsPlugin />}
           </div>
-          <HistoryPlugin />
+          <TransactionHistoryPlugin transactionManager={null} />
           {!readOnly && <AutoFocusPlugin />}
           <OnChangePlugin onChange={handleChange} />
           <ListPlugin />

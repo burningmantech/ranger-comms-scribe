@@ -3,7 +3,7 @@ import { $getRoot, $getSelection, $isRangeSelection, $createTextNode, $createPar
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
-import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
+import TransactionHistoryPlugin from './editor/plugins/TransactionHistoryPlugin';
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin';
 import { EditorState, LexicalEditor } from 'lexical';
 import { EditorRefPlugin } from '@lexical/react/LexicalEditorRefPlugin';
@@ -2972,7 +2972,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                 ErrorBoundary={LexicalErrorBoundary}
               />
               <OnChangePlugin onChange={handleEditorChange} />
-              <HistoryPlugin />
+              <TransactionHistoryPlugin transactionManager={null} />
               <ListPlugin />
               <LinkPlugin />
               <ImagePlugin currentUser={currentUser} />
