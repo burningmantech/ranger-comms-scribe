@@ -185,6 +185,53 @@ class TrackedChangesService {
     }
   }
 
+  /**
+   * Fetch the cascade dependency chain for a tracked change.
+   * Returns the changeId and an ordered list of dependent change IDs.
+   */
+  async getCascadeDependencies(
+    submissionId: string,
+    changeId: string,
+  ): Promise<{ changeId: string; dependentIds: string[] }> {
+    try {
+      const response = await fetch(
+        `${API_URL}/tracked-changes/submission/${submissionId}/cascade/${changeId}`,
+        { headers: this.getAuthHeaders() },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch cascade dependencies: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching cascade dependencies:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a tracked change from the backend.
+   */
+  async deleteTrackedChange(submissionId: string, changeId: string): Promise<void> {
+    try {
+      const response = await fetch(
+        `${API_URL}/tracked-changes/submission/${submissionId}/change/${changeId}`,
+        {
+          method: 'DELETE',
+          headers: this.getAuthHeaders(),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete tracked change: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error deleting tracked change:', error);
+      throw error;
+    }
+  }
+
   // Helper method to convert API response to frontend Change type
   convertToChange(apiChange: TrackedChangeResponse): Change {
     return {

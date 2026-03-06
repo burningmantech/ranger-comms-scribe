@@ -303,29 +303,11 @@ export class TransactionManager {
   }
 
   // -----------------------------------------------------------------------
-  // Region map computation
+  // Region map computation (delegates to module-level utility)
   // -----------------------------------------------------------------------
 
   private computeRegionMap(field: string, beforeText: string, afterText: string): RegionMap {
-    const segments = diffCharsOptimized(beforeText, afterText);
-    const ranges: RegionRange[] = [];
-
-    // Walk through the *new* text position to record affected ranges
-    let newPos = 0;
-    for (const seg of segments) {
-      if (seg.type === 'equal') {
-        newPos += seg.value.length;
-      } else if (seg.type === 'insert') {
-        ranges.push({ start: newPos, end: newPos + seg.value.length });
-        newPos += seg.value.length;
-      } else if (seg.type === 'delete') {
-        // Record a zero-width range at the deletion point in the new text
-        ranges.push({ start: newPos, end: newPos });
-      }
-    }
-
-    // Merge overlapping/adjacent ranges
-    return { field, ranges: mergeRanges(ranges) };
+    return computeRegionMap(beforeText, afterText, field);
   }
 
   // -----------------------------------------------------------------------
@@ -518,6 +500,38 @@ export class TransactionManager {
       this.pauseTimer = null;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Public utility: computeRegionMap
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a RegionMap describing which character ranges in the "after" text
+ * were affected by the diff from `beforeText` to `afterText`.
+ *
+ * Exported so it can be reused by cascade rejection and other consumers.
+ */
+export function computeRegionMap(beforeText: string, afterText: string, field: string): RegionMap {
+  const segments = diffCharsOptimized(beforeText, afterText);
+  const ranges: RegionRange[] = [];
+
+  // Walk through the *new* text position to record affected ranges
+  let newPos = 0;
+  for (const seg of segments) {
+    if (seg.type === 'equal') {
+      newPos += seg.value.length;
+    } else if (seg.type === 'insert') {
+      ranges.push({ start: newPos, end: newPos + seg.value.length });
+      newPos += seg.value.length;
+    } else if (seg.type === 'delete') {
+      // Record a zero-width range at the deletion point in the new text
+      ranges.push({ start: newPos, end: newPos });
+    }
+  }
+
+  // Merge overlapping/adjacent ranges
+  return { field, ranges: mergeRanges(ranges) };
 }
 
 // ---------------------------------------------------------------------------

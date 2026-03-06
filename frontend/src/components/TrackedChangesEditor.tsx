@@ -3,6 +3,7 @@ import { ContentSubmission, User, Comment, Change, Approval } from '../types/con
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
+import { cascadeReject } from '../utils/cascadeReject';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { CollaborativeEditor } from './CollaborativeEditor';
 import { $isImageNode } from './editor/nodes/ImageNode';
@@ -870,17 +871,42 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (decision === 'approve') {
       onApprove(changeId);
     } else {
-      // Find the change to revert
-      const changeToRevert = trackedChanges.find(change => change.id === changeId);
-      if (changeToRevert) {
-        // Revert the change in the proposed content
-        revertChangeInContent(changeToRevert);
-      }
+      // Use cascade rejection flow — it handles dependency chains
+      // and falls back gracefully for single changes.
+      const applyRevert = (content: string) => {
+        editedProposedContentRef.current = content;
+        setEditedProposedContent(content);
+        if (remoteUpdateFunctionRef.current) {
+          remoteUpdateFunctionRef.current(content);
+        }
+        setTimeout(() => { saveRevertedContent(content); }, 100);
+      };
+
+      cascadeReject({
+        submissionId: submission.id,
+        changeId,
+        restoreEditorContent: applyRevert,
+        refetchSubmissionContent: async () => {
+          // Fallback: revert using the legacy direct-revert logic
+          const changeToRevert = trackedChanges.find(c => c.id === changeId);
+          if (changeToRevert) {
+            revertChangeInContent(changeToRevert);
+          }
+        },
+      }).catch((err) => {
+        // Cascade fetch failed — fall back to legacy direct revert
+        console.error('Cascade rejection failed, falling back to direct revert:', err);
+        const changeToRevert = trackedChanges.find(c => c.id === changeId);
+        if (changeToRevert) {
+          revertChangeInContent(changeToRevert);
+        }
+      });
+
       onReject(changeId);
     }
-    
+
     // Real-time approvals are now handled by CollaborativeEditor
-  }, [onApprove, onReject, trackedChanges, revertChangeInContent]);
+  }, [onApprove, onReject, trackedChanges, revertChangeInContent, submission.id, saveRevertedContent]);
 
   // Handle suggestion submission
   const handleSuggestionSubmit = useCallback(() => {
