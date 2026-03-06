@@ -8,6 +8,9 @@ import LexicalEditorComponent from './editor/LexicalEditor';
 import { CollaborativeEditor } from './CollaborativeEditor';
 import { $isImageNode } from './editor/nodes/ImageNode';
 import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '../services/websocketService';
+import { TransactionManager, Transaction } from '../services/transactionManager';
+import SaveIndicator from './SaveIndicator';
+import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange } from './editor/plugins/TrackedChangesPlugin';
 import './TrackedChangesEditor.css';
 
 const webSocketManager = new WebSocketManager();
@@ -186,6 +189,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const realTimeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isApplyingRealTimeUpdateRef = useRef<boolean>(false);
 
+  // TransactionManager instance — one per submission editing session
+  const transactionManagerRef = useRef<TransactionManager | null>(null);
+  if (!transactionManagerRef.current) {
+    transactionManagerRef.current = new TransactionManager(submission.id);
+  }
+  const transactionManager = transactionManagerRef.current;
+
+  // Track whether we have started a transaction for the current editing sequence
+  const hasActiveTransactionRef = useRef(false);
+
+  // Callback for SaveIndicator — returns the latest editor state for
+  // beforeunload settle.
+  const getLatestEditorState = useCallback((): string | object | null => {
+    return editedProposedContentRef.current || null;
+  }, []);
+
   // Tab navigation state for Proposed / Comparison / Original sections
   const [activeTab, setActiveTab] = useState<'proposed' | 'comparison' | 'original'>('proposed');
 
@@ -271,6 +290,52 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Removed WebSocket connection setup
 
   // WebSocket connection logic removed - now handled by CollaborativeEditor
+
+  // Cleanup TransactionManager on unmount
+  useEffect(() => {
+    return () => {
+      transactionManagerRef.current?.destroy();
+    };
+  }, []);
+
+  // Wire TransactionManager events
+  useEffect(() => {
+    const tm = transactionManagerRef.current;
+    if (!tm) return;
+
+    // Reset the active-transaction flag when a transaction settles
+    // so the next content change starts a new transaction.
+    const handleSettledFlag = () => {
+      hasActiveTransactionRef.current = false;
+    };
+    tm.on('transaction-settled', handleSettledFlag);
+
+    // Broadcast the saved transaction over WebSocket.
+    // We listen for transaction-saved (not settled) because we need the
+    // remoteChangeId which is only assigned after the save succeeds.
+    const handleSaved = (tx: Transaction) => {
+      const client = webSocketClientRef.current;
+      if (client && tx.remoteChangeId && tx.afterSnapshot) {
+        client.sendTransactionSettled({
+          changeId: tx.remoteChangeId,
+          field: tx.field,
+          oldValue: tx.beforeSnapshot.text,
+          newValue: tx.afterSnapshot.text,
+          regionMap: tx.regionMap ?? undefined,
+        });
+      }
+      // Refresh sidebar so the new tracked change appears
+      if (onRefreshNeeded) {
+        onRefreshNeeded();
+      }
+    };
+    tm.on('transaction-saved', handleSaved);
+
+    return () => {
+      tm.off('transaction-settled', handleSettledFlag);
+      tm.off('transaction-saved', handleSaved);
+    };
+  }, [onRefreshNeeded]);
 
   // Update ref when content changes
   useEffect(() => {
@@ -885,6 +950,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       cascadeReject({
         submissionId: submission.id,
         changeId,
+        transactionManager,
         restoreEditorContent: applyRevert,
         refetchSubmissionContent: async () => {
           // Fallback: revert using the legacy direct-revert logic
@@ -906,7 +972,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
 
     // Real-time approvals are now handled by CollaborativeEditor
-  }, [onApprove, onReject, trackedChanges, revertChangeInContent, submission.id, saveRevertedContent]);
+  }, [onApprove, onReject, trackedChanges, revertChangeInContent, submission.id, saveRevertedContent, transactionManager]);
 
   // Handle suggestion submission
   const handleSuggestionSubmit = useCallback(() => {
@@ -1459,14 +1525,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Store WebSocket client reference
   const handleWebSocketClientRef = useCallback((client: any) => {
     webSocketClientRef.current = client;
-    
+
     if (client) {
       // Listen for content updates
       client.on('content_updated', handleWebSocketUpdate);
-      
+
       // Listen for real-time content updates (character-by-character)
       client.on('realtime_content_update', handleWebSocketUpdate);
-      
+
       // Listen for cursor position updates to track current user's position
       client.on('cursor_position', (message: any) => {
         if (message.userId === (currentUser.id || currentUser.email)) {
@@ -1474,8 +1540,83 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           lastCursorPositionRef.current = message.data;
         }
       });
+
+      // Listen for transaction-settled from remote users
+      client.on('transaction_settled', (message: WebSocketMessage) => {
+        if (message.userId === effectiveUserId) return;
+        const data = message.data;
+        if (!data?.changeId) return;
+        // Trigger a refresh so the new tracked change appears in the sidebar
+        if (onRefreshNeeded) {
+          onRefreshNeeded();
+        }
+      });
+
+      // Listen for transaction-undone from remote users
+      client.on('transaction_undone', (message: WebSocketMessage) => {
+        if (message.userId === effectiveUserId) return;
+        const data = message.data;
+        if (!data?.removedChangeIds || !Array.isArray(data.removedChangeIds)) return;
+        // Remove decorations for each undone change
+        for (const id of data.removedChangeIds) {
+          try {
+            removeDecorationsForChange(id);
+          } catch (err) {
+            console.error('Failed to remove decorations for undone change:', id, err);
+          }
+        }
+        // Trigger a refresh so the sidebar updates
+        if (onRefreshNeeded) {
+          onRefreshNeeded();
+        }
+      });
+
+      // Listen for transaction-redone from remote users
+      client.on('transaction_redone', (message: WebSocketMessage) => {
+        if (message.userId === effectiveUserId) return;
+        const data = message.data;
+        if (!data?.changeId) return;
+        // Trigger a refresh so the re-added tracked change appears
+        if (onRefreshNeeded) {
+          onRefreshNeeded();
+        }
+      });
     }
-  }, [handleWebSocketUpdate, currentUser.id, currentUser.email]);
+  }, [handleWebSocketUpdate, currentUser.id, currentUser.email, effectiveUserId, onRefreshNeeded]);
+
+  // TransactionHistoryPlugin callback: broadcast undo over WebSocket
+  const handleTransactionUndone = useCallback((tx: Transaction) => {
+    const client = webSocketClientRef.current;
+    if (!client) return;
+    const removedIds: string[] = [];
+    if (tx.remoteChangeId) {
+      removedIds.push(tx.remoteChangeId);
+    }
+    if (removedIds.length > 0) {
+      client.sendTransactionUndone(removedIds);
+    }
+    // Refresh sidebar
+    if (onRefreshNeeded) {
+      onRefreshNeeded();
+    }
+  }, [onRefreshNeeded]);
+
+  // TransactionHistoryPlugin callback: broadcast redo over WebSocket
+  const handleTransactionRedone = useCallback((tx: Transaction) => {
+    const client = webSocketClientRef.current;
+    if (!client || !tx.remoteChangeId || !tx.afterSnapshot) return;
+    client.sendTransactionRedone({
+      changeId: tx.remoteChangeId,
+      field: tx.field,
+      oldValue: tx.beforeSnapshot.text,
+      newValue: tx.afterSnapshot.text,
+      regionMap: tx.regionMap ?? undefined,
+    });
+    // Refresh sidebar
+    if (onRefreshNeeded) {
+      onRefreshNeeded();
+    }
+  }, [onRefreshNeeded]);
 
   // Cleanup real-time update timers on unmount
   useEffect(() => {
@@ -1816,10 +1957,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               </span>
             )}
 
-            {/* Manual save button */}
+            {/* SaveIndicator — replaces the old auto-save text */}
+            <SaveIndicator
+              transactionManager={transactionManager}
+              submissionId={submission.id}
+              getLatestEditorState={getLatestEditorState}
+            />
+
+            {/* Manual save button — settles any active transaction then saves */}
             <button
               className="manual-save-button"
               onClick={() => {
+                // Force-settle the active transaction if one exists
+                const currentState = editedProposedContentRef.current;
+                if (currentState && transactionManager.getActiveTransaction()) {
+                  transactionManager.settleTransaction(currentState);
+                }
                 handleProposedEditSubmit();
               }}
               disabled={editedProposedContent === lastSavedProposedContent}
@@ -2066,37 +2219,45 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     currentUser={currentUser}
                     initialContent={proposedEditorContent}
                     onContentChange={(json, cursorPosition) => {
-                            // Skip processing if we're still initializing content to prevent auto-save on load
-      if (!hasInitializedContentRef.current) {
-        return;
-      }
-      
-      setEditedProposedContent(json);
-      
-      // Send real-time character-by-character updates immediately
-      const originalContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
-      const hasChanges = json !== originalContent;
-      const hasChangesFromLastSaved = json !== lastSavedProposedContent;
-      
-      if (hasChanges) {
-        // Check if we're applying a real-time update to prevent feedback loops
-        if (!isApplyingRealTimeUpdateRef.current) {
-                          
+                      // Skip processing if we're still initializing content to prevent auto-save on load
+                      if (!hasInitializedContentRef.current) {
+                        return;
+                      }
+
+                      setEditedProposedContent(json);
+
+                      // Wire TransactionManager: start or continue a transaction
+                      if (!isApplyingRealTimeUpdateRef.current) {
+                        if (!hasActiveTransactionRef.current) {
+                          // First change in this editing sequence — start a new transaction
+                          const beforeState = editedProposedContentRef.current || json;
+                          transactionManager.startTransaction('content', beforeState);
+                          hasActiveTransactionRef.current = true;
+                        }
+                        // Notify activity to reset the pause timer with latest state
+                        transactionManager.notifyActivity(json);
+                      }
+
+                      // Send real-time character-by-character updates immediately
+                      const originalContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
+                      const hasChanges = json !== originalContent;
+
+                      if (hasChanges) {
+                        // Check if we're applying a real-time update to prevent feedback loops
+                        if (!isApplyingRealTimeUpdateRef.current) {
                           // Send immediate real-time update with cursor position
                           throttledRealTimeUpdate(json, cursorPosition);
                         }
-                        
-      }
+                      }
                     }}
-                        onSave={(content) => {
-      // Update the edited content with the saved content
-      setEditedProposedContent(content);
+                    onSave={(content) => {
+                      // Update the edited content with the saved content
+                      setEditedProposedContent(content);
                       handleProposedEditSubmit();
                     }}
                     onWebSocketClientReady={handleWebSocketClientRef}
                     onRemoteContentUpdate={(updateFn) => {
                       remoteUpdateFunctionRef.current = updateFn;
-                      console.log('🔗 Remote update function registered');
                     }}
                     placeholder="Edit the proposed version..."
                     readOnly={false}
@@ -2107,6 +2268,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     originalText={pendingContentChanges.length > 0 ? originalTextForInlineChanges : undefined}
                     onTrackedChangeClick={handleEditorTrackedChangeClick}
                     liveBaseline={originalTextForInlineChanges}
+                    transactionManager={transactionManager}
+                    onTransactionUndone={handleTransactionUndone}
+                    onTransactionRedone={handleTransactionRedone}
                   />
                 </div>
 

@@ -39,6 +39,22 @@ jest.mock('../components/editor/LexicalEditor', () => {
   };
 });
 
+// Mock SaveIndicator
+jest.mock('../components/SaveIndicator', () => {
+  return {
+    __esModule: true,
+    default: () => <span data-testid="save-indicator">saved</span>
+  };
+});
+
+// Mock TrackedChangesPlugin exports
+jest.mock('../components/editor/plugins/TrackedChangesPlugin', () => ({
+  __esModule: true,
+  default: () => null,
+  removeDecorationsForChange: jest.fn(),
+  addDecorationsForChange: jest.fn(),
+}));
+
 // Mock window.innerWidth for responsive testing
 const mockWindowWidth = (width: number) => {
   Object.defineProperty(window, 'innerWidth', {

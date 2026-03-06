@@ -30,7 +30,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update' | 'transaction_settled' | 'transaction_undone' | 'transaction_redone';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
@@ -499,6 +499,44 @@ export class SubmissionWebSocketClient {
 
   notifyContentUpdated(changes: any): void {
     this.send({ type: 'content_updated', data: changes });
+  }
+
+  /**
+   * Broadcast when a local transaction settles (pause-detected or manual).
+   * Remote clients use this to add the change to their tracked changes list
+   * and render decorations.
+   */
+  sendTransactionSettled(changeData: {
+    changeId: string;
+    field: string;
+    oldValue: string;
+    newValue: string;
+    regionMap?: any;
+  }): void {
+    this.send({ type: 'transaction_settled', data: changeData });
+  }
+
+  /**
+   * Broadcast when a transaction is undone (Ctrl+Z at transaction level).
+   * Remote clients use this to remove the listed change IDs and their
+   * decorations.
+   */
+  sendTransactionUndone(removedChangeIds: string[]): void {
+    this.send({ type: 'transaction_undone', data: { removedChangeIds } });
+  }
+
+  /**
+   * Broadcast when a previously undone transaction is redone (Ctrl+Y).
+   * Remote clients use this to re-add the change and its decorations.
+   */
+  sendTransactionRedone(changeData: {
+    changeId: string;
+    field: string;
+    oldValue: string;
+    newValue: string;
+    regionMap?: any;
+  }): void {
+    this.send({ type: 'transaction_redone', data: changeData });
   }
 
   get isConnected(): boolean {

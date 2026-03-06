@@ -26,6 +26,7 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import { UserPresence, UserPresenceData } from './UserPresence';
 import { User } from '../types/content';
 import { WebSocketManager, CursorPosition, WebSocketMessage } from '../services/websocketService';
+import { TransactionManager, Transaction } from '../services/transactionManager';
 import { isLexicalJson, extractTextFromLexical } from '../utils/lexicalUtils';
 import { getUserColor } from '../utils/userColors';
 import './CollaborativeEditor.css';
@@ -1562,6 +1563,12 @@ export interface CollaborativeEditorProps {
   originalText?: string;
   onTrackedChangeClick?: (changeId: string) => void;
   liveBaseline?: string;
+  /** TransactionManager instance for transaction-level undo/redo. */
+  transactionManager?: TransactionManager | null;
+  /** Callback fired after a transaction-level undo succeeds. */
+  onTransactionUndone?: (transaction: Transaction) => void;
+  /** Callback fired after a transaction-level redo succeeds. */
+  onTransactionRedone?: (transaction: Transaction) => void;
 }
 
 /**
@@ -1599,6 +1606,9 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   originalText,
   onTrackedChangeClick,
   liveBaseline,
+  transactionManager,
+  onTransactionUndone,
+  onTransactionRedone,
 }) => {
   // Create a unique browser session identifier for collaborative editing
   const browserSessionId = useMemo(() => {
@@ -2972,7 +2982,11 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                 ErrorBoundary={LexicalErrorBoundary}
               />
               <OnChangePlugin onChange={handleEditorChange} />
-              <TransactionHistoryPlugin transactionManager={null} />
+              <TransactionHistoryPlugin
+                transactionManager={transactionManager ?? null}
+                onTransactionUndone={onTransactionUndone}
+                onTransactionRedone={onTransactionRedone}
+              />
               <ListPlugin />
               <LinkPlugin />
               <ImagePlugin currentUser={currentUser} />
