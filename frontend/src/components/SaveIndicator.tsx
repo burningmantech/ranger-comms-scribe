@@ -118,31 +118,8 @@ const SaveIndicator: React.FC<SaveIndicatorProps> = ({
 
       if (unsaved.length === 0) return;
 
-      // 3. Try sendBeacon for fire-and-forget save
-      const sessionId = localStorage.getItem('sessionId');
-      const payload = JSON.stringify({
-        changes: unsaved.map((tx: Transaction) => ({
-          field: tx.field,
-          oldValue: tx.beforeSnapshot.text,
-          newValue: tx.afterSnapshot?.text ?? '',
-          regionMap: tx.regionMap ?? undefined,
-        })),
-      });
-
-      if (navigator.sendBeacon) {
-        const url = `${process.env.REACT_APP_API_URL || 'https://scrivenly.com/api'}/tracked-changes/submission/${submissionId}/batch`;
-        const blob = new Blob([payload], { type: 'application/json' });
-        // sendBeacon doesn't support custom headers — the batch endpoint
-        // should accept the session from a cookie or the beacon payload.
-        // As a fallback we still persist to localStorage below.
-        try {
-          navigator.sendBeacon(url, blob);
-        } catch {
-          // Swallow — localStorage fallback below.
-        }
-      }
-
-      // 4. Persist to localStorage as the reliable path
+      // Persist to localStorage as the reliable path
+      // (sendBeacon can't send auth headers so it would 401)
       const orphans: OrphanedTransaction[] = unsaved.map((tx: Transaction) => ({
         field: tx.field,
         oldValue: tx.beforeSnapshot.text,
