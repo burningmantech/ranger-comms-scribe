@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import {
   $getRoot,
+  $getNodeByKey,
   $isTextNode,
   TextNode,
   LexicalEditor,
@@ -89,8 +90,7 @@ export function removeDecorationsForChange(changeId: string): void {
     editor.update(
       () => {
         for (const nodeKey of deletionRecord.nodeKeys) {
-          const root = $getRoot();
-          const node = findNodeByKey(root, nodeKey);
+          const node = $getNodeByKey(nodeKey);
           if (node && $isDeletedTextNode(node)) {
             node.remove();
           }
@@ -162,8 +162,7 @@ export function removeDecorationsForChangeAnimated(changeId: string): Promise<vo
         editor.update(
           () => {
             for (const nodeKey of deletionRecord.nodeKeys) {
-              const root = $getRoot();
-              const node = findNodeByKey(root, nodeKey);
+              const node = $getNodeByKey(nodeKey);
               if (node && $isDeletedTextNode(node)) {
                 node.remove();
               }
@@ -200,19 +199,6 @@ export function getDecoratedChangeIds(): Set<string> {
   for (const id of highlightRegistry.keys()) ids.add(id);
   for (const id of deletionRegistry.keys()) ids.add(id);
   return ids;
-}
-
-// ---- Helper to find a Lexical node by key in the tree ----
-
-function findNodeByKey(root: any, key: NodeKey): any {
-  if (root.__key === key) return root;
-  if ('getChildren' in root && typeof root.getChildren === 'function') {
-    for (const child of root.getChildren()) {
-      const found = findNodeByKey(child, key);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 // ---- Plugin component ----
@@ -382,7 +368,7 @@ export default function TrackedChangesPlugin({
             const deletionRecord = deletionRegistry.get(removedId);
             if (deletionRecord) {
               for (const nodeKey of deletionRecord.nodeKeys) {
-                const node = findNodeByKey(root, nodeKey);
+                const node = $getNodeByKey(nodeKey);
                 if (node && $isDeletedTextNode(node)) {
                   node.remove();
                 }
@@ -400,7 +386,7 @@ export default function TrackedChangesPlugin({
               const deletionRecord = deletionRegistry.get(liveId);
               if (deletionRecord) {
                 for (const nodeKey of deletionRecord.nodeKeys) {
-                  const node = findNodeByKey(root, nodeKey);
+                  const node = $getNodeByKey(nodeKey);
                   if (node && $isDeletedTextNode(node)) {
                     node.remove();
                   }
