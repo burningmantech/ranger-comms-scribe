@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { undoChange, TrackedChange, calculateIncrementalChange } from '../../src/services/trackedChangesService';
+import { undoChange, deleteChange, getCascadeDependencies, batchCreateTrackedChanges, TrackedChange, calculateIncrementalChange, RegionMap } from '../../src/services/trackedChangesService';
 import { createCacheServiceMock } from './cache-mock-helpers';
 
 describe('trackedChangesService', () => {
@@ -217,6 +217,531 @@ describe('trackedChangesService', () => {
       const result = calculateIncrementalChange('hello world', 'goodbye earth');
       expect(result.oldValue).toBe('hello world');
       expect(result.newValue).toBe('goodbye earth');
+    });
+  });
+
+  describe('deleteChange', () => {
+    it('should successfully delete an existing change', async () => {
+      const changeId = 'test-change-id';
+      const submissionId = 'test-submission-id';
+      const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
+
+      const mockChange: TrackedChange = {
+        id: changeId,
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: new Date().toISOString(),
+        status: 'pending'
+      };
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [{ key: changeKey }]
+      });
+
+      mockEnv.R2.get = jest.fn().mockResolvedValue({
+        json: jest.fn().mockResolvedValue(mockChange)
+      });
+
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+
+      const result = await deleteChange(changeId, mockEnv);
+
+      expect(result).not.toBeNull();
+      expect(result?.submissionId).toBe(submissionId);
+      // Verify R2.delete was called (the deleteObject function calls env.R2.delete)
+      expect(mockEnv.R2.delete).toHaveBeenCalled();
+    });
+
+    it('should return null for non-existent change', async () => {
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: []
+      });
+
+      const result = await deleteChange('non-existent-id', mockEnv);
+
+      expect(result).toBeNull();
+    });
+
+    it('should delete changes regardless of status', async () => {
+      const changeId = 'approved-change-id';
+      const submissionId = 'test-submission-id';
+      const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
+
+      const mockChange: TrackedChange = {
+        id: changeId,
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: new Date().toISOString(),
+        status: 'approved',
+        approvedBy: 'user2',
+        approvedByName: 'User Two',
+        approvedAt: new Date().toISOString()
+      };
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [{ key: changeKey }]
+      });
+
+      mockEnv.R2.get = jest.fn().mockResolvedValue({
+        json: jest.fn().mockResolvedValue(mockChange)
+      });
+
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+
+      const result = await deleteChange(changeId, mockEnv);
+
+      expect(result).not.toBeNull();
+      expect(result?.submissionId).toBe(submissionId);
+    });
+  });
+
+  describe('getCascadeDependencies', () => {
+    it('should return empty array when target change has no regionMap', async () => {
+      const submissionId = 'test-submission-id';
+      const changeId = 'change-1';
+
+      const mockChange: TrackedChange = {
+        id: changeId,
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T00:00:00Z',
+        status: 'pending'
+        // No regionMap
+      };
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [{ key: `tracked-changes/submission/${submissionId}/${changeId}` }]
+      });
+
+      mockEnv.R2.get = jest.fn().mockResolvedValue({
+        json: jest.fn().mockResolvedValue(mockChange)
+      });
+
+      const result = await getCascadeDependencies(submissionId, changeId, mockEnv);
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return dependent changes with overlapping regions', async () => {
+      const submissionId = 'test-submission-id';
+      const change1: TrackedChange = {
+        id: 'change-1',
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T00:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 10, end: 20 }] }
+      };
+
+      const change2: TrackedChange = {
+        id: 'change-2',
+        submissionId,
+        field: 'content',
+        oldValue: 'old2',
+        newValue: 'new2',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T01:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 15, end: 25 }] }
+      };
+
+      const change3: TrackedChange = {
+        id: 'change-3',
+        submissionId,
+        field: 'content',
+        oldValue: 'old3',
+        newValue: 'new3',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T02:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 50, end: 60 }] }
+      };
+
+      // Mock R2.list to return all three changes
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [
+          { key: `tracked-changes/submission/${submissionId}/change-1` },
+          { key: `tracked-changes/submission/${submissionId}/change-2` },
+          { key: `tracked-changes/submission/${submissionId}/change-3` }
+        ]
+      });
+
+      // Mock R2.get to return the correct change for each key
+      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+        if (key.endsWith('change-1')) {
+          return Promise.resolve({ json: () => Promise.resolve(change1) });
+        }
+        if (key.endsWith('change-2')) {
+          return Promise.resolve({ json: () => Promise.resolve(change2) });
+        }
+        if (key.endsWith('change-3')) {
+          return Promise.resolve({ json: () => Promise.resolve(change3) });
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await getCascadeDependencies(submissionId, 'change-1', mockEnv);
+
+      // change-2 overlaps with change-1 (15-25 overlaps 10-20)
+      // change-3 does NOT overlap (50-60 vs 10-20)
+      expect(result).toContain('change-2');
+      expect(result).not.toContain('change-3');
+    });
+
+    it('should not include accepted changes in cascade', async () => {
+      const submissionId = 'test-submission-id';
+      const change1: TrackedChange = {
+        id: 'change-1',
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T00:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 10, end: 20 }] }
+      };
+
+      const change2: TrackedChange = {
+        id: 'change-2',
+        submissionId,
+        field: 'content',
+        oldValue: 'old2',
+        newValue: 'new2',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T01:00:00Z',
+        status: 'approved', // Accepted - should be excluded
+        regionMap: { field: 'content', ranges: [{ start: 15, end: 25 }] }
+      };
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [
+          { key: `tracked-changes/submission/${submissionId}/change-1` },
+          { key: `tracked-changes/submission/${submissionId}/change-2` }
+        ]
+      });
+
+      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+        if (key.endsWith('change-1')) {
+          return Promise.resolve({ json: () => Promise.resolve(change1) });
+        }
+        if (key.endsWith('change-2')) {
+          return Promise.resolve({ json: () => Promise.resolve(change2) });
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await getCascadeDependencies(submissionId, 'change-1', mockEnv);
+
+      expect(result).toEqual([]);
+    });
+
+    it('should not include changes for different fields', async () => {
+      const submissionId = 'test-submission-id';
+      const change1: TrackedChange = {
+        id: 'change-1',
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T00:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 10, end: 20 }] }
+      };
+
+      const change2: TrackedChange = {
+        id: 'change-2',
+        submissionId,
+        field: 'title', // Different field
+        oldValue: 'old2',
+        newValue: 'new2',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T01:00:00Z',
+        status: 'pending',
+        regionMap: { field: 'title', ranges: [{ start: 10, end: 20 }] }
+      };
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [
+          { key: `tracked-changes/submission/${submissionId}/change-1` },
+          { key: `tracked-changes/submission/${submissionId}/change-2` }
+        ]
+      });
+
+      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+        if (key.endsWith('change-1')) {
+          return Promise.resolve({ json: () => Promise.resolve(change1) });
+        }
+        if (key.endsWith('change-2')) {
+          return Promise.resolve({ json: () => Promise.resolve(change2) });
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await getCascadeDependencies(submissionId, 'change-1', mockEnv);
+
+      expect(result).toEqual([]);
+    });
+
+    it('should return empty for non-existent target change', async () => {
+      const submissionId = 'test-submission-id';
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: []
+      });
+
+      const result = await getCascadeDependencies(submissionId, 'non-existent', mockEnv);
+
+      expect(result).toEqual([]);
+    });
+
+    it('should not include earlier changes (only subsequent)', async () => {
+      const submissionId = 'test-submission-id';
+      const change1: TrackedChange = {
+        id: 'change-1',
+        submissionId,
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T02:00:00Z', // Later timestamp
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 10, end: 20 }] }
+      };
+
+      const change2: TrackedChange = {
+        id: 'change-2',
+        submissionId,
+        field: 'content',
+        oldValue: 'old2',
+        newValue: 'new2',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: '2024-01-01T00:00:00Z', // Earlier timestamp
+        status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: 15, end: 25 }] }
+      };
+
+      mockEnv.R2.list = jest.fn().mockResolvedValue({
+        objects: [
+          { key: `tracked-changes/submission/${submissionId}/change-1` },
+          { key: `tracked-changes/submission/${submissionId}/change-2` }
+        ]
+      });
+
+      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+        if (key.endsWith('change-1')) {
+          return Promise.resolve({ json: () => Promise.resolve(change1) });
+        }
+        if (key.endsWith('change-2')) {
+          return Promise.resolve({ json: () => Promise.resolve(change2) });
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await getCascadeDependencies(submissionId, 'change-1', mockEnv);
+
+      // change-2 has an earlier timestamp, so it should not be included
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('batchCreateTrackedChanges', () => {
+    it('should create multiple changes and return them all', async () => {
+      const submissionId = 'test-submission-id';
+
+      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+
+      const changesData = [
+        {
+          field: 'content',
+          oldValue: 'old1',
+          newValue: 'new1',
+          changedBy: 'user1',
+          changedByName: 'User One'
+        },
+        {
+          field: 'content',
+          oldValue: 'old2',
+          newValue: 'new2',
+          changedBy: 'user1',
+          changedByName: 'User One'
+        }
+      ];
+
+      const result = await batchCreateTrackedChanges(submissionId, changesData, mockEnv);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].field).toBe('content');
+      expect(result[0].oldValue).toBe('old1');
+      expect(result[0].newValue).toBe('new1');
+      expect(result[0].status).toBe('pending');
+      expect(result[0].submissionId).toBe(submissionId);
+      expect(result[1].oldValue).toBe('old2');
+      expect(result[1].newValue).toBe('new2');
+      // Each change should have a unique ID
+      expect(result[0].id).not.toBe(result[1].id);
+    });
+
+    it('should include regionMap when provided', async () => {
+      const submissionId = 'test-submission-id';
+
+      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+
+      const regionMap: RegionMap = {
+        field: 'content',
+        ranges: [{ start: 10, end: 20 }]
+      };
+
+      const changesData = [
+        {
+          field: 'content',
+          oldValue: 'old',
+          newValue: 'new',
+          changedBy: 'user1',
+          changedByName: 'User One',
+          regionMap
+        }
+      ];
+
+      const result = await batchCreateTrackedChanges(submissionId, changesData, mockEnv);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].regionMap).toEqual(regionMap);
+    });
+
+    it('should rollback on error (all-or-nothing)', async () => {
+      const submissionId = 'test-submission-id';
+
+      let putCallCount = 0;
+      mockEnv.R2.put = jest.fn().mockImplementation(() => {
+        putCallCount++;
+        // Fail on the third put call (second change's R2 write, after the first change's R2 + cache writes)
+        if (putCallCount >= 3) {
+          return Promise.reject(new Error('R2 write failed'));
+        }
+        return Promise.resolve(undefined);
+      });
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+
+      const changesData = [
+        {
+          field: 'content',
+          oldValue: 'old1',
+          newValue: 'new1',
+          changedBy: 'user1',
+          changedByName: 'User One'
+        },
+        {
+          field: 'content',
+          oldValue: 'old2',
+          newValue: 'new2',
+          changedBy: 'user1',
+          changedByName: 'User One'
+        }
+      ];
+
+      await expect(batchCreateTrackedChanges(submissionId, changesData, mockEnv))
+        .rejects.toThrow('R2 write failed');
+
+      // Verify R2.delete was called for rollback
+      expect(mockEnv.R2.delete).toHaveBeenCalled();
+    });
+
+    it('should preserve custom timestamps when provided', async () => {
+      const submissionId = 'test-submission-id';
+
+      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+
+      const customTimestamp = '2024-06-15T12:00:00Z';
+
+      const changesData = [
+        {
+          field: 'content',
+          oldValue: 'old',
+          newValue: 'new',
+          changedBy: 'user1',
+          changedByName: 'User One',
+          timestamp: customTimestamp
+        }
+      ];
+
+      const result = await batchCreateTrackedChanges(submissionId, changesData, mockEnv);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].timestamp).toBe(customTimestamp);
+    });
+  });
+
+  describe('TrackedChange with regionMap', () => {
+    it('should support TrackedChange without regionMap (backward compatible)', () => {
+      const change: TrackedChange = {
+        id: 'test-id',
+        submissionId: 'sub-id',
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: new Date().toISOString(),
+        status: 'pending'
+      };
+
+      expect(change.regionMap).toBeUndefined();
+    });
+
+    it('should support TrackedChange with regionMap', () => {
+      const change: TrackedChange = {
+        id: 'test-id',
+        submissionId: 'sub-id',
+        field: 'content',
+        oldValue: 'old',
+        newValue: 'new',
+        changedBy: 'user1',
+        changedByName: 'User One',
+        timestamp: new Date().toISOString(),
+        status: 'pending',
+        regionMap: {
+          field: 'content',
+          ranges: [{ start: 0, end: 10 }, { start: 20, end: 30 }]
+        }
+      };
+
+      expect(change.regionMap).toBeDefined();
+      expect(change.regionMap!.field).toBe('content');
+      expect(change.regionMap!.ranges).toHaveLength(2);
+      expect(change.regionMap!.ranges[0]).toEqual({ start: 0, end: 10 });
     });
   });
 });

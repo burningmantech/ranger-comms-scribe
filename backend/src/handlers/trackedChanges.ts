@@ -1,16 +1,19 @@
 import { CustomRequest } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { AutoRouter } from 'itty-router';
-import { 
-  getTrackedChanges, 
-  createTrackedChange, 
-  updateChangeStatus, 
-  getChangeComments, 
-  addChangeComment, 
+import {
+  getTrackedChanges,
+  createTrackedChange,
+  updateChangeStatus,
+  getChangeComments,
+  addChangeComment,
   getChangeHistory,
   getCompleteProposedVersion,
   getCompleteRichTextProposedVersion,
   undoChange,
+  deleteChange,
+  getCascadeDependencies,
+  batchCreateTrackedChanges,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
@@ -388,12 +391,114 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
   }
 }
 
+// Permanently delete a tracked change
+export async function deleteChangeHandler(request: CustomRequest, env: any): Promise<Response> {
+  const { changeId } = request.params!;
+
+  if (!request.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    // Check permissions - same as approve/reject
+    const hasPermission = request.user.userType === 'Admin' ||
+                         request.user.userType === 'CommsCadre' ||
+                         request.user.userType === 'CouncilManager';
+
+    if (!hasPermission) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    const result = await deleteChange(changeId, env);
+
+    if (!result) {
+      return new Response('Change not found', { status: 404 });
+    }
+
+    return new Response(JSON.stringify({ success: true, submissionId: result.submissionId }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Error deleting change:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
+// Get cascade dependency chain for a change
+export async function getCascadeHandler(request: CustomRequest, env: any): Promise<Response> {
+  const { submissionId, changeId } = request.params!;
+
+  if (!request.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    const dependentIds = await getCascadeDependencies(submissionId, changeId, env);
+
+    return new Response(JSON.stringify({ changeId, dependentIds }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Error getting cascade dependencies:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
+// Batch create tracked changes (all-or-nothing)
+export async function batchCreateHandler(request: CustomRequest, env: any): Promise<Response> {
+  const { submissionId } = request.params!;
+
+  if (!request.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    const { changes } = await request.json();
+
+    if (!Array.isArray(changes) || changes.length === 0) {
+      return new Response('Missing or empty changes array', { status: 400 });
+    }
+
+    // Validate each change has required fields
+    for (const change of changes) {
+      if (!change.field || !change.oldValue || !change.newValue) {
+        return new Response('Each change must have field, oldValue, and newValue', { status: 400 });
+      }
+    }
+
+    // Populate changedBy/changedByName from the authenticated user
+    const changesData = changes.map((change: any) => ({
+      field: change.field,
+      oldValue: change.oldValue,
+      newValue: change.newValue,
+      changedBy: request.user!.id,
+      changedByName: request.user!.name,
+      richTextOldValue: change.richTextOldValue,
+      richTextNewValue: change.richTextNewValue,
+      regionMap: change.regionMap,
+      timestamp: change.timestamp,
+    }));
+
+    const createdChanges = await batchCreateTrackedChanges(submissionId, changesData, env);
+
+    return new Response(JSON.stringify({ success: true, changes: createdChanges }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Error batch creating changes:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
 // Create the router
 export const router = AutoRouter({ base: '/api/tracked-changes' })
   .get('/submission/:submissionId', getTrackedChangesHandler)
   .post('/submission/:submissionId', createTrackedChangeHandler)
   .put('/submission/:submissionId', updateProposedVersionsHandler)
+  .post('/submission/:submissionId/batch', batchCreateHandler)
+  .get('/submission/:submissionId/cascade/:changeId', getCascadeHandler)
   .put('/change/:changeId/status', updateChangeStatusHandler)
+  .delete('/change/:changeId', deleteChangeHandler)
   .post('/change/:changeId/comment', addChangeCommentHandler)
   .post('/:changeId/undo', undoChangeHandler)
   .get('/history', getChangeHistoryHandler);

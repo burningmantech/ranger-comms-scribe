@@ -2,6 +2,11 @@ import { Env } from '../utils/sessionManager';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
 import { v4 as uuidv4 } from 'uuid';
 
+export interface RegionMap {
+  field: string;
+  ranges: Array<{ start: number; end: number }>;
+}
+
 export interface TrackedChange {
   id: string;
   submissionId: string;
@@ -23,6 +28,7 @@ export interface TrackedChange {
   completeProposedVersion?: string; // Store the complete proposed version for incremental changes
   richTextOldValue?: string; // Store the rich text content for the old value
   richTextNewValue?: string; // Store the rich text content for the new value
+  regionMap?: RegionMap; // Maps the affected region in the document for cascade dependency tracking
 }
 
 export interface ChangeComment {
@@ -692,4 +698,194 @@ export const undoChange = async (
     console.error('Error undoing change:', error);
     return null;
   }
-}; 
+};
+
+// Permanently delete a tracked change from R2 storage
+export const deleteChange = async (
+  changeId: string,
+  env: Env
+): Promise<{ submissionId: string } | null> => {
+  try {
+    // Find the change by scanning R2
+    const allChanges = await listObjects('tracked-changes/', env);
+
+    let targetChange: TrackedChange | null = null;
+    let changeKey: string | null = null;
+
+    for (const object of allChanges.objects) {
+      const change = await getObject<TrackedChange>(object.key, env);
+      if (change && change.id === changeId) {
+        targetChange = change;
+        changeKey = object.key;
+        break;
+      }
+    }
+
+    if (!targetChange || !changeKey) {
+      return null;
+    }
+
+    const submissionId = targetChange.submissionId;
+
+    // Delete the change from R2 and cache
+    await deleteObject(changeKey, env);
+
+    // Also remove the individual cache entry
+    const changeCacheKey = `change:${changeKey}`;
+    await deleteObject(changeCacheKey, env);
+
+    // Invalidate the submission's tracked changes cache
+    const submissionCacheKey = `tracked_changes:submission:${submissionId}`;
+    await deleteObject(submissionCacheKey, env);
+
+    console.log('Successfully deleted change:', changeId);
+    return { submissionId };
+  } catch (error) {
+    console.error('Error deleting change:', error);
+    return null;
+  }
+};
+
+// Check if two ranges overlap
+const rangesOverlap = (
+  a: { start: number; end: number },
+  b: { start: number; end: number }
+): boolean => {
+  return a.start < b.end && b.start < a.end;
+};
+
+// Get the cascade dependency chain for a given change
+export const getCascadeDependencies = async (
+  submissionId: string,
+  changeId: string,
+  env: Env
+): Promise<string[]> => {
+  try {
+    const changes = await getTrackedChanges(submissionId, env);
+
+    // Find the target change
+    const targetChange = changes.find(c => c.id === changeId);
+    if (!targetChange) {
+      return [];
+    }
+
+    // Target must have a regionMap to have dependents
+    if (!targetChange.regionMap) {
+      return [];
+    }
+
+    // Get all subsequent pending changes for the same field, ordered by timestamp ascending
+    const subsequentChanges = changes
+      .filter(c =>
+        c.id !== changeId &&
+        c.field === targetChange.field &&
+        c.status === 'pending' &&
+        new Date(c.timestamp).getTime() > new Date(targetChange.timestamp).getTime()
+      )
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    const dependentIds: string[] = [];
+
+    for (const change of subsequentChanges) {
+      // If the change has no regionMap, skip it (no overlap can be determined)
+      if (!change.regionMap) {
+        continue;
+      }
+
+      // If the change is for a different field in the regionMap, skip it
+      if (change.regionMap.field !== targetChange.regionMap.field) {
+        continue;
+      }
+
+      // Check for any overlapping ranges
+      let hasOverlap = false;
+      for (const targetRange of targetChange.regionMap.ranges) {
+        for (const changeRange of change.regionMap.ranges) {
+          if (rangesOverlap(targetRange, changeRange)) {
+            hasOverlap = true;
+            break;
+          }
+        }
+        if (hasOverlap) break;
+      }
+
+      if (hasOverlap) {
+        dependentIds.push(change.id);
+      }
+    }
+
+    return dependentIds;
+  } catch (error) {
+    console.error('Error getting cascade dependencies:', error);
+    return [];
+  }
+};
+
+// Batch create multiple tracked changes (all-or-nothing)
+export const batchCreateTrackedChanges = async (
+  submissionId: string,
+  changesData: Array<{
+    field: string;
+    oldValue: string;
+    newValue: string;
+    changedBy: string;
+    changedByName: string;
+    richTextOldValue?: string;
+    richTextNewValue?: string;
+    regionMap?: RegionMap;
+    timestamp?: string;
+  }>,
+  env: Env
+): Promise<TrackedChange[]> => {
+  const createdChanges: TrackedChange[] = [];
+  const createdKeys: string[] = [];
+
+  try {
+    for (const changeData of changesData) {
+      const changeId = uuidv4();
+      const timestamp = changeData.timestamp || new Date().toISOString();
+
+      const newChange: TrackedChange = {
+        id: changeId,
+        submissionId,
+        field: changeData.field,
+        oldValue: changeData.oldValue,
+        newValue: changeData.newValue,
+        changedBy: changeData.changedBy,
+        changedByName: changeData.changedByName,
+        timestamp,
+        status: 'pending',
+        richTextOldValue: changeData.richTextOldValue,
+        richTextNewValue: changeData.richTextNewValue,
+        regionMap: changeData.regionMap,
+      };
+
+      const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
+      await putObject(changeKey, newChange, env);
+
+      // Cache individually
+      const cacheKey = `change:${changeKey}`;
+      await putObject(cacheKey, newChange, env, undefined, 3600);
+
+      createdChanges.push(newChange);
+      createdKeys.push(changeKey);
+    }
+
+    // Invalidate the submission's tracked changes cache
+    await deleteObject(`tracked_changes:submission:${submissionId}`, env);
+
+    return createdChanges;
+  } catch (error) {
+    // Rollback: delete any changes that were created before the error
+    console.error('Error in batch create, rolling back:', error);
+    for (const key of createdKeys) {
+      try {
+        await deleteObject(key, env);
+        await deleteObject(`change:${key}`, env);
+      } catch (rollbackError) {
+        console.error('Error during rollback:', rollbackError);
+      }
+    }
+    throw error;
+  }
+};
