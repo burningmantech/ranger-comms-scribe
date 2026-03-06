@@ -67,6 +67,7 @@ type EventHandler = (...args: any[]) => void;
 
 const MAX_UNDO_DEPTH = 50;
 const AUTOSAVE_RETRY_DELAY_MS = 2000;
+const DEFAULT_PAUSE_DELAY_MS = 2500;
 
 // ---------------------------------------------------------------------------
 // TransactionManager
@@ -103,6 +104,11 @@ export class TransactionManager {
 
   private retryDelayMs: number;
 
+  // Pause detection state
+  private pauseDelayMs: number;
+  private pauseTimer: ReturnType<typeof setTimeout> | null = null;
+  private latestAfterLexicalState: string | object | null = null;
+
   constructor(
     submissionId: string,
     options?: {
@@ -113,10 +119,13 @@ export class TransactionManager {
       deleteFunction?: (submissionId: string, changeId: string) => Promise<void>;
       /** Override the retry delay (default 2000ms). Set to 0 for tests. */
       retryDelayMs?: number;
+      /** Override the pause/inactivity delay (default 2500ms). */
+      pauseDelayMs?: number;
     },
   ) {
     this.submissionId = submissionId;
     this.retryDelayMs = options?.retryDelayMs ?? AUTOSAVE_RETRY_DELAY_MS;
+    this.pauseDelayMs = options?.pauseDelayMs ?? DEFAULT_PAUSE_DELAY_MS;
 
     // Default save function delegates to trackedChangesService
     this.saveFunction =
@@ -214,11 +223,42 @@ export class TransactionManager {
   }
 
   /**
+   * Notify the manager that the editor content has changed.
+   * Resets the inactivity (pause) timer. When the timer fires
+   * after `pauseDelayMs` of inactivity, the active transaction
+   * is automatically settled with the most recent state.
+   *
+   * If there is no active transaction, this call is a no-op
+   * (the editor should call `startTransaction` first).
+   */
+  notifyActivity(afterLexicalState: string | object): void {
+    if (!this.activeTransaction) {
+      return;
+    }
+
+    // Store the latest state so the auto-settle uses the right snapshot
+    this.latestAfterLexicalState = afterLexicalState;
+
+    // Reset the debounce timer
+    this.cancelPauseTimer();
+    this.pauseTimer = setTimeout(() => {
+      this.pauseTimer = null;
+      if (this.activeTransaction && this.latestAfterLexicalState != null) {
+        this.settleTransaction(this.latestAfterLexicalState);
+      }
+    }, this.pauseDelayMs);
+  }
+
+  /**
    * Settle the currently active transaction.
    * Computes the diff & region map, pushes onto undo stack,
-   * and triggers autosave.
+   * and triggers autosave. If a pause timer is pending, it is cancelled.
    */
   settleTransaction(afterLexicalState: string | object): Transaction | null {
+    // Cancel any pending pause timer — we are settling explicitly
+    this.cancelPauseTimer();
+    this.latestAfterLexicalState = null;
+
     if (!this.activeTransaction) {
       return null;
     }
@@ -295,7 +335,7 @@ export class TransactionManager {
   /**
    * Push a settled/saved transaction onto the undo stack.
    */
-  pushTransaction(tx: Transaction): void {
+  private pushTransaction(tx: Transaction): void {
     this.undoStack.push(tx);
     if (this.undoStack.length > MAX_UNDO_DEPTH) {
       this.undoStack.shift();
@@ -458,12 +498,25 @@ export class TransactionManager {
    * Clear all ephemeral session state. Call when the session ends.
    */
   destroy(): void {
+    this.cancelPauseTimer();
+    this.latestAfterLexicalState = null;
     this.activeTransaction = null;
     this.undoStack = [];
     this.redoStack = [];
     this.listeners.clear();
     this.savingCount = 0;
     this.hasError = false;
+  }
+
+  // -----------------------------------------------------------------------
+  // Pause detection internals
+  // -----------------------------------------------------------------------
+
+  private cancelPauseTimer(): void {
+    if (this.pauseTimer !== null) {
+      clearTimeout(this.pauseTimer);
+      this.pauseTimer = null;
+    }
   }
 }
 

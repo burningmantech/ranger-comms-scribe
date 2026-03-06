@@ -79,18 +79,20 @@ function makeDeleteFn(): jest.Mock {
   return jest.fn(async () => {});
 }
 
-/** Create a TransactionManager with test defaults (zero retry delay). */
+/** Create a TransactionManager with test defaults (zero retry delay, no pause timer). */
 function createTM(
   submissionId: string,
   opts: {
     saveFunction?: jest.Mock;
     deleteFunction?: jest.Mock;
+    pauseDelayMs?: number;
   } = {},
 ): TransactionManager {
   return new TransactionManager(submissionId, {
     saveFunction: opts.saveFunction ?? makeSuccessSave(),
     deleteFunction: opts.deleteFunction ?? makeDeleteFn(),
     retryDelayMs: 0,
+    pauseDelayMs: opts.pauseDelayMs,
   });
 }
 
@@ -864,6 +866,198 @@ describe('TransactionManager', () => {
 
       expect(stack1).not.toBe(stack2);
       expect(stack1).toEqual(stack2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Pause detection / notifyActivity
+  // -----------------------------------------------------------------------
+
+  describe('pause detection (notifyActivity)', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('does nothing when there is no active transaction', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      // No startTransaction called — notifyActivity should be a no-op
+      tm.notifyActivity(makeLexical('Anything'));
+
+      jest.advanceTimersByTime(200);
+      expect(handler).not.toHaveBeenCalled();
+      expect(tm.getUndoStack().length).toBe(0);
+    });
+
+    it('auto-settles after the pause delay elapses', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      tm.startTransaction('content', makeLexical('A'));
+      tm.notifyActivity(makeLexical('B'));
+
+      // Not yet settled
+      expect(handler).not.toHaveBeenCalled();
+      expect(tm.getActiveTransaction()).not.toBeNull();
+
+      // Advance past the pause delay
+      jest.advanceTimersByTime(100);
+
+      // Now it should be settled
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(tm.getActiveTransaction()).toBeNull();
+
+      const tx = handler.mock.calls[0][0] as Transaction;
+      expect(tx.afterSnapshot!.text).toBe('B');
+      expect(tx.status).toBe('settled');
+    });
+
+    it('uses the most recent state when auto-settling', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      tm.startTransaction('content', makeLexical('A'));
+      tm.notifyActivity(makeLexical('B'));
+
+      // Advance partially — not enough to trigger
+      jest.advanceTimersByTime(50);
+      expect(handler).not.toHaveBeenCalled();
+
+      // New activity resets the timer and updates the latest state
+      tm.notifyActivity(makeLexical('C'));
+
+      // Advance another 50ms — the original timer would have fired, but was reset
+      jest.advanceTimersByTime(50);
+      expect(handler).not.toHaveBeenCalled();
+
+      // Advance the remaining 50ms for the reset timer
+      jest.advanceTimersByTime(50);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      const tx = handler.mock.calls[0][0] as Transaction;
+      expect(tx.afterSnapshot!.text).toBe('C');
+    });
+
+    it('resets the timer on each notifyActivity call', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      tm.startTransaction('content', makeLexical('A'));
+
+      // Simulate rapid typing: each call resets the timer
+      for (let i = 0; i < 5; i++) {
+        tm.notifyActivity(makeLexical(`Step ${i}`));
+        jest.advanceTimersByTime(50); // Less than pauseDelayMs each time
+      }
+
+      // Timer was continuously reset — should not have settled yet
+      expect(handler).not.toHaveBeenCalled();
+
+      // Advance the remaining time
+      jest.advanceTimersByTime(100);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      const tx = handler.mock.calls[0][0] as Transaction;
+      expect(tx.afterSnapshot!.text).toBe('Step 4');
+    });
+
+    it('manual settleTransaction cancels the pending pause timer', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      tm.startTransaction('content', makeLexical('A'));
+      tm.notifyActivity(makeLexical('B'));
+
+      // Settle manually before the timer fires
+      const tx = tm.settleTransaction(makeLexical('C'))!;
+      expect(tx.afterSnapshot!.text).toBe('C');
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Advance past the original timer — it should NOT fire again
+      jest.advanceTimersByTime(200);
+      expect(handler).toHaveBeenCalledTimes(1); // Still just the one manual settle
+    });
+
+    it('destroy cancels the pending pause timer', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      tm.startTransaction('content', makeLexical('A'));
+      tm.notifyActivity(makeLexical('B'));
+
+      tm.destroy();
+
+      // Timer should have been cancelled
+      jest.advanceTimersByTime(200);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('uses default pauseDelayMs of 2500 when not specified', () => {
+      const saveFn = makeSuccessSave();
+      const tm = new TransactionManager('sub-1', {
+        saveFunction: saveFn,
+        deleteFunction: makeDeleteFn(),
+        retryDelayMs: 0,
+        // pauseDelayMs not specified — should default to 2500
+      });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      tm.startTransaction('content', makeLexical('A'));
+      tm.notifyActivity(makeLexical('B'));
+
+      // Advance 2000ms — not enough
+      jest.advanceTimersByTime(2000);
+      expect(handler).not.toHaveBeenCalled();
+
+      // Advance to 2500ms total
+      jest.advanceTimersByTime(500);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('pushes auto-settled transaction onto undo stack', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+
+      tm.startTransaction('content', makeLexical('A'));
+      tm.notifyActivity(makeLexical('B'));
+
+      jest.advanceTimersByTime(100);
+
+      const stack = tm.getUndoStack();
+      expect(stack.length).toBe(1);
+      expect(stack[0].beforeSnapshot.text).toBe('A');
+      expect(stack[0].afterSnapshot!.text).toBe('B');
+    });
+
+    it('starting a new transaction while pause timer is pending settles the old one', () => {
+      const tm = createTM('sub-1', { pauseDelayMs: 100 });
+      const handler = jest.fn();
+      tm.on('transaction-settled', handler);
+
+      tm.startTransaction('content', makeLexical('A'));
+      tm.notifyActivity(makeLexical('B'));
+
+      // Start a new transaction before timer fires — should auto-settle the old one
+      tm.startTransaction('content', makeLexical('C'));
+
+      // The old transaction should have been settled (via startTransaction's auto-settle)
+      // which calls settleTransaction, which cancels the pause timer
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // The timer should not fire again
+      jest.advanceTimersByTime(200);
+      expect(handler).toHaveBeenCalledTimes(1);
     });
   });
 });

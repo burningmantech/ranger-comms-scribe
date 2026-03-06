@@ -68,6 +68,7 @@ class TrackedChangesService {
     field: string;
     oldValue: string;
     newValue: string;
+    regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
   }): Promise<TrackedChangeResponse> {
     try {
       const response = await fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
