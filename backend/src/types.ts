@@ -206,6 +206,35 @@ export interface ContentApproval {
   updatedAt: string;
 }
 
+export interface ApprovalGateDetail {
+  met: boolean;
+  approver?: string;
+  approverName?: string;
+  date?: string;
+  comment?: string;
+}
+
+export interface ApprovalGates {
+  councilManager: ApprovalGateDetail;
+  commsCadre: ApprovalGateDetail;
+  requiredApprovers: {
+    met: boolean;
+    approved: number;
+    total: number;
+    details: Array<{
+      email: string;
+      name?: string;
+      status: 'approved' | 'rejected' | 'pending';
+      date?: string;
+    }>;
+  };
+  trackedChanges: {
+    met: boolean;
+    pending: number;
+    total: number;
+  };
+}
+
 export interface ContentChange {
   id: string;
   submissionId: string;

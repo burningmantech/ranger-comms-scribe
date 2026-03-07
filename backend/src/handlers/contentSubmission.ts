@@ -1,6 +1,6 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group, CouncilRole } from '../types';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group, CouncilRole, ApprovalGates } from '../types';
 import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
@@ -78,6 +78,105 @@ async function recomputeApprovalStatus(submission: ContentSubmission, env: any):
   }
 
   return submission;
+}
+
+// Compute structured approval gate data for the frontend approval tracker
+export async function computeApprovalGates(submission: ContentSubmission, env: any): Promise<ApprovalGates> {
+  // Deduplicate by latest decision per approver (same logic as recomputeApprovalStatus)
+  const approvalsByApprover = new Map<string, ContentApproval>();
+  for (const a of submission.approvals || []) {
+    const key = (a.approverEmail || a.approverId || '').trim().toLowerCase();
+    if (!key) continue;
+    const prev = approvalsByApprover.get(key);
+    if (!prev) {
+      approvalsByApprover.set(key, a);
+    } else {
+      const prevTime = new Date(prev.updatedAt || prev.createdAt).getTime();
+      const currTime = new Date(a.updatedAt || a.createdAt).getTime();
+      approvalsByApprover.set(key, currTime >= prevTime ? a : prev);
+    }
+  }
+  const uniqueApprovals = Array.from(approvalsByApprover.values());
+
+  // --- Required approvers gate ---
+  const required = (submission.requiredApprovers || []).map(e => (e || '').trim().toLowerCase());
+  const requiredDetails = required.map(email => {
+    const approval = uniqueApprovals.find(
+      a => (a.approverEmail || '').trim().toLowerCase() === email
+    );
+    return {
+      email,
+      name: approval?.approverName,
+      status: (approval ? approval.status : 'pending') as 'approved' | 'rejected' | 'pending',
+      date: approval ? (approval.updatedAt || approval.createdAt) : undefined,
+    };
+  });
+  const approvedCount = requiredDetails.filter(d => d.status === 'approved').length;
+
+  // --- Council manager gate ---
+  const councilEmails = new Set<string>();
+  for (const role of Object.values(CouncilRole)) {
+    try {
+      const members = await getCouncilManagersForRole(role as CouncilRole, env);
+      for (const m of members || []) {
+        if (m && m.email) councilEmails.add(m.email.trim().toLowerCase());
+      }
+    } catch {}
+  }
+
+  const councilApproval = uniqueApprovals.find(a => {
+    const email = (a.approverEmail || '').trim().toLowerCase();
+    const isCouncil = (a.approverType === UserType.CouncilManager) ||
+      (a.approverRoles || []).includes('CouncilManager') ||
+      councilEmails.has(email);
+    return isCouncil && a.status === 'approved';
+  });
+
+  // --- Comms cadre gate ---
+  const commsCadreList = (await getObject<any[]>('comms_cadre:active', env)) || [];
+  const commsCadreEmails = new Set(
+    commsCadreList.filter(m => m.active).map(m => (m.email || '').trim().toLowerCase())
+  );
+
+  const commsCadreApproval = uniqueApprovals.find(a => {
+    const email = (a.approverEmail || '').trim().toLowerCase();
+    const isCommsCadre = (a.approverType === UserType.CommsCadre) ||
+      (a.approverRoles || []).includes('CommsCadre') ||
+      commsCadreEmails.has(email);
+    return isCommsCadre && a.status === 'approved';
+  });
+
+  // --- Tracked changes gate ---
+  const changes = await getTrackedChanges(submission.id, env);
+  const pendingChanges = changes.filter(c => c.status === 'pending');
+
+  return {
+    councilManager: {
+      met: !!councilApproval,
+      approver: councilApproval?.approverEmail,
+      approverName: councilApproval?.approverName,
+      date: councilApproval ? (councilApproval.updatedAt || councilApproval.createdAt) : undefined,
+      comment: councilApproval?.comment,
+    },
+    commsCadre: {
+      met: !!commsCadreApproval,
+      approver: commsCadreApproval?.approverEmail,
+      approverName: commsCadreApproval?.approverName,
+      date: commsCadreApproval ? (commsCadreApproval.updatedAt || commsCadreApproval.createdAt) : undefined,
+      comment: commsCadreApproval?.comment,
+    },
+    requiredApprovers: {
+      met: required.length === 0 || approvedCount === required.length,
+      approved: approvedCount,
+      total: required.length,
+      details: requiredDetails,
+    },
+    trackedChanges: {
+      met: pendingChanges.length === 0,
+      pending: pendingChanges.length,
+      total: changes.length,
+    },
+  };
 }
 
 // Create a new content submission
@@ -199,9 +298,13 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
     proposedVersionsContent: savedProposedVersions?.proposedVersionsContent ? 'present' : 'missing'
   });
   
+  // Compute approval gates for the frontend approval tracker
+  const approvalGates = await computeApprovalGates(submission, env);
+
   // Merge proposed versions into submission if they exist
   const submissionWithProposedVersions = {
     ...submission,
+    approvalGates,
     proposedVersions: savedProposedVersions ? {
       richTextContent: savedProposedVersions.proposedVersionsRichText,
       content: savedProposedVersions.proposedVersionsContent,
