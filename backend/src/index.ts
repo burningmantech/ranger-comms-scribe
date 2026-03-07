@@ -10,6 +10,7 @@ import { router as councilMemberRouter } from './handlers/councilMembers';
 import reminderRouter from './handlers/reminders';
 import { router as commsCadreRouter } from './handlers/commsCadre';
 import { router as trackedChangesRouter } from './handlers/trackedChanges';
+import { timelineRouter } from './handlers/timeline';
 import { router as websocketRouter } from './handlers/websocket';
 import { SubmissionWebSocketServer } from './services/websocketService';
 import { AutoRouter, cors } from 'itty-router';
@@ -178,6 +179,8 @@ router
     .all('/api/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
     .all('/api/tracked-changes/*', withValidSession) // Middleware to check session for tracked changes routes
     .all('/api/tracked-changes/*', trackedChangesRouter.fetch) // Handle all tracked changes routes
+    .all('/api/timeline/*', withValidSession) // Middleware to check session for timeline routes
+    .all('/api/timeline/*', timelineRouter.fetch) // Handle all timeline routes
     .all('/api/ws/*', websocketRouter.fetch) // Handle all WebSocket routes (auth is handled in the router)
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);
