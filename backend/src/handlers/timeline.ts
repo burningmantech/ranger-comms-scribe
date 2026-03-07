@@ -2,10 +2,9 @@ import { AutoRouter } from 'itty-router';
 import { CustomRequest, ContentSubmission, TimelineEvent } from '../types';
 import { getObject } from '../services/cacheService';
 import { getTrackedChanges, TrackedChange } from '../services/trackedChangesService';
-import { v4 as uuidv4 } from 'uuid';
 
 // GET /submission/:submissionId — returns merged, chronologically sorted timeline events
-async function getTimelineHandler(request: CustomRequest, env: any): Promise<Response> {
+export async function getTimelineHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
 
   if (!request.user) {
@@ -24,7 +23,7 @@ async function getTimelineHandler(request: CustomRequest, env: any): Promise<Res
 
     // 1. Submission created event
     events.push({
-      id: uuidv4(),
+      id: 'created-' + submission.id,
       type: 'submission_created',
       timestamp: submission.submittedAt,
       actorId: submission.submittedBy,
@@ -37,9 +36,9 @@ async function getTimelineHandler(request: CustomRequest, env: any): Promise<Res
     if (submission.approvals && submission.approvals.length > 0) {
       for (const approval of submission.approvals) {
         events.push({
-          id: uuidv4(),
+          id: 'approval-' + approval.id,
           type: 'approval_decision',
-          timestamp: approval.createdAt,
+          timestamp: approval.updatedAt || approval.createdAt,
           actorId: approval.approverId,
           actorName: approval.approverName,
           actorEmail: approval.approverEmail,
@@ -56,19 +55,16 @@ async function getTimelineHandler(request: CustomRequest, env: any): Promise<Res
     // 3. Comment events — from submission.comments array
     if (submission.comments && submission.comments.length > 0) {
       for (const comment of submission.comments) {
-        const snippet = comment.content.length > 150
-          ? comment.content.substring(0, 150) + '...'
-          : comment.content;
         events.push({
-          id: uuidv4(),
+          id: 'comment-' + comment.id,
           type: 'comment_added',
           timestamp: comment.createdAt,
           actorId: comment.authorId,
           actorName: comment.authorName,
           actorEmail: '',
-          summary: `${comment.authorName} commented: "${snippet}"`,
+          summary: 'Commented',
           details: {
-            commentId: comment.id,
+            content: comment.content?.substring(0, 150),
             isSuggestion: comment.isSuggestion,
             resolved: comment.resolved,
           },
@@ -86,7 +82,7 @@ async function getTimelineHandler(request: CustomRequest, env: any): Promise<Res
           const groupKey = `${change.changedBy}-${Math.floor(changeTimestamp / 120000)}`;
 
           events.push({
-            id: uuidv4(),
+            id: 'change-' + change.id,
             type: 'tracked_changes_made',
             timestamp: change.timestamp,
             actorId: change.changedBy,
@@ -104,7 +100,7 @@ async function getTimelineHandler(request: CustomRequest, env: any): Promise<Res
           // 5. Tracked change review events — for changes with status 'approved' or 'rejected'
           if (change.status === 'approved' && change.approvedBy) {
             events.push({
-              id: uuidv4(),
+              id: 'change-review-' + change.id,
               type: 'tracked_change_reviewed',
               timestamp: change.approvedAt || change.timestamp,
               actorId: change.approvedBy,
@@ -119,7 +115,7 @@ async function getTimelineHandler(request: CustomRequest, env: any): Promise<Res
             });
           } else if (change.status === 'rejected' && change.rejectedBy) {
             events.push({
-              id: uuidv4(),
+              id: 'change-review-' + change.id,
               type: 'tracked_change_reviewed',
               timestamp: change.rejectedAt || change.timestamp,
               actorId: change.rejectedBy,
@@ -143,7 +139,7 @@ async function getTimelineHandler(request: CustomRequest, env: any): Promise<Res
     // 6. Override approval event — if submission.approvalOverride is true
     if (submission.approvalOverride) {
       events.push({
-        id: uuidv4(),
+        id: 'override-' + submission.id,
         type: 'override_approval',
         timestamp: submission.approvalOverrideAt || submission.submittedAt,
         actorId: submission.approvalOverrideBy || '',
