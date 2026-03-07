@@ -5,7 +5,7 @@ export interface User {
   roles: UserRole[];
 }
 
-export type UserRole = 
+export type UserRole =
   | 'Public'
   | 'Member'
   | 'Lead'
@@ -131,6 +131,36 @@ export interface Change {
   completeProposedVersion?: string;
   richTextOldValue?: string;
   richTextNewValue?: string;
+  regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
+}
+
+export interface ApprovalGateDetail {
+  met: boolean;
+  approver?: string;
+  approverName?: string;
+  date?: string;
+  comment?: string;
+}
+
+export interface ApprovalGates {
+  councilManager: ApprovalGateDetail;
+  commsCadre: ApprovalGateDetail;
+  requiredApprovers: {
+    met: boolean;
+    approved: number;
+    total: number;
+    details: Array<{
+      email: string;
+      name?: string;
+      status: 'approved' | 'rejected' | 'pending';
+      date?: string;
+    }>;
+  };
+  trackedChanges: {
+    met: boolean;
+    pending: number;
+    total: number;
+  };
 }
 
 interface RolePermissions {
