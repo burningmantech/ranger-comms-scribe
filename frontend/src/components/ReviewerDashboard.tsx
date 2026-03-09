@@ -27,8 +27,13 @@ const ReviewerDashboard: React.FC = () => {
         setNeedsAction(data.needsAction || []);
         setInProgress(data.inProgress || []);
       } catch (err) {
-        console.error('Failed to load my-actions:', err);
-        // Fall back to using context submissions
+        console.error('Failed to load my-actions, falling back to context submissions:', err);
+        // Fall back: show pending/in_review submissions from context
+        const pending = submissions.filter(
+          (s) => ['pending', 'in_review', 'pending_review'].includes(s.status)
+        );
+        setNeedsAction(pending);
+        setInProgress([]);
       } finally {
         setLoading(false);
       }

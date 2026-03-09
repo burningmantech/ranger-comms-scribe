@@ -28,7 +28,7 @@ const SubmitterDashboard: React.FC = () => {
   const mySubmissions = React.useMemo(() => {
     if (!currentUser) return [];
     return submissions
-      .filter((s) => s.submittedBy === currentUser.email)
+      .filter((s) => s.submittedBy === currentUser.email || s.submittedBy === currentUser.id)
       .sort(
         (a, b) =>
           new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
