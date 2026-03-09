@@ -4,49 +4,34 @@ import { useContent } from '../contexts/ContentContext';
 import { ContentSubmission as ContentSubmissionComponent } from '../components/ContentSubmission';
 import { SubmissionHistory } from '../components/SubmissionHistory';
 import { ContentSubmission } from '../types/content';
+import ReviewerDashboard from '../components/ReviewerDashboard';
+import SubmitterDashboard from '../components/SubmitterDashboard';
 import './MySubmissions.css';
 
 export const MySubmissions: React.FC = () => {
   const navigate = useNavigate();
-  const { 
-    submissions, 
-    currentUser, 
+  const {
+    submissions,
+    currentUser,
     userPermissions,
-    saveSubmission, 
-    approveSubmission, 
-    rejectSubmission, 
-    addComment, 
+    saveSubmission,
+    approveSubmission,
+    rejectSubmission,
+    addComment,
     deleteSubmission,
-    createSuggestion, 
-    approveSuggestion, 
+    createSuggestion,
+    approveSuggestion,
     rejectSuggestion,
     refreshSubmissions
   } = useContent();
   const [selectedSubmission, setSelectedSubmission] = React.useState<ContentSubmission | null>(null);
 
-  React.useEffect(() => {
-    // Effect dependencies for re-rendering when user or submissions change
-  }, [currentUser, submissions]);
-
   if (!currentUser) {
     return <div className="error-message">Please log in to view requests.</div>;
   }
 
-  // Debug logging
-  console.log('MySubmissions Debug:', {
-    totalSubmissions: submissions.length,
-    currentUserEmail: currentUser.email,
-    userPermissions,
-    canViewFiltered: userPermissions?.canViewFilteredSubmissions,
-    submissions: submissions.map(s => ({ id: s.id, submittedBy: s.submittedBy, title: s.title }))
-  });
-
-  // Filter submissions based on user permissions
-  const filteredSubmissions = userPermissions?.canViewFilteredSubmissions
-    ? submissions // Show all submissions if user has permission
-    : submissions.filter(submission => submission.submittedBy === currentUser.email); // Show only user's submissions
-
-  console.log('Filtered submissions count:', filteredSubmissions.length);
+  const isReviewer = userPermissions?.canViewFilteredSubmissions ||
+    currentUser.roles?.some(r => ['CommsCadre', 'CouncilManager', 'Admin'].includes(r));
 
   return (
     <div className="content-management">
@@ -75,13 +60,10 @@ export const MySubmissions: React.FC = () => {
             onSuggestionApprove={approveSuggestion}
             onSuggestionReject={rejectSuggestion}
           />
+        ) : isReviewer ? (
+          <ReviewerDashboard />
         ) : (
-          <SubmissionHistory
-            submissions={filteredSubmissions}
-            onSelectSubmission={setSelectedSubmission}
-            onDeleteSubmission={deleteSubmission}
-            canViewFilteredSubmissions={userPermissions?.canViewFilteredSubmissions || false}
-          />
+          <SubmitterDashboard />
         )}
       </div>
 
@@ -95,4 +77,4 @@ export const MySubmissions: React.FC = () => {
       </button>
     </div>
   );
-}; 
+};

@@ -163,6 +163,29 @@ export interface ApprovalGates {
   };
 }
 
+export type TimelineEventType =
+  | 'submission_created'
+  | 'status_changed'
+  | 'approval_decision'
+  | 'tracked_changes_made'
+  | 'tracked_change_reviewed'
+  | 'comment_added'
+  | 'approver_added'
+  | 'approver_removed'
+  | 'override_approval';
+
+export interface TimelineEvent {
+  id: string;
+  type: TimelineEventType;
+  timestamp: string;
+  actorId: string;
+  actorName: string;
+  actorEmail: string;
+  summary: string;
+  details?: Record<string, any>;
+  groupKey?: string;
+}
+
 interface RolePermissions {
   canEdit: boolean;
   canApprove: boolean;

@@ -56,7 +56,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     deletedText: string,
     authorName?: string,
     authorColor?: string,
-    isBlockLevel?: boolean,
+    isBlockLevel: boolean = false,
     key?: NodeKey,
   ) {
     super(key);
@@ -64,7 +64,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     this.__deletedText = deletedText;
     this.__authorName = authorName;
     this.__authorColor = authorColor;
-    this.__isBlockLevel = isBlockLevel || false;
+    this.__isBlockLevel = isBlockLevel;
   }
 
   static importJSON(serializedNode: SerializedDeletedTextNode): DeletedTextNode {
@@ -86,7 +86,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       isBlockLevel: this.__isBlockLevel,
       type: 'deleted-text',
       version: 1,
-    };
+    } as SerializedDeletedTextNode;
   }
 
   createDOM(_config: EditorConfig): HTMLElement {
@@ -94,6 +94,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     element.className = 'tracked-deletion-wrapper';
     element.setAttribute('data-change-id', this.__changeId);
     element.setAttribute('spellcheck', 'false');
+    element.setAttribute('contenteditable', 'false');
     // Set initial transition-ready properties for smooth acceptance animation.
     // opacity and max-height are animated by removeDecorationsForChangeAnimated().
     element.style.opacity = '1';
@@ -106,7 +107,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
   }
 
   isInline(): boolean {
-    return true;
+    return !this.__isBlockLevel;
   }
 
   getTextContent(): string {
@@ -116,6 +117,11 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
 
   getChangeId(): string {
     return this.__changeId;
+  }
+
+  setChangeId(changeId: string): void {
+    const writable = this.getWritable();
+    writable.__changeId = changeId;
   }
 
   getDeletedText(): string {
@@ -133,6 +139,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
         deletedText={this.__deletedText}
         authorName={this.__authorName}
         authorColor={this.__authorColor}
+        isBlockLevel={this.__isBlockLevel}
         nodeKey={this.__key}
       />
     );
@@ -144,6 +151,7 @@ interface DeletedTextComponentProps {
   deletedText: string;
   authorName?: string;
   authorColor?: string;
+  isBlockLevel?: boolean;
   nodeKey: NodeKey;
 }
 
@@ -152,6 +160,7 @@ function DeletedTextComponent({
   deletedText,
   authorName,
   authorColor,
+  isBlockLevel,
   nodeKey,
 }: DeletedTextComponentProps): React.ReactElement {
   const handleClick = (e: React.MouseEvent) => {
@@ -174,9 +183,11 @@ function DeletedTextComponent({
   const color = authorColor || '#d32f2f';
   const bgColor = color + '14'; // ~8% opacity hex suffix
 
+  const Wrapper = isBlockLevel ? 'div' : 'span';
+
   return (
-    <span
-      className={`tracked-deletion${parts.length > 1 ? ' tracked-deletion-block' : ''}`}
+    <Wrapper
+      className={`tracked-deletion${isBlockLevel || parts.length > 1 ? ' tracked-deletion-block' : ''}`}
       data-change-id={changeId}
       contentEditable={false}
       spellCheck={false}
@@ -190,7 +201,7 @@ function DeletedTextComponent({
           {i < parts.length - 1 && <br />}
         </React.Fragment>
       ))}
-    </span>
+    </Wrapper>
   );
 }
 
@@ -200,7 +211,7 @@ export function $createDeletedTextNode(payload: DeletedTextPayload): DeletedText
     payload.deletedText,
     payload.authorName,
     payload.authorColor,
-    payload.isBlockLevel,
+    payload.isBlockLevel || false,
   );
 }
 

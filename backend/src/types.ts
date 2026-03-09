@@ -400,3 +400,45 @@ export interface CursorPosition {
   selectionEnd?: number;
   timestamp: string;
 }
+
+export interface SubmissionTemplate {
+  id: string;
+  name: string;
+  description: string;
+  fields: {
+    audience?: string[];
+    signatureText?: string;
+    suggestedSubjectLine?: string;
+    description?: string;
+    [key: string]: any;
+  };
+  sortOrder: number;
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationType =
+  | 'approval_received'
+  | 'rejection_received'
+  | 'changes_made'
+  | 'assigned_as_approver'
+  | 'submission_waiting'
+  | 'ready_to_send'
+  | 'comment_on_change'
+  | 'comment_reply'
+  | 'changes_requested';
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  submissionId?: string;
+  submissionTitle?: string;
+  actorName?: string;
+  read: boolean;
+  createdAt: string;
+}

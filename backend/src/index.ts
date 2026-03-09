@@ -11,6 +11,8 @@ import reminderRouter from './handlers/reminders';
 import { router as commsCadreRouter } from './handlers/commsCadre';
 import { router as trackedChangesRouter } from './handlers/trackedChanges';
 import { timelineRouter } from './handlers/timeline';
+import { router as templatesRouter } from './handlers/templates';
+import { router as notificationsRouter } from './handlers/notifications';
 import { router as websocketRouter } from './handlers/websocket';
 import { SubmissionWebSocketServer } from './services/websocketService';
 import { AutoRouter, cors } from 'itty-router';
@@ -181,6 +183,10 @@ router
     .all('/api/tracked-changes/*', trackedChangesRouter.fetch) // Handle all tracked changes routes
     .all('/api/timeline/*', withValidSession) // Middleware to check session for timeline routes
     .all('/api/timeline/*', timelineRouter.fetch) // Handle all timeline routes
+    .all('/api/templates/*', withValidSession) // Middleware to check session for templates routes
+    .all('/api/templates/*', templatesRouter.fetch) // Handle all template routes
+    .all('/api/notifications/*', withValidSession) // Middleware to check session for notification routes
+    .all('/api/notifications/*', notificationsRouter.fetch) // Handle all notification routes
     .all('/api/ws/*', websocketRouter.fetch) // Handle all WebSocket routes (auth is handled in the router)
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);

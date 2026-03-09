@@ -3,14 +3,14 @@
  */
 export function extractTextFromLexical(lexicalJson: string | object): string {
   if (!lexicalJson) return '';
-  
+
   try {
     const data = typeof lexicalJson === 'string' ? JSON.parse(lexicalJson) : lexicalJson;
-    
+
     if (!data || !data.root || !data.root.children) {
       return '';
     }
-    
+
     function extractTextFromNode(node: any): string {
       if (!node) return '';
 
@@ -33,15 +33,14 @@ export function extractTextFromLexical(lexicalJson: string | object): string {
 
       return '';
     }
-    
+
     // Extract text from all root children (paragraphs/blocks)
     // Join paragraphs with newlines to maintain structure
     const text = data.root.children
       .map(extractTextFromNode)
-      .filter((text: string) => text.trim() !== '')
       .join('\n');
-    
-    return text.trim();
+
+    return text;
   } catch (error) {
     console.error('Error extracting text from Lexical JSON:', error);
     return '';
@@ -53,7 +52,7 @@ export function extractTextFromLexical(lexicalJson: string | object): string {
  */
 export function isLexicalJson(data: string | object): boolean {
   if (!data) return false;
-  
+
   try {
     const parsed = typeof data === 'string' ? JSON.parse(data) : data;
     return parsed && parsed.root && Array.isArray(parsed.root.children);
@@ -67,17 +66,17 @@ export function isLexicalJson(data: string | object): boolean {
  */
 export function findAndReplaceInLexical(lexicalJson: string | object, searchText: string, replaceText: string): string {
   if (!lexicalJson || !searchText) return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
-  
+
   try {
     const data = typeof lexicalJson === 'string' ? JSON.parse(lexicalJson) : lexicalJson;
-    
+
     if (!data || !data.root || !data.root.children) {
       return JSON.stringify(data);
     }
-    
+
     function replaceInNode(node: any): any {
       if (!node) return node;
-      
+
       // If it's a text node, replace the text while preserving other properties
       if (node.type === 'text' && node.text) {
         return {
@@ -85,7 +84,7 @@ export function findAndReplaceInLexical(lexicalJson: string | object, searchText
           text: node.text.replace(new RegExp(escapeRegExp(searchText), 'g'), replaceText)
         };
       }
-      
+
       // If it has children, recursively process them
       if (node.children && Array.isArray(node.children)) {
         return {
@@ -93,10 +92,10 @@ export function findAndReplaceInLexical(lexicalJson: string | object, searchText
           children: node.children.map(replaceInNode)
         };
       }
-      
+
       return node;
     }
-    
+
     const updatedData = {
       ...data,
       root: {
@@ -104,7 +103,7 @@ export function findAndReplaceInLexical(lexicalJson: string | object, searchText
         children: data.root.children.map(replaceInNode)
       }
     };
-    
+
     return JSON.stringify(updatedData);
   } catch (error) {
     console.error('Error replacing text in Lexical JSON:', error);
@@ -117,19 +116,19 @@ export function findAndReplaceInLexical(lexicalJson: string | object, searchText
  */
 export function insertTextInLexical(lexicalJson: string | object, insertText: string, position?: number): string {
   if (!lexicalJson || !insertText) return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
-  
+
   try {
     const data = typeof lexicalJson === 'string' ? JSON.parse(lexicalJson) : lexicalJson;
-    
+
     if (!data || !data.root || !data.root.children) {
       return JSON.stringify(data);
     }
-    
+
     // If no position specified, append to the end
     if (position === undefined) {
       // Find the last paragraph and append text there, or create a new paragraph
       const lastChild = data.root.children[data.root.children.length - 1];
-      
+
       if (lastChild && lastChild.type === 'paragraph' && lastChild.children) {
         // Append to last paragraph
         const newTextNode = {
@@ -141,7 +140,7 @@ export function insertTextInLexical(lexicalJson: string | object, insertText: st
           type: "text",
           version: 1
         };
-        
+
         lastChild.children.push(newTextNode);
       } else {
         // Create new paragraph
@@ -163,7 +162,7 @@ export function insertTextInLexical(lexicalJson: string | object, insertText: st
           type: "paragraph",
           version: 1
         };
-        
+
         data.root.children.push(newParagraph);
       }
     } else {
@@ -171,7 +170,7 @@ export function insertTextInLexical(lexicalJson: string | object, insertText: st
       // For now, just append to end
       return insertTextInLexical(lexicalJson, insertText);
     }
-    
+
     return JSON.stringify(data);
   } catch (error) {
     console.error('Error inserting text in Lexical JSON:', error);
@@ -239,7 +238,7 @@ export function restoreDeletedTextInLexical(
 
       // Only try within-paragraph context (no \n in context strings)
       if (before.length > 0 && after.length > 0 &&
-          !before.includes('\n') && !after.includes('\n')) {
+        !before.includes('\n') && !after.includes('\n')) {
         const junction = before + after;
         const replacement = before + deletedText + after;
         const result = findAndReplaceInLexical(currentJson, junction, replacement);
@@ -317,7 +316,7 @@ export function restoreDeletedTextInLexical(
         // inserting — Lexical often leaves an empty paragraph behind when the
         // user deletes a line's text, and we want to restore into that slot.
         if (insertPos < current.root.children.length &&
-            nodeText(current.root.children[insertPos]).trim() === '') {
+          nodeText(current.root.children[insertPos]).trim() === '') {
           current.root.children[insertPos] = paraClone;
           currParaTexts[insertPos] = origParaTexts[origIdx];
         } else {

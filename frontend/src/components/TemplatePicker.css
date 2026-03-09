@@ -1,0 +1,71 @@
+/* =============================================================================
+   TemplatePicker — Row of selectable template cards
+   ============================================================================= */
+
+.template-picker {
+  margin-bottom: 16px;
+}
+
+.template-picker__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-medium);
+  margin-bottom: 8px;
+}
+
+.template-picker__row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.template-picker__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+  max-width: 150px;
+  padding: 14px 12px;
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  font-family: inherit;
+}
+
+.template-picker__card:hover {
+  border-color: var(--accent-gold);
+  background: #fffdf5;
+}
+
+.template-picker__card--selected {
+  border-color: var(--accent-gold);
+  background: #fffdf5;
+  box-shadow: 0 0 0 1px var(--accent-gold);
+}
+
+.template-picker__icon {
+  font-size: 20px;
+  color: var(--text-medium);
+}
+
+.template-picker__card--selected .template-picker__icon {
+  color: var(--accent-gold);
+}
+
+.template-picker__name {
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.template-picker__desc {
+  font-size: 11px;
+  color: var(--text-medium);
+  line-height: 1.3;
+}

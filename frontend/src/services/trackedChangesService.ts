@@ -18,6 +18,11 @@ export interface TrackedChangeResponse {
   approvedAt?: string;
   rejectedAt?: string;
   comments: ChangeComment[];
+  isIncremental?: boolean;
+  completeProposedVersion?: string;
+  richTextOldValue?: string;
+  richTextNewValue?: string;
+  regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
 }
 
 export interface ChangeComment {
@@ -101,6 +106,25 @@ class TrackedChangesService {
       }
     } catch (error) {
       console.error('Error updating change status:', error);
+      throw error;
+    }
+  }
+
+  async batchUpdateStatus(changeIds: string[], status: 'approved' | 'rejected', comment?: string): Promise<{ results: Array<{ changeId: string; success: boolean; error?: string }> }> {
+    try {
+      const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
+        method: 'PUT',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({ changeIds, status, comment })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to batch update: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error in batch status update:', error);
       throw error;
     }
   }
@@ -240,7 +264,13 @@ class TrackedChangesService {
       oldValue: apiChange.oldValue,
       newValue: apiChange.newValue,
       changedBy: apiChange.changedByName || apiChange.changedBy,
-      timestamp: new Date(apiChange.timestamp)
+      timestamp: new Date(apiChange.timestamp),
+      status: apiChange.status,
+      isIncremental: apiChange.isIncremental,
+      completeProposedVersion: apiChange.completeProposedVersion,
+      richTextOldValue: apiChange.richTextOldValue,
+      richTextNewValue: apiChange.richTextNewValue,
+      regionMap: apiChange.regionMap,
     };
   }
 

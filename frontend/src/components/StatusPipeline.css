@@ -1,0 +1,128 @@
+/* =============================================================================
+   StatusPipeline — Visual submission progress indicator
+   ============================================================================= */
+
+.status-pipeline {
+  padding: 4px 0;
+}
+
+.status-pipeline__stages {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+/* Stage */
+
+.status-pipeline__stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.status-pipeline__dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: all 0.2s ease;
+}
+
+.status-pipeline__stage--complete .status-pipeline__dot {
+  background: var(--accent-teal);
+  color: #fff;
+}
+
+.status-pipeline__stage--current .status-pipeline__dot {
+  background: var(--accent-gold);
+  color: #fff;
+}
+
+.status-pipeline__stage--future .status-pipeline__dot {
+  background: #e0e0e0;
+  color: #999;
+}
+
+.status-pipeline__dot-pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: pipeline-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pipeline-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.8); }
+}
+
+.status-pipeline__label {
+  font-family: 'Poppins', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-medium);
+  white-space: nowrap;
+}
+
+.status-pipeline__stage--current .status-pipeline__label {
+  color: var(--text-dark);
+  font-weight: 600;
+}
+
+.status-pipeline__stage--complete .status-pipeline__label {
+  color: var(--accent-teal);
+}
+
+/* Connector line */
+
+.status-pipeline__connector {
+  flex: 1;
+  height: 2px;
+  background: #e0e0e0;
+  min-width: 24px;
+  margin: 0 4px;
+  margin-bottom: 22px; /* Align with dots, not labels */
+}
+
+.status-pipeline__connector--complete {
+  background: var(--accent-teal);
+}
+
+/* Rejected state */
+
+.status-pipeline__rejected {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: #fdeaea;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--danger);
+}
+
+.status-pipeline__rejected i {
+  font-size: 14px;
+}
+
+/* Blocking reason */
+
+.status-pipeline__blocking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--accent-gold);
+}
+
+.status-pipeline__blocking i {
+  flex-shrink: 0;
+}

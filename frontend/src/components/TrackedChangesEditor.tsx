@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
-import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars } from '../utils/diffAlgorithm';
+import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffCharsOptimized } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
 import { cascadeReject } from '../utils/cascadeReject';
@@ -11,6 +11,11 @@ import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '.
 import { TransactionManager, Transaction } from '../services/transactionManager';
 import SaveIndicator from './SaveIndicator';
 import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange } from './editor/plugins/TrackedChangesPlugin';
+import ApprovalTracker from './ApprovalTracker';
+import ActivityTimeline from './ActivityTimeline';
+import BatchActionBar from './BatchActionBar';
+import ChangeGroup, { groupChanges } from './ChangeGroup';
+import { ApprovalGates } from '../types/content';
 import './TrackedChangesEditor.css';
 
 const webSocketManager = new WebSocketManager();
@@ -86,6 +91,8 @@ interface TrackedChangesEditorProps {
   onSubmissionApprove?: (submission: ContentSubmission) => Promise<void> | void;
   onSubmissionReject?: (submission: ContentSubmission) => Promise<void> | void;
   onBack?: () => void;
+  onReset?: () => void;
+  reviewMode?: boolean;
 }
 
 interface ConnectedUser {
@@ -144,10 +151,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onSubmissionApprove,
   onSubmissionReject,
   onBack,
+  onReset,
+  reviewMode = false
 }) => {
-  
+
   // WebSocket state is now managed by CollaborativeEditor
-  
+
   // Existing state
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
@@ -165,18 +174,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [replyToComment, setReplyToComment] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
-  
+
+  // Batch selection state
+  const [selectedChangeIds, setSelectedChangeIds] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
+  const [batchActionLoading, setBatchActionLoading] = useState(false);
+
+  // Track optimistically removed changes (e.g. via undo) so they disappear immediately
+  const [localRemovedChangeIds, setLocalRemovedChangeIds] = useState<Set<string>>(new Set());
+
   // Synchronized scrolling refs and state
   const originalDiffTextRef = useRef<HTMLDivElement>(null);
   const proposedDiffTextRef = useRef<HTMLDivElement>(null);
   const isScrollingSyncedRef = useRef(false);
-  
+
   // Content initialization tracking
   const hasInitializedContentRef = useRef(false);
-  
+
   // Remote update state
   const [remoteUpdateStatus, setRemoteUpdateStatus] = useState<'none' | 'applying' | 'applied'>('none');
-  
+
   // WebSocket client for sending updates
   const webSocketClientRef = useRef<any>(null);
   const lastCursorPositionRef = useRef<any>(null);
@@ -208,24 +225,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Tab navigation state for Proposed / Comparison / Original sections
   const [activeTab, setActiveTab] = useState<'proposed' | 'comparison' | 'original'>('proposed');
 
+  // Sidebar tab state: Changes, Timeline, or Comments (review mode)
+  const [sidebarTab, setSidebarTab] = useState<'changes' | 'timeline' | 'comments'>('changes');
+
   // Sidebar collapse state - initialize based on screen size
   const [isSmallScreen, setIsSmallScreen] = useState<boolean>(window.innerWidth <= 768);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState<boolean>(false); // Start with manual control
-  
+
   // Use refs to access current state values without causing re-renders
   const sidebarCollapsedRef = useRef(sidebarCollapsed);
   const sidebarAutoCollapsedRef = useRef(sidebarAutoCollapsed);
-  
+
   // Update refs when state changes
   useEffect(() => {
     sidebarCollapsedRef.current = sidebarCollapsed;
   }, [sidebarCollapsed]);
-  
+
   useEffect(() => {
     sidebarAutoCollapsedRef.current = sidebarAutoCollapsed;
   }, [sidebarAutoCollapsed]);
-  
+
   // Editable title/audience/replyTo/signature state
   const [editingTitle, setEditingTitle] = useState(false);
   const [editingAudience, setEditingAudience] = useState(false);
@@ -323,6 +343,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           newValue: tx.afterSnapshot.text,
           regionMap: tx.regionMap ?? undefined,
         });
+
+        // Map __pending_deletion__ to the real changeId in the Lexical JSON
+        const currentJson = editedProposedContentRef.current;
+        if (currentJson && currentJson.includes('__pending_deletion__')) {
+          const updatedJson = currentJson.replace(/__pending_deletion__/g, tx.remoteChangeId);
+          setEditedProposedContent(updatedJson);
+          editedProposedContentRef.current = updatedJson;
+
+          window.dispatchEvent(new CustomEvent('commit-pending-deletion', {
+            detail: { newId: tx.remoteChangeId }
+          }));
+        }
       }
       // Refresh sidebar so the new tracked change appears
       if (onRefreshNeeded) {
@@ -348,7 +380,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (!hasInitializedContentRef.current) {
       return;
     }
-    
+
     // Only update if the content has actually changed
     if (json !== editedProposedContentRef.current) {
       setEditedProposedContent(json);
@@ -377,23 +409,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Helper function to get displayable text from content
   const getDisplayableText = useCallback((content: string): string => {
     if (!content) return '';
-    
+
     // Check if content is Lexical JSON and extract text
     if (isLexicalJson(content)) {
       return extractTextFromLexical(content);
     }
-    
+
     return content;
   }, []);
 
   // Helper function to extract images from Lexical content
   const extractImagesFromLexical = useCallback((content: string): Array<{ src: string; alt: string; id?: string }> => {
     if (!content || !isLexicalJson(content)) return [];
-    
+
     try {
       const lexicalData = JSON.parse(content);
       const images: Array<{ src: string; alt: string; id?: string }> = [];
-      
+
       const extractFromChildren = (children: any[]) => {
         for (const child of children) {
           if (child.type === 'image') {
@@ -408,11 +440,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           }
         }
       };
-      
+
       if (lexicalData.root?.children) {
         extractFromChildren(lexicalData.root.children);
       }
-      
+
       return images;
     } catch (error) {
       console.error('Error extracting images from Lexical content:', error);
@@ -424,17 +456,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const renderImageInDiff = useCallback((image: { src: string; alt: string; id?: string }, type: 'added' | 'removed' | 'unchanged') => {
     return (
       <div key={image.id || image.src} className={`diff-image ${type}`}>
-        <img 
-          src={image.src} 
-          alt={image.alt} 
+        <img
+          src={image.src}
+          alt={image.alt}
           className="diff-image-content"
-          style={{ 
-            maxWidth: '200px', 
+          style={{
+            maxWidth: '200px',
             maxHeight: '150px',
             objectFit: 'contain',
-            border: type === 'added' ? '2px solid #28a745' : 
-                   type === 'removed' ? '2px solid #dc3545' : 
-                   '2px solid #6c757d',
+            border: type === 'added' ? '2px solid #28a745' :
+              type === 'removed' ? '2px solid #dc3545' :
+                '2px solid #6c757d',
             borderRadius: '4px',
             margin: '4px'
           }}
@@ -451,18 +483,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Helper function to get displayable text from change values (with debugging)
   const getChangeDisplayText = useCallback((content: string): string => {
-    
+
     if (!content) return '';
-    
+
     // Check if content is Lexical JSON and extract text
     if (isLexicalJson(content)) {
       const extracted = extractTextFromLexical(content);
       return extracted;
     }
-    
+
     // Handle partial JSON fragments (like the ones you're seeing)
     if (typeof content === 'string' && content.includes('"text":"')) {
-      
+
       // Extract text values from JSON fragments using regex
       const textMatches = content.match(/"text":"([^"]*)"/g);
       if (textMatches && textMatches.length > 0) {
@@ -470,14 +502,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           // Remove the "text":" and " parts
           return match.replace(/"text":"/, '').replace(/"$/, '');
         }).filter(text => text.trim() !== '');
-        
+
         if (extractedTexts.length > 0) {
           const result = extractedTexts.join(' ');
           return result;
         }
       }
     }
-    
+
     // If it's a string that looks like JSON but isn't Lexical, try to parse it
     if (typeof content === 'string' && content.trim().startsWith('{') && content.trim().endsWith('}')) {
       try {
@@ -494,11 +526,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           const stringified = JSON.stringify(parsed, null, 2);
           return stringified.substring(0, 200) + (stringified.length > 200 ? '...' : '');
         }
-              } catch (e) {
-          // Failed to parse as JSON, treating as plain text
-        }
+      } catch (e) {
+        // Failed to parse as JSON, treating as plain text
+      }
     }
-    
+
     return content;
   }, []);
 
@@ -534,33 +566,33 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (!content) {
       return '';
     }
-    
+
     // If it's already Lexical JSON, return as is
     if (isLexicalJson(content)) {
       return content;
     }
-    
+
     // Check if content contains HTML or rich text formatting
     // Only treat as HTML if it starts with HTML tags, not if it just contains them
-    const isHtml = typeof content === 'string' && 
-                   content.trim().startsWith('<') && 
-                   !isLexicalJson(content);
-    
+    const isHtml = typeof content === 'string' &&
+      content.trim().startsWith('<') &&
+      !isLexicalJson(content);
+
     if (isHtml) {
       // For HTML content, let the CollaborativeEditor handle the conversion
       // Just return the HTML content as-is and let the editor parse it
       return content;
     }
-    
+
     // If it's plain text, create a basic Lexical structure
     if (typeof content === 'string' && content.trim()) {
       // For plain text with line breaks, create multiple paragraphs
-      const lines = content.split('\n').filter(line => line.trim() !== '');
-      
+      const lines = content.split('\n');
+
       if (lines.length === 0) {
         return '';
       }
-      
+
       // Create a Lexical JSON structure with multiple paragraphs for multi-line content
       const children = lines.map(line => ({
         children: [
@@ -580,7 +612,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         type: "paragraph",
         version: 1
       }));
-      
+
       const basicLexicalStructure = {
         root: {
           children: children,
@@ -591,50 +623,53 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           version: 1
         }
       };
-      
+
       const result = JSON.stringify(basicLexicalStructure);
       return result;
     }
-    
+
     return '';
   }, []);
 
   // Initialize edited proposed content when component mounts or submission changes
   useEffect(() => {
+    // Clear optimistically removed changes when submission changes arrive from the server
+    setLocalRemovedChangeIds(new Set());
+
     // Prioritize rich text content from proposed versions, then fall back to other sources
     // Skip if the content looks like a comment (contains @change:)
-    let content = submission.proposedVersions?.richTextContent || 
-                   submission.proposedVersions?.content || 
-                   submission.richTextContent || 
-                   submission.content || '';
-    
+    let content = submission.proposedVersions?.richTextContent ||
+      submission.proposedVersions?.content ||
+      submission.richTextContent ||
+      submission.content || '';
 
-    
+
+
     // If content looks like a comment, skip it and use empty content
     if (typeof content === 'string' && content.includes('@change:')) {
       content = '';
     }
-    
+
     // DEFENSE: If we have editedProposedContent that's richer than what we're getting from backend,
     // and the new content is plain text while the current content is Lexical JSON, preserve the current content
     const isCurrentContentRich = editedProposedContent && isLexicalJson(editedProposedContent);
     const isNewContentPlain = content && !isLexicalJson(content);
-    
+
     if (isCurrentContentRich && isNewContentPlain && editedProposedContent) {
       // Keep the current rich content instead of overwriting with plain text
       return;
     }
-    
+
     const richTextContent = getRichTextContent(content);
-    
+
     // Always update the edited content and last saved content during initialization
     setEditedProposedContent(richTextContent);
     setLastSavedProposedContent(richTextContent);
-    
+
     // Always update the initial content reference for fresh data
     // This ensures the editor gets the latest content when entering edit mode
     initialEditorContentRef.current = richTextContent;
-    
+
     // Mark as initialized after a short delay to ensure all state is set
     setTimeout(() => {
       hasInitializedContentRef.current = true;
@@ -644,7 +679,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Synchronized scrolling handlers
   const handleOriginalScroll = useCallback(() => {
     if (isScrollingSyncedRef.current || !originalDiffTextRef.current || !proposedDiffTextRef.current) return;
-    
+
     isScrollingSyncedRef.current = true;
     requestAnimationFrame(() => {
       if (proposedDiffTextRef.current && originalDiffTextRef.current) {
@@ -656,7 +691,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   const handleProposedScroll = useCallback(() => {
     if (isScrollingSyncedRef.current || !originalDiffTextRef.current || !proposedDiffTextRef.current) return;
-    
+
     isScrollingSyncedRef.current = true;
     requestAnimationFrame(() => {
       if (originalDiffTextRef.current && proposedDiffTextRef.current) {
@@ -706,7 +741,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           if (replyMatch) {
             const replyToCommentId = replyMatch[1];
             // Check if the comment being replied to is on this change
-            const parentComment = submission.comments.find(pc => 
+            const parentComment = submission.comments.find(pc =>
               pc.id === replyToCommentId && pc.content.includes(`@change:${change.id}`)
             );
             return !!parentComment;
@@ -714,9 +749,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
         return false;
       });
-      
+
       const status = (change as any).status || 'pending';
-      
+
       return {
         ...change,
         status: status, // Use status from tracked changes data
@@ -724,9 +759,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         rejectedBy: (change as any).rejectedBy,
         comments: changeComments
       };
-    });
+    }).filter(c => !localRemovedChangeIds.has(c.id));
     return result;
-  }, [submission.changes, submission.comments]);
+  }, [submission.changes, submission.comments, localRemovedChangeIds]);
 
   const hasPendingTrackedChanges = trackedChanges.filter(c => c.status === 'pending').length > 0;
 
@@ -734,26 +769,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const canMakeEditorialDecisions = useCallback(() => {
     // Check if user has admin, comms cadre, or council manager roles
     const hasEditorialRole = currentUser.roles.includes('CommsCadre') ||
-                            currentUser.roles.includes('CouncilManager') ||
-                            currentUser.roles.includes('Admin');
-    
+      currentUser.roles.includes('CouncilManager') ||
+      currentUser.roles.includes('Admin');
+
     // Check if user is the submitter
     const isSubmitter = currentUser.id === submission.submittedBy ||
-                       currentUser.email === submission.submittedBy;
-    
+      currentUser.email === submission.submittedBy;
+
     // Check if user is a required approver
     const isRequiredApprover = submission.requiredApprovers?.includes(currentUser.email) || false;
-    
+
     // Check if user is an assigned council manager
     const isAssignedCouncilManager = submission.assignedCouncilManagers?.includes(currentUser.email) || false;
-    
+
     // Check if user has already approved this submission
-    const hasApproved = submission.approvals?.some(approval => 
+    const hasApproved = submission.approvals?.some(approval =>
       approval.approverEmail === currentUser.email || approval.approverId === currentUser.email
     ) || false;
-    
+
     const canMake = hasEditorialRole || isSubmitter || isRequiredApprover || isAssignedCouncilManager || hasApproved;
-    
+
     return canMake;
   }, [currentUser, submission.submittedBy, submission.requiredApprovers, submission.assignedCouncilManagers, submission.approvals]);
 
@@ -766,8 +801,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const proposedContentToDisplay = useMemo(() => {
     // Always return the edited content for collaborative editing
     return editedProposedContent || getDisplayableText(
-      submission.proposedVersions?.richTextContent || 
-      submission.proposedVersions?.content || 
+      submission.proposedVersions?.richTextContent ||
+      submission.proposedVersions?.content ||
       currentContent
     );
   }, [editedProposedContent, submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, currentContent, getDisplayableText]);
@@ -785,6 +820,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         status: c.status as 'pending' | 'approved' | 'rejected',
         richTextOldValue: c.richTextOldValue,
         richTextNewValue: c.richTextNewValue,
+        isIncremental: c.isIncremental,
+        completeProposedVersion: c.completeProposedVersion,
+        regionMap: c.regionMap,
       }));
   }, [trackedChanges]);
 
@@ -864,10 +902,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const revertChangeInContent = useCallback((change: TrackedChange) => {
     // Use ref for current content so concurrent calls see the latest value
     const currentContent = editedProposedContentRef.current ||
-                          editedProposedContent ||
-                          submission.proposedVersions?.richTextContent ||
-                          submission.richTextContent ||
-                          submission.content || '';
+      editedProposedContent ||
+      submission.proposedVersions?.richTextContent ||
+      submission.richTextContent ||
+      submission.content || '';
 
     // Original content for position context when restoring deletions
     const originalContent = submission.richTextContent || submission.content || '';
@@ -914,8 +952,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           const index = currentText.indexOf(newText);
           if (index !== -1) {
             const revertedText = currentText.substring(0, index) +
-                                oldText +
-                                currentText.substring(index + newText.length);
+              oldText +
+              currentText.substring(index + newText.length);
             applyRevert(getRichTextContent(revertedText));
           }
         }
@@ -935,44 +973,200 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
     if (decision === 'approve') {
       onApprove(changeId);
+
+      // Tell Lexical to remove the native DeletedTextNode permanently
+      window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
+        detail: { changeId, action: 'approve' }
+      }));
     } else {
       // Use cascade rejection flow — it handles dependency chains
       // and falls back gracefully for single changes.
-      const applyRevert = (content: string) => {
-        editedProposedContentRef.current = content;
-        setEditedProposedContent(content);
-        if (remoteUpdateFunctionRef.current) {
-          remoteUpdateFunctionRef.current(content);
-        }
-        setTimeout(() => { saveRevertedContent(content); }, 100);
-      };
-
       cascadeReject({
         submissionId: submission.id,
         changeId,
         transactionManager,
-        restoreEditorContent: applyRevert,
-        refetchSubmissionContent: async () => {
-          // Fallback: revert using the legacy direct-revert logic
-          const changeToRevert = trackedChanges.find(c => c.id === changeId);
-          if (changeToRevert) {
-            revertChangeInContent(changeToRevert);
+        // We omit restoreEditorContent here because applying an entire old
+        // session snapshot incorrectly wipes out all independent changes 
+        // made after it. Native resolutions and string-fallbacks are used instead.
+        refetchSubmissionContent: async (removedIds?: string[]) => {
+          const idsToProcess = removedIds && removedIds.length > 0 ? removedIds : [changeId];
+
+          for (const id of idsToProcess) {
+            const changeToRevert = trackedChanges.find(c => c.id === id);
+
+            if (changeToRevert) {
+              const oldText = getChangeDisplayText(changeToRevert.oldValue || '');
+              const newText = getChangeDisplayText(changeToRevert.newValue || '');
+
+              const diffSegments = diffCharsOptimized(oldText, newText);
+              const hasDeletion = diffSegments.some(seg => seg.type === 'delete');
+              const hasInsertion = diffSegments.some(seg => seg.type === 'insert');
+
+              if (hasDeletion && !hasInsertion) {
+                // Pure deletion - rely wholly on native DeletedTextNode replacement
+                window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
+                  detail: { changeId: id, action: 'reject' }
+                }));
+              } else {
+                // For additions or mixed replacements, also trigger string fallback
+                window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
+                  detail: { changeId: id, action: 'reject' }
+                }));
+                revertChangeInContent(changeToRevert);
+              }
+            }
           }
+
+          // Trigger auto-save so the native changes are persisted AND wait for it
+          await new Promise<void>((resolve) => {
+            setTimeout(async () => {
+              if (editedProposedContentRef.current) {
+                await saveRevertedContent(editedProposedContentRef.current);
+              }
+              resolve();
+            }, 100);
+          });
         },
+      }).then(() => {
+        // Cascade and state saving complete! Call onReject to trigger UI reload
+        onReject(changeId);
       }).catch((err) => {
-        // Cascade fetch failed — fall back to legacy direct revert
+        // Cascade fetch failed — fall back
         console.error('Cascade rejection failed, falling back to direct revert:', err);
         const changeToRevert = trackedChanges.find(c => c.id === changeId);
-        if (changeToRevert) {
-          revertChangeInContent(changeToRevert);
-        }
-      });
 
-      onReject(changeId);
+        if (changeToRevert) {
+          const oldText = getChangeDisplayText(changeToRevert.oldValue || '');
+          const newText = getChangeDisplayText(changeToRevert.newValue || '');
+          const diffSegments = diffCharsOptimized(oldText, newText);
+          const hasDeletion = diffSegments.some(seg => seg.type === 'delete');
+          const hasInsertion = diffSegments.some(seg => seg.type === 'insert');
+
+          if (hasDeletion && !hasInsertion) {
+            window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
+              detail: { changeId, action: 'reject' }
+            }));
+          } else {
+            window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
+              detail: { changeId, action: 'reject' }
+            }));
+            revertChangeInContent(changeToRevert);
+          }
+        }
+
+        setTimeout(() => {
+          if (editedProposedContentRef.current) {
+            saveRevertedContent(editedProposedContentRef.current).finally(() => {
+              onReject(changeId);
+            });
+          } else {
+            onReject(changeId);
+          }
+        }, 100);
+      });
     }
 
     // Real-time approvals are now handled by CollaborativeEditor
   }, [onApprove, onReject, trackedChanges, revertChangeInContent, submission.id, saveRevertedContent, transactionManager]);
+
+  // Batch action handlers
+  const pendingChanges = useMemo(
+    () => trackedChanges.filter(c => c.status === 'pending'),
+    [trackedChanges]
+  );
+
+  const changeGroups = useMemo(
+    () => groupChanges(trackedChanges),
+    [trackedChanges]
+  );
+
+  const toggleGroupExpansion = useCallback((index: number) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }, []);
+
+  const handleBatchAction = useCallback(async (changeIds: string[], status: 'approved' | 'rejected') => {
+    setBatchActionLoading(true);
+    try {
+      const { trackedChangesService } = await import('../services/trackedChangesService');
+      await trackedChangesService.batchUpdateStatus(changeIds, status);
+      // Process each change through the existing single-change handlers for UI updates
+      for (const id of changeIds) {
+        if (status === 'approved') {
+          onApprove(id);
+        } else {
+          onReject(id);
+        }
+      }
+      setSelectedChangeIds(new Set());
+    } catch (err) {
+      console.error('Batch action failed:', err);
+    } finally {
+      setBatchActionLoading(false);
+    }
+  }, [onApprove, onReject]);
+
+  const handleSelectAllChanges = useCallback(() => {
+    setSelectedChangeIds(new Set(pendingChanges.map(c => c.id)));
+  }, [pendingChanges]);
+
+  const handleDeselectAllChanges = useCallback(() => {
+    setSelectedChangeIds(new Set());
+  }, []);
+
+  const toggleChangeSelection = useCallback((changeId: string) => {
+    setSelectedChangeIds(prev => {
+      const next = new Set(prev);
+      if (next.has(changeId)) next.delete(changeId);
+      else next.add(changeId);
+      return next;
+    });
+  }, []);
+
+  // Keyboard shortcuts for batch actions
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (sidebarTab !== 'changes') return;
+
+      const pendingIds = trackedChanges.filter(c => c.status === 'pending').map(c => c.id);
+      if (pendingIds.length === 0) return;
+
+      const currentIdx = selectedChange ? pendingIds.indexOf(selectedChange) : -1;
+
+      if (e.key === 'j') {
+        e.preventDefault();
+        const nextIdx = Math.min(currentIdx + 1, pendingIds.length - 1);
+        setSelectedChange(pendingIds[nextIdx]);
+      } else if (e.key === 'k') {
+        e.preventDefault();
+        const prevIdx = Math.max(currentIdx - 1, 0);
+        setSelectedChange(pendingIds[prevIdx]);
+      } else if (e.key === 'a' && selectedChange) {
+        e.preventDefault();
+        if (selectedChangeIds.size > 0) {
+          handleBatchAction(Array.from(selectedChangeIds), 'approved');
+        } else {
+          handleChangeDecision(selectedChange, 'approve');
+        }
+      } else if (e.key === 'r' && selectedChange) {
+        e.preventDefault();
+        if (selectedChangeIds.size > 0) {
+          handleBatchAction(Array.from(selectedChangeIds), 'rejected');
+        } else {
+          handleChangeDecision(selectedChange, 'reject');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sidebarTab, selectedChange, selectedChangeIds, trackedChanges, handleBatchAction, handleChangeDecision]);
 
   // Handle suggestion submission
   const handleSuggestionSubmit = useCallback(() => {
@@ -1006,7 +1200,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onComment(comment);
       setCommentText('');
       setShowCommentDialog(false);
-      
+
       // Real-time comments are now handled by CollaborativeEditor
     }
   }, [selectedChange, commentText, currentUser.id, onComment]);
@@ -1021,7 +1215,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onApproveProposedVersion(currentUser.id, proposedVersionApprovalComment);
     setProposedVersionApprovalComment('');
     setShowProposedVersionApprovalDialog(false);
-    
+
     // Real-time status changes are now handled by CollaborativeEditor
   }, [currentUser.id, proposedVersionApprovalComment, onApproveProposedVersion]);
 
@@ -1030,7 +1224,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onRejectProposedVersion(currentUser.id, proposedVersionApprovalComment);
     setProposedVersionApprovalComment('');
     setShowProposedVersionApprovalDialog(false);
-    
+
     // Real-time status changes are now handled by CollaborativeEditor
   }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
 
@@ -1216,15 +1410,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const generateChangeSummary = useCallback((oldContent: string, newContent: string) => {
     const oldText = getDisplayableText(oldContent);
     const newText = getDisplayableText(newContent);
-    
+
     if (oldText === newText) {
       return 'No text changes';
     }
-    
+
     const wordDiff = smartDiff(oldText, newText);
     const additions = wordDiff.filter(d => d.type === 'insert').length;
     const deletions = wordDiff.filter(d => d.type === 'delete').length;
-    
+
     if (additions > 0 && deletions > 0) {
       return `Modified content (+${additions} additions, -${deletions} deletions)`;
     } else if (additions > 0) {
@@ -1307,25 +1501,25 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (isApplyingRealTimeUpdateRef.current) {
       return;
     }
-    
+
     // Store the latest content and cursor position
     lastRealTimeUpdateRef.current = content;
     lastCursorPositionRef.current = cursorPosition;
-    
+
     // If we're not already pending an update, schedule one
     if (!pendingRealTimeUpdateRef.current) {
       console.log('⏰ Scheduling real-time update in 150ms...');
       pendingRealTimeUpdateRef.current = true;
-      
+
       realTimeUpdateTimeoutRef.current = setTimeout(() => {
         console.log('⏰ Real-time update timeout triggered');
-        
+
         // Double-check we're not applying a remote update before sending
         if (isApplyingRealTimeUpdateRef.current) {
           pendingRealTimeUpdateRef.current = false;
           return;
         }
-        
+
         // Send the most recent content
         sendRealTimeUpdate(lastRealTimeUpdateRef.current, lastCursorPositionRef.current);
         pendingRealTimeUpdateRef.current = false;
@@ -1341,35 +1535,35 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (message.userId === (currentUser.id || currentUser.email)) {
       return;
     }
-    
+
     // Handle real-time content updates (character-by-character)
     if (message.type === 'realtime_content_update' && message.data) {
       const { content, lexicalContent, cursorPosition, isRealTime, userId, userName } = message.data;
-      
+
       // Ensure we have valid Lexical content
       if (!lexicalContent || !isLexicalJson(lexicalContent)) {
         console.error('❌ TrackedChangesEditor: Invalid Lexical content in real-time update');
         return; // Skip invalid content
       }
-      
+
       // Apply the real-time update immediately
       // Try to use the specialized real-time update function first
       if (webSocketClientRef.current && webSocketClientRef.current.applyRealTimeUpdate) {
         try {
           // Set flag to prevent feedback loop
           isApplyingRealTimeUpdateRef.current = true;
-          
+
           webSocketClientRef.current.applyRealTimeUpdate(lexicalContent);
-          
+
           // Update our state to match
           setEditedProposedContent(lexicalContent);
-          
+
           // Show brief visual feedback
           setRemoteUpdateStatus('applied');
           setTimeout(() => {
             setRemoteUpdateStatus('none');
           }, 1000);
-          
+
           // Request cursor positions from all connected users after real-time update
           if (webSocketClientRef.current) {
             setTimeout(() => {
@@ -1389,7 +1583,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               }
             }, 300); // Shorter delay for real-time updates
           }
-          
+
           // Reset flag after a short delay to ensure the change event is processed
           setTimeout(() => {
             isApplyingRealTimeUpdateRef.current = false;
@@ -1402,18 +1596,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         try {
           // Set flag to prevent feedback loop
           isApplyingRealTimeUpdateRef.current = true;
-          
+
           remoteUpdateFunctionRef.current(lexicalContent);
-          
+
           // Update our state to match
           setEditedProposedContent(lexicalContent);
-          
+
           // Show brief visual feedback
           setRemoteUpdateStatus('applied');
           setTimeout(() => {
             setRemoteUpdateStatus('none');
           }, 1000);
-          
+
           // Request cursor positions from all connected users after real-time update
           if (webSocketClientRef.current) {
             setTimeout(() => {
@@ -1433,7 +1627,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               }
             }, 300); // Shorter delay for real-time updates
           }
-          
+
           // Reset flag after a short delay to ensure the change event is processed
           setTimeout(() => {
             isApplyingRealTimeUpdateRef.current = false;
@@ -1447,9 +1641,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         if (lexicalContent && isLexicalJson(lexicalContent)) {
           // Set flag to prevent feedback loop
           isApplyingRealTimeUpdateRef.current = true;
-          
+
           setEditedProposedContent(lexicalContent);
-          
+
           // Reset flag after a short delay
           setTimeout(() => {
             isApplyingRealTimeUpdateRef.current = false;
@@ -1458,66 +1652,66 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           console.error('❌ TrackedChangesEditor: Cannot apply real-time update - invalid Lexical content');
         }
       }
-      
+
       return; // Exit early for real-time updates
     }
-    
+
     // Handle regular content updates (auto-save, manual save)
     if (message.type === 'content_updated' && message.data) {
       const { field, newValue, lexicalContent, isAutoSave, cursorPosition, preserveEditingState } = message.data;
-      
+
       if (field === 'proposedVersions.richTextContent' && lexicalContent) {
-      // Apply remote content updates
-      {
-        // Show visual feedback that a remote update is being applied
-        setRemoteUpdateStatus('applying');
-        
-        // Apply the content update through the CollaborativeEditor
-        if (remoteUpdateFunctionRef.current) {
-          try {
-            remoteUpdateFunctionRef.current(lexicalContent);
-          } catch (error) {
-            console.error('❌ TrackedChangesEditor: Error calling remote update function:', error);
-          }
-        } else {
-          setEditedProposedContent(lexicalContent);
-        }
-        
-        // Also update our state
-        setEditedProposedContent(lexicalContent);
-        setLastSavedProposedContent(lexicalContent);
-        
-        // Show applied status briefly
-        setRemoteUpdateStatus('applied');
-        setTimeout(() => {
-          setRemoteUpdateStatus('none');
-        }, 2000);
-        
-        // Request cursor positions from all connected users after remote update
-        if (webSocketClientRef.current) {
-          setTimeout(() => {
+        // Apply remote content updates
+        {
+          // Show visual feedback that a remote update is being applied
+          setRemoteUpdateStatus('applying');
+
+          // Apply the content update through the CollaborativeEditor
+          if (remoteUpdateFunctionRef.current) {
             try {
-              webSocketClientRef.current.send({
-                type: 'request_cursor_refresh_all',
-                data: {
-                  requesterId: effectiveUserId,
-                  requesterName: currentUser.name || currentUser.email,
-                  timestamp: new Date().toISOString(),
-                  reason: 'content_updated'
-                }
-              });
-              console.log('📍 Requested cursor refresh from all users after remote update');
+              remoteUpdateFunctionRef.current(lexicalContent);
             } catch (error) {
-              console.error('❌ Failed to request cursor refresh:', error);
+              console.error('❌ TrackedChangesEditor: Error calling remote update function:', error);
             }
-          }, 500); // Wait for content to settle before requesting cursors
+          } else {
+            setEditedProposedContent(lexicalContent);
+          }
+
+          // Also update our state
+          setEditedProposedContent(lexicalContent);
+          setLastSavedProposedContent(lexicalContent);
+
+          // Show applied status briefly
+          setRemoteUpdateStatus('applied');
+          setTimeout(() => {
+            setRemoteUpdateStatus('none');
+          }, 2000);
+
+          // Request cursor positions from all connected users after remote update
+          if (webSocketClientRef.current) {
+            setTimeout(() => {
+              try {
+                webSocketClientRef.current.send({
+                  type: 'request_cursor_refresh_all',
+                  data: {
+                    requesterId: effectiveUserId,
+                    requesterName: currentUser.name || currentUser.email,
+                    timestamp: new Date().toISOString(),
+                    reason: 'content_updated'
+                  }
+                });
+                console.log('📍 Requested cursor refresh from all users after remote update');
+              } catch (error) {
+                console.error('❌ Failed to request cursor refresh:', error);
+              }
+            }, 500); // Wait for content to settle before requesting cursors
+          }
+
+          // Show a notification about the update
+          if (onRefreshNeeded) {
+            onRefreshNeeded();
+          }
         }
-        
-        // Show a notification about the update
-        if (onRefreshNeeded) {
-          onRefreshNeeded();
-        }
-      }
       }
     }
   }, [currentUser.id, currentUser.email, onRefreshNeeded]);
@@ -1591,9 +1785,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const removedIds: string[] = [];
     if (tx.remoteChangeId) {
       removedIds.push(tx.remoteChangeId);
+      // Optimistically hide the change locally
+      setLocalRemovedChangeIds(prev => {
+        const next = new Set(prev);
+        next.add(tx.remoteChangeId!);
+        return next;
+      });
     }
     if (removedIds.length > 0) {
       client.sendTransactionUndone(removedIds);
+
+      // If we are undoing a tracked change natively, tell the plugin to restore it
+      for (const id of removedIds) {
+        window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
+          detail: { changeId: id, action: 'reject' } // Undo means reject/restore
+        }));
+      }
     }
     // Refresh sidebar
     if (onRefreshNeeded) {
@@ -1605,6 +1812,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleTransactionRedone = useCallback((tx: Transaction) => {
     const client = webSocketClientRef.current;
     if (!client || !tx.remoteChangeId || !tx.afterSnapshot) return;
+
+    // Optimistically unhide the change locally if it was hidden
+    setLocalRemovedChangeIds(prev => {
+      const next = new Set(prev);
+      next.delete(tx.remoteChangeId!);
+      return next;
+    });
+
     client.sendTransactionRedone({
       changeId: tx.remoteChangeId,
       field: tx.field,
@@ -1636,14 +1851,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     let lastResizeTime = 0;
     const DEBOUNCE_DELAY = 300; // Increased debounce to prevent bouncing
     const MIN_RESIZE_INTERVAL = 500; // Minimum time between auto-collapse/expand actions
-    
+
     const handleResize = () => {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
         const now = Date.now();
         const isSmallScreen = window.innerWidth <= 768;
         setIsSmallScreen(isSmallScreen);
-        
+
         if (isSmallScreen) {
           // On mobile, only auto-collapse if it was previously auto-collapsed
           if (!sidebarCollapsedRef.current && sidebarAutoCollapsedRef.current) {
@@ -1657,12 +1872,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             const containerWidth = editorContainer.offsetWidth;
             const sidebarWidth = 350; // Approximate sidebar width when expanded
             const minEditorWidth = 600; // Minimum width needed for comfortable editing
-            
+
             const availableWidth = containerWidth - sidebarWidth;
             const shouldCollapse = availableWidth < minEditorWidth;
-            
+
             console.log(`🖥️ Desktop: containerWidth=${containerWidth}, availableWidth=${availableWidth}, shouldCollapse=${shouldCollapse}, sidebarCollapsed=${sidebarCollapsedRef.current}, sidebarAutoCollapsed=${sidebarAutoCollapsedRef.current}`);
-            
+
             // Only trigger auto-collapse/expand if enough time has passed since last action
             if (now - lastResizeTime > MIN_RESIZE_INTERVAL) {
               if (shouldCollapse && !sidebarCollapsedRef.current && !sidebarAutoCollapsedRef.current) {
@@ -1692,7 +1907,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     // Add event listener
     window.addEventListener('resize', handleResize);
-    
+
     return () => {
       window.removeEventListener('resize', handleResize);
       clearTimeout(resizeTimeout);
@@ -1715,7 +1930,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onComment(reply);
       setReplyText('');
       setReplyToComment(null);
-      
+
       // Real-time comment replies are now handled by CollaborativeEditor
     }
   }, [replyText, currentUser.id, onComment]);
@@ -1739,22 +1954,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     setSidebarCollapsed(prev => {
       const newState = !prev;
       console.log('🔧 Setting sidebarCollapsed to:', newState);
-      
+
       // If expanding on mobile, scroll to show the content
       if (newState === false && isSmallScreen) {
         // Use setTimeout to ensure the DOM has updated before scrolling
         setTimeout(() => {
           const mobileSidebarSection = document.querySelector('.mobile-sidebar-section');
           if (mobileSidebarSection) {
-            mobileSidebarSection.scrollIntoView({ 
-              behavior: 'smooth', 
+            mobileSidebarSection.scrollIntoView({
+              behavior: 'smooth',
               block: 'start',
               inline: 'nearest'
             });
           }
         }, 100);
       }
-      
+
       return newState;
     });
     setSidebarAutoCollapsed(false); // Clear auto-collapse flag when manually toggled
@@ -1764,22 +1979,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Check if user can approve the proposed version
   const canApproveProposedVersion = useCallback(() => {
     return currentUser.roles.includes('CommsCadre') ||
-           currentUser.roles.includes('CouncilManager') ||
-           currentUser.roles.includes('REVIEWER');
+      currentUser.roles.includes('CouncilManager') ||
+      currentUser.roles.includes('REVIEWER');
   }, [currentUser.roles]);
 
   // Check if proposed version is already approved
   const isProposedVersionApproved = useMemo(() => {
-    return submission.approvals?.some(approval => 
-      approval.status === 'APPROVED' && 
+    return submission.approvals?.some(approval =>
+      approval.status === 'APPROVED' &&
       approval.approverId !== submission.submittedBy
     ) || false;
   }, [submission.approvals, submission.submittedBy]);
 
   // Get proposed version approval info
   const proposedVersionApprovalInfo = useMemo(() => {
-    const approval = submission.approvals?.find(a => 
-      a.status === 'APPROVED' && 
+    const approval = submission.approvals?.find(a =>
+      a.status === 'APPROVED' &&
       a.approverId !== submission.submittedBy
     );
     return approval;
@@ -1908,35 +2123,35 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, []);
 
   const proposedEditorContent = useMemo(() => {
-    const content = submission.proposedVersions?.richTextContent || 
-                   submission.proposedVersions?.content || 
-                   submission.richTextContent || 
-                   submission.content || '';
-    
+    const content = submission.proposedVersions?.richTextContent ||
+      submission.proposedVersions?.content ||
+      submission.richTextContent ||
+      submission.content || '';
+
     // Pass the content directly to the CollaborativeEditor
     // The CollaborativeEditor will handle the proper conversion based on content type:
     // - Lexical JSON: use as-is
     // - HTML: parse and preserve formatting
     // - Plain text: create proper paragraph structure
     let result = content;
-    
+
     // If content is empty, provide a default
     if (!result || result.trim() === '') {
       result = 'Start typing your content here...';
     }
-    
+
     return result;
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content]);
 
   return (
-    <div className="tracked-changes-editor">
+    <div className={`tracked-changes-editor ${reviewMode ? 'review-mode' : ''}`}>
       {/* Collaborative Editor handles its own WebSocket status and user presence */}
 
-      <div className="editor-toolbar" ref={toolbarRef}>
+      {!reviewMode && <div className="editor-toolbar" ref={toolbarRef}>
         <div className="toolbar-left">
           {onBack && (
             <button onClick={onBack} className="toolbar-back-btn" title="Back to requests">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
             </button>
           )}
           <span className="toolbar-value">
@@ -1980,6 +2195,20 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             >
               Save
             </button>
+            {onReset && (
+              <button
+                className="manual-save-button"
+                style={{ marginLeft: '8px', backgroundColor: '#fee2e2', color: '#b91c1c', borderColor: '#fca5a5' }}
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to reset this document to its original state and delete all tracked changes? This cannot be undone.")) {
+                    onReset();
+                  }
+                }}
+                title="Reset to Original"
+              >
+                Reset
+              </button>
+            )}
           </div>
           <div className="change-stats">
             <span className="stat pending">
@@ -1992,8 +2221,20 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               {`${trackedChanges.filter(c => c.status === 'rejected').length} rejected`}
             </span>
           </div>
+          {(submission as any).approvalGates && (
+            <ApprovalTracker
+              variant="compact"
+              gates={(submission as any).approvalGates as ApprovalGates}
+              onNavigateToChanges={() => {
+                const changesSection = document.querySelector('.changes-list');
+                if (changesSection) {
+                  changesSection.scrollIntoView({ behavior: 'smooth' });
+                }
+              }}
+            />
+          )}
         </div>
-      </div>
+      </div>}
 
       <div className="editor-container">
         <div className={`editor-content ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} ref={editorRef}>
@@ -2138,7 +2379,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             <span className="separator">•</span>
             <span>{new Date(submission.submittedAt).toLocaleDateString()}</span>
           </div>
-          
+
           <div className="document-body">
             {/* Tab bar for switching between sections */}
             <div className="tce-tab-bar">
@@ -2271,6 +2512,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     transactionManager={transactionManager}
                     onTransactionUndone={handleTransactionUndone}
                     onTransactionRedone={handleTransactionRedone}
+                    interceptDeletions={true}
                   />
                 </div>
 
@@ -2323,18 +2565,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   // Get the original and proposed content for comparison
                   const originalContent = submission.richTextContent || submission.content || '';
                   const proposedContent = editedProposedContent || submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
-                  
+
                   const originalText = getDisplayableText(originalContent);
                   const proposedText = getDisplayableText(proposedContent);
-                  
+
                   // Extract images from both versions
                   const originalImages = extractImagesFromLexical(originalContent);
                   const proposedImages = extractImagesFromLexical(proposedContent);
-                  
+
                   // Check if content is the same (text and images)
                   const textSame = originalText === proposedText;
                   const imagesSame = JSON.stringify(originalImages) === JSON.stringify(proposedImages);
-                  
+
                   if (textSame && imagesSame) {
                     return (
                       <div className="no-changes">
@@ -2342,7 +2584,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       </div>
                     );
                   }
-                  
+
                   // Generate word-level diff for text
                   const diff = smartDiff(originalText, proposedText);
 
@@ -2442,16 +2684,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   });
 
                   // Compare images
-                  const addedImages = proposedImages.filter(pImg => 
+                  const addedImages = proposedImages.filter(pImg =>
                     !originalImages.some(oImg => oImg.src === pImg.src)
                   );
-                  const removedImages = originalImages.filter(oImg => 
+                  const removedImages = originalImages.filter(oImg =>
                     !proposedImages.some(pImg => pImg.src === oImg.src)
                   );
-                  const unchangedImages = originalImages.filter(oImg => 
+                  const unchangedImages = originalImages.filter(oImg =>
                     proposedImages.some(pImg => pImg.src === oImg.src)
                   );
-                  
+
                   // Build aligned rows: each row has left and right content.
                   // When a paragraph is deleted, right side gets a spacer (and vice versa).
                   type Seg = { type: string; value: string; index: number };
@@ -2700,8 +2942,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   <div className="mobile-sidebar-content">
                     <div className="changes-list">
                       {trackedChanges.map(change => (
-                        <div 
-                          key={change.id} 
+                        <div
+                          key={change.id}
                           className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
                           onClick={() => handleChangeClick(change)}
                           data-change-id={change.id}
@@ -2734,13 +2976,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                     </span>
                                   </div>
                                   {change.oldValue && (
-                                    <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                    <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
                                       <strong style={{ marginRight: '6px' }}>From:</strong>
                                       {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
                                     </span>
                                   )}
                                   {change.newValue && (
-                                    <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                    <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
                                       <strong style={{ marginRight: '6px' }}>To:</strong>
                                       {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
                                     </span>
@@ -2749,12 +2991,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               ) : (
                                 <>
                                   {change.oldValue && (
-                                    <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                    <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
                                       <strong>Previous:</strong>{' '}{getChangeDisplayText(change.oldValue).substring(0, 100)}...
                                     </span>
                                   )}
                                   {change.newValue && (
-                                    <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
+                                    <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
                                       <strong>New:</strong>{' '}{getChangeDisplayText(change.newValue).substring(0, 100)}...
                                     </span>
                                   )}
@@ -2773,7 +3015,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                   }}
                                   title="Approve this change"
                                   disabled={change.status !== 'pending'}
-                                  style={{ 
+                                  style={{
                                     opacity: change.status !== 'pending' ? 0.4 : 1
                                   }}
                                 >
@@ -2787,7 +3029,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                   }}
                                   title="Reject this change"
                                   disabled={change.status !== 'pending'}
-                                  style={{ 
+                                  style={{
                                     opacity: change.status !== 'pending' ? 0.4 : 1
                                   }}
                                 >
@@ -2850,7 +3092,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               </div>
                               {expandedComments.has(change.id) && (
                                 <div className="comments-thread">
-                                  {organizeCommentsIntoTree(change.comments).map(comment => 
+                                  {organizeCommentsIntoTree(change.comments).map(comment =>
                                     renderCommentTree(comment, change.id)
                                   )}
                                 </div>
@@ -2867,200 +3109,285 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           </div>
         </div>
 
-        {/* Desktop sidebar - only shown on larger screens */}
-        {!isSmallScreen && (
-          <div className={`editor-sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${sidebarAutoCollapsed ? 'auto-collapsed' : ''}`}>
-          <div className="sidebar-header">
-            <h3>Changes & Comments</h3>
-            <button
-              className="sidebar-toggle-btn"
-              onClick={toggleSidebar}
-              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {sidebarCollapsed ? '◀' : '▶'}
-            </button>
-          </div>
-          {sidebarCollapsed && !isSmallScreen && (
-            <div className="collapsed-sidebar-indicator">
-              <div
-                className={`change-count-badge ${trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'has-pending' : ''}`}
-                title={`${trackedChanges.filter(c => c.status === 'pending').length > 0 ? trackedChanges.filter(c => c.status === 'pending').length + ' pending' : trackedChanges.length + ' changes'}`}
-              >
-                {trackedChanges.filter(c => c.status === 'pending').length || trackedChanges.length}
-              </div>
-            </div>
-          )}
-          {sidebarCollapsed && isSmallScreen && sidebarAutoCollapsed && (
-            <div className="mobile-auto-collapsed-indicator">
-              <span>💬 {trackedChanges.length} changes</span>
-            </div>
-          )}
-          {!sidebarCollapsed && (
-            <div className="sidebar-content">
-              <div className="changes-list">
-                {trackedChanges.map(change => (
-                <div 
-                  key={change.id} 
-                  className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
-                  onClick={() => handleChangeClick(change)}
-                  data-change-id={change.id}
+        {/* Desktop sidebar - only shown on larger screens (always visible in review mode) */}
+        {(!isSmallScreen || reviewMode) && (
+          <div className={`editor-sidebar ${reviewMode ? 'review-panel' : ''} ${sidebarCollapsed && !reviewMode ? 'collapsed' : ''} ${sidebarAutoCollapsed ? 'auto-collapsed' : ''}`}>
+            <div className="sidebar-header">
+              <div className="sidebar-tabs">
+                <button
+                  className={`sidebar-tab-btn ${sidebarTab === 'changes' ? 'active' : ''}`}
+                  onClick={() => setSidebarTab('changes')}
                 >
-                  <div className="change-header">
-                    <span className="change-author" title={change.changedBy}>{change.changedBy}</span>
-                    <span className="change-time" title={new Date(change.timestamp).toLocaleString()}>
-                      {formatRelativeTime(new Date(change.timestamp))}
-                    </span>
-                  </div>
-                  {FIELD_DISPLAY_NAMES[change.field] && (
-                    <div className="change-field-tag">
-                      <span className="field-tag-badge">{FIELD_DISPLAY_NAMES[change.field]}</span>
-                    </div>
-                  )}
-                  <div className="change-content">
-                    <div className="change-diff">
-                      {change.isIncremental ? (
-                        <>
-                          <div className="change-type-indicator">
-                            <span className="incremental-badge" style={{
-                              backgroundColor: '#e3f2fd',
-                              color: '#1976d2',
-                              padding: '2px 6px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: '500'
-                            }}>
-                              Incremental Change
-                            </span>
-                          </div>
-                          {change.oldValue && (
-                            <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong style={{ marginRight: '6px' }}>From:</strong>
-                              {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
-                            </span>
-                          )}
-                          {change.newValue && (
-                            <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong style={{ marginRight: '6px' }}>To:</strong>
-                              {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          {change.oldValue && (
-                            <span className="diff-old" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong>Previous:</strong>{' '}{getChangeDisplayText(change.oldValue).substring(0, 100)}...
-                            </span>
-                          )}
-                          {change.newValue && (
-                            <span className="diff-new" style={{fontSize: '13px', lineHeight: '1.4'}}>
-                              <strong>New:</strong>{' '}{getChangeDisplayText(change.newValue).substring(0, 100)}...
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="change-actions">
-                    {canMakeEditorialDecisions() && (
-                      <>
-                        <button
-                          className="btn btn-icon btn-sm btn-secondary action-button approve"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleChangeDecision(change.id, 'approve');
-                          }}
-                          title="Approve this change"
-                          disabled={change.status !== 'pending'}
-                          style={{ 
-                            opacity: change.status !== 'pending' ? 0.4 : 1
-                          }}
-                        >
-                          ✓
-                        </button>
-                        <button
-                          className="btn btn-icon btn-sm btn-danger action-button reject"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleChangeDecision(change.id, 'reject');
-                          }}
-                          title="Reject this change"
-                          disabled={change.status !== 'pending'}
-                          style={{ 
-                            opacity: change.status !== 'pending' ? 0.4 : 1
-                          }}
-                        >
-                          ✗
-                        </button>
-                        {(change.status === 'approved' || change.status === 'rejected') && (
-                          <button
-                            className="btn btn-icon btn-sm btn-neutral action-button undo"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleUndoChange(change.id);
-                            }}
-                            title="Undo this decision"
-                          >
-                            ↩
-                          </button>
-                        )}
-                      </>
-                    )}
-                    <button
-                      className="btn btn-icon btn-sm btn-tertiary action-button comment"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedChange(change.id);
-                        setShowCommentDialog(true);
-                      }}
-                      title="Add comment"
-                    >
-                      💬
-                    </button>
-                  </div>
-                  {change.status !== 'pending' && (
-                    <div className="change-status">
-                      {change.status === 'approved' && (
-                        <span className="status-label approved">
-                          ✓ Approved by {change.approvedBy}
-                        </span>
-                      )}
-                      {change.status === 'rejected' && (
-                        <span className="status-label rejected">
-                          ✗ Rejected by {change.rejectedBy}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {change.comments.length > 0 && (
-                    <div className="change-comments">
-                      <div className="comments-header">
-                        <span className="comments-count">{change.comments.length} comment{change.comments.length !== 1 ? 's' : ''}</span>
-                        <button
-                          className="btn btn-icon btn-sm btn-neutral expand-comments-button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleCommentExpansion(change.id);
-                          }}
-                        >
-                          {expandedComments.has(change.id) ? '▲' : '▼'}
-                        </button>
-                      </div>
-                      {expandedComments.has(change.id) && (
-                        <div className="comments-thread">
-                          {organizeCommentsIntoTree(change.comments).map(comment => 
-                            renderCommentTree(comment, change.id)
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                ))}
+                  Changes
+                </button>
+                <button
+                  className={`sidebar-tab-btn ${sidebarTab === 'timeline' ? 'active' : ''}`}
+                  onClick={() => setSidebarTab('timeline')}
+                >
+                  Timeline
+                </button>
+                {reviewMode && (
+                  <button
+                    className={`sidebar-tab-btn ${sidebarTab === 'comments' ? 'active' : ''}`}
+                    onClick={() => setSidebarTab('comments')}
+                  >
+                    Comments
+                  </button>
+                )}
               </div>
+              {!reviewMode && (
+                <button
+                  className="sidebar-toggle-btn"
+                  onClick={toggleSidebar}
+                  title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                >
+                  {sidebarCollapsed ? '◀' : '▶'}
+                </button>
+              )}
             </div>
-          )}
-        </div>
+            {sidebarCollapsed && !isSmallScreen && (
+              <div className="collapsed-sidebar-indicator">
+                <div
+                  className={`change-count-badge ${trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'has-pending' : ''}`}
+                  title={`${trackedChanges.filter(c => c.status === 'pending').length > 0 ? trackedChanges.filter(c => c.status === 'pending').length + ' pending' : trackedChanges.length + ' changes'}`}
+                >
+                  {trackedChanges.filter(c => c.status === 'pending').length || trackedChanges.length}
+                </div>
+              </div>
+            )}
+            {sidebarCollapsed && isSmallScreen && sidebarAutoCollapsed && (
+              <div className="mobile-auto-collapsed-indicator">
+                <span>💬 {trackedChanges.length} changes</span>
+              </div>
+            )}
+            {(!sidebarCollapsed || reviewMode) && (
+              <div className="sidebar-content">
+                {sidebarTab === 'comments' ? (
+                  <div className="sidebar-comments-content">
+                    {submission.comments.length === 0 ? (
+                      <p className="sidebar-empty-state">No comments yet.</p>
+                    ) : (
+                      <div className="submission-comments-list">
+                        {submission.comments.map(comment => (
+                          <div key={comment.id} className="submission-comment-item">
+                            <div className="submission-comment-header">
+                              <span className="submission-comment-author">{comment.authorId}</span>
+                              <span className="submission-comment-time">
+                                {formatRelativeTime(new Date(comment.createdAt))}
+                              </span>
+                            </div>
+                            <p className="submission-comment-body">{comment.content}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : sidebarTab === 'timeline' ? (
+                  <div className="sidebar-timeline-content">
+                    <ActivityTimeline submissionId={submission.id} />
+                  </div>
+                ) : (
+                  <>
+                    {canMakeEditorialDecisions() && pendingChanges.length > 0 && (
+                      <BatchActionBar
+                        selectedCount={selectedChangeIds.size}
+                        totalCount={pendingChanges.length}
+                        onSelectAll={handleSelectAllChanges}
+                        onDeselectAll={handleDeselectAllChanges}
+                        onApproveSelected={() => handleBatchAction(Array.from(selectedChangeIds), 'approved')}
+                        onRejectSelected={() => handleBatchAction(Array.from(selectedChangeIds), 'rejected')}
+                        onApproveAll={() => handleBatchAction(pendingChanges.map(c => c.id), 'approved')}
+                        onRejectAll={() => handleBatchAction(pendingChanges.map(c => c.id), 'rejected')}
+                        disabled={batchActionLoading}
+                      />
+                    )}
+                    <div className="changes-list">
+                      {changeGroups.map((group, groupIndex) => (
+                        <ChangeGroup
+                          key={`${group.authorEmail}-${group.timestamp}`}
+                          authorName={group.authorName}
+                          authorEmail={group.authorEmail}
+                          timestamp={group.timestamp}
+                          changes={group.changes}
+                          expanded={expandedGroups.has(groupIndex)}
+                          onToggle={() => toggleGroupExpansion(groupIndex)}
+                          onApproveGroup={() => handleBatchAction(
+                            group.changes.filter(c => c.status === 'pending').map(c => c.id),
+                            'approved'
+                          )}
+                          onRejectGroup={() => handleBatchAction(
+                            group.changes.filter(c => c.status === 'pending').map(c => c.id),
+                            'rejected'
+                          )}
+                          selectedIds={selectedChangeIds}
+                          onToggleSelect={toggleChangeSelection}
+                          canReview={canMakeEditorialDecisions()}
+                          renderChange={(change) => (
+                            <div
+                              className={`change-item ${change.status} ${selectedChange === change.id ? 'selected' : ''}`}
+                              onClick={() => handleChangeClick(change as any)}
+                              data-change-id={change.id}
+                            >
+                              <div className="change-header">
+                                <span className="change-author" title={change.changedBy}>{change.changedBy}</span>
+                                <span className="change-time" title={new Date(change.timestamp).toLocaleString()}>
+                                  {formatRelativeTime(new Date(change.timestamp))}
+                                </span>
+                              </div>
+                              {FIELD_DISPLAY_NAMES[change.field] && (
+                                <div className="change-field-tag">
+                                  <span className="field-tag-badge">{FIELD_DISPLAY_NAMES[change.field]}</span>
+                                </div>
+                              )}
+                              <div className="change-content">
+                                <div className="change-diff">
+                                  {change.isIncremental ? (
+                                    <>
+                                      <div className="change-type-indicator">
+                                        <span className="incremental-badge" style={{
+                                          backgroundColor: '#e3f2fd',
+                                          color: '#1976d2',
+                                          padding: '2px 6px',
+                                          borderRadius: '4px',
+                                          fontSize: '11px',
+                                          fontWeight: '500'
+                                        }}>
+                                          Incremental Change
+                                        </span>
+                                      </div>
+                                      {change.oldValue && (
+                                        <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                          <strong style={{ marginRight: '6px' }}>From:</strong>
+                                          {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
+                                        </span>
+                                      )}
+                                      {change.newValue && (
+                                        <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                          <strong style={{ marginRight: '6px' }}>To:</strong>
+                                          {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
+                                        </span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      {change.oldValue && (
+                                        <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                          <strong>Previous:</strong>{' '}{getChangeDisplayText(change.oldValue).substring(0, 100)}...
+                                        </span>
+                                      )}
+                                      {change.newValue && (
+                                        <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                          <strong>New:</strong>{' '}{getChangeDisplayText(change.newValue).substring(0, 100)}...
+                                        </span>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="change-actions">
+                                {canMakeEditorialDecisions() && (
+                                  <>
+                                    <button
+                                      className="btn btn-icon btn-sm btn-secondary action-button approve"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleChangeDecision(change.id, 'approve');
+                                      }}
+                                      title="Approve this change"
+                                      disabled={change.status !== 'pending'}
+                                      style={{
+                                        opacity: change.status !== 'pending' ? 0.4 : 1
+                                      }}
+                                    >
+                                      ✓
+                                    </button>
+                                    <button
+                                      className="btn btn-icon btn-sm btn-danger action-button reject"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleChangeDecision(change.id, 'reject');
+                                      }}
+                                      title="Reject this change"
+                                      disabled={change.status !== 'pending'}
+                                      style={{
+                                        opacity: change.status !== 'pending' ? 0.4 : 1
+                                      }}
+                                    >
+                                      ✗
+                                    </button>
+                                    {(change.status === 'approved' || change.status === 'rejected') && (
+                                      <button
+                                        className="btn btn-icon btn-sm btn-neutral action-button undo"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleUndoChange(change.id);
+                                        }}
+                                        title="Undo this decision"
+                                      >
+                                        ↩
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                                <button
+                                  className="btn btn-icon btn-sm btn-tertiary action-button comment"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedChange(change.id);
+                                    setShowCommentDialog(true);
+                                  }}
+                                  title="Add comment"
+                                >
+                                  💬
+                                </button>
+                              </div>
+                              {change.status !== 'pending' && (
+                                <div className="change-status">
+                                  {change.status === 'approved' && (
+                                    <span className="status-label approved">
+                                      ✓ Approved by {change.approvedBy}
+                                    </span>
+                                  )}
+                                  {change.status === 'rejected' && (
+                                    <span className="status-label rejected">
+                                      ✗ Rejected by {change.rejectedBy}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {(change as any).comments && (change as any).comments.length > 0 && (
+                                <div className="change-comments">
+                                  <div className="comments-header">
+                                    <span className="comments-count">{(change as any).comments.length} comment{(change as any).comments.length !== 1 ? 's' : ''}</span>
+                                    <button
+                                      className="btn btn-icon btn-sm btn-neutral expand-comments-button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleCommentExpansion(change.id);
+                                      }}
+                                    >
+                                      {expandedComments.has(change.id) ? '▲' : '▼'}
+                                    </button>
+                                  </div>
+                                  {expandedComments.has(change.id) && (
+                                    <div className="comments-thread">
+                                      {organizeCommentsIntoTree((change as any).comments).map((comment: any) =>
+                                        renderCommentTree(comment, change.id)
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

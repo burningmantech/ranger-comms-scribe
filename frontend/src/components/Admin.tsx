@@ -7,6 +7,7 @@ import { RoleManagement } from './RoleManagement';
 import { CouncilManagerManagement } from './CouncilManagerManagement';
 import { CommsCadreManagement } from './CommsCadreManagement';
 import { ApprovalReminders } from './ApprovalReminders';
+import TemplateManagement from './TemplateManagement';
 import { useContent } from '../contexts/ContentContext';
 import './RoleManagement.css';
 
@@ -39,7 +40,8 @@ enum AdminTab {
   Roles = 'roles',
   Council = 'council',
   CommsCadre = 'commsCadre',
-  Reminders = 'reminders'
+  Reminders = 'reminders',
+  Templates = 'templates'
 }
 
 // Email dialog interface
@@ -732,6 +734,12 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
           >
             Reminders
           </button>
+          <button
+            className={activeTab === AdminTab.Templates ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.Templates)}
+          >
+            Templates
+          </button>
         </div>
 
         {error && <div className="error-message">{error}</div>}
@@ -1107,6 +1115,9 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
             councilManagers={councilManagers}
             onSendReminder={sendReminder}
           />
+        )}
+        {activeTab === AdminTab.Templates && (
+          <TemplateManagement />
         )}
       </div>
       

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { TrackedChangesEditor } from '../components/TrackedChangesEditor';
-import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
+import ReviewTopBar from '../components/ReviewTopBar';
+import { ContentSubmission, User, Comment, Change, Approval, ApprovalGates } from '../types/content';
 import { useContent } from '../contexts/ContentContext';
 import { API_URL } from '../config';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
@@ -38,49 +39,39 @@ export const TrackedChangesView: React.FC = () => {
         return;
       }
 
-        // Fetch both submission data and tracked changes
-        const [submissionResponse, trackedChangesResponse] = await Promise.all([
-          fetch(`${API_URL}/content/submissions/${submissionId}`, {
-            headers: {
-              Authorization: `Bearer ${sessionId}`,
-            },
-          }),
-          fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
-            headers: {
-              Authorization: `Bearer ${sessionId}`,
-            },
-          })
-        ]);
+      // Fetch both submission data and tracked changes
+      const [submissionResponse, trackedChangesResponse] = await Promise.all([
+        fetch(`${API_URL}/content/submissions/${submissionId}`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        }),
+        fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
+          headers: {
+            Authorization: `Bearer ${sessionId}`,
+          },
+        })
+      ]);
 
-        if (!submissionResponse.ok) {
-          throw new Error(`Failed to fetch submission: ${submissionResponse.status}`);
-        }
+      if (!submissionResponse.ok) {
+        throw new Error(`Failed to fetch submission: ${submissionResponse.status}`);
+      }
 
-        const data = await submissionResponse.json();
-        const trackedChanges = trackedChangesResponse.ok ? await trackedChangesResponse.json() : [];
-        
+      const data = await submissionResponse.json();
+      const trackedChanges = trackedChangesResponse.ok ? await trackedChangesResponse.json() : [];
 
-        
-        // Determine the content to use for the tracked changes editor
-        let content = data.content || '';
-        
-        // Handle different content formats
-        let richTextContent = data.richTextContent;
-        
-        if (content) {
-          // If content is an object, it might be Lexical JSON
-          if (typeof content === 'object') {
-            if (isLexicalJson(content)) {
-              // Preserve the Lexical JSON for rich text display
-              richTextContent = content;
-              const extractedText = extractTextFromLexical(content);
-              if (extractedText) {
-                content = extractedText;
-              }
-            }
-          }
-          // If content is a string that looks like JSON
-          else if (typeof content === 'string' && content.trim().startsWith('{') && isLexicalJson(content)) {
+
+
+      // Determine the content to use for the tracked changes editor
+      let content = data.content || '';
+
+      // Handle different content formats
+      let richTextContent = data.richTextContent;
+
+      if (content) {
+        // If content is an object, it might be Lexical JSON
+        if (typeof content === 'object') {
+          if (isLexicalJson(content)) {
             // Preserve the Lexical JSON for rich text display
             richTextContent = content;
             const extractedText = extractTextFromLexical(content);
@@ -89,103 +80,114 @@ export const TrackedChangesView: React.FC = () => {
             }
           }
         }
-        
-        // If we still don't have readable content, try richTextContent
-        if (!content || content.trim() === '') {
-          if (data.richTextContent) {
-            const isLexical = isLexicalJson(data.richTextContent);
-            
-            if (isLexical) {
-              // If richTextContent is Lexical JSON, extract plain text from it
-              const extractedText = extractTextFromLexical(data.richTextContent);
-              if (extractedText) {
-                content = extractedText;
-              }
+        // If content is a string that looks like JSON
+        else if (typeof content === 'string' && content.trim().startsWith('{') && isLexicalJson(content)) {
+          // Preserve the Lexical JSON for rich text display
+          richTextContent = content;
+          const extractedText = extractTextFromLexical(content);
+          if (extractedText) {
+            content = extractedText;
+          }
+        }
+      }
+
+      // If we still don't have readable content, try richTextContent
+      if (!content || content.trim() === '') {
+        if (data.richTextContent) {
+          const isLexical = isLexicalJson(data.richTextContent);
+
+          if (isLexical) {
+            // If richTextContent is Lexical JSON, extract plain text from it
+            const extractedText = extractTextFromLexical(data.richTextContent);
+            if (extractedText) {
+              content = extractedText;
             }
           }
         }
-        
-        // Final fallback
-        if (!content || content.trim() === '') {
-          content = 'No content available';
-        }
-        
-        // Transform tracked changes to the format expected by the frontend
-        const transformedChanges = trackedChanges.changes.map((change: any) => ({
-          id: change.id,
-          field: change.field,
-          oldValue: change.oldValue,
-          newValue: change.newValue,
-          changedBy: change.changedBy,
-          timestamp: new Date(change.timestamp),
-          status: change.status || 'pending',
-          approvedBy: change.approvedBy,
-          rejectedBy: change.rejectedBy,
-          approvedAt: change.approvedAt,
-          rejectedAt: change.rejectedAt,
-          isIncremental: change.isIncremental || false,
-          previousVersionId: change.previousVersionId,
-          completeProposedVersion: change.completeProposedVersion,
-          richTextOldValue: change.richTextOldValue,
-          richTextNewValue: change.richTextNewValue,
-        }));
-        
-        // Transform backend data to frontend format
-        const transformedSubmission: ContentSubmission = {
-          id: data.id,
-          title: data.title,
-          content: content,
-          richTextContent: richTextContent,
-          status: data.status,
-          submittedBy: data.submittedBy,
-          submittedAt: new Date(data.submittedAt),
-          formFields: data.formFields || [],
-          comments: (data.comments || []).map((comment: any) => ({
-            id: comment.id,
-            content: comment.content,
-            authorId: comment.authorId,
-            createdAt: new Date(comment.createdAt),
-            type: comment.isSuggestion ? 'SUGGESTION' : 'COMMENT',
-            resolved: comment.resolved || false
-          })),
-          approvals: (data.approvals || []).map((approval: any) => ({
-            id: approval.id,
-            approverId: approval.approverId,
-            status: approval.status.toUpperCase(),
-            comment: approval.comment,
-            timestamp: new Date(approval.createdAt)
-          })),
-          changes: transformedChanges, // Use the tracked changes from the separate API
-          assignedReviewers: [],
-          assignedCouncilManagers: data.assignedCouncilManagers || [],
-          suggestedEdits: [],
-          requiredApprovers: [],
-          commsApprovedBy: data.commsApprovedBy,
-          sentBy: data.sentBy,
-          sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
-          // Add proposed versions with rich text support
-          proposedVersions: {
-            // Start with base proposed versions (plain text)
-            ...trackedChanges.proposedVersions,
-            // Override with rich text content if available (prioritize rich text)
-            ...(trackedChanges.proposedVersionsRichText && {
-              richTextContent: trackedChanges.proposedVersionsRichText.content
-            }),
-            // Also set content field from plain text versions if not already set
-            ...(trackedChanges.proposedVersions && {
-              content: trackedChanges.proposedVersions.content
-            })
-          }
-        };
-
-        setSubmission(transformedSubmission);
-      } catch (err) {
-        console.error('Error fetching submission:', err);
-        setError(err instanceof Error ? err.message : 'Failed to fetch submission');
-      } finally {
-        setLoading(false);
       }
-    };
+
+      // Final fallback
+      if (!content || content.trim() === '') {
+        content = 'No content available';
+      }
+
+      // Transform tracked changes to the format expected by the frontend
+      const transformedChanges = trackedChanges.changes.map((change: any) => ({
+        id: change.id,
+        field: change.field,
+        oldValue: change.oldValue,
+        newValue: change.newValue,
+        changedBy: change.changedBy,
+        timestamp: new Date(change.timestamp),
+        status: change.status || 'pending',
+        approvedBy: change.approvedBy,
+        rejectedBy: change.rejectedBy,
+        approvedAt: change.approvedAt,
+        rejectedAt: change.rejectedAt,
+        isIncremental: change.isIncremental || false,
+        previousVersionId: change.previousVersionId,
+        completeProposedVersion: change.completeProposedVersion,
+        richTextOldValue: change.richTextOldValue,
+        richTextNewValue: change.richTextNewValue,
+        regionMap: change.regionMap,
+      }));
+
+      // Transform backend data to frontend format
+      const transformedSubmission: ContentSubmission = {
+        id: data.id,
+        title: data.title,
+        content: content,
+        richTextContent: richTextContent,
+        status: data.status,
+        submittedBy: data.submittedBy,
+        submittedAt: new Date(data.submittedAt),
+        formFields: data.formFields || [],
+        comments: (data.comments || []).map((comment: any) => ({
+          id: comment.id,
+          content: comment.content,
+          authorId: comment.authorId,
+          createdAt: new Date(comment.createdAt),
+          type: comment.isSuggestion ? 'SUGGESTION' : 'COMMENT',
+          resolved: comment.resolved || false
+        })),
+        approvals: (data.approvals || []).map((approval: any) => ({
+          id: approval.id,
+          approverId: approval.approverId,
+          status: approval.status.toUpperCase(),
+          comment: approval.comment,
+          timestamp: new Date(approval.createdAt)
+        })),
+        changes: transformedChanges, // Use the tracked changes from the separate API
+        assignedReviewers: [],
+        assignedCouncilManagers: data.assignedCouncilManagers || [],
+        suggestedEdits: [],
+        requiredApprovers: [],
+        commsApprovedBy: data.commsApprovedBy,
+        sentBy: data.sentBy,
+        sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
+        // Add proposed versions with rich text support
+        proposedVersions: {
+          // Start with base proposed versions (plain text)
+          ...trackedChanges.proposedVersions,
+          // Override with rich text content if available (prioritize rich text)
+          ...(trackedChanges.proposedVersionsRichText && {
+            richTextContent: trackedChanges.proposedVersionsRichText.content
+          }),
+          // Also set content field from plain text versions if not already set
+          ...(trackedChanges.proposedVersions && {
+            content: trackedChanges.proposedVersions.content
+          })
+        }
+      };
+
+      setSubmission(transformedSubmission);
+    } catch (err) {
+      console.error('Error fetching submission:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch submission');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchSubmission();
@@ -253,7 +255,7 @@ export const TrackedChangesView: React.FC = () => {
         // Include the proposed versions data
         proposedVersions: updatedSubmission.proposedVersions
       };
-      
+
 
 
       // Save to both submission and tracked changes APIs
@@ -272,9 +274,9 @@ export const TrackedChangesView: React.FC = () => {
             proposedVersionsRichText: updatedSubmission.proposedVersions.richTextContent,
             proposedVersionsContent: updatedSubmission.proposedVersions.content
           };
-          
 
-          
+
+
           return fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
             method: 'PUT',
             headers: {
@@ -296,7 +298,7 @@ export const TrackedChangesView: React.FC = () => {
 
       const savedSubmission = await submissionResponse.json();
       setSubmission(savedSubmission);
-      
+
 
     } catch (err) {
       console.error('Error saving submission:', err);
@@ -323,10 +325,10 @@ export const TrackedChangesView: React.FC = () => {
       }
 
       const data = await response.json();
-      
+
       // Determine the content to use for the tracked changes editor
       let content = data.content || '';
-      
+
       // Handle different content formats (same logic as above)
       if (content) {
         // If content is an object, it might be Lexical JSON
@@ -335,7 +337,7 @@ export const TrackedChangesView: React.FC = () => {
             const extractedText = extractTextFromLexical(content);
             if (extractedText) {
               content = extractedText;
-  
+
             }
           }
         }
@@ -348,7 +350,7 @@ export const TrackedChangesView: React.FC = () => {
           }
         }
       }
-      
+
       // If we still don't have readable content, try richTextContent
       if (!content || content.trim() === '') {
         if (data.richTextContent && isLexicalJson(data.richTextContent)) {
@@ -359,7 +361,7 @@ export const TrackedChangesView: React.FC = () => {
           }
         }
       }
-      
+
       // Transform backend data to frontend format
       const transformedSubmission: ContentSubmission = {
         id: data.id,
@@ -391,7 +393,10 @@ export const TrackedChangesView: React.FC = () => {
           oldValue: change.oldValue,
           newValue: change.newValue,
           changedBy: change.changedBy,
-          timestamp: new Date(change.changedAt)
+          timestamp: new Date(change.changedAt || change.timestamp),
+          richTextOldValue: change.richTextOldValue,
+          richTextNewValue: change.richTextNewValue,
+          regionMap: change.regionMap,
         })),
         assignedReviewers: [],
         assignedCouncilManagers: data.assignedCouncilManagers || [],
@@ -475,9 +480,13 @@ export const TrackedChangesView: React.FC = () => {
       });
 
       if (!response.ok) {
-        // Revert on failure
-        setSubmission(previousSubmission);
-        throw new Error(`Failed to reject change: ${response.status}`);
+        if (response.status === 404) {
+          console.log(`Change ${changeId} not found. It may have been deleted by a background cascade rejection.`);
+        } else {
+          // Revert on failure
+          setSubmission(previousSubmission);
+          throw new Error(`Failed to reject change: ${response.status}`);
+        }
       }
 
       // Refresh data in the background to get server-authoritative state
@@ -487,7 +496,7 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  const handleSuggestion = async (suggestion: Change) => {
+  const handleSuggestion = async (suggestion: Change): Promise<Change | undefined> => {
     try {
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
@@ -527,9 +536,9 @@ export const TrackedChangesView: React.FC = () => {
       if (submissionResponse.ok && trackedChangesResponse.ok) {
         const data = await submissionResponse.json();
         const trackedChanges = await trackedChangesResponse.json();
-        
 
-        
+
+
         // Transform tracked changes to the format expected by the frontend
         const transformedChanges = trackedChanges.changes.map((change: any) => ({
           id: change.id,
@@ -548,8 +557,9 @@ export const TrackedChangesView: React.FC = () => {
           completeProposedVersion: change.completeProposedVersion,
           richTextOldValue: change.richTextOldValue,
           richTextNewValue: change.richTextNewValue,
+          regionMap: change.regionMap,
         }));
-        
+
         // Transform backend data to frontend format
         const transformedSubmission: ContentSubmission = {
           id: data.id,
@@ -605,14 +615,17 @@ export const TrackedChangesView: React.FC = () => {
           trackedChanges: trackedChangesResponse.status
         });
       }
+
+      return createdChange;
     } catch (err) {
       console.error('Error creating suggestion:', err);
+      return undefined;
     }
   };
 
   const handleUndo = async (changeId: string) => {
     try {
-  
+
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
@@ -638,7 +651,7 @@ export const TrackedChangesView: React.FC = () => {
 
   const handleApproveProposedVersion = async (approverId: string, comment?: string) => {
     try {
-  
+
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
@@ -668,7 +681,7 @@ export const TrackedChangesView: React.FC = () => {
 
   const handleRejectProposedVersion = async (rejecterId: string, comment?: string) => {
     try {
-  
+
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) throw new Error('Not authenticated');
 
@@ -738,49 +751,199 @@ export const TrackedChangesView: React.FC = () => {
     );
   }
 
+  // Determine if current user can approve/reject the submission
+  const canApprove = currentUser.roles.includes('CommsCadre') ||
+    currentUser.roles.includes('CouncilManager') ||
+    currentUser.roles.includes('Admin') ||
+    (submission.requiredApprovers || []).includes(currentUser.email) ||
+    (submission.assignedCouncilManagers || []).includes(currentUser.email);
+
+  // Check urgency from form fields
+  const isUrgent = submission.formFields?.some(
+    (f: any) => f.name === 'urgent' && (f.value === 'true' || f.value === true)
+  ) || false;
+
+  const handleSubmissionApprove = async () => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) return;
+    await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionId}`,
+      },
+      body: JSON.stringify({ status: 'approved' })
+    });
+    await fetchSubmission();
+  };
+
+  const handleSubmissionReject = async () => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) return;
+    await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${sessionId}`,
+      },
+      body: JSON.stringify({ status: 'rejected' })
+    });
+    await fetchSubmission();
+  };
+
+  const handleRequestChanges = async (comment: string) => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) return;
+    try {
+      await fetch(`${API_URL}/content/submissions/${submission.id}/request-changes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({ comment })
+      });
+      await fetchSubmission();
+    } catch (err) {
+      console.error('Error requesting changes:', err);
+    }
+  };
+
   return (
-    <div style={{ backgroundColor: '#f8f9fa' }}>
-        <TrackedChangesEditor
-          submission={submission}
-          currentUser={currentUser}
-          onSave={handleSave}
-          onComment={handleComment}
-          onApprove={handleApprove}
-          onReject={handleReject}
-          onSuggestion={handleSuggestion}
-          onUndo={handleUndo}
-          onApproveProposedVersion={handleApproveProposedVersion}
-          onRejectProposedVersion={handleRejectProposedVersion}
-          onRefreshNeeded={handleRefreshNeeded}
-          onBack={() => navigate('/requests')}
-          onSubmissionApprove={async () => {
-            // Reuse ContentContext's approve flow via endpoint
+    <ReviewLayout
+      submission={submission}
+      currentUser={currentUser}
+      canApprove={canApprove}
+      isUrgent={isUrgent}
+      onBack={() => navigate('/requests')}
+      onApprove={handleSubmissionApprove}
+      onReject={handleSubmissionReject}
+      onRequestChanges={handleRequestChanges}
+      onNavigate={(id) => navigate(`/submissions/${id}/review`)}
+    >
+      <TrackedChangesEditor
+        submission={submission}
+        currentUser={currentUser}
+        onSave={handleSave}
+        onComment={handleComment}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onSuggestion={handleSuggestion}
+        onUndo={handleUndo}
+        onApproveProposedVersion={handleApproveProposedVersion}
+        onRejectProposedVersion={handleRejectProposedVersion}
+        onRefreshNeeded={handleRefreshNeeded}
+        onBack={() => navigate('/requests')}
+        onSubmissionApprove={handleSubmissionApprove}
+        onSubmissionReject={handleSubmissionReject}
+        reviewMode={true}
+        onReset={async () => {
+          try {
             const sessionId = localStorage.getItem('sessionId');
-            if (!sessionId) return;
-            await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
-              method: 'POST',
+            if (!sessionId) throw new Error('Not authenticated');
+
+            await fetch(`${API_URL}/tracked-changes/submission/${submission.id}/all`, {
+              method: 'DELETE',
               headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${sessionId}`,
-              },
-              body: JSON.stringify({ status: 'approved' })
+                Authorization: `Bearer ${sessionId}`
+              }
             });
-            await fetchSubmission();
-          }}
-          onSubmissionReject={async () => {
-            const sessionId = localStorage.getItem('sessionId');
-            if (!sessionId) return;
-            await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${sessionId}`,
-              },
-              body: JSON.stringify({ status: 'rejected' })
-            });
-            await fetchSubmission();
-          }}
-        />
+
+            // Reload the page entirely to clear collaborative session data securely
+            window.location.reload();
+          } catch (err) {
+            console.error('Failed to reset changes:', err);
+            alert('Failed to reset changes. Please try again.');
+          }
+        }}
+      />
+    </ReviewLayout>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// ReviewLayout — wraps TCE with ReviewTopBar + Request Changes modal
+// ---------------------------------------------------------------------------
+
+interface ReviewLayoutProps {
+  submission: ContentSubmission;
+  currentUser: User;
+  canApprove: boolean;
+  isUrgent: boolean;
+  onBack: () => void;
+  onApprove: () => void;
+  onReject: () => void;
+  onRequestChanges: (comment: string) => void;
+  onNavigate: (submissionId: string) => void;
+  children: React.ReactNode;
+}
+
+const ReviewLayout: React.FC<ReviewLayoutProps> = ({
+  submission,
+  currentUser,
+  canApprove,
+  isUrgent,
+  onBack,
+  onApprove,
+  onReject,
+  onRequestChanges,
+  onNavigate,
+  children,
+}) => {
+  const [showRequestChanges, setShowRequestChanges] = useState(false);
+  const [requestChangesComment, setRequestChangesComment] = useState('');
+
+  const handleSubmitRequestChanges = () => {
+    if (!requestChangesComment.trim()) return;
+    onRequestChanges(requestChangesComment.trim());
+    setRequestChangesComment('');
+    setShowRequestChanges(false);
+  };
+
+  return (
+    <div className="review-layout">
+      <ReviewTopBar
+        submissionId={submission.id}
+        title={submission.title}
+        submitterName={submission.submittedBy}
+        submittedAt={submission.submittedAt instanceof Date ? submission.submittedAt : new Date(submission.submittedAt)}
+        isUrgent={isUrgent}
+        approvalGates={(submission as any).approvalGates}
+        canApprove={canApprove}
+        onBack={onBack}
+        onApprove={onApprove}
+        onRequestChanges={() => setShowRequestChanges(true)}
+        onReject={onReject}
+        onNavigate={onNavigate}
+      />
+      {children}
+
+      {/* Request Changes Modal */}
+      {showRequestChanges && (
+        <div className="request-changes-overlay" onClick={() => setShowRequestChanges(false)}>
+          <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
+            <h3>Request Changes</h3>
+            <textarea
+              value={requestChangesComment}
+              onChange={e => setRequestChangesComment(e.target.value)}
+              placeholder="Describe the changes needed..."
+              autoFocus
+            />
+            <div className="request-changes-actions">
+              <button className="btn btn-neutral" onClick={() => setShowRequestChanges(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSubmitRequestChanges}
+                disabled={!requestChangesComment.trim()}
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }; 

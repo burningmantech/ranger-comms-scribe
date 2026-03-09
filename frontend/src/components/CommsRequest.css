@@ -3,9 +3,32 @@
    ============================================================================= */
 
 .comms-wizard {
-  max-width: 720px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 24px 16px;
+}
+
+.wizard-body {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  gap: 20px;
+  align-items: start;
+}
+
+.wizard-main {
+  min-width: 0;
+}
+
+.audience-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .wizard-body {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* --- Stepper Progress Bar --- */

@@ -21,10 +21,8 @@ export interface CascadeRejectOptions {
   changeId: string;
   /** Optional TransactionManager instance — used to clean up the undo stack. */
   transactionManager?: TransactionManager | null;
-  /** Callback to restore editor content (e.g. set editor state from a snapshot). */
-  restoreEditorContent?: (content: string) => void;
-  /** Callback to refetch submission content when no snapshot is available. */
-  refetchSubmissionContent?: () => Promise<void>;
+  /** Callback to refetch submission content when no snapshot is available. Optional args: removed changes. */
+  refetchSubmissionContent?: (removedIds?: string[]) => Promise<void>;
   /**
    * Override for getCascadeDependencies (useful for testing).
    * Defaults to trackedChangesService.getCascadeDependencies.
@@ -62,7 +60,6 @@ export async function cascadeReject(
     submissionId,
     changeId,
     transactionManager,
-    restoreEditorContent,
     refetchSubmissionContent,
     getCascadeDependencies = (sid, cid) =>
       trackedChangesService.getCascadeDependencies(sid, cid),
@@ -79,9 +76,6 @@ export async function cascadeReject(
 
   // 2. Reverse the dependents (newest first) and process each
   const reversedDependents = [...dependentIds].reverse();
-
-  // Find the earliest transaction's beforeSnapshot for later restoration
-  let earliestBeforeSnapshot: string | null = null;
 
   for (const depId of reversedDependents) {
     // Delete from backend (best effort — continue on failure)
@@ -128,20 +122,9 @@ export async function cascadeReject(
   removedChangeIds.push(changeId);
 
   // 4. Restore editor to pre-chain state
-  //    Find the earliest transaction in the undo stack that matches any of
-  //    the removed changes — its beforeSnapshot is the restore target.
-  if (transactionManager) {
-    earliestBeforeSnapshot = findEarliestBeforeSnapshot(
-      transactionManager,
-      removedChangeIds,
-    );
-  }
-
-  if (earliestBeforeSnapshot && restoreEditorContent) {
-    restoreEditorContent(earliestBeforeSnapshot);
-  } else if (refetchSubmissionContent) {
-    // No snapshot available — refetch from server
-    await refetchSubmissionContent();
+  if (refetchSubmissionContent) {
+    // Rely on native UI resolution (dispatching resolve events) for all changes
+    await refetchSubmissionContent(removedChangeIds);
   }
 
   return { removedChangeIds, failedDeleteIds };
@@ -183,40 +166,3 @@ function removeFromUndoStack(
   }
 }
 
-/**
- * Search the undo stack for the earliest transaction whose remoteChangeId
- * matches one of the removed change IDs, and return its beforeSnapshot text.
- *
- * Note: after removeFromUndoStack nulls out remoteChangeId, we rely on
- * looking up before calling remove. So this function should be called
- * BEFORE removeFromUndoStack for the original change, but after for
- * dependents. In practice we capture it here from the full removed set
- * before any nulling, by looking at the before snapshots of ALL undo
- * transactions (even those that have been nulled).
- *
- * Actually, since removeFromUndoStack nulls remoteChangeId, we need a
- * different approach: we look at the beforeSnapshot Lexical state of
- * transactions whose IDs we can still match. The safest strategy is to
- * search by transaction field + timing.
- *
- * Simplification: we just look for the earliest (lowest createdAt)
- * transaction in the undo stack. If it has a text-based beforeSnapshot,
- * that is our restore point. This works because the undo stack is
- * session-scoped — the bottom of the stack represents the session start.
- */
-function findEarliestBeforeSnapshot(
-  manager: TransactionManager,
-  _removedChangeIds: string[],
-): string | null {
-  const stack = manager.getUndoStack();
-  if (stack.length === 0) return null;
-
-  // The earliest transaction is at index 0
-  const earliest = stack[0];
-  if (earliest.beforeSnapshot) {
-    const state = earliest.beforeSnapshot.lexicalState;
-    return typeof state === 'string' ? state : JSON.stringify(state);
-  }
-
-  return null;
-}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Form, Modal, Button } from 'react-bootstrap';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -9,6 +9,9 @@ import { ContentSubmission } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { User } from '../types';
 import { API_URL } from '../config';
+import TemplatePicker from './TemplatePicker';
+import AudienceCard from './AudienceCard';
+import FormSummarySidebar from './FormSummarySidebar';
 import './CommsRequest.css';
 
 const commsRequestSchema = z.object({
@@ -29,9 +32,9 @@ const commsRequestSchema = z.object({
 type CommsRequestFormData = z.infer<typeof commsRequestSchema>;
 
 const STEPS = [
-  { label: 'Details', number: 1 },
-  { label: 'Content', number: 2 },
-  { label: 'Review', number: 3 },
+  { label: 'Content', number: 1 },
+  { label: 'Audience & Timing', number: 2 },
+  { label: 'Approvers', number: 3 },
 ];
 
 const AUDIENCE_LABELS: Record<string, string> = {
@@ -45,13 +48,26 @@ const AUDIENCE_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+const AUDIENCE_CARDS = [
+  { id: 'newsletter', label: 'Newsletter', description: 'Included in the next Ranger newsletter — reaches all active Rangers', icon: 'fas fa-newspaper' },
+  { id: 'singular', label: 'Singular Announcement', description: 'A standalone announcement sent directly to all Rangers', icon: 'fas fa-bullhorn' },
+  { id: 'allcom', label: 'Allcom', description: 'Broadcast to the full Allcom distribution list', icon: 'fas fa-broadcast-tower' },
+  { id: 'website_fix', label: 'Website Fix', description: 'Fix or correction to existing website content', icon: 'fas fa-wrench' },
+  { id: 'website_update', label: 'Website Update', description: 'New or updated content for the Ranger website', icon: 'fas fa-globe' },
+  { id: 'jrs', label: 'JRS / Event Ops', description: 'Communication targeted at JRS, Event Ops, or other BMP teams', icon: 'fas fa-users' },
+  { id: 'event', label: 'Plan an Event', description: 'Coordination for an upcoming Ranger event', icon: 'fas fa-calendar-alt' },
+  { id: 'other', label: 'Other', description: 'Something else — describe below', icon: 'fas fa-ellipsis-h' },
+];
+
 export const CommsRequest: React.FC = () => {
   const [step, setStep] = useState(1);
   const [showSuccess, setShowSuccess] = useState(false);
   const [editorContent, setEditorContent] = useState('');
   const [stepErrors, setStepErrors] = useState<string[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const { saveSubmission } = useContent();
   const navigate = useNavigate();
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const userJson = localStorage.getItem('user');
   const user = userJson ? JSON.parse(userJson) : null;
@@ -80,20 +96,47 @@ export const CommsRequest: React.FC = () => {
   const publishByValue = watch('publishBy');
   const audienceValue = watch('audience');
   const urgentRequestValue = watch('urgentRequest');
-  const otherAudienceTextValue = watch('otherAudienceText');
+
+  // Auto-save draft on field changes (debounced 2s)
+  const watchedValues = watch();
+  useEffect(() => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem('commsRequestDraft', JSON.stringify({
+          ...watchedValues,
+          editorContent,
+          selectedTemplateId,
+        }));
+      } catch { /* ignore quota errors */ }
+    }, 2000);
+    return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
+  }, [watchedValues, editorContent, selectedTemplateId]);
+
+  // Restore draft on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('commsRequestDraft');
+      if (saved) {
+        const draft = JSON.parse(saved);
+        Object.entries(draft).forEach(([key, value]) => {
+          if (key === 'editorContent') {
+            setEditorContent(value as string);
+          } else if (key === 'selectedTemplateId') {
+            setSelectedTemplateId(value as string | null);
+          } else if (key in commsRequestSchema.shape) {
+            setValue(key as keyof CommsRequestFormData, value as any);
+          }
+        });
+      }
+    } catch { /* ignore parse errors */ }
+  }, [setValue]);
 
   const getMinDate = () => {
     const days = urgentRequestValue ? 1 : 7;
     const d = new Date();
     d.setDate(d.getDate() + days);
     return d.toISOString().split('T')[0];
-  };
-
-  const formatDate = (dateStr: string): string => {
-    if (!dateStr) return '';
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -132,6 +175,20 @@ export const CommsRequest: React.FC = () => {
   const handleEditorChange = (_editor: any, json: string) => {
     setEditorContent(json);
     setValue('text', json);
+  };
+
+  const handleTemplateSelect = (template: any) => {
+    if (!template) {
+      setSelectedTemplateId(null);
+      return;
+    }
+    setSelectedTemplateId(template.id);
+    if (template.fields) {
+      if (template.fields.audience) setValue('audience', template.fields.audience);
+      if (template.fields.signatureText) setValue('signatureText', template.fields.signatureText);
+      if (template.fields.suggestedSubjectLine) setValue('suggestedSubjectLine', template.fields.suggestedSubjectLine);
+      if (template.fields.description) setValue('description', template.fields.description);
+    }
   };
 
   const showCouncilManagerDefaults = (index: number) => {
@@ -238,12 +295,21 @@ export const CommsRequest: React.FC = () => {
     });
   };
 
-  // Step validation before advancing
+  // Step validation
   const validateStep = async (currentStep: number): Promise<boolean> => {
     setStepErrors([]);
     setFormError(null);
 
     if (currentStep === 1) {
+      const fieldsToValidate: (keyof CommsRequestFormData)[] = [
+        'description',
+        'suggestedSubjectLine',
+        'signatureText',
+      ];
+      return await trigger(fieldsToValidate);
+    }
+
+    if (currentStep === 2) {
       const fieldsToValidate: (keyof CommsRequestFormData)[] = [
         'email',
         'replyToAddress',
@@ -261,22 +327,7 @@ export const CommsRequest: React.FC = () => {
           return false;
         }
       }
-
-      const validApprovers = approverEmails.filter((e) => e.trim() !== '');
-      if (validApprovers.length === 0) {
-        setFormError('At least one approver is required');
-        return false;
-      }
       return valid;
-    }
-
-    if (currentStep === 2) {
-      const fieldsToValidate: (keyof CommsRequestFormData)[] = [
-        'description',
-        'suggestedSubjectLine',
-        'signatureText',
-      ];
-      return await trigger(fieldsToValidate);
     }
 
     return true;
@@ -326,10 +377,12 @@ export const CommsRequest: React.FC = () => {
       };
 
       await saveSubmission(submission as ContentSubmission);
+      localStorage.removeItem('commsRequestDraft');
       setShowSuccess(true);
       reset();
       setEditorContent('');
       setApproverEmails(['']);
+      setSelectedTemplateId(null);
       setStep(1);
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -353,7 +406,7 @@ export const CommsRequest: React.FC = () => {
             <div
               className={`step-circle ${step === s.number ? 'active' : ''} ${step > s.number ? 'completed' : ''}`}
             >
-              {step > s.number ? '✓' : s.number}
+              {step > s.number ? '\u2713' : s.number}
             </div>
             <div
               className={`step-label ${step === s.number ? 'active' : ''} ${step > s.number ? 'completed' : ''}`}
@@ -373,30 +426,119 @@ export const CommsRequest: React.FC = () => {
     <>
       <div className="wizard-card">
         <div className="wizard-card-header">
-          <h3>Contact Information</h3>
+          <h3>Content</h3>
+          <p>Describe what you need communicated and provide any draft text.</p>
         </div>
-        <div className="form-row">
-          <div className="form-field">
-            <label>Email <span className="required">*</span></label>
-            <Form.Control type="email" {...register('email')} readOnly />
+
+        <TemplatePicker
+          selectedId={selectedTemplateId}
+          onSelect={handleTemplateSelect}
+        />
+
+        <div className="form-field">
+          <label>Suggested Subject Line <span className="required">*</span></label>
+          <Form.Control
+            type="text"
+            {...register('suggestedSubjectLine')}
+            placeholder="What should the subject line say?"
+          />
+          {errors.suggestedSubjectLine && (
+            <div className="field-error">{errors.suggestedSubjectLine.message}</div>
+          )}
+        </div>
+
+        <div className="form-field">
+          <label>Description <span className="required">*</span></label>
+          <Form.Control
+            as="textarea"
+            rows={3}
+            {...register('description')}
+            placeholder="Briefly describe the document this request is about"
+          />
+          {errors.description && <div className="field-error">{errors.description.message}</div>}
+        </div>
+
+        <div className="form-field">
+          <label>Text</label>
+          <div className="field-hint" style={{ marginBottom: 8 }}>
+            Include any text you'd like us to use, or paste content and links here.
           </div>
-          <div className="form-field">
-            <label>Reply-To Address <span className="required">*</span></label>
-            <Form.Control
-              type="email"
-              {...register('replyToAddress')}
-              placeholder="Who should recipients reply to?"
-            />
-            {errors.replyToAddress && (
-              <div className="field-error">{errors.replyToAddress.message}</div>
-            )}
-          </div>
+          <LexicalEditorComponent
+            initialContent={editorContent}
+            onChange={handleEditorChange}
+            placeholder="Start typing or paste your content..."
+            className="h-64"
+            currentUserId={userId}
+          />
+        </div>
+
+        <div className="form-field">
+          <label>Signature Text <span className="required">*</span></label>
+          <Form.Control
+            type="text"
+            {...register('signatureText')}
+            placeholder="What text do you want at the end of the email?"
+          />
+          {errors.signatureText && (
+            <div className="field-error">{errors.signatureText.message}</div>
+          )}
+        </div>
+
+        <div className="form-field" style={{ marginTop: 8 }}>
+          <label>Notes</label>
+          <Form.Control
+            as="textarea"
+            rows={2}
+            {...register('notes')}
+            placeholder="Notes, questions, issues, or anything else you want us to know"
+          />
         </div>
       </div>
+    </>
+  );
 
+  const renderStep2 = () => (
+    <>
       <div className="wizard-card">
         <div className="wizard-card-header">
-          <h3>Request Details</h3>
+          <h3>Audience & Timing</h3>
+          <p>Who should see this and when?</p>
+        </div>
+
+        <div className="form-field">
+          <label>Audience <span className="required">*</span></label>
+          <div className="audience-cards-grid">
+            {AUDIENCE_CARDS.map((card) => {
+              const checked = audienceValue?.includes(card.id) ?? false;
+              return (
+                <AudienceCard
+                  key={card.id}
+                  id={card.id}
+                  label={card.label}
+                  description={card.description}
+                  icon={card.icon}
+                  selected={checked}
+                  onToggle={() => {
+                    const current = audienceValue || [];
+                    const next = checked
+                      ? current.filter((v: string) => v !== card.id)
+                      : [...current, card.id];
+                    setValue('audience', next, { shouldValidate: true });
+                  }}
+                />
+              );
+            })}
+          </div>
+          {audienceValue?.includes('other') && (
+            <div className="other-audience-field" style={{ marginTop: 8 }}>
+              <Form.Control
+                type="text"
+                {...register('otherAudienceText')}
+                placeholder="Please describe your audience..."
+              />
+            </div>
+          )}
+          {errors.audience && <div className="field-error">{errors.audience.message}</div>}
         </div>
 
         <div className="form-row">
@@ -420,9 +562,6 @@ export const CommsRequest: React.FC = () => {
                 try { e.currentTarget.showPicker(); } catch {}
               }}
             />
-            {publishByValue && (
-              <div className="field-hint">{formatDate(publishByValue)}</div>
-            )}
             {!urgentRequestValue && (
               <div className="field-hint">Dates must be at least 7 days from today</div>
             )}
@@ -434,10 +573,7 @@ export const CommsRequest: React.FC = () => {
           <label
             className={`urgent-checkbox-label ${urgentRequestValue ? 'checked' : ''}`}
           >
-            <input
-              type="checkbox"
-              {...register('urgentRequest')}
-            />
+            <input type="checkbox" {...register('urgentRequest')} />
             <span>This is an urgent request</span>
           </label>
           {urgentRequestValue && (
@@ -453,42 +589,29 @@ export const CommsRequest: React.FC = () => {
           )}
         </div>
 
-        <div className="form-field">
-          <label>Audience <span className="required">*</span></label>
-          <div className="audience-grid">
-            {Object.entries(AUDIENCE_LABELS).map(([value, label]) => {
-              const checked = audienceValue?.includes(value) ?? false;
-              return (
-                <label key={value} className={`audience-option ${checked ? 'selected' : ''}`}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => {
-                      const current = audienceValue || [];
-                      const next = checked
-                        ? current.filter((v: string) => v !== value)
-                        : [...current, value];
-                      setValue('audience', next, { shouldValidate: true });
-                    }}
-                  />
-                  <span className="audience-label">{label}</span>
-                </label>
-              );
-            })}
+        <div className="form-row">
+          <div className="form-field">
+            <label>Email <span className="required">*</span></label>
+            <Form.Control type="email" {...register('email')} readOnly />
           </div>
-          {audienceValue?.includes('other') && (
-            <div className="other-audience-field">
-              <Form.Control
-                type="text"
-                {...register('otherAudienceText')}
-                placeholder="Please describe your audience..."
-              />
-            </div>
-          )}
-          {errors.audience && <div className="field-error">{errors.audience.message}</div>}
+          <div className="form-field">
+            <label>Reply-To Address <span className="required">*</span></label>
+            <Form.Control
+              type="email"
+              {...register('replyToAddress')}
+              placeholder="Who should recipients reply to?"
+            />
+            {errors.replyToAddress && (
+              <div className="field-error">{errors.replyToAddress.message}</div>
+            )}
+          </div>
         </div>
       </div>
+    </>
+  );
 
+  const renderStep3 = () => (
+    <>
       <div className="wizard-card">
         <div className="wizard-card-header">
           <h3>Required Approvers</h3>
@@ -573,161 +696,6 @@ export const CommsRequest: React.FC = () => {
     </>
   );
 
-  const renderStep2 = () => (
-    <>
-      <div className="wizard-card">
-        <div className="wizard-card-header">
-          <h3>Content</h3>
-          <p>Describe what you need communicated and provide any draft text.</p>
-        </div>
-
-        <div className="form-field">
-          <label>Description <span className="required">*</span></label>
-          <Form.Control
-            as="textarea"
-            rows={3}
-            {...register('description')}
-            placeholder="Briefly describe the document this request is about"
-          />
-          {errors.description && <div className="field-error">{errors.description.message}</div>}
-        </div>
-
-        <div className="form-field">
-          <label>Suggested Subject Line <span className="required">*</span></label>
-          <Form.Control
-            type="text"
-            {...register('suggestedSubjectLine')}
-            placeholder="What should the subject line say?"
-          />
-          {errors.suggestedSubjectLine && (
-            <div className="field-error">{errors.suggestedSubjectLine.message}</div>
-          )}
-        </div>
-
-        <div className="form-field">
-          <label>Text</label>
-          <div className="field-hint" style={{ marginBottom: 8 }}>
-            Include any text you'd like us to use, or paste content and links here.
-          </div>
-          <LexicalEditorComponent
-            initialContent={editorContent}
-            onChange={handleEditorChange}
-            placeholder="Start typing or paste your content..."
-            className="h-64"
-            currentUserId={userId}
-          />
-        </div>
-
-        <div className="form-field">
-          <label>Signature Text <span className="required">*</span></label>
-          <Form.Control
-            type="text"
-            {...register('signatureText')}
-            placeholder="What text do you want at the end of the email?"
-          />
-          {errors.signatureText && (
-            <div className="field-error">{errors.signatureText.message}</div>
-          )}
-        </div>
-      </div>
-    </>
-  );
-
-  const renderStep3 = () => {
-    const v = getValues();
-    const validApprovers = approverEmails.filter((e) => e.trim() !== '');
-
-    return (
-      <>
-        <div className="wizard-card">
-          <div className="wizard-card-header">
-            <h3>Review Your Request</h3>
-            <p>Please review the details below before submitting.</p>
-          </div>
-
-          <div className="review-section">
-            <h4>Contact & Details</h4>
-            <div className="review-grid">
-              <div className="review-item">
-                <span className="review-label">Email</span>
-                <span className="review-value">{v.email}</span>
-              </div>
-              <div className="review-item">
-                <span className="review-label">Reply-To</span>
-                <span className="review-value">{v.replyToAddress || <em className="review-value empty">Not set</em>}</span>
-              </div>
-              <div className="review-item">
-                <span className="review-label">Owner</span>
-                <span className="review-value">{v.owner || <em className="review-value empty">Not set</em>}</span>
-              </div>
-              <div className="review-item">
-                <span className="review-label">Publish By</span>
-                <span className="review-value">
-                  {v.publishBy ? formatDate(v.publishBy) : <em className="review-value empty">Not set</em>}
-                  {v.urgentRequest && <span className="badge badge-urgent" style={{ marginLeft: 8 }}>Urgent</span>}
-                </span>
-              </div>
-              <div className="review-item full-width">
-                <span className="review-label">Audience</span>
-                <span className="review-value">
-                  {v.audience && v.audience.length > 0
-                    ? v.audience.map((a: string) =>
-                        a === 'other' && v.otherAudienceText
-                          ? `Other: ${v.otherAudienceText}`
-                          : AUDIENCE_LABELS[a] || a
-                      ).join(', ')
-                    : <em className="review-value empty">Not set</em>}
-                </span>
-              </div>
-              <div className="review-item full-width">
-                <span className="review-label">Approvers</span>
-                <span className="review-value">
-                  {validApprovers.length > 0
-                    ? validApprovers.join(', ')
-                    : <em className="review-value empty">None</em>}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="review-section">
-            <h4>Content</h4>
-            <div className="review-grid">
-              <div className="review-item full-width">
-                <span className="review-label">Description</span>
-                <span className="review-value">{v.description || <em className="review-value empty">Not provided</em>}</span>
-              </div>
-              <div className="review-item full-width">
-                <span className="review-label">Subject Line</span>
-                <span className="review-value">{v.suggestedSubjectLine || <em className="review-value empty">Not provided</em>}</span>
-              </div>
-              <div className="review-item full-width">
-                <span className="review-label">Body Text</span>
-                <span className="review-value">
-                  {editorContent ? 'Rich text content provided' : <em className="review-value empty">None</em>}
-                </span>
-              </div>
-              <div className="review-item full-width">
-                <span className="review-label">Signature</span>
-                <span className="review-value">{v.signatureText || <em className="review-value empty">Not provided</em>}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="form-field" style={{ marginTop: 16 }}>
-            <label>Notes</label>
-            <Form.Control
-              as="textarea"
-              rows={3}
-              {...register('notes')}
-              placeholder="Notes, questions, issues, or anything else you want us to know"
-            />
-          </div>
-        </div>
-      </>
-    );
-  };
-
   return (
     <div className="comms-wizard">
       <div className="wizard-intro">
@@ -739,36 +707,54 @@ export const CommsRequest: React.FC = () => {
 
       {renderStepper()}
 
-      <Form
-        onSubmit={handleSubmit(
-          (data) => onSubmit(data),
-          () => {}
+      <div className="wizard-body">
+        <Form
+          className="wizard-main"
+          onSubmit={handleSubmit(
+            (data) => onSubmit(data),
+            () => {}
+          )}
+        >
+          {step === 1 && renderStep1()}
+          {step === 2 && renderStep2()}
+          {step === 3 && renderStep3()}
+
+          <div className="wizard-nav">
+            {step > 1 ? (
+              <button type="button" className="btn-back" onClick={goBack}>
+                Back
+              </button>
+            ) : (
+              <div />
+            )}
+
+            {step < 3 ? (
+              <button type="button" className="btn-next" onClick={goNext}>
+                Next
+              </button>
+            ) : (
+              <button type="submit" className="btn-submit">
+                Submit Request
+              </button>
+            )}
+          </div>
+        </Form>
+
+        {step >= 2 && (
+          <FormSummarySidebar
+            title={values.suggestedSubjectLine}
+            description={values.description}
+            audience={values.audience}
+            audienceLabels={AUDIENCE_LABELS}
+            publishBy={values.publishBy}
+            urgent={values.urgentRequest}
+            replyTo={values.replyToAddress}
+            signature={values.signatureText}
+            approvers={approverEmails}
+            hasContent={!!editorContent}
+          />
         )}
-      >
-        {step === 1 && renderStep1()}
-        {step === 2 && renderStep2()}
-        {step === 3 && renderStep3()}
-
-        <div className="wizard-nav">
-          {step > 1 ? (
-            <button type="button" className="btn-back" onClick={goBack}>
-              Back
-            </button>
-          ) : (
-            <div />
-          )}
-
-          {step < 3 ? (
-            <button type="button" className="btn-next" onClick={goNext}>
-              Next
-            </button>
-          ) : (
-            <button type="submit" className="btn-submit">
-              Submit Request
-            </button>
-          )}
-        </div>
-      </Form>
+      </div>
 
       <Modal show={showSuccess} onHide={() => setShowSuccess(false)} centered>
         <Modal.Header closeButton>

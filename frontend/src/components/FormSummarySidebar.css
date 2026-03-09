@@ -1,0 +1,87 @@
+/* =============================================================================
+   FormSummarySidebar — Live form state summary (desktop only)
+   ============================================================================= */
+
+.form-summary {
+  position: sticky;
+  top: 24px;
+  background: #f8f9fa;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.form-summary__header {
+  font-family: 'Poppins', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dark);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: #fff;
+}
+
+.form-summary__body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.form-summary__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.form-summary__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.form-summary__value {
+  font-size: 13px;
+  color: var(--text-dark);
+  line-height: 1.4;
+}
+
+.form-summary__badge {
+  display: inline-block;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  text-transform: uppercase;
+}
+
+.form-summary__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.form-summary__tag {
+  font-size: 11px;
+  background: #e8f4fd;
+  color: var(--accent-teal);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.form-summary__approver {
+  font-size: 12px;
+  color: var(--text-dark);
+}
+
+/* Hide on mobile */
+@media (max-width: 900px) {
+  .form-summary {
+    display: none;
+  }
+}

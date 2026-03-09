@@ -264,6 +264,75 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   return json(submissions);
 });
 
+// Get submissions needing the current user's action
+router.get('/submissions/my-actions', withAuth, async (request: Request, env: any) => {
+  const user = (request as any).user as User;
+
+  // Get all submissions
+  const response = await listObjects('content_submissions/', env);
+  const submissionPromises = response.objects.map(async (obj: any) => {
+    return await getObject<ContentSubmission>(obj.key, env);
+  });
+  const allSubmissions = (await Promise.all(submissionPromises)).filter(
+    (sub): sub is ContentSubmission => sub !== null
+  );
+
+  const needsAction: any[] = [];
+  const inProgress: any[] = [];
+
+  for (const submission of allSubmissions) {
+    if (['sent', 'rejected', 'draft'].includes(submission.status)) continue;
+
+    const isRequiredApprover = (submission.requiredApprovers || []).includes(user.email);
+    const hasActed = (submission.approvals || []).some(
+      (a: ContentApproval) =>
+        a.approverEmail === user.email || a.approverId === user.id
+    );
+
+    const isReviewer =
+      user.userType === UserType.CommsCadre ||
+      user.userType === UserType.CouncilManager ||
+      user.userType === UserType.Admin;
+
+    const gates = await computeApprovalGates(submission, env);
+
+    if (isRequiredApprover && !hasActed) {
+      needsAction.push({ ...submission, approvalGates: gates });
+    } else if (isReviewer && !hasActed) {
+      if (
+        (user.userType === UserType.CouncilManager && !gates.councilManager.met) ||
+        (user.userType === UserType.CommsCadre && !gates.commsCadre.met)
+      ) {
+        needsAction.push({ ...submission, approvalGates: gates });
+      } else {
+        inProgress.push({ ...submission, approvalGates: gates });
+      }
+    } else {
+      inProgress.push({ ...submission, approvalGates: gates });
+    }
+  }
+
+  // Sort: urgent first, then oldest first
+  const sortByUrgencyThenAge = (a: any, b: any) => {
+    const aUrgent = a.formFields?.some(
+      (f: any) => f.name === 'urgent' && f.value === 'true'
+    );
+    const bUrgent = b.formFields?.some(
+      (f: any) => f.name === 'urgent' && f.value === 'true'
+    );
+    if (aUrgent && !bUrgent) return -1;
+    if (!aUrgent && bUrgent) return 1;
+    return (
+      new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime()
+    );
+  };
+
+  needsAction.sort(sortByUrgencyThenAge);
+  inProgress.sort(sortByUrgencyThenAge);
+
+  return json({ needsAction, inProgress });
+});
+
 // Get a single submission by ID
 router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   const { id } = (request as any).params;
@@ -544,6 +613,21 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     }
   }, env);
 
+  // Notify submitter of approval/rejection
+  try {
+    const { notifyApprovalDecision } = await import('../services/notificationService');
+    await notifyApprovalDecision(
+      id,
+      submission.title,
+      submission.submittedBy,
+      status,
+      user.name || user.email,
+      env
+    );
+  } catch (err) {
+    console.error('Error sending approval notification:', err);
+  }
+
   const response: any = { ...approval };
   if (pendingTrackedChangesCount > 0) {
     response.pendingTrackedChanges = pendingTrackedChangesCount;
@@ -601,6 +685,79 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
   }, env);
 
   return json(submission);
+});
+
+// Request changes — reviewer asks submitter for revisions (requires comment)
+router.post('/submissions/:id/request-changes', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const { comment } = await request.json();
+
+  if (!comment || !comment.trim()) {
+    return json({ error: 'Comment required when requesting changes' }, { status: 400 });
+  }
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+
+  // Only reviewers can request changes
+  const canRequest = user.userType === UserType.Admin ||
+    user.userType === UserType.CouncilManager ||
+    user.userType === UserType.CommsCadre ||
+    (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+  if (!canRequest) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  // Keep status as in_review
+  submission.status = 'in_review';
+
+  // Add comment
+  const newComment = {
+    id: crypto.randomUUID(),
+    submissionId: id,
+    content: comment.trim(),
+    authorId: user.id || user.email,
+    authorName: user.name,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    isSuggestion: false,
+    resolved: false,
+  };
+  submission.comments = [...(submission.comments || []), newComment];
+
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  // Notify submitter
+  try {
+    const { createInAppNotification } = await import('../services/notificationService');
+    await createInAppNotification({
+      userId: submission.submittedBy,
+      type: 'changes_requested',
+      title: 'Changes requested',
+      message: `${user.name || user.email} requested changes on "${submission.title}"`,
+      submissionId: id,
+      submissionTitle: submission.title,
+      actorName: user.name || user.email,
+    }, env);
+  } catch (err) {
+    console.error('Error sending changes-requested notification:', err);
+  }
+
+  // Broadcast via WebSocket
+  await broadcastToSubmissionRoom(id, {
+    type: 'status_changed',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: { status: 'in_review', comment: newComment },
+  }, env);
+
+  return json({ success: true, comment: newComment });
 });
 
 // Send announcement email after full approval; Comms Cadre can send

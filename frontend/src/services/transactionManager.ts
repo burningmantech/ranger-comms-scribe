@@ -94,7 +94,14 @@ export class TransactionManager {
   // Allow dependency injection for testing
   private saveFunction: (
     submissionId: string,
-    change: { field: string; oldValue: string; newValue: string; regionMap?: RegionMap },
+    change: {
+      field: string;
+      oldValue: string;
+      newValue: string;
+      regionMap?: RegionMap;
+      richTextOldValue?: string;
+      richTextNewValue?: string;
+    },
   ) => Promise<TrackedChangeResponse>;
 
   private deleteFunction: (
@@ -114,7 +121,14 @@ export class TransactionManager {
     options?: {
       saveFunction?: (
         submissionId: string,
-        change: { field: string; oldValue: string; newValue: string; regionMap?: RegionMap },
+        change: {
+          field: string;
+          oldValue: string;
+          newValue: string;
+          regionMap?: RegionMap;
+          richTextOldValue?: string;
+          richTextNewValue?: string;
+        },
       ) => Promise<TrackedChangeResponse>;
       deleteFunction?: (submissionId: string, changeId: string) => Promise<void>;
       /** Override the retry delay (default 2000ms). Set to 0 for tests. */
@@ -412,6 +426,12 @@ export class TransactionManager {
         oldValue: tx.beforeSnapshot.text,
         newValue: tx.afterSnapshot.text,
         regionMap: tx.regionMap ?? undefined,
+        richTextOldValue: typeof tx.beforeSnapshot.lexicalState === 'string'
+          ? tx.beforeSnapshot.lexicalState
+          : JSON.stringify(tx.beforeSnapshot.lexicalState),
+        richTextNewValue: typeof tx.afterSnapshot.lexicalState === 'string'
+          ? tx.afterSnapshot.lexicalState
+          : JSON.stringify(tx.afterSnapshot.lexicalState),
       });
 
       tx.status = 'saved';
@@ -436,6 +456,12 @@ export class TransactionManager {
           oldValue: tx.beforeSnapshot.text,
           newValue: tx.afterSnapshot!.text,
           regionMap: tx.regionMap ?? undefined,
+          richTextOldValue: typeof tx.beforeSnapshot.lexicalState === 'string'
+            ? tx.beforeSnapshot.lexicalState
+            : JSON.stringify(tx.beforeSnapshot.lexicalState),
+          richTextNewValue: typeof tx.afterSnapshot!.lexicalState === 'string'
+            ? tx.afterSnapshot!.lexicalState
+            : JSON.stringify(tx.afterSnapshot!.lexicalState),
         });
 
         tx.status = 'saved';

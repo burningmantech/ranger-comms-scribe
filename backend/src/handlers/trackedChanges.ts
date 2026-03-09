@@ -24,7 +24,7 @@ import { mergeTextIntoLexicalJson } from '../services/trackedChangesService';
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
-  
+
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -32,12 +32,12 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
   try {
     // Get submission to check permissions (you'll need to implement this based on your content submission service)
     // For now, we'll assume the user has access if they're authenticated
-    
+
     // Check if user has access
     const hasAccess = request.user.userType === 'Admin' ||
-                     request.user.userType === 'CommsCadre' ||
-                     request.user.userType === 'CouncilManager' ||
-                     true; // TODO: Check if user is the submitter
+      request.user.userType === 'CommsCadre' ||
+      request.user.userType === 'CouncilManager' ||
+      true; // TODO: Check if user is the submitter
 
     if (!hasAccess) {
       return new Response('Forbidden', { status: 403 });
@@ -64,17 +64,17 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     const fields = [...new Set(changes.map(change => change.field))];
     const proposedVersions: Record<string, string> = {};
     const proposedVersionsRichText: Record<string, string> = {};
-    
+
     // First, try to get saved proposed versions from cache
     const savedProposedVersions = await getObject(`proposed_versions/${submissionId}`, env) as any;
-    
+
     console.log('🔍 Backend getTrackedChangesHandler - savedProposedVersions:', {
       hasData: !!savedProposedVersions,
       proposedVersionsRichText: savedProposedVersions?.proposedVersionsRichText ? 'present' : 'missing',
       proposedVersionsContent: savedProposedVersions?.proposedVersionsContent ? 'present' : 'missing',
       submissionId
     });
-    
+
     if (savedProposedVersions) {
       console.log('📋 Found saved proposed versions for submission:', submissionId);
       if (savedProposedVersions.proposedVersionsRichText) {
@@ -91,7 +91,7 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
         });
       }
     }
-    
+
     // Fall back to calculating from changes if no saved versions
     for (const field of fields) {
       if (!proposedVersions[field]) {
@@ -100,7 +100,7 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
           proposedVersions[field] = completeVersion;
         }
       }
-      
+
       if (!proposedVersionsRichText[field]) {
         const completeRichTextVersion = await getCompleteRichTextProposedVersion(submissionId, field, env);
         if (completeRichTextVersion) {
@@ -138,7 +138,7 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
 // Create a new tracked change (suggestion)
 export async function createTrackedChangeHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
-  
+
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -176,7 +176,7 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
 // Approve or reject a tracked change
 export async function updateChangeStatusHandler(request: CustomRequest, env: any): Promise<Response> {
   const { changeId } = request.params!;
-  
+
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -190,8 +190,8 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
 
     // Check permissions
     const hasPermission = request.user.userType === 'Admin' ||
-                         request.user.userType === 'CommsCadre' ||
-                         request.user.userType === 'CouncilManager';
+      request.user.userType === 'CommsCadre' ||
+      request.user.userType === 'CouncilManager';
 
     if (!hasPermission) {
       return new Response('Forbidden', { status: 403 });
@@ -233,10 +233,78 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
   }
 }
 
+// Batch update status for multiple tracked changes
+export async function batchUpdateStatusHandler(request: CustomRequest, env: any): Promise<Response> {
+  if (!request.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    const { changeIds, status, comment, submissionId } = await request.json();
+
+    if (!Array.isArray(changeIds) || changeIds.length === 0) {
+      return new Response(JSON.stringify({ error: 'changeIds array required' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    if (!['approved', 'rejected'].includes(status)) {
+      return new Response(JSON.stringify({ error: 'Invalid status' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const hasPermission = request.user.userType === 'Admin' ||
+      request.user.userType === 'CommsCadre' ||
+      request.user.userType === 'CouncilManager';
+
+    if (!hasPermission) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    const results = [];
+    for (const changeId of changeIds) {
+      const updatedChange = await updateChangeStatus(
+        changeId,
+        status,
+        env,
+        status === 'approved' ? request.user.id : undefined,
+        status === 'approved' ? request.user.name : undefined,
+        status === 'rejected' ? request.user.id : undefined,
+        status === 'rejected' ? request.user.name : undefined
+      );
+
+      if (!updatedChange) {
+        results.push({ changeId, success: false, error: 'Not found' });
+        continue;
+      }
+
+      if (comment && submissionId) {
+        await addChangeComment(
+          changeId,
+          submissionId,
+          comment,
+          request.user.id,
+          request.user.name || request.user.email,
+          env
+        );
+      }
+
+      results.push({ changeId, success: true });
+    }
+
+    return new Response(JSON.stringify({ results }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Error in batch status update:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
 // Add a comment to a tracked change
 export async function addChangeCommentHandler(request: CustomRequest, env: any): Promise<Response> {
   const { changeId } = request.params!;
-  
+
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -251,7 +319,7 @@ export async function addChangeCommentHandler(request: CustomRequest, env: any):
     // Get the change to get the submission ID
     const changes = await getTrackedChanges('', env); // Get all changes to find the one with matching ID
     const change = changes.find(c => c.id === changeId);
-    
+
     if (!change) {
       return new Response('Change not found', { status: 404 });
     }
@@ -283,7 +351,7 @@ export async function getChangeHistoryHandler(request: CustomRequest, env: any):
 
   try {
     const { startDate, endDate, userId } = request.params!;
-    
+
     const result = await getChangeHistory(env, startDate, endDate, userId);
 
     return new Response(JSON.stringify(result), {
@@ -298,7 +366,7 @@ export async function getChangeHistoryHandler(request: CustomRequest, env: any):
 // Undo a change decision
 export async function undoChangeHandler(request: CustomRequest, env: any): Promise<Response> {
   const { changeId } = request.params!;
-  
+
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -306,8 +374,8 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
   try {
     // Check permissions - same as approve/reject
     const hasPermission = request.user.userType === 'Admin' ||
-                         request.user.userType === 'CommsCadre' ||
-                         request.user.userType === 'CouncilManager';
+      request.user.userType === 'CommsCadre' ||
+      request.user.userType === 'CouncilManager';
 
     if (!hasPermission) {
       return new Response('Forbidden', { status: 403 });
@@ -332,7 +400,7 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
 // Update proposed versions for a submission
 export async function updateProposedVersionsHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
-  
+
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -352,9 +420,9 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
 
     // Check permissions
     const hasPermission = request.user.userType === 'Admin' ||
-                         request.user.userType === 'CommsCadre' ||
-                         request.user.userType === 'CouncilManager' ||
-                         true; // TODO: Check if user is the submitter
+      request.user.userType === 'CommsCadre' ||
+      request.user.userType === 'CouncilManager' ||
+      true; // TODO: Check if user is the submitter
 
     if (!hasPermission) {
       return new Response('Forbidden', { status: 403 });
@@ -412,8 +480,8 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
     // Allow deletion if user is the change author OR has elevated permissions
     const isAuthor = change.changedBy === request.user.id;
     const hasElevatedPermission = request.user.userType === 'Admin' ||
-                                  request.user.userType === 'CommsCadre' ||
-                                  request.user.userType === 'CouncilManager';
+      request.user.userType === 'CommsCadre' ||
+      request.user.userType === 'CouncilManager';
 
     if (!isAuthor && !hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
@@ -430,6 +498,45 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
     });
   } catch (error) {
     console.error('Error deleting change:', error);
+    return new Response('Internal server error', { status: 500 });
+  }
+}
+
+// Permanently delete ALL tracked changes for a submission (reset state)
+export async function deleteAllChangesHandler(request: CustomRequest, env: any): Promise<Response> {
+  const { submissionId } = request.params!;
+
+  if (!request.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  try {
+    const hasElevatedPermission = request.user.userType === 'Admin' ||
+      request.user.userType === 'CommsCadre' ||
+      request.user.userType === 'CouncilManager';
+
+    if (!hasElevatedPermission) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    const { listObjects, deleteObject } = await import('../services/cacheService');
+    const objects = await listObjects(`tracked-changes/submission/${submissionId}/`, env);
+
+    // Delete all changes
+    for (const obj of objects.objects) {
+      await deleteObject(obj.key, env);
+      await deleteObject(`change:${obj.key}`, env);
+    }
+
+    // Delete proposed versions cache
+    await deleteObject(`proposed_versions/${submissionId}`, env);
+    await deleteObject(`tracked_changes:submission:${submissionId}`, env);
+
+    return new Response(JSON.stringify({ success: true, count: objects.objects.length }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.error('Error deleting all changes:', error);
     return new Response('Internal server error', { status: 500 });
   }
 }
@@ -512,6 +619,8 @@ export const router = AutoRouter({ base: '/api/tracked-changes' })
   .post('/submission/:submissionId/batch', batchCreateHandler)
   .get('/submission/:submissionId/cascade/:changeId', getCascadeHandler)
   .delete('/submission/:submissionId/change/:changeId', deleteChangeHandler)
+  .delete('/submission/:submissionId/all', deleteAllChangesHandler)
+  .put('/batch-status', batchUpdateStatusHandler)
   .put('/change/:changeId/status', updateChangeStatusHandler)
   .post('/change/:changeId/comment', addChangeCommentHandler)
   .post('/:changeId/undo', undoChangeHandler)
