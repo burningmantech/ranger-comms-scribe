@@ -2238,6 +2238,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       <div className="editor-container">
         <div className={`editor-content ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} ref={editorRef}>
+          <div className={reviewMode ? 'editor-document-page' : undefined}>
           <div className="document-title-row" data-field-id="title">
             {editingTitle ? (
               <div className="field-edit-row">
@@ -2924,6 +2925,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 )}
               </div>
             </div>}
+          </div>{/* close editor-document-page wrapper */}
 
             {/* Mobile sidebar section - shown below content on small screens */}
             {isSmallScreen && (

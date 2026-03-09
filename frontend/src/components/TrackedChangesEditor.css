@@ -2961,17 +2961,30 @@ span.tracked-deletion-wrapper {
 
 .tracked-changes-editor.review-mode .editor-container {
   display: grid;
-  grid-template-columns: 6fr 4fr;
+  grid-template-columns: 1fr 400px;
   height: 100%;
   overflow: hidden;
 }
 
+/* Left panel: scrollable grey area with centered white document */
 .tracked-changes-editor.review-mode .editor-content {
-  width: auto;
-  max-width: none;
-  padding: 24px 48px 48px;
+  background-color: #f8f9fa;
   overflow-y: auto;
   min-height: 0;
+  padding: 24px;
+  width: auto;
+  max-width: none;
+}
+
+/* The inner document wrapper preserves the centered page look */
+.tracked-changes-editor.review-mode .editor-content .editor-document-page {
+  background-color: #fff;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 96px 48px;
+  min-height: calc(100vh - 200px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  border-radius: 2px;
 }
 
 .tracked-changes-editor.review-mode .editor-sidebar.review-panel {
@@ -3104,6 +3117,9 @@ span.tracked-deletion-wrapper {
 @media (max-width: 768px) {
   .tracked-changes-editor.review-mode .editor-container {
     grid-template-columns: 1fr;
+  }
+  .tracked-changes-editor.review-mode .editor-document-page {
+    padding: 16px 24px 32px;
   }
   .tracked-changes-editor.review-mode .editor-sidebar.review-panel {
     border-left: none;
