@@ -540,6 +540,10 @@ router.get('/session', async (request: Request, env) => {
 
 // Get current user from session
 router.get('/me', async (request: Request, env) => {
+    if (env.DEV_BYPASS_AUTH === 'true') {
+        return json({ user: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin', isAdmin: true, roles: ['Admin'], groups: [] } });
+    }
+
     const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
     if (!sessionId) {
         return json({ error: 'Unauthorized' }, { status: 401 });

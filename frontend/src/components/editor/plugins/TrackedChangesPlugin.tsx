@@ -86,6 +86,11 @@ let activeEditorRef: LexicalEditor | null = null;
 /**
  * Remove all decorations (highlights + DeletedTextNodes) for a specific changeId.
  * Used by TransactionHistoryPlugin and cascade rejection.
+ *
+ * WARNING: This removes DeletedTextNodes from the editor tree. If you need to
+ * restore deleted text via 'resolve-tracked-change' events afterward, use
+ * removeHighlightDecorationsForChange() instead and let the event handler
+ * replace the DeletedTextNodes.
  */
 export function removeDecorationsForChange(changeId: string): void {
   // Remove CSS highlights for this change
@@ -109,6 +114,19 @@ export function removeDecorationsForChange(changeId: string): void {
     );
   }
   deletionRegistry.delete(changeId);
+}
+
+/**
+ * Remove only CSS highlight decorations for a change, leaving DeletedTextNodes
+ * intact so they can be resolved by 'resolve-tracked-change' events.
+ * Use this when you need to clean up visual highlights but still want the
+ * DeletedTextNodes to be available for text restoration.
+ */
+export function removeHighlightDecorationsForChange(changeId: string): void {
+  removeHighlightsForChange(changeId);
+  highlightRegistry.delete(changeId);
+  // Note: we intentionally do NOT remove DeletedTextNodes or the deletion registry.
+  // The caller is expected to handle those via resolve-tracked-change events.
 }
 
 /**
@@ -329,6 +347,9 @@ export default function TrackedChangesPlugin({
   const applyDecorations = useCallback(() => {
     if (isUpdatingRef.current) return;
     isUpdatingRef.current = true;
+    // Signal to parent components that decoration changes are programmatic
+    // and should not be tracked by TransactionManager.
+    (window as any).__isApplyingDecorations = true;
 
     try {
       editor.update(
@@ -407,15 +428,6 @@ export default function TrackedChangesPlugin({
             }
           }
 
-          // If no new changes and no removals and no live refresh needed, we still
-          // need to rebuild highlights after editor text changes (DOM reconciliation
-          // invalidates Range objects). But we can skip the diffing step for
-          // already-decorated formal changes and just recompute DOM ranges from
-          // the stored charRanges.
-          const needsNewDiff = newChangeIds.size > 0 || removedChangeIds.size > 0;
-
-
-
           // Step 2: Build clean text (excluding DeletedTextNodes)
           let cleanText = '';
           const paragraphBoundaries: number[] = [];
@@ -438,6 +450,30 @@ export default function TrackedChangesPlugin({
               }
             };
             collectParaText(child);
+          }
+
+          // Detect if the underlying text content has changed (e.g., after a revert
+          // or collaborative edit). When text changes, stored charRanges become stale
+          // and ALL existing changes need to be re-diffed to update their positions.
+          const textChanged = lastCleanTextRef.current !== '' && cleanText !== lastCleanTextRef.current;
+          if (textChanged) {
+            // Invalidate all existing highlight char ranges and treat all current
+            // changes as "new" so they get re-diffed with correct positions.
+            // NOTE: We intentionally do NOT remove existing DeletedTextNodes here.
+            // When the user makes a second edit while a prior deletion is tracked,
+            // the re-diff may fail to locate the prior change's newDisplayText
+            // (because the new edit removed text the prior change expected).
+            // Keeping the existing nodes ensures they remain visible; the duplicate
+            // guard at Step 3a (existingDeletionChangeIds) prevents accumulation.
+            for (const [cid, record] of highlightRegistry) {
+              if (!cid.startsWith('__live__')) {
+                record.charRanges = [];
+                newChangeIds.add(cid);
+                // Clear the registry so it gets re-populated at Step 3a
+                // when the existing node is found via $nodesOfType scan.
+                deletionRegistry.delete(cid);
+              }
+            }
           }
           lastCleanTextRef.current = cleanText;
 
@@ -470,6 +506,7 @@ export default function TrackedChangesPlugin({
             previousChangeIdsRef.current = new Set();
             previousLiveBaselineRef.current = liveBaseline;
             isUpdatingRef.current = false;
+            (window as any).__isApplyingDecorations = false;
             return;
           }
 
@@ -478,6 +515,7 @@ export default function TrackedChangesPlugin({
             previousChangeIdsRef.current = new Set();
             previousLiveBaselineRef.current = liveBaseline;
             isUpdatingRef.current = false;
+            (window as any).__isApplyingDecorations = false;
             return;
           }
 
@@ -486,9 +524,18 @@ export default function TrackedChangesPlugin({
           const SEGMENT_SEPARATOR = ' \u2026 ';
 
           const newAdditionRanges: Array<{ start: number; end: number; changeId: string; colorIndex: number }> = [];
+          const newDeletionInsertions: Array<{
+            changeId: string;
+            proposedCharOffset: number;
+            deletedText: string;
+            authorName?: string;
+            authorColor?: string;
+          }> = [];
 
           // Only diff changes that need new decorations
           const changesToProcess = contentChanges.filter(c => newChangeIds.has(c.id));
+
+
 
           for (const change of changesToProcess) {
             // Use the full document JSON if available for a perfect diff, fallback to the (potentially truncated) plain text values
@@ -504,16 +551,54 @@ export default function TrackedChangesPlugin({
 
             const segCount = Math.max(newSegments.length, oldSegments.length);
             for (let si = 0; si < segCount; si++) {
-              const newDisplayText = (newSegments[si] || '').trim();
-              const oldDisplayText = (oldSegments[si] || '').trim();
+              const rawNewSeg = newSegments[si] || '';
+              const rawOldSeg = oldSegments[si] || '';
+              const newDisplayText = rawNewSeg.trim();
+              const oldDisplayText = rawOldSeg.trim();
 
               if (!newDisplayText && !oldDisplayText) continue;
 
-              let newTextStart = cleanTextWithNewlines.indexOf(newDisplayText);
+              // Try untrimmed first so the diff sees correct leading/trailing
+              // newlines (e.g. "\n\nline 3" vs "line 1\n\nline 3").  Fall back
+              // to trimmed if the untrimmed text isn't found.
+              let newTextStart = cleanTextWithNewlines.indexOf(rawNewSeg);
+              let diffNewText = rawNewSeg;
+              let diffOldText = rawOldSeg;
+              if (newTextStart === -1) {
+                newTextStart = cleanTextWithNewlines.indexOf(newDisplayText);
+                diffNewText = newDisplayText;
+                diffOldText = oldDisplayText;
+              }
 
-              if (newDisplayText === '' && change.regionMap?.ranges?.[0] && change.completeProposedVersion) {
-                // Deletions are now stored natively as DeletedTextNodes.
-                // We no longer need to dynamically re-insert them via text diffing.
+              // Pure deletion: newDisplayText is empty, so indexOf('') always
+              // returns 0 (wrong). Use context from completeProposedVersion +
+              // regionMap to find the correct insertion point.
+              if (newDisplayText === '' && oldDisplayText) {
+                let insertOffset = cleanText.length; // fallback: end of document
+                if (change.regionMap?.ranges?.[0] && change.completeProposedVersion) {
+                  const proposedText = getDisplayableText(change.completeProposedVersion);
+                  const delPoint = Math.min(change.regionMap.ranges[0].start, proposedText.length);
+                  const CTX = 30;
+                  const ctxBefore = proposedText.substring(Math.max(0, delPoint - CTX), delPoint);
+                  if (ctxBefore.length > 0) {
+                    const ctxPos = cleanText.indexOf(ctxBefore);
+                    if (ctxPos !== -1) {
+                      insertOffset = ctxPos + ctxBefore.length;
+                    }
+                  } else {
+                    insertOffset = 0;
+                  }
+                }
+                const deletedText = oldDisplayText.replace(/^\n+|\n+$/g, '');
+                if (deletedText) {
+                  newDeletionInsertions.push({
+                    changeId: change.id,
+                    proposedCharOffset: insertOffset,
+                    deletedText,
+                    authorName: change.changedBy,
+                    authorColor: getUserColor(change.changedBy || ''),
+                  });
+                }
                 continue;
               }
 
@@ -540,7 +625,7 @@ export default function TrackedChangesPlugin({
 
               if (newTextStart === -1) {
                 const ctxDiff = diffCharsOptimized(
-                  oldDisplayText, newDisplayText, { paragraphAligned: true },
+                  diffOldText, diffNewText, { paragraphAligned: true },
                 );
                 let ctxNewOff = 0;
                 const ctxColorIndex = getUserColorIndex(change.changedBy || '');
@@ -550,7 +635,7 @@ export default function TrackedChangesPlugin({
                   if (seg.type === 'equal') {
                     ctxNewOff += seg.value.length;
                   } else if (seg.type === 'insert') {
-                    const ctxBefore = newDisplayText.slice(Math.max(0, ctxNewOff - CTX_LEN), ctxNewOff);
+                    const ctxBefore = diffNewText.slice(Math.max(0, ctxNewOff - CTX_LEN), ctxNewOff);
                     const needle = ctxBefore + seg.value;
                     const pos = cleanTextWithNewlines.indexOf(needle);
                     if (pos !== -1) {
@@ -564,13 +649,33 @@ export default function TrackedChangesPlugin({
                       });
                     }
                     ctxNewOff += seg.value.length;
+                  } else if (seg.type === 'delete') {
+                    // Position the deletion using context AFTER it in newDisplayText
+                    const deletedText = seg.value.replace(/^\n+|\n+$/g, '');
+                    if (deletedText) {
+                      const ctxAfter = diffNewText.slice(ctxNewOff, ctxNewOff + CTX_LEN);
+                      let insertOffset = cleanText.length; // fallback: end of document
+                      if (ctxAfter) {
+                        const pos = cleanTextWithNewlines.indexOf(ctxAfter);
+                        if (pos !== -1) {
+                          insertOffset = newlinedToClean(pos);
+                        }
+                      }
+                      newDeletionInsertions.push({
+                        changeId: change.id,
+                        proposedCharOffset: insertOffset,
+                        deletedText,
+                        authorName: change.changedBy,
+                        authorColor: ctxColor,
+                      });
+                    }
                   }
                 }
                 continue;
               }
 
               const charDiff = diffCharsOptimized(
-                oldDisplayText, newDisplayText, { paragraphAligned: true },
+                diffOldText, diffNewText, { paragraphAligned: true },
               );
 
               let newOffset = 0;
@@ -589,8 +694,125 @@ export default function TrackedChangesPlugin({
                     colorIndex: changeColorIndex,
                   });
                   newOffset += seg.value.length;
+                } else if (seg.type === 'delete') {
+                  const deletedText = seg.value.replace(/^\n+|\n+$/g, '');
+                  if (deletedText) {
+                    newDeletionInsertions.push({
+                      changeId: change.id,
+                      proposedCharOffset: newlinedToClean(newTextStart + newOffset),
+                      deletedText,
+                      authorName: change.changedBy,
+                      authorColor: changeColor,
+                    });
+                  }
                 }
               }
+            }
+          }
+
+          // Step 3a: Insert collected DeletedTextNodes (reverse offset order
+          // so earlier insertions don't shift later ones).
+          // First, build a set of changeIds that already have DeletedTextNodes
+          // in the tree (e.g., committed from __pending_deletion__ by handleSaved).
+          const existingDeletionChangeIds = new Set(
+            $nodesOfType(DeletedTextNode).map(n => n.getChangeId())
+          );
+
+          const sortedNewDeletions = [...newDeletionInsertions].sort(
+            (a, b) => b.proposedCharOffset - a.proposedCharOffset
+          );
+          for (const deletion of sortedNewDeletions) {
+            // Skip if a DeletedTextNode for this change already exists (e.g.,
+            // DeletionInterceptionPlugin created it and handleSaved renamed it
+            // from __pending_deletion__ to the real changeId).
+            if (existingDeletionChangeIds.has(deletion.changeId)) {
+              // Register the existing node in deletionRegistry so it's tracked
+              if (!deletionRegistry.has(deletion.changeId)) {
+                const existingNode = $nodesOfType(DeletedTextNode)
+                  .find(n => n.getChangeId() === deletion.changeId);
+                if (existingNode) {
+                  deletionRegistry.set(deletion.changeId, {
+                    nodeKeys: [existingNode.getKey()],
+                    specs: [deletion],
+                  });
+                }
+              }
+              continue;
+            }
+
+            // Check if existing DeletedTextNode(s) already cover this deletion.
+            // Nodes may have __pending_deletion__ changeId (from DeletionInterceptionPlugin)
+            // or a different formal changeId (from handleSaved renaming a previous transaction).
+            // In either case, we reuse the existing node(s) rather than inserting duplicates.
+            const allDeletedNodes = $nodesOfType(DeletedTextNode);
+
+            // Strategy 1: Exact single-node match (any changeId)
+            const existingMatch = allDeletedNodes.find(
+              n => n.getDeletedText() === deletion.deletedText
+            );
+            if (existingMatch) {
+              existingMatch.setChangeId(deletion.changeId);
+              let record = deletionRegistry.get(deletion.changeId);
+              if (!record) {
+                record = { nodeKeys: [], specs: [] };
+                deletionRegistry.set(deletion.changeId, record);
+              }
+              record.nodeKeys.push(existingMatch.getKey());
+              record.specs.push(deletion);
+              continue;
+            }
+
+            // Strategy 2: Combined deletion spanning multiple existing nodes.
+            // When the backend batches two deletions into one transaction,
+            // deletion.deletedText = "line 1\nline 2" but separate nodes
+            // exist for "line 1" and "line 2" (with any changeId).
+            const deletionParts = deletion.deletedText.split('\n');
+            if (deletionParts.length > 1) {
+              const matched: DeletedTextNode[] = [];
+              const usedKeys = new Set<string>();
+              for (const part of deletionParts) {
+                const trimmed = part.trim();
+                if (!trimmed) continue;
+                const node = allDeletedNodes.find(
+                  n => n.getDeletedText() === trimmed && !usedKeys.has(n.getKey())
+                );
+                if (node) {
+                  matched.push(node);
+                  usedKeys.add(node.getKey());
+                }
+              }
+              if (matched.length > 0) {
+                // Rename all matched nodes to the formal changeId
+                let record = deletionRegistry.get(deletion.changeId);
+                if (!record) {
+                  record = { nodeKeys: [], specs: [] };
+                  deletionRegistry.set(deletion.changeId, record);
+                }
+                for (const node of matched) {
+                  node.setChangeId(deletion.changeId);
+                  record.nodeKeys.push(node.getKey());
+                }
+                record.specs.push(deletion);
+                continue;
+              }
+            }
+
+            const nodeKey = insertDeletedTextNodeAtOffset(
+              deletion.proposedCharOffset,
+              deletion.changeId,
+              deletion.deletedText,
+              deletion.authorName,
+              deletion.authorColor,
+              paragraphBoundaries,
+            );
+            if (nodeKey) {
+              let record = deletionRegistry.get(deletion.changeId);
+              if (!record) {
+                record = { nodeKeys: [], specs: [] };
+                deletionRegistry.set(deletion.changeId, record);
+              }
+              record.nodeKeys.push(nodeKey);
+              record.specs.push(deletion);
             }
           }
 
@@ -657,22 +879,32 @@ export default function TrackedChangesPlugin({
           requestAnimationFrame(() => {
             rebuildAllHighlightsFromRegistry(editor);
             suppressSpellcheckNearDeletions(editor);
-            isUpdatingRef.current = false;
           });
         },
         { tag: 'historic' }
       );
+      // Clear flags synchronously after editor.update() returns so they don't
+      // leak into subsequent user edits (requestAnimationFrame was too late).
+      isUpdatingRef.current = false;
+      (window as any).__isApplyingDecorations = false;
     } catch (err) {
       console.error('TrackedChangesPlugin: error applying decorations', err);
       isUpdatingRef.current = false;
+      (window as any).__isApplyingDecorations = false;
     }
   }, [editor, originalText, pendingChanges, getDisplayableText, liveBaseline, currentUserId]);
 
   // Debounced update on editor changes
   useEffect(() => {
-    const unregister = editor.registerUpdateListener(() => {
+    const unregister = editor.registerUpdateListener(({ tags }) => {
       // Skip our own decoration updates (tagged 'historic' to avoid polluting undo)
       if (isUpdatingRef.current) return;
+      // Skip updates from resolve-tracked-change and commit-pending-deletion
+      // handlers. These modify the editor (restore text, rename nodes) but the
+      // correct applyDecorations re-run will happen via the useEffect when
+      // pendingChanges updates after React re-renders. Running here with stale
+      // pendingChanges causes re-diffing of rejected changes → wrong offsets.
+      if (tags.has('tracked-changes-decoration') || tags.has('tracked-changes-resolve')) return;
 
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
@@ -714,7 +946,7 @@ export default function TrackedChangesPlugin({
               break;
             }
           }
-        });
+        }, { tag: 'tracked-changes-decoration' });
       }
     };
     window.addEventListener('commit-pending-deletion', handleCommit);
@@ -725,23 +957,156 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleResolve = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { changeId, action } = customEvent.detail;
+      const { changeId, action, deletedTexts, replacementPairs, insertedTexts } = customEvent.detail;
       if (changeId && action) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
+
+          // Track which deletedTexts have been matched (for __pending_deletion__ fallback)
+          const matchedTexts = new Set<string>();
+
           for (const node of deletions) {
-            if (node.getChangeId() === changeId) {
+            const nodeChangeId = node.getChangeId();
+            const nodeDeletedText = node.getDeletedText();
+            let match = nodeChangeId === changeId;
+
+            // Fallback: match __pending_deletion__ nodes by their deleted text content.
+            // DeletedTextNodes loaded from saved content often have __pending_deletion__
+            // instead of the real change ID because commit-pending-deletion may not
+            // have fired before the content was persisted.
+            if (!match && nodeChangeId === '__pending_deletion__' &&
+                Array.isArray(deletedTexts) && deletedTexts.length > 0) {
+              if (deletedTexts.includes(nodeDeletedText) && !matchedTexts.has(nodeDeletedText)) {
+                match = true;
+                matchedTexts.add(nodeDeletedText);
+              }
+            }
+
+            if (match) {
               if (action === 'approve') {
-                // Approving a deletion means the text is permanently deleted
                 node.remove();
               } else if (action === 'reject') {
-                // Rejecting a deletion means the text is restored
-                const textNode = $createTextNode(node.getDeletedText());
+                const textNode = $createTextNode(nodeDeletedText);
                 node.replace(textNode);
+
+                // For replacement changes (delete+insert pair), also remove the
+                // inserted text from the adjacent sibling. Without this, both the
+                // restored old text and the added new text remain in the document.
+                // Check both next AND previous siblings because the inserted text
+                // may appear on either side depending on cursor position when typed.
+                if (Array.isArray(replacementPairs)) {
+                  const pair = replacementPairs.find(
+                    (p: { deleted: string; inserted: string }) => p.deleted === nodeDeletedText
+                  );
+                  if (pair) {
+                    let removed = false;
+                    // Check next sibling first (inserted text prepended to it)
+                    const nextSibling = textNode.getNextSibling();
+                    if (nextSibling && $isTextNode(nextSibling)) {
+                      const content = nextSibling.getTextContent();
+                      if (content.startsWith(pair.inserted)) {
+                        const remaining = content.substring(pair.inserted.length);
+                        if (remaining) {
+                          nextSibling.setTextContent(remaining);
+                        } else {
+                          nextSibling.remove();
+                        }
+                        removed = true;
+                      }
+                    }
+                    // Check previous sibling (inserted text in a separate node before)
+                    if (!removed) {
+                      const prevSibling = textNode.getPreviousSibling();
+                      if (prevSibling && $isTextNode(prevSibling)) {
+                        const content = prevSibling.getTextContent();
+                        if (content.endsWith(pair.inserted)) {
+                          const remaining = content.substring(0, content.length - pair.inserted.length);
+                          if (remaining) {
+                            prevSibling.setTextContent(remaining);
+                          } else {
+                            prevSibling.remove();
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           }
-        });
+
+          // Handle pure insertions (additions with no corresponding DeletedTextNode).
+          // These are text additions tracked by CSS highlights, not by special nodes.
+          // On reject, find and remove the inserted text from TextNodes.
+          if (action === 'reject' && Array.isArray(insertedTexts) && insertedTexts.length > 0) {
+            const allTextNodes = $nodesOfType(TextNode);
+            for (const insertion of insertedTexts) {
+              const { text, beforeContext, afterContext } = insertion;
+              let found = false;
+
+              // Strategy 1: search with both before+after context for precise matching
+              if (beforeContext || afterContext) {
+                const searchStr = (beforeContext || '') + text + (afterContext || '');
+                for (const textNode of allTextNodes) {
+                  const content = textNode.getTextContent();
+                  const idx = content.indexOf(searchStr);
+                  if (idx !== -1) {
+                    const beforeLen = (beforeContext || '').length;
+                    const newContent = content.substring(0, idx + beforeLen) +
+                                       content.substring(idx + beforeLen + text.length);
+                    if (newContent) {
+                      textNode.setTextContent(newContent);
+                    } else {
+                      textNode.remove();
+                    }
+                    found = true;
+                    break;
+                  }
+                }
+              }
+
+              // Strategy 2: search with just text+afterContext
+              if (!found && afterContext) {
+                const searchStr = text + afterContext;
+                for (const textNode of allTextNodes) {
+                  const content = textNode.getTextContent();
+                  const idx = content.indexOf(searchStr);
+                  if (idx !== -1) {
+                    const newContent = content.substring(0, idx) +
+                                       content.substring(idx + text.length);
+                    if (newContent) {
+                      textNode.setTextContent(newContent);
+                    } else {
+                      textNode.remove();
+                    }
+                    found = true;
+                    break;
+                  }
+                }
+              }
+
+              // Strategy 3: search with beforeContext+text
+              if (!found && beforeContext) {
+                const searchStr = beforeContext + text;
+                for (const textNode of allTextNodes) {
+                  const content = textNode.getTextContent();
+                  const idx = content.indexOf(searchStr);
+                  if (idx !== -1) {
+                    const newContent = content.substring(0, idx + beforeContext.length) +
+                                       content.substring(idx + beforeContext.length + text.length);
+                    if (newContent) {
+                      textNode.setTextContent(newContent);
+                    } else {
+                      textNode.remove();
+                    }
+                    found = true;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }, { tag: 'tracked-changes-resolve' });
       }
     };
     window.addEventListener('resolve-tracked-change', handleResolve);

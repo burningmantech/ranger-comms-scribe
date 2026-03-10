@@ -379,7 +379,10 @@ export const updateChangeStatus = async (
     
     // Invalidate the submission's tracked changes cache
     await deleteObject(`tracked_changes:submission:${change.submissionId}`, env);
-    
+
+    // Invalidate the cached proposed versions so they're recomputed on next fetch
+    await deleteObject(`proposed_versions/${change.submissionId}`, env);
+
     return updatedChange;
   } catch (error) {
     console.error('Error updating change status:', error);
@@ -480,6 +483,200 @@ export const addChangeComment = async (
   }
 };
 
+// Find the first occurrence of a word subsequence within an array
+function findWordSubsequence(haystack: string[], needle: string[]): number {
+  if (needle.length === 0) return -1;
+  for (let i = 0; i <= haystack.length - needle.length; i++) {
+    let match = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return i;
+  }
+  return -1;
+}
+
+// Apply a diff (from predecessorCpv → changeCpv) to a running text.
+// Extracts change groups (contiguous delete/insert segments) from the diff,
+// finds the deleted words in the running text, and replaces them with inserted words.
+// Works correctly for non-overlapping changes (guaranteed by cascade rejection).
+function applyDiffContribution(
+  runningText: string,
+  diff: Array<{ type: 'equal' | 'delete' | 'insert'; words: string[] }>
+): string {
+  // Extract change groups from the diff
+  type ChangeGroup = {
+    toDelete: string[];   // words to find and remove in running text
+    toInsert: string[];   // words to add in their place
+    contextBefore: string[]; // preceding equal words (for pure insertions)
+  };
+
+  const groups: ChangeGroup[] = [];
+  let lastEqual: string[] = [];
+  let currentDelete: string[] = [];
+  let currentInsert: string[] = [];
+  let inChange = false;
+
+  for (const seg of diff) {
+    if (seg.type === 'equal') {
+      if (inChange) {
+        groups.push({
+          toDelete: currentDelete,
+          toInsert: currentInsert,
+          contextBefore: lastEqual.slice(-3)
+        });
+        currentDelete = [];
+        currentInsert = [];
+        inChange = false;
+      }
+      lastEqual = seg.words;
+    } else {
+      inChange = true;
+      if (seg.type === 'delete') {
+        currentDelete.push(...seg.words);
+      } else {
+        currentInsert.push(...seg.words);
+      }
+    }
+  }
+  if (inChange) {
+    groups.push({
+      toDelete: currentDelete,
+      toInsert: currentInsert,
+      contextBefore: lastEqual.slice(-3)
+    });
+  }
+
+  // Apply each group to runningText, preserving newline positions.
+  // Split into tokens while remembering which separators contain newlines.
+  const tokens = runningText.split(/(\s+)/); // odd indices are separators
+  const resultWords: string[] = [];
+  // Map: resultWords index → separator BEFORE this word (empty for first word)
+  const separatorBefore: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (i % 2 === 0) {
+      // word token
+      if (tokens[i] !== '') {
+        resultWords.push(tokens[i]);
+        separatorBefore.push(i > 0 ? tokens[i - 1] : '');
+      }
+    }
+  }
+
+  for (const group of groups) {
+    if (group.toDelete.length > 0) {
+      // Find the deleted words in result and replace with inserted words.
+      // Use contextBefore to disambiguate when there are multiple occurrences
+      // of the same word. Try progressively shorter contexts since earlier
+      // context words may have been modified by rejected changes.
+      let idx = -1;
+      for (let ctxLen = group.contextBefore.length; ctxLen >= 1; ctxLen--) {
+        const ctx = group.contextBefore.slice(-ctxLen);
+        const searchSeq = [...ctx, ...group.toDelete];
+        const seqIdx = findWordSubsequence(resultWords, searchSeq);
+        if (seqIdx >= 0) {
+          idx = seqIdx + ctxLen; // offset past the context words
+          break;
+        }
+      }
+      // Fallback: search for just the toDelete words (original behavior)
+      if (idx < 0) {
+        idx = findWordSubsequence(resultWords, group.toDelete);
+      }
+      if (idx >= 0) {
+        resultWords.splice(idx, group.toDelete.length, ...group.toInsert);
+        // Preserve the separator before the first deleted word, remove rest
+        const keptSep = separatorBefore[idx];
+        const newSeps = [keptSep, ...group.toInsert.slice(1).map(() => ' ')];
+        separatorBefore.splice(idx, group.toDelete.length, ...newSeps);
+      }
+    } else if (group.toInsert.length > 0 && group.contextBefore.length > 0) {
+      // Pure insertion: find context and insert after it.
+      // Try progressively shorter contexts for the same reason.
+      let ctxIdx = -1;
+      let ctxLen = 0;
+      for (let cl = group.contextBefore.length; cl >= 1; cl--) {
+        const ctx = group.contextBefore.slice(-cl);
+        const found = findWordSubsequence(resultWords, ctx);
+        if (found >= 0) {
+          ctxIdx = found;
+          ctxLen = cl;
+          break;
+        }
+      }
+      if (ctxIdx >= 0) {
+        const insertAt = ctxIdx + ctxLen;
+        resultWords.splice(insertAt, 0, ...group.toInsert);
+        separatorBefore.splice(insertAt, 0, ...group.toInsert.map(() => ' '));
+      }
+    }
+  }
+
+  // Rejoin using original separators (preserving newlines)
+  let result = '';
+  for (let i = 0; i < resultWords.length; i++) {
+    if (i > 0) {
+      result += separatorBefore[i] || ' ';
+    }
+    result += resultWords[i];
+  }
+  return result;
+}
+
+// Get the completeProposedVersion that was the state right before a change was
+// made. For the first change in a chain this is the original document content.
+function getPredecessorCpv(
+  change: TrackedChange,
+  allFieldChanges: TrackedChange[],
+  originalContent: string
+): string {
+  // Find the change immediately preceding this one (by timestamp)
+  const predecessors = allFieldChanges
+    .filter(c => new Date(c.timestamp).getTime() < new Date(change.timestamp).getTime())
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  if (predecessors.length > 0) {
+    const pred = predecessors[0];
+    if (pred.completeProposedVersion) {
+      return pred.completeProposedVersion;
+    }
+    // For non-incremental changes, newValue is the full document
+    if (!pred.isIncremental) {
+      return pred.newValue || originalContent;
+    }
+  }
+  return originalContent;
+}
+
+// Extract plain text from content that may be Lexical JSON
+// Preserves paragraph structure by joining top-level nodes with newlines
+function extractPlainText(content: string): string {
+  if (typeof content === 'string' && content.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.root && Array.isArray(parsed.root.children)) {
+        const extractNodeText = (node: any): string => {
+          if (node.text) return node.text;
+          if (Array.isArray(node.children)) {
+            return node.children.map(extractNodeText).join('');
+          }
+          return '';
+        };
+        // Join top-level nodes (paragraphs) with newlines
+        return parsed.root.children
+          .map((child: any) => extractNodeText(child))
+          .join('\n')
+          .trim();
+      }
+    } catch { /* not JSON, use as-is */ }
+  }
+  return content;
+}
+
 // Get the complete proposed version for a field by applying all incremental changes
 export const getCompleteProposedVersion = async (
   submissionId: string,
@@ -488,24 +685,54 @@ export const getCompleteProposedVersion = async (
 ): Promise<string | null> => {
   try {
     const changes = await getTrackedChanges(submissionId, env);
-    
-    // Get all approved and pending changes for this field, sorted by timestamp
-    const latestChange = changes
-      .filter(change => change.field === field && change.status !== 'rejected')
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      .pop();
-    
-    if (!latestChange) {
+
+    // All changes for this field, sorted chronologically
+    const allFieldChanges = changes
+      .filter(change => change.field === field)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    const activeChanges = allFieldChanges.filter(c => c.status !== 'rejected');
+    if (activeChanges.length === 0) {
       return null;
     }
-    
-    // If this is an incremental change, use the stored complete proposed version
-    if (latestChange.isIncremental && latestChange.completeProposedVersion) {
-      return latestChange.completeProposedVersion;
+
+    // Fast path: no rejections exist → the last active change's cpv is correct
+    const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
+    if (!hasRejections) {
+      const latestChange = activeChanges[activeChanges.length - 1];
+      if (latestChange.isIncremental && latestChange.completeProposedVersion) {
+        return latestChange.completeProposedVersion;
+      }
+      return latestChange.newValue;
     }
-    
-    // For non-incremental changes or fallback, return the newValue
-    return latestChange.newValue;
+
+    // Slow path: rejections exist → recompute by replaying non-rejected changes
+    const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
+    const originalContent = submission ? extractPlainText(submission.content || '') : '';
+
+    // Replay each non-rejected change's individual contribution
+    let runningText = originalContent;
+
+    for (const change of allFieldChanges) {
+      if (change.status === 'rejected') {
+        continue;
+      }
+
+      // Get this change's individual contribution by diffing predecessor → changeCpv
+      const predecessorCpv = getPredecessorCpv(change, allFieldChanges, originalContent);
+      const changeCpv = (change.isIncremental && change.completeProposedVersion)
+        ? change.completeProposedVersion
+        : change.newValue;
+
+      const predWords = predecessorCpv.split(/\s+/).filter(w => w !== '');
+      const changeWords = changeCpv.split(/\s+/).filter(w => w !== '');
+      const diffSegments = wordLcsDiff(predWords, changeWords);
+
+      // Apply only the changed parts to the running text
+      runningText = applyDiffContribution(runningText, diffSegments);
+    }
+
+    return runningText;
   } catch (error) {
     console.error('Error getting complete proposed version:', error);
     return null;
@@ -520,24 +747,39 @@ export const getCompleteRichTextProposedVersion = async (
 ): Promise<string | null> => {
   try {
     const changes = await getTrackedChanges(submissionId, env);
-    
-    // Get all approved and pending changes for this field, sorted by timestamp
-    const latestChange = changes
-      .filter(change => change.field === field && change.status !== 'rejected')
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      .pop();
-    
-    if (!latestChange) {
+
+    const allFieldChanges = changes
+      .filter(change => change.field === field)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    const activeChanges = allFieldChanges.filter(c => c.status !== 'rejected');
+    if (activeChanges.length === 0) {
       return null;
     }
-    
-    // If this change has rich text content, use the rich text new value
-    if (latestChange.richTextNewValue) {
-      return latestChange.richTextNewValue;
+
+    // Fast path: no rejections → use last active change's rich text directly
+    const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
+    if (!hasRejections) {
+      const latestChange = activeChanges[activeChanges.length - 1];
+      if (latestChange.richTextNewValue) {
+        return latestChange.richTextNewValue;
+      }
+      return latestChange.newValue;
     }
-    
-    // Fallback to the regular newValue if no rich text content is available
-    return latestChange.newValue;
+
+    // Slow path: compute correct plain text, then merge into original Lexical JSON
+    const correctPlainText = await getCompleteProposedVersion(submissionId, field, env);
+    if (!correctPlainText) {
+      return null;
+    }
+
+    // Get the original submission's rich text to use as the Lexical structure base
+    const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
+    if (submission?.richTextContent) {
+      return mergeTextIntoLexicalJson(submission.richTextContent, correctPlainText);
+    }
+
+    return correctPlainText;
   } catch (error) {
     console.error('Error getting complete rich text proposed version:', error);
     return null;
@@ -621,17 +863,41 @@ export function mergeTextIntoLexicalJson(originalLexical: string, newText: strin
     const json = JSON.parse(originalLexical);
     if (!json.root || !Array.isArray(json.root.children)) return originalLexical;
 
-    // Find the first paragraph or heading node
-    const node = json.root.children.find(
+    // Split the new text into lines to distribute across paragraphs
+    const lines = newText.split('\n');
+
+    // Find all paragraph/heading nodes
+    const textNodes = json.root.children.filter(
       (child: any) => child.type === 'paragraph' || child.type === 'heading'
     );
-    if (node && Array.isArray(node.children) && node.children.length > 0) {
-      // Replace the text of the first text node
-      const textNode = node.children.find((n: any) => n.type === 'text');
-      if (textNode) {
-        textNode.text = newText;
+
+    // Replace text in each paragraph, matching by index
+    for (let i = 0; i < textNodes.length; i++) {
+      const node = textNodes[i];
+      if (!Array.isArray(node.children) || node.children.length === 0) continue;
+
+      const lineText = i < lines.length ? lines[i] : '';
+      const textChild = node.children.find((n: any) => n.type === 'text');
+      if (textChild) {
+        textChild.text = lineText;
       }
     }
+
+    // If there are more lines than paragraphs, add new paragraph nodes
+    for (let i = textNodes.length; i < lines.length; i++) {
+      if (!lines[i] && lines[i] !== '') continue;
+      json.root.children.push({
+        children: [{ detail: 0, format: 0, mode: "normal", style: "", text: lines[i], type: "text", version: 1 }],
+        direction: "ltr",
+        format: "",
+        indent: 0,
+        type: "paragraph",
+        version: 1,
+        textFormat: 0,
+        textStyle: ""
+      });
+    }
+
     return JSON.stringify(json);
   } catch (e) {
     return originalLexical;
@@ -693,7 +959,10 @@ export const undoChange = async (
     // Clear cache for the submission's tracked changes
     const submissionCacheKey = `tracked_changes:submission:${targetChange.submissionId}`;
     await deleteObject(submissionCacheKey, env);
-    
+
+    // Invalidate the cached proposed versions so they're recomputed on next fetch
+    await deleteObject(`proposed_versions/${targetChange.submissionId}`, env);
+
     console.log('Successfully undone change:', changeId);
     return updatedChange;
   } catch (error) {
@@ -731,6 +1000,9 @@ export const deleteChange = async (
     const submissionCacheKey = `tracked_changes:submission:${submissionId}`;
     await deleteObject(submissionCacheKey, env);
 
+    // Invalidate the cached proposed versions so they're recomputed on next fetch
+    await deleteObject(`proposed_versions/${submissionId}`, env);
+
     console.log('Successfully deleted change:', changeId);
     return { submissionId };
   } catch (error) {
@@ -739,12 +1011,35 @@ export const deleteChange = async (
   }
 };
 
-// Check if two ranges overlap
+// Check if two ranges overlap (inclusive of touching boundaries)
 const rangesOverlap = (
   a: { start: number; end: number },
   b: { start: number; end: number }
 ): boolean => {
   return a.start < b.end && b.start < a.end;
+};
+
+// Check if a subsequent change depends on a target change via value chain.
+// A change is dependent if its oldValue matches or contains the target's newValue,
+// or if the target's newValue matches or contains the change's oldValue.
+// This catches cases where regionMap ranges don't numerically overlap because
+// they're expressed in different document coordinate spaces.
+const hasValueChainDependency = (
+  targetChange: TrackedChange,
+  subsequentChange: TrackedChange
+): boolean => {
+  const targetNew = (targetChange.newValue || '').trim();
+  const changeOld = (subsequentChange.oldValue || '').trim();
+
+  if (!targetNew || !changeOld) return false;
+
+  // Direct match: the subsequent change operates on exactly what the target produced
+  if (targetNew === changeOld) return true;
+
+  // Containment: the subsequent change operates on text that includes the target's output
+  if (changeOld.includes(targetNew) || targetNew.includes(changeOld)) return true;
+
+  return false;
 };
 
 // Get the cascade dependency chain for a given change
@@ -762,11 +1057,6 @@ export const getCascadeDependencies = async (
       return [];
     }
 
-    // Target must have a regionMap to have dependents
-    if (!targetChange.regionMap) {
-      return [];
-    }
-
     // Get all subsequent changes for the same field (pending AND accepted),
     // ordered by timestamp ascending. We need accepted changes to act as
     // cascade boundaries — the chain stops at any accepted change.
@@ -781,35 +1071,43 @@ export const getCascadeDependencies = async (
 
     const dependentIds: string[] = [];
 
+    // Track the running "newValue" through the chain so transitive dependencies
+    // are detected (A→B→C where C depends on B which depends on A).
+    let chainNewValue = targetChange.newValue || '';
+
     for (const change of subsequentChanges) {
-      // If the change has no regionMap, skip it (no overlap can be determined)
-      if (!change.regionMap) {
-        continue;
-      }
+      let isDependent = false;
 
-      // If the change is for a different field in the regionMap, skip it
-      if (change.regionMap.field !== targetChange.regionMap.field) {
-        continue;
-      }
-
-      // Check for any overlapping ranges
-      let hasOverlap = false;
-      for (const targetRange of targetChange.regionMap.ranges) {
-        for (const changeRange of change.regionMap.ranges) {
-          if (rangesOverlap(targetRange, changeRange)) {
-            hasOverlap = true;
-            break;
+      // Method 1: regionMap overlap (character-level ranges)
+      if (targetChange.regionMap && change.regionMap &&
+          change.regionMap.field === targetChange.regionMap.field) {
+        for (const targetRange of targetChange.regionMap.ranges) {
+          for (const changeRange of change.regionMap.ranges) {
+            if (rangesOverlap(targetRange, changeRange)) {
+              isDependent = true;
+              break;
+            }
           }
+          if (isDependent) break;
         }
-        if (hasOverlap) break;
       }
 
-      if (hasOverlap) {
+      // Method 2: value chain dependency (catches coordinate-space mismatches)
+      if (!isDependent) {
+        isDependent = hasValueChainDependency(
+          { ...targetChange, newValue: chainNewValue } as TrackedChange,
+          change
+        );
+      }
+
+      if (isDependent) {
         // Accepted changes are immutable boundaries — stop the cascade
         if (change.status === 'approved') {
           break;
         }
         dependentIds.push(change.id);
+        // Update chain value for transitive detection
+        chainNewValue = change.newValue || chainNewValue;
       }
     }
 

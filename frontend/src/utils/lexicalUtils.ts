@@ -336,6 +336,119 @@ export function restoreDeletedTextInLexical(
 }
 
 /**
+ * Replace only the FIRST occurrence of searchText in Lexical JSON.
+ * Unlike findAndReplaceInLexical (which uses the 'g' flag), this stops
+ * after the first match to avoid corrupting duplicate text elsewhere.
+ */
+export function replaceFirstInLexical(
+  lexicalJson: string | object,
+  searchText: string,
+  replaceText: string,
+): string {
+  if (!lexicalJson || !searchText) return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+
+  try {
+    const data = typeof lexicalJson === 'string' ? JSON.parse(lexicalJson) : JSON.parse(JSON.stringify(lexicalJson));
+
+    if (!data || !data.root || !data.root.children) {
+      return JSON.stringify(data);
+    }
+
+    let replaced = false;
+
+    function replaceInNode(node: any): any {
+      if (replaced || !node) return node;
+
+      if (node.type === 'text' && node.text) {
+        const idx = node.text.indexOf(searchText);
+        if (idx !== -1) {
+          replaced = true;
+          return {
+            ...node,
+            text: node.text.substring(0, idx) + replaceText + node.text.substring(idx + searchText.length),
+          };
+        }
+        return node;
+      }
+
+      if (node.children && Array.isArray(node.children)) {
+        return {
+          ...node,
+          children: node.children.map(replaceInNode),
+        };
+      }
+
+      return node;
+    }
+
+    const updatedData = {
+      ...data,
+      root: {
+        ...data.root,
+        children: data.root.children.map(replaceInNode),
+      },
+    };
+
+    return JSON.stringify(updatedData);
+  } catch (error) {
+    console.error('Error replacing first occurrence in Lexical JSON:', error);
+    return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+  }
+}
+
+/**
+ * Strip deleted-text nodes from Lexical JSON and merge adjacent text nodes.
+ * This makes text continuous for search/replace operations that would
+ * otherwise fail when text is split across nodes by DeletedTextNode markers.
+ */
+export function stripDeletedTextNodes(lexicalJson: string | object): string {
+  if (!lexicalJson) return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+
+  try {
+    const data = typeof lexicalJson === 'string' ? JSON.parse(lexicalJson) : JSON.parse(JSON.stringify(lexicalJson));
+
+    if (!data?.root?.children) {
+      return JSON.stringify(data);
+    }
+
+    function processChildren(children: any[]): any[] {
+      const result: any[] = [];
+      for (const child of children) {
+        // Skip deleted-text nodes entirely
+        if (child.type === 'deleted-text') continue;
+
+        // Recursively process children
+        if (child.children && Array.isArray(child.children)) {
+          child.children = processChildren(child.children);
+        }
+
+        // Merge adjacent text nodes with same formatting
+        const prev = result[result.length - 1];
+        if (prev && prev.type === 'text' && child.type === 'text' &&
+            prev.format === child.format && prev.style === child.style) {
+          prev.text = (prev.text || '') + (child.text || '');
+        } else {
+          result.push(child);
+        }
+      }
+      return result;
+    }
+
+    data.root.children = data.root.children.map((block: any) => {
+      if (block.children && Array.isArray(block.children)) {
+        return { ...block, children: processChildren(block.children) };
+      }
+      return block;
+    });
+
+    return JSON.stringify(data);
+  } catch (error) {
+    console.error('Error stripping deleted text nodes:', error);
+    return typeof lexicalJson === 'string' ? lexicalJson : JSON.stringify(lexicalJson);
+  }
+}
+
+/**
  * Helper function to escape special regex characters
  */
 function escapeRegExp(string: string): string {

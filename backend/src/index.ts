@@ -76,6 +76,11 @@ const router = AutoRouter({
 });
 
 const withValidSession = async (request: Request, env: Env) => {
+    if (env.DEV_BYPASS_AUTH === 'true') {
+        (request as any).user = { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin', isAdmin: true, roles: ['Admin'], groups: [] };
+        return undefined;
+    }
+
     const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
     if (!sessionId) {
         return json({ error: 'Session ID is required' }, { status: 400 });

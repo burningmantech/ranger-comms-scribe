@@ -16,6 +16,7 @@ interface ReviewTopBarProps {
   onApprove: () => void;
   onRequestChanges: () => void;
   onReject: () => void;
+  onReset?: () => void;
   onNavigate: (submissionId: string) => void;
 }
 
@@ -31,8 +32,11 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
   onApprove,
   onRequestChanges,
   onReject,
+  onReset,
   onNavigate,
 }) => {
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
   const formatDate = (date: Date) => {
     return date.toLocaleDateString(undefined, {
       month: 'short',
@@ -93,6 +97,16 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
               <i className="fas fa-times" />
               <span>Reject</span>
             </button>
+            {onReset && (
+              <button
+                className="review-top-bar__action-btn review-top-bar__action-btn--reset"
+                onClick={() => setShowResetConfirm(true)}
+                style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}
+              >
+                <i className="fas fa-undo" />
+                <span>Reset</span>
+              </button>
+            )}
           </div>
         )}
         <QueueNavigator
@@ -100,6 +114,20 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
           onNavigate={onNavigate}
         />
       </div>
+      {showResetConfirm && (
+        <div className="request-changes-overlay" onClick={() => setShowResetConfirm(false)}>
+          <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
+            <h3>Reset Document</h3>
+            <p style={{ margin: '12px 0', color: '#666' }}>
+              Are you sure you want to reset this document to its original state and delete all tracked changes? This cannot be undone.
+            </p>
+            <div className="request-changes-actions">
+              <button className="btn btn-neutral" onClick={() => setShowResetConfirm(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={() => { setShowResetConfirm(false); onReset?.(); }}>Reset</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

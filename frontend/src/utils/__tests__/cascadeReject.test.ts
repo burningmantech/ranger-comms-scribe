@@ -62,16 +62,14 @@ async function flush(): Promise<void> {
 
 describe('cascadeReject', () => {
   let mockGetCascade: jest.Mock;
-  let mockDelete: jest.Mock;
+  let mockReject: jest.Mock;
   let mockRemoveDecorations: jest.Mock;
-  let mockRestoreEditor: jest.Mock;
   let mockRefetch: jest.Mock;
 
   beforeEach(() => {
     mockGetCascade = jest.fn();
-    mockDelete = jest.fn(async () => {});
+    mockReject = jest.fn(async () => {});
     mockRemoveDecorations = jest.fn();
-    mockRestoreEditor = jest.fn();
     mockRefetch = jest.fn(async () => {});
   });
 
@@ -82,9 +80,8 @@ describe('cascadeReject', () => {
       submissionId: 'sub-1',
       changeId: 'change-1',
       getCascadeDependencies: mockGetCascade,
-      deleteTrackedChange: mockDelete,
+      rejectTrackedChange: mockReject,
       removeDecorations: mockRemoveDecorations,
-      restoreEditorContent: mockRestoreEditor,
       refetchSubmissionContent: mockRefetch,
       ...overrides,
     };
@@ -98,9 +95,9 @@ describe('cascadeReject', () => {
     expect(result.removedChangeIds).toEqual(['change-1']);
     expect(result.failedDeleteIds).toEqual([]);
 
-    // Should delete the one change
-    expect(mockDelete).toHaveBeenCalledTimes(1);
-    expect(mockDelete).toHaveBeenCalledWith('sub-1', 'change-1');
+    // Should reject the one change
+    expect(mockReject).toHaveBeenCalledTimes(1);
+    expect(mockReject).toHaveBeenCalledWith('sub-1', 'change-1');
 
     // Should remove decorations for the one change
     expect(mockRemoveDecorations).toHaveBeenCalledTimes(1);
@@ -119,27 +116,27 @@ describe('cascadeReject', () => {
     expect(result.removedChangeIds).toEqual(['dep-c', 'dep-b', 'dep-a', 'change-1']);
     expect(result.failedDeleteIds).toEqual([]);
 
-    // Delete calls: 3 dependents + 1 original = 4
-    expect(mockDelete).toHaveBeenCalledTimes(4);
+    // Reject calls: 3 dependents + 1 original = 4
+    expect(mockReject).toHaveBeenCalledTimes(4);
 
     // Verify order: dep-c, dep-b, dep-a, change-1
-    expect(mockDelete.mock.calls[0]).toEqual(['sub-1', 'dep-c']);
-    expect(mockDelete.mock.calls[1]).toEqual(['sub-1', 'dep-b']);
-    expect(mockDelete.mock.calls[2]).toEqual(['sub-1', 'dep-a']);
-    expect(mockDelete.mock.calls[3]).toEqual(['sub-1', 'change-1']);
+    expect(mockReject.mock.calls[0]).toEqual(['sub-1', 'dep-c']);
+    expect(mockReject.mock.calls[1]).toEqual(['sub-1', 'dep-b']);
+    expect(mockReject.mock.calls[2]).toEqual(['sub-1', 'dep-a']);
+    expect(mockReject.mock.calls[3]).toEqual(['sub-1', 'change-1']);
 
     // Remove decorations: 3 dependents + 1 original = 4
     expect(mockRemoveDecorations).toHaveBeenCalledTimes(4);
   });
 
-  it('continues on failed deletes (best effort)', async () => {
+  it('continues on failed rejects (best effort)', async () => {
     mockGetCascade.mockResolvedValue({
       changeId: 'change-1',
       dependentIds: ['dep-a', 'dep-b'],
     });
 
-    // Make dep-b fail (it gets called second since we reverse: dep-b then dep-a)
-    mockDelete
+    // Make dep-a fail (called second since we reverse: dep-b then dep-a)
+    mockReject
       .mockResolvedValueOnce(undefined) // dep-b succeeds
       .mockRejectedValueOnce(new Error('Network error')) // dep-a fails
       .mockResolvedValueOnce(undefined); // change-1 succeeds
@@ -151,14 +148,14 @@ describe('cascadeReject', () => {
     // dep-a should be in the failed list
     expect(result.failedDeleteIds).toEqual(['dep-a']);
 
-    // All deletes should have been attempted
-    expect(mockDelete).toHaveBeenCalledTimes(3);
+    // All rejects should have been attempted
+    expect(mockReject).toHaveBeenCalledTimes(3);
 
     // Decorations should still be removed for all
     expect(mockRemoveDecorations).toHaveBeenCalledTimes(3);
   });
 
-  it('uses refetchSubmissionContent when no TransactionManager is provided', async () => {
+  it('calls refetchSubmissionContent when provided', async () => {
     mockGetCascade.mockResolvedValue({ changeId: 'change-1', dependentIds: [] });
 
     const result = await cascadeReject(
@@ -166,9 +163,8 @@ describe('cascadeReject', () => {
     );
 
     expect(result.removedChangeIds).toEqual(['change-1']);
-    // No TransactionManager means no beforeSnapshot -> should call refetch
+    // Should call refetch with the removed IDs
     expect(mockRefetch).toHaveBeenCalledTimes(1);
-    expect(mockRestoreEditor).not.toHaveBeenCalled();
   });
 
   it('cleans up undo stack entries for removed changes', async () => {
@@ -204,34 +200,6 @@ describe('cascadeReject', () => {
     for (const tx of updatedStack) {
       expect(tx.remoteChangeId).toBeNull();
     }
-  });
-
-  it('restores editor with earliest beforeSnapshot when TransactionManager is provided', async () => {
-    mockGetCascade.mockResolvedValue({
-      changeId: 'change-1',
-      dependentIds: [],
-    });
-
-    const tm = createTM('sub-1');
-
-    // Create a transaction to populate the undo stack
-    const beforeState = makeLexical('original text');
-    tm.startTransaction('content', beforeState);
-    tm.settleTransaction(makeLexical('modified text'));
-    await flush();
-
-    const stack = tm.getUndoStack();
-    stack[0].remoteChangeId = 'change-1';
-
-    await cascadeReject(
-      buildOptions({ transactionManager: tm }),
-    );
-
-    // Should restore with the earliest beforeSnapshot
-    expect(mockRestoreEditor).toHaveBeenCalledTimes(1);
-    const restoredContent = mockRestoreEditor.mock.calls[0][0];
-    expect(restoredContent).toContain('original text');
-    expect(mockRefetch).not.toHaveBeenCalled();
   });
 
   it('handles decoration removal failure gracefully', async () => {

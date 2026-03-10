@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffCharsOptimized } from '../utils/diffAlgorithm';
-import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
+import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, replaceFirstInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical, stripDeletedTextNodes } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
-import { cascadeReject } from '../utils/cascadeReject';
+
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { CollaborativeEditor } from './CollaborativeEditor';
 import { $isImageNode } from './editor/nodes/ImageNode';
@@ -161,6 +161,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
   const [showCommentDialog, setShowCommentDialog] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [selectedText, setSelectedText] = useState('');
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
@@ -182,6 +183,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Track optimistically removed changes (e.g. via undo) so they disappear immediately
   const [localRemovedChangeIds, setLocalRemovedChangeIds] = useState<Set<string>>(new Set());
+
+  // Track optimistically added changes (from handleSaved) so they appear in sidebar
+  // immediately without a full fetchSubmission() round-trip that would trigger applyDecorations cascade
+  const [localAddedChanges, setLocalAddedChanges] = useState<Change[]>([]);
 
   // Synchronized scrolling refs and state
   const originalDiffTextRef = useRef<HTMLDivElement>(null);
@@ -205,6 +210,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const pendingRealTimeUpdateRef = useRef<boolean>(false);
   const realTimeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isApplyingRealTimeUpdateRef = useRef<boolean>(false);
+  const isRefreshingContentRef = useRef<boolean>(false);
+  // Stays true while a change resolution (approve/reject) is in progress.
+  // Unlike isRefreshingContentRef (one-shot), this persists through multiple
+  // onContentChange events until cleared by a timeout.
+  const isResolvingChangeRef = useRef<boolean>(false);
 
   // TransactionManager instance — one per submission editing session
   const transactionManagerRef = useRef<TransactionManager | null>(null);
@@ -334,6 +344,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // We listen for transaction-saved (not settled) because we need the
     // remoteChangeId which is only assigned after the save succeeds.
     const handleSaved = (tx: Transaction) => {
+      console.log('[TrackedChangesEditor] transaction-saved:', {
+        remoteChangeId: tx.remoteChangeId,
+        field: tx.field,
+        status: tx.status,
+        beforeTextLen: tx.beforeSnapshot.text.length,
+        afterTextLen: tx.afterSnapshot?.text.length,
+      });
       const client = webSocketClientRef.current;
       if (client && tx.remoteChangeId && tx.afterSnapshot) {
         client.sendTransactionSettled({
@@ -356,9 +373,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           }));
         }
       }
-      // Refresh sidebar so the new tracked change appears
-      if (onRefreshNeeded) {
-        onRefreshNeeded();
+      // Optimistically add the new change to the sidebar instead of calling
+      // onRefreshNeeded() (which triggers fetchSubmission → applyDecorations → cascade).
+      // The editor DOM already has the correct DeletedTextNode from commit-pending-deletion.
+      if (tx.remoteChangeId && tx.afterSnapshot) {
+        const optimisticChange: Change = {
+          id: tx.remoteChangeId,
+          field: tx.field,
+          oldValue: tx.beforeSnapshot.text,
+          newValue: tx.afterSnapshot.text,
+          changedBy: currentUser.email || currentUser.id,
+          timestamp: new Date(),
+          status: 'pending',
+          isIncremental: true,
+          regionMap: tx.regionMap ?? undefined,
+        };
+        setLocalAddedChanges(prev => [...prev, optimisticChange]);
       }
     };
     tm.on('transaction-saved', handleSaved);
@@ -367,7 +397,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       tm.off('transaction-settled', handleSettledFlag);
       tm.off('transaction-saved', handleSaved);
     };
-  }, [onRefreshNeeded]);
+  }, [currentUser.email, currentUser.id]);
 
   // Update ref when content changes
   useEffect(() => {
@@ -633,8 +663,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Initialize edited proposed content when component mounts or submission changes
   useEffect(() => {
-    // Clear optimistically removed changes when submission changes arrive from the server
+    // Clear optimistic local state when submission changes arrive from the server
     setLocalRemovedChangeIds(new Set());
+    setLocalAddedChanges([]);
 
     // Prioritize rich text content from proposed versions, then fall back to other sources
     // Skip if the content looks like a comment (contains @change:)
@@ -662,6 +693,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     const richTextContent = getRichTextContent(content);
 
+    // Suppress TransactionManager from creating tracked changes during this
+    // programmatic content update (e.g. after a rejection refreshes the submission).
+    isRefreshingContentRef.current = true;
+
     // Always update the edited content and last saved content during initialization
     setEditedProposedContent(richTextContent);
     setLastSavedProposedContent(richTextContent);
@@ -670,9 +705,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // This ensures the editor gets the latest content when entering edit mode
     initialEditorContentRef.current = richTextContent;
 
-    // Mark as initialized after a short delay to ensure all state is set
+    // Mark as initialized after a short delay to ensure all state is set.
+    // Also clear isRefreshingContentRef as a safety net — if the editor doesn't
+    // fire an onChange (e.g. content unchanged after refresh), the flag would
+    // otherwise stay true and swallow the first user edit.
     setTimeout(() => {
       hasInitializedContentRef.current = true;
+      isRefreshingContentRef.current = false;
     }, 100);
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
 
@@ -760,8 +799,32 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         comments: changeComments
       };
     }).filter(c => !localRemovedChangeIds.has(c.id));
+
+    // Merge optimistically added changes (from handleSaved) that aren't yet
+    // in the server data.  Once fetchSubmission() runs, the server data will
+    // include these changes and the local copies are automatically excluded.
+    const serverIds = new Set(result.map(c => c.id));
+    for (const local of localAddedChanges) {
+      if (!serverIds.has(local.id) && !localRemovedChangeIds.has(local.id)) {
+        result.push({
+          ...local,
+          status: local.status || 'pending',
+          approvedBy: undefined,
+          rejectedBy: undefined,
+          comments: [],
+        });
+      }
+    }
+
+    console.log('[TrackedChangesEditor] trackedChanges:', {
+      submissionChangesCount: submission.changes.length,
+      afterFilterCount: result.length,
+      localRemovedCount: localRemovedChangeIds.size,
+      localAddedCount: localAddedChanges.filter(c => !serverIds.has(c.id)).length,
+      statuses: result.map(c => c.status),
+    });
     return result;
-  }, [submission.changes, submission.comments, localRemovedChangeIds]);
+  }, [submission.changes, submission.comments, localRemovedChangeIds, localAddedChanges]);
 
   const hasPendingTrackedChanges = trackedChanges.filter(c => c.status === 'pending').length > 0;
 
@@ -931,31 +994,86 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Ellipsis separator used by backend to join disjoint change segments
     const SEGMENT_SEPARATOR = ' \u2026 ';
 
-    // For incremental changes, find and replace the specific part
+    // For incremental changes, surgically revert only the specific text
+    // that this change introduced, leaving other changes intact.
+    // NOTE: Deletion restoration is handled separately by the 'resolve-tracked-change'
+    // event (which replaces DeletedTextNodes). This function only needs to handle
+    // removing inserted text from the current document.
     if (change.isIncremental) {
-      // Prefer richTextOldValue when available — it's the full Lexical JSON
-      // document state before this change was applied. Using it directly is
-      // like reverting a git commit: simple, correct, and avoids the complex
-      // text-surgery positioning that restoreDeletedTextInLexical attempts.
-      if (change.richTextOldValue && isLexicalJson(change.richTextOldValue)) {
-        applyRevert(change.richTextOldValue);
-      } else if (isLexicalJson(currentContent)) {
-        // Fallback to plain text handling for non-Lexical content
-        const currentText = getDisplayableText(currentContent);
-        const newText = getDisplayableText(valueToRevert);
-        const oldText = getDisplayableText(revertToValue);
+      // Extract the text before and after this change was applied so we
+      // can compute what was actually added/removed by this specific change.
+      const changeOldText = getDisplayableText(revertToValue);
+      const changeNewText = getDisplayableText(valueToRevert);
 
-        if (newText === '') {
-          const revertedText = currentText + (currentText.endsWith(' ') ? '' : ' ') + oldText;
-          applyRevert(getRichTextContent(revertedText));
-        } else {
-          const index = currentText.indexOf(newText);
-          if (index !== -1) {
-            const revertedText = currentText.substring(0, index) +
-              oldText +
-              currentText.substring(index + newText.length);
-            applyRevert(getRichTextContent(revertedText));
+      if (isLexicalJson(currentContent)) {
+        // Strip DeletedTextNodes from the JSON so text is continuous for
+        // accurate search/replace. DeletedTextNodes split text across
+        // multiple nodes, preventing replaceFirstInLexical from finding
+        // junction text that spans a deletion boundary.
+        const cleanedContent = stripDeletedTextNodes(currentContent);
+
+        // Diff the change's old vs new to find the specific insertions/deletions
+        const segments = diffCharsOptimized(changeOldText, changeNewText);
+        let revertedContent = cleanedContent;
+        const CTX = 20;
+
+        // Track offsets in both old and new text independently.
+        // equal segments advance both; insert advances new only; delete advances old only.
+        let oldOffset = 0;
+        let newOffset = 0;
+        for (const seg of segments) {
+          if (seg.type === 'equal') {
+            oldOffset += seg.value.length;
+            newOffset += seg.value.length;
+          } else if (seg.type === 'insert') {
+            // Get surrounding context from the new text for precise matching
+            const before = changeNewText.slice(Math.max(0, newOffset - CTX), newOffset);
+            const after = changeNewText.slice(
+              newOffset + seg.value.length,
+              newOffset + seg.value.length + CTX,
+            );
+
+            // Try context-aware replacement first (before+inserted+after → before+after)
+            if (before.length > 0 || after.length > 0) {
+              const searchStr = before + seg.value + after;
+              const replaceStr = before + after;
+              const result = replaceFirstInLexical(revertedContent, searchStr, replaceStr);
+              if (result !== revertedContent) {
+                revertedContent = result;
+                newOffset += seg.value.length;
+                continue;
+              }
+            }
+
+            // Fallback: replace just the inserted text (first occurrence only)
+            if (seg.value.trim()) {
+              revertedContent = replaceFirstInLexical(revertedContent, seg.value, '');
+            }
+            newOffset += seg.value.length;
+          } else if (seg.type === 'delete') {
+            // Deletions are primarily handled by the resolve-tracked-change event
+            // which replaces DeletedTextNodes with TextNodes. However, if
+            // no DeletedTextNode exists, restore using context-aware placement.
+            const before = changeOldText.slice(Math.max(0, oldOffset - CTX), oldOffset);
+            const afterDel = changeOldText.slice(
+              oldOffset + seg.value.length,
+              oldOffset + seg.value.length + CTX,
+            );
+            if (before.length > 0 && afterDel.length > 0) {
+              const junction = before + afterDel;
+              const restored = before + seg.value + afterDel;
+              const result = replaceFirstInLexical(revertedContent, junction, restored);
+              if (result !== revertedContent) {
+                revertedContent = result;
+              }
+            }
+            oldOffset += seg.value.length;
           }
+        }
+
+        // Always apply if we cleaned DeletedTextNodes or if the diff changed content
+        if (revertedContent !== currentContent) {
+          applyRevert(revertedContent);
         }
       }
     } else {
@@ -969,105 +1087,122 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [editedProposedContent, submission, getDisplayableText, getRichTextContent, saveRevertedContent]);
 
-  // Handle change decision (approve/reject)
+  // Background sync: fire-and-forget PUT to backend
+  const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected') => {
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) return;
+      await fetch(`${API_URL}/tracked-changes/change/${changeId}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
+        body: JSON.stringify({ status })
+      });
+    } catch (error) {
+      console.error(`Background sync failed for change ${changeId}:`, error);
+      onRefreshNeeded?.();
+    }
+  }, [onRefreshNeeded]);
+
+  // Handle change decision (approve/reject) — fully local, no network on hot path
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
-    if (decision === 'approve') {
-      onApprove(changeId);
+    // Compute deleted text segments so the handler can match __pending_deletion__ nodes.
+    // Also compute replacement pairs (adjacent delete→insert) so the reject handler
+    // can remove inserted text that corresponds to each deletion.
+    const change = trackedChanges.find(c => c.id === changeId);
+    let deletedTexts: string[] = [];
+    let replacementPairs: Array<{ deleted: string; inserted: string }> = [];
+    let insertedTexts: Array<{ text: string; beforeContext: string; afterContext: string }> = [];
+    if (change) {
+      const rawOld = change.richTextOldValue || change.oldValue || '';
+      const rawNew = change.richTextNewValue || change.newValue || '';
+      const oldText = getDisplayableText(rawOld);
+      const newText = getDisplayableText(rawNew);
+      if (oldText && newText) {
+        const segments = diffCharsOptimized(oldText, newText);
+        deletedTexts = segments
+          .filter(s => s.type === 'delete')
+          .map(s => s.value.replace(/^\n+|\n+$/g, ''))
+          .filter(t => t.length > 0);
 
-      // Tell Lexical to remove the native DeletedTextNode permanently
-      window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-        detail: { changeId, action: 'approve' }
-      }));
-    } else {
-      // Use cascade rejection flow — it handles dependency chains
-      // and falls back gracefully for single changes.
-      cascadeReject({
-        submissionId: submission.id,
-        changeId,
-        transactionManager,
-        // We omit restoreEditorContent here because applying an entire old
-        // session snapshot incorrectly wipes out all independent changes 
-        // made after it. Native resolutions and string-fallbacks are used instead.
-        refetchSubmissionContent: async (removedIds?: string[]) => {
-          const idsToProcess = removedIds && removedIds.length > 0 ? removedIds : [changeId];
-
-          for (const id of idsToProcess) {
-            const changeToRevert = trackedChanges.find(c => c.id === id);
-
-            if (changeToRevert) {
-              const oldText = getChangeDisplayText(changeToRevert.oldValue || '');
-              const newText = getChangeDisplayText(changeToRevert.newValue || '');
-
-              const diffSegments = diffCharsOptimized(oldText, newText);
-              const hasDeletion = diffSegments.some(seg => seg.type === 'delete');
-              const hasInsertion = diffSegments.some(seg => seg.type === 'insert');
-
-              if (hasDeletion && !hasInsertion) {
-                // Pure deletion - rely wholly on native DeletedTextNode replacement
-                window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-                  detail: { changeId: id, action: 'reject' }
-                }));
-              } else {
-                // For additions or mixed replacements, also trigger string fallback
-                window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-                  detail: { changeId: id, action: 'reject' }
-                }));
-                revertChangeInContent(changeToRevert);
-              }
+        // Build replacement pairs: adjacent (delete, insert) segments form a pair.
+        // When rejecting, we need to remove the inserted text alongside restoring
+        // the deleted text, otherwise both end up in the document.
+        const pairedInsertIndices = new Set<number>();
+        for (let i = 0; i < segments.length; i++) {
+          if (segments[i].type === 'delete' && i + 1 < segments.length && segments[i + 1].type === 'insert') {
+            const del = segments[i].value.replace(/^\n+|\n+$/g, '');
+            const ins = segments[i + 1].value.replace(/^\n+|\n+$/g, '');
+            if (del.length > 0 && ins.length > 0) {
+              replacementPairs.push({ deleted: del, inserted: ins });
+              pairedInsertIndices.add(i + 1);
             }
-          }
-
-          // Trigger auto-save so the native changes are persisted AND wait for it
-          await new Promise<void>((resolve) => {
-            setTimeout(async () => {
-              if (editedProposedContentRef.current) {
-                await saveRevertedContent(editedProposedContentRef.current);
-              }
-              resolve();
-            }, 100);
-          });
-        },
-      }).then(() => {
-        // Cascade and state saving complete! Call onReject to trigger UI reload
-        onReject(changeId);
-      }).catch((err) => {
-        // Cascade fetch failed — fall back
-        console.error('Cascade rejection failed, falling back to direct revert:', err);
-        const changeToRevert = trackedChanges.find(c => c.id === changeId);
-
-        if (changeToRevert) {
-          const oldText = getChangeDisplayText(changeToRevert.oldValue || '');
-          const newText = getChangeDisplayText(changeToRevert.newValue || '');
-          const diffSegments = diffCharsOptimized(oldText, newText);
-          const hasDeletion = diffSegments.some(seg => seg.type === 'delete');
-          const hasInsertion = diffSegments.some(seg => seg.type === 'insert');
-
-          if (hasDeletion && !hasInsertion) {
-            window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-              detail: { changeId, action: 'reject' }
-            }));
-          } else {
-            window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-              detail: { changeId, action: 'reject' }
-            }));
-            revertChangeInContent(changeToRevert);
           }
         }
 
-        setTimeout(() => {
-          if (editedProposedContentRef.current) {
-            saveRevertedContent(editedProposedContentRef.current).finally(() => {
-              onReject(changeId);
-            });
-          } else {
-            onReject(changeId);
+        // Build insertedTexts: pure inserts NOT part of a delete→insert replacement pair.
+        // These are additions that have no corresponding DeletedTextNode, so the
+        // resolve-tracked-change handler needs to find and remove them from TextNodes.
+        let newOffset = 0;
+        for (let i = 0; i < segments.length; i++) {
+          const seg = segments[i];
+          if (seg.type === 'equal') {
+            newOffset += seg.value.length;
+          } else if (seg.type === 'insert') {
+            if (!pairedInsertIndices.has(i) && seg.value.trim().length > 0) {
+              // Get after-context within the same paragraph for precise matching
+              const afterAll = newText.slice(newOffset + seg.value.length);
+              const nlIdx = afterAll.indexOf('\n');
+              const afterCtx = nlIdx >= 0 ? afterAll.slice(0, Math.min(nlIdx, 30)) : afterAll.slice(0, 30);
+              // Get before-context within the same paragraph
+              const beforeAll = newText.slice(0, newOffset);
+              const lastNl = beforeAll.lastIndexOf('\n');
+              const beforeCtx = lastNl >= 0 ? beforeAll.slice(lastNl + 1) : beforeAll.slice(-30);
+              insertedTexts.push({ text: seg.value, beforeContext: beforeCtx, afterContext: afterCtx });
+            }
+            newOffset += seg.value.length;
           }
-        }, 100);
-      });
+          // 'delete' segments don't advance newOffset
+        }
+      }
     }
 
-    // Real-time approvals are now handled by CollaborativeEditor
-  }, [onApprove, onReject, trackedChanges, revertChangeInContent, submission.id, saveRevertedContent, transactionManager]);
+    // 1. Suppress TransactionManager for all editor changes caused by the
+    //    resolve (restore text, remove decorations, applyDecorations re-run).
+    //    Cleared after 500ms to allow all debounced editor updates to settle.
+    isResolvingChangeRef.current = true;
+    setTimeout(() => { isResolvingChangeRef.current = false; }, 500);
+
+    // 2. Resolve DeletedTextNode nodes in the Lexical editor
+    //    - approve deletion: removes DeletedTextNode (text stays deleted)
+    //    - reject deletion: replaces DeletedTextNode with TextNode (text restored)
+    //      AND removes the corresponding inserted text for replacement pairs
+    window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
+      detail: { changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts }
+    }));
+
+    // 3. Remove CSS highlight decorations for additions
+    removeDecorationsForChange(changeId);
+
+    // 4. Optimistic sidebar update (no network call)
+    if (decision === 'approve') {
+      onApprove(changeId);
+    } else {
+      onReject(changeId);
+    }
+
+    // 4b. Also hide from sidebar via localRemovedChangeIds.
+    // onReject updates submission.changes, but changes from localAddedChanges
+    // (created by handleSaved) aren't in submission.changes and won't be updated.
+    // Adding to localRemovedChangeIds ensures the change disappears from both sources.
+    setLocalRemovedChangeIds(prev => {
+      const next = new Set(prev);
+      next.add(changeId);
+      return next;
+    });
+
+    // 5. Backend sync in background (fire-and-forget)
+    syncChangeStatusToBackend(changeId, decision === 'approve' ? 'approved' : 'rejected');
+  }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText]);
 
   // Batch action handlers
   const pendingChanges = useMemo(
@@ -1092,15 +1227,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleBatchAction = useCallback(async (changeIds: string[], status: 'approved' | 'rejected') => {
     setBatchActionLoading(true);
     try {
-      const { trackedChangesService } = await import('../services/trackedChangesService');
-      await trackedChangesService.batchUpdateStatus(changeIds, status);
-      // Process each change through the existing single-change handlers for UI updates
+      const decision = status === 'approved' ? 'approve' : 'reject';
       for (const id of changeIds) {
-        if (status === 'approved') {
-          onApprove(id);
-        } else {
-          onReject(id);
-        }
+        handleChangeDecision(id, decision);
       }
       setSelectedChangeIds(new Set());
     } catch (err) {
@@ -1108,7 +1237,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     } finally {
       setBatchActionLoading(false);
     }
-  }, [onApprove, onReject]);
+  }, [handleChangeDecision]);
 
   const handleSelectAllChanges = useCallback(() => {
     setSelectedChangeIds(new Set(pendingChanges.map(c => c.id)));
@@ -2199,11 +2328,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <button
                 className="manual-save-button"
                 style={{ marginLeft: '8px', backgroundColor: '#fee2e2', color: '#b91c1c', borderColor: '#fca5a5' }}
-                onClick={() => {
-                  if (window.confirm("Are you sure you want to reset this document to its original state and delete all tracked changes? This cannot be undone.")) {
-                    onReset();
-                  }
-                }}
+                onClick={() => setShowResetConfirm(true)}
                 title="Reset to Original"
               >
                 Reset
@@ -2463,6 +2588,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     onContentChange={(json, cursorPosition) => {
                       // Skip processing if we're still initializing content to prevent auto-save on load
                       if (!hasInitializedContentRef.current) {
+                        return;
+                      }
+
+                      // If this onChange was triggered by a programmatic content refresh
+                      // (e.g. after a rejection), clear the flag and skip tracking.
+                      if (isRefreshingContentRef.current) {
+                        isRefreshingContentRef.current = false;
+                        setEditedProposedContent(json);
+                        return;
+                      }
+
+                      // Skip TransactionManager during change resolution (approve/reject).
+                      // The flag stays true for 500ms to cover all resulting editor updates.
+                      if (isResolvingChangeRef.current) {
+                        setEditedProposedContent(json);
+                        return;
+                      }
+
+                      // Skip TransactionManager during programmatic decoration updates
+                      // (applyDecorations inserts/removes DeletedTextNodes).
+                      if ((window as any).__isApplyingDecorations) {
+                        setEditedProposedContent(json);
                         return;
                       }
 
@@ -3204,6 +3351,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       />
                     )}
                     <div className="changes-list">
+                      {changeGroups.length === 0 && (
+                        <p className="sidebar-empty-state">No tracked changes yet. Edits will appear here after saving.</p>
+                      )}
                       {changeGroups.map((group, groupIndex) => (
                         <ChangeGroup
                           key={`${group.authorEmail}-${group.timestamp}`}
@@ -3462,6 +3612,32 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               </button>
               <button className="btn btn-primary" onClick={handleProposedVersionApproval}>
                 Approve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="request-changes-overlay" onClick={() => setShowResetConfirm(false)}>
+          <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
+            <h3>Reset Document</h3>
+            <p style={{ margin: '12px 0', color: '#666' }}>
+              Are you sure you want to reset this document to its original state and delete all tracked changes? This cannot be undone.
+            </p>
+            <div className="request-changes-actions">
+              <button className="btn btn-neutral" onClick={() => setShowResetConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={() => {
+                  setShowResetConfirm(false);
+                  onReset?.();
+                }}
+              >
+                Reset
               </button>
             </div>
           </div>

@@ -5,11 +5,11 @@
  * Steps:
  * 1. Fetch cascade dependencies from the backend.
  * 2. Walk the dependent chain in reverse chronological order (newest first).
- * 3. For each dependent change: delete from backend, remove decorations,
+ * 3. For each dependent change: reject on backend, remove decorations,
  *    and remove from the undo stack if present.
- * 4. Delete the originally rejected change itself.
+ * 4. Reject the originally rejected change itself.
  * 5. Restore the editor to the pre-chain state.
- * 6. Return the list of all removed change IDs (for WebSocket broadcast).
+ * 6. Return the list of all rejected change IDs (for WebSocket broadcast).
  */
 
 import { trackedChangesService } from '../services/trackedChangesService';
@@ -32,10 +32,12 @@ export interface CascadeRejectOptions {
     changeId: string,
   ) => Promise<{ changeId: string; dependentIds: string[] }>;
   /**
-   * Override for deleteTrackedChange (useful for testing).
-   * Defaults to trackedChangesService.deleteTrackedChange.
+   * Override for rejecting a tracked change (useful for testing).
+   * Defaults to trackedChangesService.updateChangeStatus with 'rejected'.
+   * Previously this deleted changes, but that caused stale proposed versions
+   * because deleted changes can't be used as predecessor references.
    */
-  deleteTrackedChange?: (submissionId: string, changeId: string) => Promise<void>;
+  rejectTrackedChange?: (submissionId: string, changeId: string) => Promise<void>;
   /**
    * Override for removeDecorationsForChange (useful for testing).
    * Defaults to the TrackedChangesPlugin export.
@@ -63,8 +65,8 @@ export async function cascadeReject(
     refetchSubmissionContent,
     getCascadeDependencies = (sid, cid) =>
       trackedChangesService.getCascadeDependencies(sid, cid),
-    deleteTrackedChange = (sid, cid) =>
-      trackedChangesService.deleteTrackedChange(sid, cid),
+    rejectTrackedChange = (_sid, cid) =>
+      trackedChangesService.updateChangeStatus(cid, 'rejected'),
     removeDecorations = removeDecorationsForChange,
   } = options;
 
@@ -80,7 +82,7 @@ export async function cascadeReject(
   for (const depId of reversedDependents) {
     // Delete from backend (best effort — continue on failure)
     try {
-      await deleteTrackedChange(submissionId, depId);
+      await rejectTrackedChange(submissionId, depId);
     } catch (err) {
       console.error(`cascadeReject: failed to delete dependent change ${depId}`, err);
       failedDeleteIds.push(depId);
@@ -103,7 +105,7 @@ export async function cascadeReject(
 
   // 3. Handle the originally rejected change
   try {
-    await deleteTrackedChange(submissionId, changeId);
+    await rejectTrackedChange(submissionId, changeId);
   } catch (err) {
     console.error(`cascadeReject: failed to delete original change ${changeId}`, err);
     failedDeleteIds.push(changeId);

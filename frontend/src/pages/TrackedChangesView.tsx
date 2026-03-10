@@ -60,7 +60,12 @@ export const TrackedChangesView: React.FC = () => {
       const data = await submissionResponse.json();
       const trackedChanges = trackedChangesResponse.ok ? await trackedChangesResponse.json() : [];
 
-
+      console.log('[TrackedChangesView] fetchSubmission:', {
+        trackedChangesResponseOk: trackedChangesResponse.ok,
+        trackedChangesResponseStatus: trackedChangesResponse.status,
+        changesCount: trackedChanges?.changes?.length ?? 0,
+        changeIds: trackedChanges?.changes?.map((c: any) => c.id)?.slice(0, 5),
+      });
 
       // Determine the content to use for the tracked changes editor
       let content = data.content || '';
@@ -112,7 +117,7 @@ export const TrackedChangesView: React.FC = () => {
       }
 
       // Transform tracked changes to the format expected by the frontend
-      const transformedChanges = trackedChanges.changes.map((change: any) => ({
+      const transformedChanges = (trackedChanges.changes || []).map((change: any) => ({
         id: change.id,
         field: change.field,
         oldValue: change.oldValue,
@@ -412,9 +417,8 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  const handleApprove = async (changeId: string) => {
-    // Optimistic update: immediately reflect the approval in local state
-    const previousSubmission = submission;
+  const handleApprove = (changeId: string) => {
+    // Optimistic-only: editor owns backend sync via syncChangeStatusToBackend
     if (submission) {
       setSubmission({
         ...submission,
@@ -425,36 +429,10 @@ export const TrackedChangesView: React.FC = () => {
         ),
       });
     }
-
-    try {
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      const response = await fetch(`${API_URL}/tracked-changes/change/${changeId}/status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({ status: 'approved' }),
-      });
-
-      if (!response.ok) {
-        // Revert on failure
-        setSubmission(previousSubmission);
-        throw new Error(`Failed to approve change: ${response.status}`);
-      }
-
-      // Refresh data in the background to get server-authoritative state
-      fetchSubmission();
-    } catch (err) {
-      console.error('Error approving change:', err);
-    }
   };
 
-  const handleReject = async (changeId: string) => {
-    // Optimistic update: immediately reflect the rejection in local state
-    const previousSubmission = submission;
+  const handleReject = (changeId: string) => {
+    // Optimistic-only: editor owns backend sync via syncChangeStatusToBackend
     if (submission) {
       setSubmission({
         ...submission,
@@ -464,35 +442,6 @@ export const TrackedChangesView: React.FC = () => {
             : change
         ),
       });
-    }
-
-    try {
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      const response = await fetch(`${API_URL}/tracked-changes/change/${changeId}/status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({ status: 'rejected' }),
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          console.log(`Change ${changeId} not found. It may have been deleted by a background cascade rejection.`);
-        } else {
-          // Revert on failure
-          setSubmission(previousSubmission);
-          throw new Error(`Failed to reject change: ${response.status}`);
-        }
-      }
-
-      // Refresh data in the background to get server-authoritative state
-      fetchSubmission();
-    } catch (err) {
-      console.error('Error rejecting change:', err);
     }
   };
 
@@ -540,7 +489,7 @@ export const TrackedChangesView: React.FC = () => {
 
 
         // Transform tracked changes to the format expected by the frontend
-        const transformedChanges = trackedChanges.changes.map((change: any) => ({
+        const transformedChanges = (trackedChanges.changes || []).map((change: any) => ({
           id: change.id,
           field: change.field,
           oldValue: change.oldValue,
@@ -709,6 +658,27 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  const handleReset = async () => {
+    if (!submission) return;
+    try {
+      const sessionId = localStorage.getItem('sessionId');
+      if (!sessionId) throw new Error('Not authenticated');
+
+      await fetch(`${API_URL}/tracked-changes/submission/${submission.id}/all`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${sessionId}`
+        }
+      });
+
+      // Reload the page entirely to clear collaborative session data securely
+      window.location.reload();
+    } catch (err) {
+      console.error('Failed to reset changes:', err);
+      setError('Failed to reset changes. Please try again.');
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '24rem' }}>
@@ -752,9 +722,10 @@ export const TrackedChangesView: React.FC = () => {
   }
 
   // Determine if current user can approve/reject the submission
-  const canApprove = currentUser.roles.includes('CommsCadre') ||
-    currentUser.roles.includes('CouncilManager') ||
-    currentUser.roles.includes('Admin') ||
+  const userRoles = currentUser.roles || [];
+  const canApprove = userRoles.includes('CommsCadre') ||
+    userRoles.includes('CouncilManager') ||
+    userRoles.includes('Admin') ||
     (submission.requiredApprovers || []).includes(currentUser.email) ||
     (submission.assignedCouncilManagers || []).includes(currentUser.email);
 
@@ -819,6 +790,7 @@ export const TrackedChangesView: React.FC = () => {
       onApprove={handleSubmissionApprove}
       onReject={handleSubmissionReject}
       onRequestChanges={handleRequestChanges}
+      onReset={handleReset}
       onNavigate={(id) => navigate(`/submissions/${id}/review`)}
     >
       <TrackedChangesEditor
@@ -837,25 +809,7 @@ export const TrackedChangesView: React.FC = () => {
         onSubmissionApprove={handleSubmissionApprove}
         onSubmissionReject={handleSubmissionReject}
         reviewMode={true}
-        onReset={async () => {
-          try {
-            const sessionId = localStorage.getItem('sessionId');
-            if (!sessionId) throw new Error('Not authenticated');
-
-            await fetch(`${API_URL}/tracked-changes/submission/${submission.id}/all`, {
-              method: 'DELETE',
-              headers: {
-                Authorization: `Bearer ${sessionId}`
-              }
-            });
-
-            // Reload the page entirely to clear collaborative session data securely
-            window.location.reload();
-          } catch (err) {
-            console.error('Failed to reset changes:', err);
-            alert('Failed to reset changes. Please try again.');
-          }
-        }}
+        onReset={handleReset}
       />
     </ReviewLayout>
   );
@@ -874,6 +828,7 @@ interface ReviewLayoutProps {
   onApprove: () => void;
   onReject: () => void;
   onRequestChanges: (comment: string) => void;
+  onReset?: () => void;
   onNavigate: (submissionId: string) => void;
   children: React.ReactNode;
 }
@@ -887,6 +842,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   onApprove,
   onReject,
   onRequestChanges,
+  onReset,
   onNavigate,
   children,
 }) => {
@@ -914,6 +870,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
         onApprove={onApprove}
         onRequestChanges={() => setShowRequestChanges(true)}
         onReject={onReject}
+        onReset={onReset}
         onNavigate={onNavigate}
       />
       {children}

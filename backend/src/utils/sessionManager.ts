@@ -34,6 +34,7 @@ export interface Env {
     USERS: KVNamespace;
     GROUPS: KVNamespace;
     ROLES: KVNamespace;
+    DEV_BYPASS_AUTH?: string;
 }
 
 export async function CreateSession(

@@ -105,9 +105,10 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
         const completeRichTextVersion = await getCompleteRichTextProposedVersion(submissionId, field, env);
         if (completeRichTextVersion) {
           proposedVersionsRichText[field] = completeRichTextVersion;
-        } else if (submission && submission.richTextContent && submission.richTextContent.trim().startsWith('{')) {
+        } else if (proposedVersions[field] && submission && submission.richTextContent && submission.richTextContent.trim().startsWith('{')) {
           // Fallback: merge the plain text into the original rich text structure
-          proposedVersionsRichText[field] = mergeTextIntoLexicalJson(submission.richTextContent, proposedVersions[field] || '');
+          // Only do this when there IS a plain text proposed version (i.e. active changes exist)
+          proposedVersionsRichText[field] = mergeTextIntoLexicalJson(submission.richTextContent, proposedVersions[field]);
         }
       }
     }
@@ -146,7 +147,7 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
   try {
     const { field, oldValue, newValue, richTextOldValue, richTextNewValue, regionMap } = await request.json();
 
-    if (!field || !oldValue || !newValue) {
+    if (!field || oldValue === undefined || oldValue === null || newValue === undefined || newValue === null) {
       return new Response('Missing required fields', { status: 400 });
     }
 
@@ -224,7 +225,37 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
       );
     }
 
-    return new Response(JSON.stringify({ success: true }), {
+    // Server-side cascade rejection: when a change is rejected, also reject
+    // all dependent changes whose regions overlap with this change.
+    let cascadeRejectedIds: string[] = [];
+    if (status === 'rejected') {
+      const dependentIds = await getCascadeDependencies(
+        updatedChange.submissionId,
+        changeId,
+        env
+      );
+      for (const depId of dependentIds) {
+        try {
+          await updateChangeStatus(
+            depId,
+            'rejected',
+            env,
+            undefined,
+            undefined,
+            request.user.id,
+            request.user.name
+          );
+          cascadeRejectedIds.push(depId);
+        } catch (err) {
+          console.error(`Cascade rejection: failed to reject dependent ${depId}`, err);
+        }
+      }
+      if (cascadeRejectedIds.length > 0) {
+        console.log(`Cascade rejection: rejected ${cascadeRejectedIds.length} dependent changes`, cascadeRejectedIds);
+      }
+    }
+
+    return new Response(JSON.stringify({ success: true, cascadeRejectedIds }), {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error) {
