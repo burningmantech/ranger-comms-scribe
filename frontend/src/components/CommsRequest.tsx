@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Form, Modal, Button } from 'react-bootstrap';
+import { Form } from 'react-bootstrap';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -756,25 +756,24 @@ export const CommsRequest: React.FC = () => {
         )}
       </div>
 
-      <Modal show={showSuccess} onHide={() => setShowSuccess(false)} centered>
-        <Modal.Header closeButton>
-          <Modal.Title>Request Submitted!</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <p>Your comms request has been submitted and is now under review.</p>
-          <p style={{ marginTop: 12 }}>
-            You can track the status of your request in the submissions area.
-          </p>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowSuccess(false)}>
-            Close
-          </Button>
-          <Button variant="primary" onClick={handleViewSubmissions}>
-            View Submissions
-          </Button>
-        </Modal.Footer>
-      </Modal>
+      {showSuccess && (
+        <div className="modal-overlay" onClick={() => setShowSuccess(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Request Submitted!</h3>
+              <button className="modal-close" onClick={() => setShowSuccess(false)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <p>Your comms request has been submitted and is now under review.</p>
+              <p>You can track the status of your request in the submissions area.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-neutral" onClick={() => setShowSuccess(false)}>Close</button>
+              <button className="btn btn-primary" onClick={handleViewSubmissions}>View Submissions</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

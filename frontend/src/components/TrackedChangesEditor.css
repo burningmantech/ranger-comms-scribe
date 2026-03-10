@@ -3126,3 +3126,87 @@ span.tracked-deletion-wrapper {
     border-top: 1px solid var(--border-color, #e0e0e0);
   }
 }
+
+/* =============================================================================
+   Send Mode — Email preview and send actions
+   ============================================================================= */
+
+.send-mode-section {
+  padding: 0;
+}
+
+.send-mode-preview {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.send-mode-email {
+  background: #fff;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: var(--radius-md, 8px);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.send-mode-field {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.send-mode-label {
+  font-weight: 600;
+  color: var(--text-medium, #666);
+  flex-shrink: 0;
+  min-width: 70px;
+}
+
+.send-mode-value {
+  color: var(--text-dark, #1a1a1a);
+}
+
+.send-mode-divider {
+  height: 1px;
+  background: var(--border-color, #e0e0e0);
+  margin: 16px 0;
+}
+
+.send-mode-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-dark, #1a1a1a);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.send-mode-signature {
+  font-size: 14px;
+  color: var(--text-medium, #666);
+  white-space: pre-wrap;
+  font-style: italic;
+}
+
+.send-mode-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.send-mode-note {
+  font-size: 13px;
+  color: var(--text-medium, #666);
+}
+
+.send-mode-sent-info {
+  font-size: 13px;
+  color: var(--text-dark, #1a1a1a);
+  font-weight: 500;
+}
+
+.send-mode-error {
+  font-size: 13px;
+  color: var(--danger, #dc3545);
+}

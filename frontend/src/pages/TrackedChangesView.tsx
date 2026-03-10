@@ -10,7 +10,7 @@ import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
-  const { currentUser } = useContent();
+  const { currentUser, deleteSubmission, sendAnnouncementEmail } = useContent();
   const [submission, setSubmission] = useState<ContentSubmission | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -658,6 +658,23 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  const handleSendEmail = async () => {
+    if (!submission) return;
+    await sendAnnouncementEmail(submission);
+    await fetchSubmission();
+  };
+
+  const handleDelete = async () => {
+    if (!submission) return;
+    try {
+      await deleteSubmission(submission.id);
+      navigate('/requests');
+    } catch (err) {
+      console.error('Failed to delete submission:', err);
+      setError('Failed to delete submission. Please try again.');
+    }
+  };
+
   const handleReset = async () => {
     if (!submission) return;
     try {
@@ -810,6 +827,8 @@ export const TrackedChangesView: React.FC = () => {
         onSubmissionReject={handleSubmissionReject}
         reviewMode={true}
         onReset={handleReset}
+        onDelete={handleDelete}
+        onSendEmail={handleSendEmail}
       />
     </ReviewLayout>
   );

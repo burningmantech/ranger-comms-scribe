@@ -10,10 +10,11 @@ type SubmissionWithGates = ContentSubmission & { approvalGates?: ApprovalGates }
 
 const ReviewerDashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { submissions } = useContent();
+  const { submissions, deleteSubmission } = useContent();
   const [needsAction, setNeedsAction] = useState<SubmissionWithGates[]>([]);
   const [inProgress, setInProgress] = useState<SubmissionWithGates[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<SubmissionWithGates | null>(null);
 
   useEffect(() => {
     const fetchMyActions = async () => {
@@ -90,6 +91,7 @@ const ReviewerDashboard: React.FC = () => {
                 key={submission.id}
                 submission={submission}
                 onClick={() => handleCardClick(submission)}
+                onDelete={() => setDeleteTarget(submission)}
                 showApprovalTracker
                 showLatestActivity
               />
@@ -115,6 +117,7 @@ const ReviewerDashboard: React.FC = () => {
                 key={submission.id}
                 submission={submission}
                 onClick={() => handleCardClick(submission)}
+                onDelete={() => setDeleteTarget(submission)}
                 showApprovalTracker
                 showLatestActivity={false}
               />
@@ -140,6 +143,7 @@ const ReviewerDashboard: React.FC = () => {
                 key={submission.id}
                 submission={submission}
                 onClick={() => handleCardClick(submission)}
+                onDelete={() => setDeleteTarget(submission)}
                 showApprovalTracker={false}
                 showLatestActivity
               />
@@ -147,6 +151,31 @@ const ReviewerDashboard: React.FC = () => {
           )}
         </div>
       </div>
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Delete Submission</h3>
+              <button className="modal-close" onClick={() => setDeleteTarget(null)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <p>Are you sure you want to delete &ldquo;{deleteTarget.title}&rdquo;? This cannot be undone.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-neutral" onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button className="btn btn-danger" onClick={async () => {
+                try {
+                  await deleteSubmission(deleteTarget.id);
+                } catch (err) {
+                  console.error('Failed to delete:', err);
+                }
+                setDeleteTarget(null);
+              }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

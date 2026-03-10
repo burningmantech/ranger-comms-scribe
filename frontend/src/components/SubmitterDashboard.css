@@ -1,12 +1,15 @@
 /* =============================================================================
-   SubmitterDashboard — Status pipeline view for submitters
+   SubmitterDashboard — Three-column triage layout for submitters
    ============================================================================= */
 
-.submitter-dashboard {
-  max-width: 800px;
+.submitter-dashboard--columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 24px;
+  padding: 0;
 }
 
-/* Empty State */
+/* Empty State (full-width, no submissions at all) */
 
 .submitter-dashboard__empty {
   display: flex;
@@ -38,112 +41,113 @@
   margin: 0;
 }
 
-/* Submission List */
+/* Column */
 
-.submitter-dashboard__list {
+.submitter-dashboard__column {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  min-height: 200px;
 }
 
-/* Submission Card */
-
-.submitter-dashboard__card {
-  background: #fff;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 20px;
-  cursor: pointer;
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
-}
-
-.submitter-dashboard__card:hover {
-  box-shadow: var(--shadow-sm);
-  border-color: var(--accent-teal);
-}
-
-.submitter-dashboard__card:focus-visible {
-  outline: 2px solid var(--accent-teal);
-  outline-offset: 2px;
-}
-
-.submitter-dashboard__card-header {
+.submitter-dashboard__column-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid transparent;
 }
 
-.submitter-dashboard__card-header h4 {
+.submitter-dashboard__column--attention .submitter-dashboard__column-header {
+  border-bottom-color: var(--danger);
+}
+
+.submitter-dashboard__column--review .submitter-dashboard__column-header {
+  border-bottom-color: var(--accent-gold);
+}
+
+.submitter-dashboard__column--completed .submitter-dashboard__column-header {
+  border-bottom-color: #ccc;
+}
+
+.submitter-dashboard__column-header h3 {
   font-family: 'Poppins', sans-serif;
   font-size: 16px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-dark);
   margin: 0;
-  flex: 1;
 }
 
-.submitter-dashboard__card-time {
-  font-size: 13px;
-  color: var(--text-medium);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* Activity preview */
-
-.submitter-dashboard__card-activity {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 8px 12px;
+.submitter-dashboard__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 12px;
   background: var(--primary-light);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  color: var(--text-medium);
-}
-
-.submitter-dashboard__card-activity i {
-  flex-shrink: 0;
-  margin-top: 2px;
-  font-size: 12px;
-}
-
-.submitter-dashboard__card-activity span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-/* View Details link */
-
-.submitter-dashboard__card-action {
-  margin-top: 12px;
   font-family: 'Poppins', sans-serif;
   font-size: 13px;
-  font-weight: 500;
-  color: var(--accent-teal);
+  font-weight: 600;
+  color: var(--text-dark);
 }
 
-.submitter-dashboard__card-action i {
-  font-size: 11px;
-  margin-left: 4px;
+.submitter-dashboard__column--attention .submitter-dashboard__count {
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+/* Cards List */
+
+.submitter-dashboard__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Card border accent per column */
+.submitter-dashboard__column--attention .submission-card {
+  border-left: 3px solid var(--danger);
+}
+
+.submitter-dashboard__column--review .submission-card {
+  border-left: 3px solid var(--accent-gold);
+}
+
+.submitter-dashboard__column--completed .submission-card {
+  border-left: 3px solid #ccc;
+}
+
+/* Empty column state */
+
+.submitter-dashboard__empty-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 16px;
+  color: var(--text-medium);
+  font-size: 14px;
+}
+
+.submitter-dashboard__empty-col i {
+  font-size: 24px;
+  opacity: 0.5;
 }
 
 /* ---------------------------------------------------------------------------
    Responsive
    --------------------------------------------------------------------------- */
 
-@media (max-width: 576px) {
-  .submitter-dashboard__card {
-    padding: 16px;
+@media (max-width: 992px) {
+  .submitter-dashboard--columns {
+    grid-template-columns: 1fr;
+    gap: 32px;
   }
 
-  .submitter-dashboard__card-header h4 {
-    font-size: 15px;
+  .submitter-dashboard__column {
+    min-height: auto;
   }
 }

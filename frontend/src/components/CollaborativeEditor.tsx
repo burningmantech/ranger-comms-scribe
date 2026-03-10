@@ -2331,6 +2331,11 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           client.on('realtime_content_update', (message) => {
             // Don't update our own content to avoid infinite loops
             if (message.userId !== (currentUser.id || currentUser.email)) {
+              // Skip applying remote updates while the local user is actively
+              // editing — full-state replacement would overwrite local changes.
+              if (transactionManager?.getActiveTransaction()) {
+                return;
+              }
               if (message.data && message.data.lexicalContent) {
                 const { lexicalContent } = message.data;
 
@@ -2658,7 +2663,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         }
 
         // Notify other users of content changes via WebSocket
-        if (webSocketClientRef.current) {
+        // Only send if this is NOT a remote update to prevent re-broadcasting
+        if (webSocketClientRef.current && !isApplyingRemoteUpdate.current) {
           try {
             webSocketClientRef.current.send({
               type: 'content_updated',

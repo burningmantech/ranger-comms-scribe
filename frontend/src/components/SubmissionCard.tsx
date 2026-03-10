@@ -6,6 +6,7 @@ import './SubmissionCard.css';
 interface SubmissionCardProps {
   submission: ContentSubmission & { approvalGates?: ApprovalGates };
   onClick: () => void;
+  onDelete?: (e: React.MouseEvent) => void;
   showApprovalTracker?: boolean;
   showLatestActivity?: boolean;
 }
@@ -30,6 +31,7 @@ function formatRelativeTime(date: Date): string {
 const SubmissionCard: React.FC<SubmissionCardProps> = ({
   submission,
   onClick,
+  onDelete,
   showApprovalTracker = true,
   showLatestActivity = true,
 }) => {
@@ -68,6 +70,15 @@ const SubmissionCard: React.FC<SubmissionCardProps> = ({
         <h4 className="submission-card__title">{submission.title}</h4>
         {isUrgent && (
           <span className="submission-card__urgent-badge">Urgent</span>
+        )}
+        {onDelete && (
+          <button
+            className="submission-card__delete-btn"
+            onClick={(e) => { e.stopPropagation(); onDelete(e); }}
+            title="Delete submission"
+          >
+            <i className="fas fa-trash-alt" />
+          </button>
         )}
       </div>
 

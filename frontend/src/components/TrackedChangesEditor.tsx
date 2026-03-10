@@ -92,6 +92,8 @@ interface TrackedChangesEditorProps {
   onSubmissionReject?: (submission: ContentSubmission) => Promise<void> | void;
   onBack?: () => void;
   onReset?: () => void;
+  onDelete?: () => void;
+  onSendEmail?: () => Promise<void>;
   reviewMode?: boolean;
 }
 
@@ -152,6 +154,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onSubmissionReject,
   onBack,
   onReset,
+  onDelete,
+  onSendEmail,
   reviewMode = false
 }) => {
 
@@ -162,6 +166,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [commentText, setCommentText] = useState('');
   const [showCommentDialog, setShowCommentDialog] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [selectedText, setSelectedText] = useState('');
   const [suggestionText, setSuggestionText] = useState('');
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
@@ -232,8 +237,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     return editedProposedContentRef.current || null;
   }, []);
 
-  // Tab navigation state for Proposed / Comparison / Original sections
-  const [activeTab, setActiveTab] = useState<'proposed' | 'comparison' | 'original'>('proposed');
+  // Tab navigation state for Proposed / Comparison / Original / Send sections
+  const [activeTab, setActiveTab] = useState<'proposed' | 'comparison' | 'original' | 'send'>('proposed');
+  const [sendCopied, setSendCopied] = useState(false);
+  const [showSendConfirm, setShowSendConfirm] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
   // Sidebar tab state: Changes, Timeline, or Comments (review mode)
   const [sidebarTab, setSidebarTab] = useState<'changes' | 'timeline' | 'comments'>('changes');
@@ -1675,6 +1684,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         return; // Skip invalid content
       }
 
+      // Skip applying remote updates while the local user is actively editing.
+      // The full-document-state sync would overwrite local changes. The next
+      // update after the local user pauses will bring things back in sync.
+      if (hasActiveTransactionRef.current) {
+        return;
+      }
+
       // Apply the real-time update immediately
       // Try to use the specialized real-time update function first
       if (webSocketClientRef.current && webSocketClientRef.current.applyRealTimeUpdate) {
@@ -1792,6 +1808,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       if (field === 'proposedVersions.richTextContent' && lexicalContent) {
         // Apply remote content updates
         {
+          // Set flag to prevent feedback loop (same as realtime_content_update handler)
+          isApplyingRealTimeUpdateRef.current = true;
+
           // Show visual feedback that a remote update is being applied
           setRemoteUpdateStatus('applying');
 
@@ -1835,6 +1854,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               }
             }, 500); // Wait for content to settle before requesting cursors
           }
+
+          // Reset flag after a short delay to ensure the change event is processed
+          setTimeout(() => {
+            isApplyingRealTimeUpdateRef.current = false;
+          }, 100);
 
           // Show a notification about the update
           if (onRefreshNeeded) {
@@ -2334,6 +2358,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 Reset
               </button>
             )}
+            {onDelete && (
+              <button
+                className="manual-save-button"
+                style={{ marginLeft: '8px', backgroundColor: '#fee2e2', color: '#b91c1c', borderColor: '#fca5a5' }}
+                onClick={() => setShowDeleteConfirm(true)}
+                title="Delete Submission"
+              >
+                <i className="fas fa-trash-alt" style={{ marginRight: '4px' }} />
+                Delete
+              </button>
+            )}
           </div>
           <div className="change-stats">
             <span className="stat pending">
@@ -2527,6 +2562,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               >
                 Original Version
               </button>
+              {['approved', 'comms_approved', 'sent'].includes(submission.status) && (
+                <button
+                  className={`tce-tab ${activeTab === 'send' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('send')}
+                >
+                  Send
+                </button>
+              )}
             </div>
 
             {/* Proposed Version */}
@@ -3071,6 +3114,200 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   <p className="original-field original-signature">Signature: {signatureValue}</p>
                 )}
               </div>
+            </div>}
+
+            {/* Send Mode */}
+            {activeTab === 'send' && <div className="send-mode-section">
+              {(() => {
+                const proposedTitle = (() => {
+                  // Check proposed versions for a title
+                  if (submission.proposedVersions?.title) return submission.proposedVersions.title;
+                  return submission.title;
+                })();
+
+                const bodyContent = (() => {
+                  const content = editedProposedContent || submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
+                  if (typeof content === 'string' && isLexicalJson(content)) {
+                    return extractTextFromLexical(content);
+                  }
+                  if (typeof content === 'object' && isLexicalJson(content)) {
+                    return extractTextFromLexical(content);
+                  }
+                  return typeof content === 'string' ? content : '';
+                })();
+
+                const audienceFields = submission.formFields?.filter(
+                  (f) => f.id === 'audience' || f.label?.toLowerCase() === 'audience'
+                ) || [];
+                const audienceValues: string[] = audienceFields.flatMap((f) => {
+                  if (Array.isArray(f.value)) return f.value as string[];
+                  if (typeof f.value === 'string') {
+                    try { return JSON.parse(f.value); } catch { return [f.value]; }
+                  }
+                  return [];
+                });
+
+                const emailAudiences = ['newsletter', 'singular', 'allcom'];
+                const audienceKeys = audienceValues.map((v) => {
+                  // Map from label to key if needed
+                  const entry = Object.entries(AUDIENCE_LABELS).find(([, label]) => label === v);
+                  return entry ? entry[0] : v;
+                });
+                const hasEmailAudience = audienceKeys.some((k) => emailAudiences.includes(k));
+                const audienceLabels = audienceKeys.map((k) => AUDIENCE_LABELS[k] || k);
+
+                const replyTo = submission.formFields?.find(
+                  (f) => f.id === 'replyToAddress' || f.label?.toLowerCase()?.includes('reply')
+                )?.value as string || '';
+                const signature = submission.formFields?.find(
+                  (f) => f.id === 'signatureText' || f.label?.toLowerCase()?.includes('signature')
+                )?.value as string || '';
+
+                const fullText = [
+                  `Subject: ${proposedTitle}`,
+                  '',
+                  bodyContent,
+                  signature ? `\n${signature}` : '',
+                ].join('\n').trim();
+
+                const isCommsCadreOrAdmin = currentUser.roles?.some(
+                  (r) => ['CommsCadre', 'Admin'].includes(r)
+                );
+
+                const alreadySent = submission.status === 'sent';
+
+                const handleCopy = async () => {
+                  try {
+                    await navigator.clipboard.writeText(fullText);
+                    setSendCopied(true);
+                    setTimeout(() => setSendCopied(false), 2000);
+                  } catch {
+                    // Fallback
+                    const textarea = document.createElement('textarea');
+                    textarea.value = fullText;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    setSendCopied(true);
+                    setTimeout(() => setSendCopied(false), 2000);
+                  }
+                };
+
+                const handleSend = async () => {
+                  if (!onSendEmail) return;
+                  setSending(true);
+                  setSendError(null);
+                  try {
+                    await onSendEmail();
+                    setShowSendConfirm(false);
+                  } catch (err: any) {
+                    setSendError(err?.message || 'Failed to send email');
+                  } finally {
+                    setSending(false);
+                  }
+                };
+
+                return (
+                  <div className="send-mode-preview">
+                    <div className="send-mode-email">
+                      <div className="send-mode-field">
+                        <span className="send-mode-label">Subject:</span>
+                        <span className="send-mode-value">{proposedTitle}</span>
+                      </div>
+                      <div className="send-mode-field">
+                        <span className="send-mode-label">To:</span>
+                        <span className="send-mode-value">
+                          {audienceLabels.length > 0 ? audienceLabels.join(', ') : 'No audience specified'}
+                        </span>
+                      </div>
+                      {replyTo && (
+                        <div className="send-mode-field">
+                          <span className="send-mode-label">Reply-To:</span>
+                          <span className="send-mode-value">{replyTo}</span>
+                        </div>
+                      )}
+                      <div className="send-mode-divider" />
+                      <div className="send-mode-body">
+                        {bodyContent}
+                      </div>
+                      {signature && (
+                        <>
+                          <div className="send-mode-divider" />
+                          <div className="send-mode-signature">{signature}</div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="send-mode-actions">
+                      <button
+                        className="btn btn-neutral"
+                        onClick={handleCopy}
+                      >
+                        <i className={`fas ${sendCopied ? 'fa-check' : 'fa-copy'}`} style={{ marginRight: '6px' }} />
+                        {sendCopied ? 'Copied!' : 'Copy to Clipboard'}
+                      </button>
+
+                      {!hasEmailAudience && (
+                        <span className="send-mode-note">
+                          <i className="fas fa-info-circle" style={{ marginRight: '4px' }} />
+                          This submission is not an email item
+                        </span>
+                      )}
+
+                      {hasEmailAudience && !alreadySent && isCommsCadreOrAdmin && onSendEmail && (
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => setShowSendConfirm(true)}
+                          disabled={sending}
+                        >
+                          <i className="fas fa-paper-plane" style={{ marginRight: '6px' }} />
+                          {sending ? 'Sending...' : 'Send Email'}
+                        </button>
+                      )}
+
+                      {alreadySent && (
+                        <span className="send-mode-sent-info">
+                          <i className="fas fa-check-circle" style={{ marginRight: '4px', color: 'var(--accent-teal)' }} />
+                          Sent{submission.sentBy ? ` by ${submission.sentBy}` : ''}
+                          {submission.sentAt ? ` on ${new Date(submission.sentAt).toLocaleDateString()}` : ''}
+                        </span>
+                      )}
+
+                      {sendError && (
+                        <span className="send-mode-error">
+                          <i className="fas fa-exclamation-circle" style={{ marginRight: '4px' }} />
+                          {sendError}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Send Confirmation */}
+                    {showSendConfirm && (
+                      <div className="request-changes-overlay" onClick={() => setShowSendConfirm(false)}>
+                        <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
+                          <h3>Send Email</h3>
+                          <p style={{ margin: '12px 0', color: '#666' }}>
+                            Are you sure you want to send this announcement to {audienceLabels.join(', ')}? This action cannot be undone.
+                          </p>
+                          <div className="request-changes-actions">
+                            <button className="btn btn-neutral" onClick={() => setShowSendConfirm(false)}>
+                              Cancel
+                            </button>
+                            <button
+                              className="btn btn-primary"
+                              onClick={handleSend}
+                              disabled={sending}
+                            >
+                              {sending ? 'Sending...' : 'Confirm Send'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>}
           </div>{/* close editor-document-page wrapper */}
 
@@ -3638,6 +3875,32 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 }}
               >
                 Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="request-changes-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
+            <h3>Delete Submission</h3>
+            <p style={{ margin: '12px 0', color: '#666' }}>
+              Are you sure you want to delete &ldquo;{submission.title}&rdquo;? This cannot be undone.
+            </p>
+            <div className="request-changes-actions">
+              <button className="btn btn-neutral" onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  onDelete?.();
+                }}
+              >
+                Delete
               </button>
             </div>
           </div>
