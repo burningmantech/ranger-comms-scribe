@@ -2549,6 +2549,14 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
     connectWebSocket();
 
+    // Register remote content update function immediately (independent of WebSocket)
+    // so parent components can push content updates even if WebSocket fails
+    if (onRemoteContentUpdate) {
+      onRemoteContentUpdate((content: string) => {
+        applyRemoteContentUpdate(content);
+      });
+    }
+
     return () => {
       // Cleanup WebSocket connection
       setWebSocketClientReady(false);
@@ -2565,9 +2573,17 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
   // Handle content changes
   const handleEditorChange = useCallback((editorState: EditorState) => {
-    // Skip propagation for tracked-changes-decoration updates
+    // Skip propagation for tracked-changes-decoration updates, but still
+    // sync currentContent so the next non-suppressed handleEditorChange
+    // doesn't see a stale diff and trigger TransactionManager.
     if (isTrackedChangeDecorationRef.current) {
       isTrackedChangeDecorationRef.current = false;
+      editorState.read(() => {
+        const jsonContent = JSON.stringify(editorState);
+        if (jsonContent !== currentContent) {
+          setCurrentContent(jsonContent);
+        }
+      });
       return;
     }
 
@@ -2963,6 +2979,10 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                 placeholder={<div className="collaborative-editor-placeholder">{placeholder}</div>}
                 ErrorBoundary={LexicalErrorBoundary}
               />
+              {/* TrackedChangeTagDetector MUST be before OnChangePlugin so its
+                  registerUpdateListener fires first, setting the decoration flag
+                  before handleEditorChange reads it. */}
+              <TrackedChangeTagDetector flagRef={isTrackedChangeDecorationRef} />
               <OnChangePlugin onChange={handleEditorChange} />
               <TransactionHistoryPlugin
                 transactionManager={transactionManager ?? null}
@@ -2975,7 +2995,6 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <ImageDragPlugin />
               <ImageResizePlugin />
               <EditorRefPlugin editorRef={editorRef} />
-              <TrackedChangeTagDetector flagRef={isTrackedChangeDecorationRef} />
               {(trackedChanges || liveBaseline) && onTrackedChangeClick && (
                 <TrackedChangesPlugin
                   pendingChanges={trackedChanges || []}
@@ -2990,6 +3009,10 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   enabled={true}
                   currentUserName={currentUser.name || currentUser.email}
                   currentUserId={currentUser.id || currentUser.email}
+                  getBeforeText={() => {
+                    const tx = transactionManager?.getActiveTransaction();
+                    return tx?.beforeSnapshot?.text ?? null;
+                  }}
                 />
               )}
               {/* Always render CursorTrackingPlugin but let it handle WebSocket client internally */}

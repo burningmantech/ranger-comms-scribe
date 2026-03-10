@@ -30,6 +30,7 @@ import {
     $isTextNode,
     $getNodeByKey,
     $isElementNode,
+    $getRoot,
     KEY_BACKSPACE_COMMAND,
     KEY_DELETE_COMMAND,
     DELETE_CHARACTER_COMMAND,
@@ -50,6 +51,7 @@ interface DeletionInterceptionPluginProps {
     currentUserName?: string;
     currentUserId?: string;
     onDeletionIntercepted?: (deletedText: string) => void;
+    getBeforeText?: () => string | null;
 }
 
 export default function DeletionInterceptionPlugin({
@@ -57,6 +59,7 @@ export default function DeletionInterceptionPlugin({
     currentUserName,
     currentUserId,
     onDeletionIntercepted,
+    getBeforeText,
 }: DeletionInterceptionPluginProps): null {
     const [editor] = useLexicalComposerContext();
 
@@ -64,6 +67,159 @@ export default function DeletionInterceptionPlugin({
         if (!enabled) return;
 
         const authorColor = currentUserId ? getUserColor(currentUserId) : undefined;
+
+        // When KEY_BACKSPACE/DELETE allows a deletion through (returns false),
+        // the subsequent DELETE_CHARACTER_COMMAND must also allow it through.
+        let skipNextDeleteCommand = false;
+
+        /**
+         * Get the text content of the paragraph (top-level block) containing
+         * a given text node, by concatenating all its descendant text nodes.
+         */
+        const getParagraphText = (textNode: LexicalNode): string => {
+            let parent = textNode.getParent();
+            // Walk up to the top-level block (direct child of root)
+            while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
+                parent = parent.getParent();
+            }
+            if (!parent) return textNode.getTextContent();
+            return parent.getTextContent();
+        };
+
+        /**
+         * Get the offset of a text node within its paragraph by summing
+         * preceding sibling/descendant text node lengths.
+         */
+        const getOffsetInParagraph = (textNode: LexicalNode): number => {
+            let parent = textNode.getParent();
+            while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
+                parent = parent.getParent();
+            }
+            if (!parent) return 0;
+
+            let offset = 0;
+            const walk = (node: LexicalNode): boolean => {
+                if (node === textNode) return true; // found it
+                if ($isTextNode(node)) {
+                    offset += node.getTextContent().length;
+                } else if ($isElementNode(node)) {
+                    for (const child of node.getChildren()) {
+                        if (walk(child)) return true;
+                    }
+                }
+                return false;
+            };
+            walk(parent);
+            return offset;
+        };
+
+        /**
+         * Find the paragraph index (0-based) of the top-level block
+         * containing a given text node.
+         */
+        const getParagraphIndex = (textNode: LexicalNode): number => {
+            let parent = textNode.getParent();
+            while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
+                parent = parent.getParent();
+            }
+            if (!parent) return 0;
+            const root = $getRoot();
+            const children = root.getChildren();
+            for (let i = 0; i < children.length; i++) {
+                if (children[i] === parent) return i;
+            }
+            return 0;
+        };
+
+        /**
+         * Check if the character about to be deleted is newly added text
+         * (typed in the current editing session, not present in beforeSnapshot).
+         *
+         * Works at the paragraph level to avoid text-format mismatches between
+         * extractTextFromLexical (\n) and $getRoot().getTextContent() (\n\n).
+         *
+         * Returns true if the deletion target is entirely new text.
+         */
+        const isNewlyAddedText = (isForward: boolean): boolean => {
+            if (!getBeforeText) return false;
+            const beforeText = getBeforeText();
+            if (beforeText === null) return false;
+
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection)) return false;
+
+            // beforeText uses single \n between paragraphs (from extractTextFromLexical)
+            const beforeParagraphs = beforeText.split('\n');
+
+            if (selection.isCollapsed()) {
+                const anchor = selection.anchor;
+                const anchorNode = anchor.getNode();
+                if (!$isTextNode(anchorNode)) return false;
+
+                const paraIndex = getParagraphIndex(anchorNode);
+                const beforePara = beforeParagraphs[paraIndex];
+                if (beforePara === undefined) return true; // Entirely new paragraph
+
+                const currentPara = getParagraphText(anchorNode);
+                if (currentPara === beforePara) return false; // No changes in this paragraph
+                if (currentPara.length <= beforePara.length) return false; // No additions
+
+                // Compute added range within this paragraph
+                let addStart = 0;
+                while (addStart < beforePara.length && beforePara[addStart] === currentPara[addStart]) {
+                    addStart++;
+                }
+                let beforeEnd = beforePara.length - 1;
+                let currentEnd = currentPara.length - 1;
+                while (beforeEnd >= addStart && currentEnd >= addStart && beforePara[beforeEnd] === currentPara[currentEnd]) {
+                    beforeEnd--;
+                    currentEnd--;
+                }
+                const addEnd = currentEnd + 1;
+                if (addEnd <= addStart) return false;
+
+                // Cursor position within paragraph
+                const offsetInPara = getOffsetInParagraph(anchorNode) + anchor.offset;
+                const deletePos = isForward ? offsetInPara : offsetInPara - 1;
+                return deletePos >= addStart && deletePos < addEnd;
+            } else {
+                // Non-collapsed: check if entire selection is within one paragraph's added range
+                const anchor = selection.anchor;
+                const focus = selection.focus;
+                const anchorNode = anchor.getNode();
+                const focusNode = focus.getNode();
+                if (!$isTextNode(anchorNode) || !$isTextNode(focusNode)) return false;
+
+                const anchorParaIdx = getParagraphIndex(anchorNode);
+                const focusParaIdx = getParagraphIndex(focusNode);
+                if (anchorParaIdx !== focusParaIdx) return false; // Cross-paragraph selection
+
+                const beforePara = beforeParagraphs[anchorParaIdx];
+                if (beforePara === undefined) return true;
+
+                const currentPara = getParagraphText(anchorNode);
+                if (currentPara.length <= beforePara.length) return false;
+
+                let addStart = 0;
+                while (addStart < beforePara.length && beforePara[addStart] === currentPara[addStart]) {
+                    addStart++;
+                }
+                let beforeEnd = beforePara.length - 1;
+                let currentEnd = currentPara.length - 1;
+                while (beforeEnd >= addStart && currentEnd >= addStart && beforePara[beforeEnd] === currentPara[currentEnd]) {
+                    beforeEnd--;
+                    currentEnd--;
+                }
+                const addEnd = currentEnd + 1;
+                if (addEnd <= addStart) return false;
+
+                const anchorAbs = getOffsetInParagraph(anchorNode) + anchor.offset;
+                const focusAbs = getOffsetInParagraph(focusNode) + focus.offset;
+                const selStart = Math.min(anchorAbs, focusAbs);
+                const selEnd = Math.max(anchorAbs, focusAbs);
+                return selStart >= addStart && selEnd <= addEnd;
+            }
+        };
 
         /**
          * Capture what the user intends to delete from the current editor state,
@@ -272,6 +428,10 @@ export default function DeletionInterceptionPlugin({
         const unregisterBackspace = editor.registerCommand(
             KEY_BACKSPACE_COMMAND,
             (event: KeyboardEvent) => {
+                if (isNewlyAddedText(false)) {
+                    skipNextDeleteCommand = true;
+                    return false; // Let Lexical delete normally
+                }
                 event.preventDefault();
                 handleDeletion(false);
                 return true;
@@ -282,6 +442,10 @@ export default function DeletionInterceptionPlugin({
         const unregisterDelete = editor.registerCommand(
             KEY_DELETE_COMMAND,
             (event: KeyboardEvent) => {
+                if (isNewlyAddedText(true)) {
+                    skipNextDeleteCommand = true;
+                    return false; // Let Lexical delete normally
+                }
                 event.preventDefault();
                 handleDeletion(true);
                 return true;
@@ -292,7 +456,10 @@ export default function DeletionInterceptionPlugin({
         const unregisterDeleteChar = editor.registerCommand(
             DELETE_CHARACTER_COMMAND,
             (_isForward: boolean) => {
-                // Already handled by KEY_BACKSPACE/KEY_DELETE — just block.
+                if (skipNextDeleteCommand) {
+                    skipNextDeleteCommand = false;
+                    return false; // Allow through — newly added text
+                }
                 return true;
             },
             COMMAND_PRIORITY_HIGH,
@@ -301,6 +468,10 @@ export default function DeletionInterceptionPlugin({
         const unregisterDeleteWord = editor.registerCommand(
             DELETE_WORD_COMMAND,
             (_isForward: boolean) => {
+                if (skipNextDeleteCommand) {
+                    skipNextDeleteCommand = false;
+                    return false;
+                }
                 return true; // Block word-level deletions for now
             },
             COMMAND_PRIORITY_HIGH,
@@ -309,6 +480,10 @@ export default function DeletionInterceptionPlugin({
         const unregisterDeleteLine = editor.registerCommand(
             DELETE_LINE_COMMAND,
             (_isForward: boolean) => {
+                if (skipNextDeleteCommand) {
+                    skipNextDeleteCommand = false;
+                    return false;
+                }
                 return true; // Block line-level deletions for now
             },
             COMMAND_PRIORITY_HIGH,
@@ -321,7 +496,7 @@ export default function DeletionInterceptionPlugin({
             unregisterDeleteWord();
             unregisterDeleteLine();
         };
-    }, [editor, enabled, currentUserName, currentUserId, onDeletionIntercepted]);
+    }, [editor, enabled, currentUserName, currentUserId, onDeletionIntercepted, getBeforeText]);
 
     return null;
 }
