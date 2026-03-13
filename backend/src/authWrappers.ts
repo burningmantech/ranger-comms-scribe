@@ -57,7 +57,13 @@ export const withLeadCheck = async (request: Request, env: Env) => {
 // Middleware to check if the user is authenticated
 export const withAuth = async (request: Request, env: Env) => {
   if (env.DEV_BYPASS_AUTH === 'true') {
-    (request as any).user = { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: UserType.Admin, isAdmin: true, roles: ['Admin'], groups: [] };
+    const devUser = request.headers.get('X-Dev-User');
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
+    if (devUser === 'user2' || sessionId.includes('user2')) {
+      (request as any).user = { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: UserType.CommsCadre, isAdmin: false, roles: ['CommsCadre'], groups: [] };
+    } else {
+      (request as any).user = { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: UserType.Admin, isAdmin: true, roles: ['Admin'], groups: [] };
+    }
     return undefined;
   }
 

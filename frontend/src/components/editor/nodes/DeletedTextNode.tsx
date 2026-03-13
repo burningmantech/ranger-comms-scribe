@@ -8,12 +8,20 @@ import {
   Spread,
 } from 'lexical';
 
+export interface FormattedSegment {
+  text: string;
+  format: number; // Lexical format bitmask: 1=bold, 2=italic, 4=strikethrough, 8=underline, 16=code, 32=subscript, 64=superscript
+  style?: string;
+}
+
 export interface DeletedTextPayload {
   changeId: string;
   deletedText: string;
   authorName?: string;
   authorColor?: string;
   isBlockLevel?: boolean;
+  /** Optional formatted segments preserving bold/italic from the original text */
+  formattedSegments?: FormattedSegment[];
 }
 
 export type SerializedDeletedTextNode = Spread<
@@ -23,6 +31,7 @@ export type SerializedDeletedTextNode = Spread<
     authorName?: string;
     authorColor?: string;
     isBlockLevel?: boolean;
+    formattedSegments?: FormattedSegment[];
     type: 'deleted-text';
     version: 1;
   },
@@ -35,6 +44,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
   __authorName?: string;
   __authorColor?: string;
   __isBlockLevel: boolean;
+  __formattedSegments?: FormattedSegment[];
 
   static getType(): string {
     return 'deleted-text';
@@ -47,6 +57,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       node.__authorName,
       node.__authorColor,
       node.__isBlockLevel,
+      node.__formattedSegments,
       node.__key,
     );
   }
@@ -57,6 +68,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     authorName?: string,
     authorColor?: string,
     isBlockLevel: boolean = false,
+    formattedSegments?: FormattedSegment[],
     key?: NodeKey,
   ) {
     super(key);
@@ -65,6 +77,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     this.__authorName = authorName;
     this.__authorColor = authorColor;
     this.__isBlockLevel = isBlockLevel;
+    this.__formattedSegments = formattedSegments;
   }
 
   static importJSON(serializedNode: SerializedDeletedTextNode): DeletedTextNode {
@@ -74,6 +87,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       authorName: serializedNode.authorName,
       authorColor: serializedNode.authorColor,
       isBlockLevel: serializedNode.isBlockLevel,
+      formattedSegments: serializedNode.formattedSegments,
     });
   }
 
@@ -84,6 +98,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       authorName: this.__authorName,
       authorColor: this.__authorColor,
       isBlockLevel: this.__isBlockLevel,
+      formattedSegments: this.__formattedSegments,
       type: 'deleted-text',
       version: 1,
     } as SerializedDeletedTextNode;
@@ -132,6 +147,10 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     return this.__authorName;
   }
 
+  getFormattedSegments(): FormattedSegment[] | undefined {
+    return this.__formattedSegments;
+  }
+
   decorate(): React.ReactElement {
     return (
       <DeletedTextComponent
@@ -140,6 +159,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
         authorName={this.__authorName}
         authorColor={this.__authorColor}
         isBlockLevel={this.__isBlockLevel}
+        formattedSegments={this.__formattedSegments}
         nodeKey={this.__key}
       />
     );
@@ -152,7 +172,18 @@ interface DeletedTextComponentProps {
   authorName?: string;
   authorColor?: string;
   isBlockLevel?: boolean;
+  formattedSegments?: FormattedSegment[];
   nodeKey: NodeKey;
+}
+
+/** Apply Lexical format bitmask to inline styles */
+function formatStyle(format: number): React.CSSProperties {
+  const style: React.CSSProperties = {};
+  if (format & 1) style.fontWeight = 'bold';
+  if (format & 2) style.fontStyle = 'italic';
+  if (format & 8) style.textDecoration = 'underline';
+  if (format & 16) { style.fontFamily = 'monospace'; style.fontSize = '0.9em'; }
+  return style;
 }
 
 function DeletedTextComponent({
@@ -161,6 +192,7 @@ function DeletedTextComponent({
   authorName,
   authorColor,
   isBlockLevel,
+  formattedSegments,
   nodeKey,
 }: DeletedTextComponentProps): React.ReactElement {
   const handleClick = (e: React.MouseEvent) => {
@@ -176,14 +208,42 @@ function DeletedTextComponent({
     }
   };
 
-  // Split on newlines to render paragraph breaks as <br/> elements
-  const parts = deletedText.split('\n');
-
   // Fall back to red if no authorColor provided (backward compat)
   const color = authorColor || '#d32f2f';
   const bgColor = color + '14'; // ~8% opacity hex suffix
 
   const Wrapper = isBlockLevel ? 'div' : 'span';
+
+  // Render formatted segments if available, otherwise fall back to plain text
+  const renderContent = () => {
+    if (formattedSegments && formattedSegments.length > 0) {
+      return formattedSegments.map((seg, i) => {
+        const parts = seg.text.split('\n');
+        const style = seg.format ? formatStyle(seg.format) : undefined;
+        return (
+          <React.Fragment key={i}>
+            {parts.map((part, j) => (
+              <React.Fragment key={j}>
+                {style ? <span style={style}>{part}</span> : part}
+                {j < parts.length - 1 && <br />}
+              </React.Fragment>
+            ))}
+          </React.Fragment>
+        );
+      });
+    }
+
+    // Plain text fallback
+    const parts = deletedText.split('\n');
+    return parts.map((part, i) => (
+      <React.Fragment key={i}>
+        {part}
+        {i < parts.length - 1 && <br />}
+      </React.Fragment>
+    ));
+  };
+
+  const parts = deletedText.split('\n');
 
   return (
     <Wrapper
@@ -195,12 +255,7 @@ function DeletedTextComponent({
       title={authorName ? `Deleted by ${authorName}` : 'Deleted text'}
       style={{ color, backgroundColor: bgColor }}
     >
-      {parts.map((part, i) => (
-        <React.Fragment key={i}>
-          {part}
-          {i < parts.length - 1 && <br />}
-        </React.Fragment>
-      ))}
+      {renderContent()}
     </Wrapper>
   );
 }
@@ -212,6 +267,7 @@ export function $createDeletedTextNode(payload: DeletedTextPayload): DeletedText
     payload.authorName,
     payload.authorColor,
     payload.isBlockLevel || false,
+    payload.formattedSegments,
   );
 }
 

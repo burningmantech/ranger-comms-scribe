@@ -56,6 +56,9 @@ function getColorForUser(userId: string): string {
   return USER_COLORS[Math.abs(hash) % USER_COLORS.length];
 }
 
+// Cursor staleness TTL — cursors not updated within this window are faded out
+const CURSOR_STALE_TTL_MS = 5000;
+
 export default function CollaborativeCursorPlugin({
   remoteCursors,
   currentUserId,
@@ -65,6 +68,27 @@ export default function CollaborativeCursorPlugin({
   const [cursorElements, setCursorElements] = useState<Map<string, HTMLElement>>(new Map());
   const selectionRef = useRef<any>(null);
   const lastPositionRef = useRef<CursorPosition | null>(null);
+  const [, forceRender] = useState(0);
+
+  // Periodically force re-render to update staleness classes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      forceRender(n => n + 1);
+    }, CURSOR_STALE_TTL_MS);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Filter out stale cursors and compute freshness
+  const activeCursors = remoteCursors.filter(cursor => {
+    if (cursor.userId === currentUserId) return false;
+    const age = Date.now() - new Date(cursor.timestamp).getTime();
+    return age < CURSOR_STALE_TTL_MS * 2; // Remove entirely after 2x TTL
+  });
+
+  const isCursorStale = (cursor: RemoteCursor): boolean => {
+    const age = Date.now() - new Date(cursor.timestamp).getTime();
+    return age > CURSOR_STALE_TTL_MS;
+  };
 
   // Track selection changes and broadcast cursor position
   useEffect(() => {
@@ -144,8 +168,7 @@ export default function CollaborativeCursorPlugin({
 
     const newCursorElements = new Map<string, HTMLElement>();
 
-    remoteCursors.forEach(cursor => {
-      if (cursor.userId === currentUserId) return; // Don't show our own cursor
+    activeCursors.forEach(cursor => {
 
       try {
         editor.getEditorState().read(() => {
@@ -168,7 +191,7 @@ export default function CollaborativeCursorPlugin({
     });
 
     setCursorElements(newCursorElements);
-  }, [editor, remoteCursors, currentUserId, cursorElements]);
+  }, [editor, activeCursors, currentUserId, cursorElements]);
 
   // Helper function to find text node at specific offset
   const getTextNodeAtOffset = (element: Element, offset: number): { node: Text; offset: number } | null => {
@@ -208,8 +231,9 @@ export default function CollaborativeCursorPlugin({
 
   // Create cursor element
   const createCursorElement = (cursor: RemoteCursor): HTMLElement => {
+    const stale = isCursorStale(cursor);
     const cursorElement = document.createElement('div');
-    cursorElement.className = 'remote-cursor-marker';
+    cursorElement.className = `remote-cursor-marker${stale ? ' cursor-stale' : ''}`;
     cursorElement.setAttribute('data-user-id', cursor.userId);
     
     const color = getColorForUser(cursor.userId);

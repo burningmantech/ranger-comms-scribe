@@ -43,6 +43,7 @@ import {
 import {
     $createDeletedTextNode,
     $isDeletedTextNode,
+    FormattedSegment,
 } from '../nodes/DeletedTextNode';
 import { getUserColor } from '../../../utils/userColors';
 
@@ -222,6 +223,57 @@ export default function DeletionInterceptionPlugin({
         };
 
         /**
+         * Check if the cursor is at the very start of a paragraph (backspace)
+         * or the very end (forward delete). In these cases Lexical should
+         * handle the paragraph merge natively.
+         */
+        const isAtParagraphBoundary = (isForward: boolean): boolean => {
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+
+            const anchor = selection.anchor;
+            const anchorNode = anchor.getNode();
+
+            // Empty paragraph (anchor is on the ElementNode itself) — always a boundary
+            if ($isElementNode(anchorNode) && anchorNode.getTextContent().trim() === '') {
+                return true;
+            }
+
+            if (!$isTextNode(anchorNode)) return false;
+
+            if (!isForward && anchor.offset !== 0) return false;
+            if (isForward && anchor.offset < anchorNode.getTextContent().length) return false;
+
+            // Walk siblings in the relevant direction to check for preceding/following
+            // real text content within the same paragraph.
+            let sibling: LexicalNode | null = anchorNode;
+            while (true) {
+                sibling = isForward ? sibling.getNextSibling() : sibling.getPreviousSibling();
+                if (!sibling) break;
+                if ($isDeletedTextNode(sibling)) continue; // skip deleted nodes
+                if ($isTextNode(sibling) && sibling.getTextContent().length > 0) return false;
+                if ($isElementNode(sibling)) return false;
+            }
+
+            // Also walk up: if the text node is inside an inline element (e.g. <strong>),
+            // check the parent's siblings too.
+            let parent = anchorNode.getParent();
+            while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
+                let parentSibling: LexicalNode | null = parent;
+                while (true) {
+                    parentSibling = isForward ? parentSibling.getNextSibling() : parentSibling.getPreviousSibling();
+                    if (!parentSibling) break;
+                    if ($isDeletedTextNode(parentSibling)) continue;
+                    if ($isTextNode(parentSibling) && parentSibling.getTextContent().length > 0) return false;
+                    if ($isElementNode(parentSibling)) return false;
+                }
+                parent = parent.getParent();
+            }
+
+            return true; // truly at paragraph boundary
+        };
+
+        /**
          * Capture what the user intends to delete from the current editor state,
          * then schedule the tree mutation in a deferred `editor.update()`.
          *
@@ -293,6 +345,13 @@ export default function DeletionInterceptionPlugin({
                             const deletedSlice = text.slice(sliceStart, sliceEnd);
                             const textLen = text.length;
 
+                            // Capture format from the source TextNode
+                            const nodeFormat = $isTextNode(liveNode) ? liveNode.getFormat() : 0;
+                            const nodeStyle = $isTextNode(liveNode) ? liveNode.getStyle() : '';
+                            const segments: FormattedSegment[] | undefined = nodeFormat
+                                ? [{ text: deletedSlice, format: nodeFormat, style: nodeStyle }]
+                                : undefined;
+
                             if (sliceStart === 0 && sliceEnd >= textLen) {
                                 // Entire node is selected
                                 const deletedNode = $createDeletedTextNode({
@@ -300,6 +359,7 @@ export default function DeletionInterceptionPlugin({
                                     deletedText: deletedSlice,
                                     authorName: currentUserName,
                                     authorColor,
+                                    formattedSegments: segments,
                                 });
                                 liveNode.insertBefore(deletedNode);
                                 liveNode.remove();
@@ -313,6 +373,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
+                                        formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
                                     selectedNode.remove();
@@ -327,6 +388,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
+                                        formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
                                     selectedNode.remove();
@@ -341,6 +403,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
+                                        formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
                                     selectedNode.remove();
@@ -370,11 +433,134 @@ export default function DeletionInterceptionPlugin({
             let deleteOffset: number;
 
             if (isForward) {
-                if (offset >= text.length) return;
+                if (offset >= text.length) {
+                    // Not at paragraph boundary (handled earlier), so
+                    // there must be a next text node in the same paragraph.
+                    let next: LexicalNode | null = anchorNode.getNextSibling();
+                    if (!next) {
+                        let parent = anchorNode.getParent();
+                        while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
+                            next = parent.getNextSibling();
+                            if (next) break;
+                            parent = parent.getParent();
+                        }
+                    }
+                    while (next && $isDeletedTextNode(next)) {
+                        next = next.getNextSibling();
+                    }
+                    while (next && $isElementNode(next)) {
+                        const children = (next as ElementNode).getChildren();
+                        next = children.length > 0 ? children[0] : null;
+                    }
+                    if (!next || !$isTextNode(next) || $isDeletedTextNode(next)) return;
+                    const nextText = next.getTextContent();
+                    if (nextText.length === 0) return;
+                    const nextKey = next.getKey();
+                    const nextChar = nextText[0];
+                    setTimeout(() => {
+                        editor.update(() => {
+                            const liveNode = $getNodeByKey(nextKey);
+                            if (!liveNode || !$isTextNode(liveNode)) return;
+                            const currentText = liveNode.getTextContent();
+                            if (currentText !== nextText) return;
+                            if (currentText.length === 1) {
+                                const deletedNode = $createDeletedTextNode({
+                                    changeId: '__pending_deletion__',
+                                    deletedText: nextChar,
+                                    authorName: currentUserName,
+                                    authorColor,
+                                });
+                                liveNode.insertBefore(deletedNode);
+                                liveNode.remove();
+                            } else {
+                                const parts = liveNode.splitText(0, 1);
+                                const charNode = parts[0];
+                                if (charNode) {
+                                    const deletedNode = $createDeletedTextNode({
+                                        changeId: '__pending_deletion__',
+                                        deletedText: nextChar,
+                                        authorName: currentUserName,
+                                        authorColor,
+                                    });
+                                    charNode.insertBefore(deletedNode);
+                                    charNode.remove();
+                                }
+                            }
+                        });
+                    }, 0);
+                    if (onDeletionIntercepted) {
+                        onDeletionIntercepted(nextChar);
+                    }
+                    return;
+                }
                 charToDelete = text[offset];
                 deleteOffset = offset;
             } else {
-                if (offset === 0) return;
+                if (offset === 0) {
+                    // Not at paragraph boundary (that's handled earlier), so
+                    // there must be a previous text node in the same paragraph.
+                    // Find it and delete its last character.
+                    let prev: LexicalNode | null = anchorNode.getPreviousSibling();
+                    // Walk up through inline parents if needed
+                    if (!prev) {
+                        let parent = anchorNode.getParent();
+                        while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
+                            prev = parent.getPreviousSibling();
+                            if (prev) break;
+                            parent = parent.getParent();
+                        }
+                    }
+                    // Skip over DeletedTextNodes
+                    while (prev && $isDeletedTextNode(prev)) {
+                        prev = prev.getPreviousSibling();
+                    }
+                    // Descend into element nodes to find the last text node
+                    while (prev && $isElementNode(prev)) {
+                        const children = (prev as ElementNode).getChildren();
+                        prev = children.length > 0 ? children[children.length - 1] : null;
+                    }
+                    if (!prev || !$isTextNode(prev) || $isDeletedTextNode(prev)) return;
+                    const prevText = prev.getTextContent();
+                    if (prevText.length === 0) return;
+                    const prevKey = prev.getKey();
+                    const prevChar = prevText[prevText.length - 1];
+                    const prevOffset = prevText.length - 1;
+                    setTimeout(() => {
+                        editor.update(() => {
+                            const liveNode = $getNodeByKey(prevKey);
+                            if (!liveNode || !$isTextNode(liveNode)) return;
+                            const currentText = liveNode.getTextContent();
+                            if (currentText !== prevText) return;
+                            if (currentText.length === 1) {
+                                const deletedNode = $createDeletedTextNode({
+                                    changeId: '__pending_deletion__',
+                                    deletedText: prevChar,
+                                    authorName: currentUserName,
+                                    authorColor,
+                                });
+                                liveNode.insertBefore(deletedNode);
+                                liveNode.remove();
+                            } else {
+                                const parts = liveNode.splitText(prevOffset, prevOffset + 1);
+                                const charNode = prevOffset > 0 ? parts[1] : parts[0];
+                                if (charNode) {
+                                    const deletedNode = $createDeletedTextNode({
+                                        changeId: '__pending_deletion__',
+                                        deletedText: prevChar,
+                                        authorName: currentUserName,
+                                        authorColor,
+                                    });
+                                    charNode.insertBefore(deletedNode);
+                                    charNode.remove();
+                                }
+                            }
+                        });
+                    }, 0);
+                    if (onDeletionIntercepted) {
+                        onDeletionIntercepted(prevChar);
+                    }
+                    return;
+                }
                 charToDelete = text[offset - 1];
                 deleteOffset = offset - 1;
             }
@@ -388,6 +574,13 @@ export default function DeletionInterceptionPlugin({
                     const currentText = liveNode.getTextContent();
                     if (currentText !== text) return; // text changed, skip
 
+                    // Capture format from source TextNode
+                    const fmt = liveNode.getFormat();
+                    const sty = liveNode.getStyle();
+                    const fmtSegs: FormattedSegment[] | undefined = fmt
+                        ? [{ text: charToDelete, format: fmt, style: sty }]
+                        : undefined;
+
                     if (currentText.length === 1) {
                         // Only character in the node
                         const deletedNode = $createDeletedTextNode({
@@ -395,6 +588,7 @@ export default function DeletionInterceptionPlugin({
                             deletedText: charToDelete,
                             authorName: currentUserName,
                             authorColor,
+                            formattedSegments: fmtSegs,
                         });
                         liveNode.insertBefore(deletedNode);
                         liveNode.remove();
@@ -407,6 +601,7 @@ export default function DeletionInterceptionPlugin({
                                 deletedText: charToDelete,
                                 authorName: currentUserName,
                                 authorColor,
+                                formattedSegments: fmtSegs,
                             });
                             charNode.insertBefore(deletedNode);
                             charNode.remove();
@@ -432,6 +627,11 @@ export default function DeletionInterceptionPlugin({
                     skipNextDeleteCommand = true;
                     return false; // Let Lexical delete normally
                 }
+                // At paragraph boundary — let Lexical merge paragraphs natively
+                if (isAtParagraphBoundary(false)) {
+                    skipNextDeleteCommand = true;
+                    return false;
+                }
                 event.preventDefault();
                 handleDeletion(false);
                 return true;
@@ -445,6 +645,11 @@ export default function DeletionInterceptionPlugin({
                 if (isNewlyAddedText(true)) {
                     skipNextDeleteCommand = true;
                     return false; // Let Lexical delete normally
+                }
+                // At paragraph boundary — let Lexical merge paragraphs natively
+                if (isAtParagraphBoundary(true)) {
+                    skipNextDeleteCommand = true;
+                    return false;
                 }
                 event.preventDefault();
                 handleDeletion(true);

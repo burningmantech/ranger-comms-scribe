@@ -142,7 +142,7 @@ describe('TransactionManager', () => {
       const tm = createTM('sub-1');
 
       const lexical = makeLexical('Hello world');
-      const tx = tm.startTransaction('content', lexical);
+      const tx = tm.startTransaction('content', lexical)!;
 
       expect(tx.status).toBe('active');
       expect(tx.field).toBe('content');
@@ -172,7 +172,7 @@ describe('TransactionManager', () => {
     it('auto-settles the previous active transaction if one exists', () => {
       const tm = createTM('sub-1');
 
-      const tx1 = tm.startTransaction('content', makeLexical('First'));
+      const tx1 = tm.startTransaction('content', makeLexical('First'))!;
       // Start a second transaction without settling the first
       const tx2 = tm.startTransaction('content', makeLexical('Second'));
 
@@ -833,7 +833,7 @@ describe('TransactionManager', () => {
 
       const ids = new Set<string>();
       for (let i = 0; i < 20; i++) {
-        const tx = tm.startTransaction('content', makeLexical(`v${i}`));
+        const tx = tm.startTransaction('content', makeLexical(`v${i}`))!;
         ids.add(tx.id);
         tm.settleTransaction(makeLexical(`v${i + 1}`));
       }

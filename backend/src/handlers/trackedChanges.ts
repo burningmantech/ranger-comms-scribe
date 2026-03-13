@@ -17,9 +17,185 @@ import {
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
-import { getObject } from '../services/cacheService';
+import { getObject, putObject } from '../services/cacheService';
 import { mergeTextIntoLexicalJson } from '../services/trackedChangesService';
 
+
+/**
+ * Strip tracked-change marker nodes (deleted-text, inserted-text) from Lexical
+ * JSON so the persisted richTextContent is clean after accept/reject.
+ *
+ * - `deleted-text` nodes are removed entirely (the text was deleted).
+ * - `inserted-text` nodes are replaced with a normal text node preserving the
+ *   inserted text content and any formatting.
+ * - Adjacent text nodes with identical format/style are merged.
+ */
+function cleanLexicalJson(jsonStr: string): string {
+  try {
+    const root = JSON.parse(jsonStr);
+
+    function cleanChildren(children: any[]): any[] {
+      const cleaned: any[] = [];
+      for (const node of children) {
+        if (node.type === 'deleted-text') {
+          // Drop deletion markers — the text is gone
+          continue;
+        }
+        if (node.type === 'inserted-text') {
+          // Convert to a normal text node
+          cleaned.push({
+            detail: node.detail ?? 0,
+            format: node.format ?? 0,
+            mode: node.mode ?? 'normal',
+            style: node.style ?? '',
+            text: node.text ?? node.insertedText ?? '',
+            type: 'text',
+            version: 1,
+          });
+          continue;
+        }
+        // Recurse into children of element nodes (paragraphs, etc.)
+        if (node.children && Array.isArray(node.children)) {
+          node.children = cleanChildren(node.children);
+        }
+        cleaned.push(node);
+      }
+
+      // Merge adjacent text nodes with identical format & style
+      const merged: any[] = [];
+      for (const node of cleaned) {
+        const prev = merged[merged.length - 1];
+        if (
+          prev &&
+          prev.type === 'text' &&
+          node.type === 'text' &&
+          prev.format === node.format &&
+          prev.style === node.style
+        ) {
+          prev.text += node.text;
+        } else {
+          merged.push(node);
+        }
+      }
+      return merged;
+    }
+
+    if (root.root?.children) {
+      root.root.children = cleanChildren(root.root.children);
+    }
+    return JSON.stringify(root);
+  } catch {
+    return jsonStr;
+  }
+}
+
+/**
+ * After any accept or reject, recompute submission.content and
+ * submission.richTextContent so the persisted state is correct.
+ *
+ * Uses the stored original content (before any tracked changes) as the base,
+ * then replays only non-rejected changes' individual deltas.
+ */
+async function recomputeContentAfterResolution(
+  submissionId: string,
+  field: string,
+  env: any,
+): Promise<{ content: string; richText: string } | null> {
+  const originalData = await getObject<any>(`original_content/${submissionId}`, env);
+  if (!originalData) return null; // Legacy: no original stored
+
+  const allChanges = await getTrackedChanges(submissionId, env);
+  const fieldChanges = allChanges
+    .filter((c: any) => c.field === field)
+    .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  if (fieldChanges.length === 0) {
+    return { content: originalData.content, richText: originalData.richTextContent };
+  }
+
+  const hasRejections = fieldChanges.some((c: any) => c.status === 'rejected');
+  const activeChanges = fieldChanges.filter((c: any) => c.status !== 'rejected');
+
+  if (activeChanges.length === 0) {
+    // All changes rejected — revert to original
+    return { content: originalData.content, richText: originalData.richTextContent };
+  }
+
+  if (!hasRejections) {
+    // No rejections — the last active change's cpv is the correct cumulative state
+    const last = activeChanges[activeChanges.length - 1];
+    const content = last.completeProposedVersion || last.newValue;
+    let richText = last.richTextNewValue;
+    if (!richText && originalData.richTextContent) {
+      richText = mergeTextIntoLexicalJson(originalData.richTextContent, content);
+    }
+    richText = cleanLexicalJson(richText || content);
+    return { content, richText };
+  }
+
+  // ---- Mixed accept/reject: replay only non-rejected changes ----
+  const originalContent: string = originalData.content || '';
+  let result = originalContent;
+
+  for (let i = 0; i < fieldChanges.length; i++) {
+    if (fieldChanges[i].status === 'rejected') continue;
+
+    // Compute this change's individual delta by diffing its cpv
+    // against the previous change's cpv (or original for the first change).
+    const prevCpv: string = i === 0
+      ? originalContent
+      : (fieldChanges[i - 1].completeProposedVersion || fieldChanges[i - 1].newValue || originalContent);
+    const currCpv: string = fieldChanges[i].completeProposedVersion || fieldChanges[i].newValue || '';
+
+    // Prefix / suffix matching to isolate the delta
+    let pLen = 0;
+    while (pLen < prevCpv.length && pLen < currCpv.length && prevCpv[pLen] === currCpv[pLen]) pLen++;
+    let sLen = 0;
+    while (
+      sLen < prevCpv.length - pLen &&
+      sLen < currCpv.length - pLen &&
+      prevCpv[prevCpv.length - 1 - sLen] === currCpv[currCpv.length - 1 - sLen]
+    ) sLen++;
+
+    const removedText = prevCpv.substring(pLen, prevCpv.length - sLen);
+    const addedText = currCpv.substring(pLen, currCpv.length - sLen);
+
+    if (removedText) {
+      // Replacement or deletion
+      const pos = result.indexOf(removedText);
+      if (pos >= 0) {
+        result = result.substring(0, pos) + addedText + result.substring(pos + removedText.length);
+      }
+    } else if (addedText) {
+      // Pure insertion — use context anchor to find position
+      const anchor = prevCpv.substring(Math.max(0, pLen - 30), pLen);
+      if (anchor) {
+        const anchorPos = result.indexOf(anchor);
+        if (anchorPos >= 0) {
+          const insertPos = anchorPos + anchor.length;
+          result = result.substring(0, insertPos) + addedText + result.substring(insertPos);
+        } else {
+          // Fallback: insert at computed offset
+          result = result.substring(0, Math.min(pLen, result.length)) + addedText + result.substring(Math.min(pLen, result.length));
+        }
+      } else {
+        // No anchor (insertion at very beginning)
+        result = addedText + result;
+      }
+    }
+    // If neither added nor removed, no change for this entry
+  }
+
+  // Build rich text from the recomputed plain text
+  let richText: string;
+  if (originalData.richTextContent) {
+    richText = cleanLexicalJson(mergeTextIntoLexicalJson(originalData.richTextContent, result));
+  } else {
+    richText = result;
+  }
+
+  return { content: result, richText };
+}
 
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
@@ -68,27 +244,12 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     // First, try to get saved proposed versions from cache
     const savedProposedVersions = await getObject(`proposed_versions/${submissionId}`, env) as any;
 
-    console.log('🔍 Backend getTrackedChangesHandler - savedProposedVersions:', {
-      hasData: !!savedProposedVersions,
-      proposedVersionsRichText: savedProposedVersions?.proposedVersionsRichText ? 'present' : 'missing',
-      proposedVersionsContent: savedProposedVersions?.proposedVersionsContent ? 'present' : 'missing',
-      submissionId
-    });
-
     if (savedProposedVersions) {
-      console.log('📋 Found saved proposed versions for submission:', submissionId);
       if (savedProposedVersions.proposedVersionsRichText) {
         proposedVersionsRichText['content'] = savedProposedVersions.proposedVersionsRichText;
-        console.log('✅ Set proposedVersionsRichText from cache:', {
-          length: savedProposedVersions.proposedVersionsRichText.length,
-          isLexical: savedProposedVersions.proposedVersionsRichText.includes('"root"')
-        });
       }
       if (savedProposedVersions.proposedVersionsContent) {
         proposedVersions['content'] = savedProposedVersions.proposedVersionsContent;
-        console.log('✅ Set proposedVersionsContent from cache:', {
-          length: savedProposedVersions.proposedVersionsContent.length
-        });
       }
     }
 
@@ -119,14 +280,6 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
       proposedVersionsRichText
     };
 
-    console.log('🔍 Backend getTrackedChangesHandler - response:', {
-      changesCount: changesWithComments.length,
-      proposedVersionsFields: Object.keys(proposedVersions),
-      proposedVersionsRichTextFields: Object.keys(proposedVersionsRichText),
-      proposedVersionsRichTextContentLength: proposedVersionsRichText.content?.length,
-      proposedVersionsRichTextContentIsLexical: proposedVersionsRichText.content ? proposedVersionsRichText.content.includes('"root"') : false
-    });
-
     return new Response(JSON.stringify(response), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -149,6 +302,20 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
 
     if (!field || oldValue === undefined || oldValue === null || newValue === undefined || newValue === null) {
       return new Response('Missing required fields', { status: 400 });
+    }
+
+    // On the first tracked change for this submission, snapshot the original
+    // content so we can recompute correctly after mixed accept/reject.
+    const originalKey = `original_content/${submissionId}`;
+    const existingOriginal = await getObject<any>(originalKey, env);
+    if (!existingOriginal) {
+      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+      if (submission) {
+        await putObject(originalKey, {
+          content: submission.content || '',
+          richTextContent: submission.richTextContent || '',
+        }, env);
+      }
     }
 
     // Create the tracked change
@@ -183,23 +350,36 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
   }
 
   try {
-    const { status, comment } = await request.json();
+    const { status, comment, submissionId } = await request.json();
 
     if (!['approved', 'rejected'].includes(status)) {
       return new Response('Invalid status', { status: 400 });
     }
 
-    // Check permissions
-    const hasPermission = request.user.userType === 'Admin' ||
+    // Check permissions: privileged roles always allowed
+    let hasPermission = request.user.userType === 'Admin' ||
       request.user.userType === 'CommsCadre' ||
       request.user.userType === 'CouncilManager';
+
+    // Also allow the submission author to accept/reject changes to their content
+    if (!hasPermission && submissionId) {
+      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+      if (submission && submission.submittedBy === request.user.id) {
+        hasPermission = true;
+      }
+    }
 
     if (!hasPermission) {
       return new Response('Forbidden', { status: 403 });
     }
 
+    if (!submissionId) {
+      return new Response('submissionId is required', { status: 400 });
+    }
+
     // Update the change status
     const updatedChange = await updateChangeStatus(
+      submissionId,
       changeId,
       status,
       env,
@@ -217,7 +397,7 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
     if (comment) {
       await addChangeComment(
         changeId,
-        updatedChange.submissionId,
+        submissionId,
         comment,
         request.user.id,
         request.user.name,
@@ -225,18 +405,55 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
       );
     }
 
+    // After accepting or rejecting, recompute the submission content from the
+    // stored original + non-rejected changes so the persisted state is correct.
+    try {
+      const recomputed = await recomputeContentAfterResolution(submissionId, updatedChange.field, env);
+      if (recomputed) {
+        const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+        if (submission) {
+          // For accepts with richTextNewValue, prefer it over mergeTextIntoLexicalJson
+          // because it preserves formatting.  Only use it when there are no rejections
+          // (otherwise the recomputed plain text is authoritative).
+          const allChanges = await getTrackedChanges(submissionId, env);
+          const hasRejections = allChanges.some((c: any) => c.field === updatedChange.field && c.status === 'rejected');
+
+          if (!hasRejections && status === 'approved' && updatedChange.richTextNewValue) {
+            submission.content = recomputed.content;
+            submission.richTextContent = cleanLexicalJson(updatedChange.richTextNewValue);
+          } else {
+            submission.content = recomputed.content;
+            submission.richTextContent = recomputed.richText;
+          }
+          await putObject(`content_submissions/${submissionId}`, submission, env);
+
+          // Update proposed_versions cache
+          await putObject(`proposed_versions/${submissionId}`, {
+            proposedVersionsContent: submission.content,
+            proposedVersionsRichText: submission.richTextContent,
+            proposedVersionsFields: [updatedChange.field],
+            lastUpdatedAt: new Date().toISOString(),
+            lastUpdatedBy: request.user.id,
+          }, env);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update submission content after change resolution:', err);
+    }
+
     // Server-side cascade rejection: when a change is rejected, also reject
     // all dependent changes whose regions overlap with this change.
     let cascadeRejectedIds: string[] = [];
     if (status === 'rejected') {
       const dependentIds = await getCascadeDependencies(
-        updatedChange.submissionId,
+        submissionId,
         changeId,
         env
       );
       for (const depId of dependentIds) {
         try {
           await updateChangeStatus(
+            submissionId,
             depId,
             'rejected',
             env,
@@ -284,17 +501,32 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
       });
     }
 
-    const hasPermission = request.user.userType === 'Admin' ||
+    let hasPermission = request.user.userType === 'Admin' ||
       request.user.userType === 'CommsCadre' ||
       request.user.userType === 'CouncilManager';
+
+    // Also allow the submission author to accept/reject changes to their content
+    if (!hasPermission && submissionId) {
+      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+      if (submission && submission.submittedBy === request.user.id) {
+        hasPermission = true;
+      }
+    }
 
     if (!hasPermission) {
       return new Response('Forbidden', { status: 403 });
     }
 
+    if (!submissionId) {
+      return new Response(JSON.stringify({ error: 'submissionId required' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
     const results = [];
     for (const changeId of changeIds) {
       const updatedChange = await updateChangeStatus(
+        submissionId,
         changeId,
         status,
         env,
@@ -309,7 +541,7 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
         continue;
       }
 
-      if (comment && submissionId) {
+      if (comment) {
         await addChangeComment(
           changeId,
           submissionId,
@@ -321,6 +553,52 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
       }
 
       results.push({ changeId, success: true });
+    }
+
+    // After batch resolution, recompute submission content from original + non-rejected changes.
+    try {
+      // Determine which fields were affected
+      const allChanges = await getTrackedChanges(submissionId, env);
+      const affectedFields = [...new Set(
+        allChanges.filter((c: any) => changeIds.includes(c.id)).map((c: any) => c.field)
+      )];
+
+      for (const field of affectedFields) {
+        const recomputed = await recomputeContentAfterResolution(submissionId, field, env);
+        if (recomputed) {
+          const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+          if (submission) {
+            // For batch accepts with no rejections, prefer richTextNewValue from the latest change
+            const hasRejections = allChanges.some((c: any) => c.field === field && c.status === 'rejected');
+            if (!hasRejections && status === 'approved') {
+              const justApproved = allChanges
+                .filter((c: any) => changeIds.includes(c.id) && c.status === 'approved' && c.field === field)
+                .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+              const latestApproved = justApproved[0];
+              if (latestApproved?.richTextNewValue) {
+                submission.content = recomputed.content;
+                submission.richTextContent = cleanLexicalJson(latestApproved.richTextNewValue);
+              } else {
+                submission.content = recomputed.content;
+                submission.richTextContent = recomputed.richText;
+              }
+            } else {
+              submission.content = recomputed.content;
+              submission.richTextContent = recomputed.richText;
+            }
+            await putObject(`content_submissions/${submissionId}`, submission, env);
+            await putObject(`proposed_versions/${submissionId}`, {
+              proposedVersionsContent: submission.content,
+              proposedVersionsRichText: submission.richTextContent,
+              proposedVersionsFields: affectedFields,
+              lastUpdatedAt: new Date().toISOString(),
+              lastUpdatedBy: 'batch',
+            }, env);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update submission content after batch resolution:', err);
     }
 
     return new Response(JSON.stringify({ results }), {
@@ -412,12 +690,23 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
       return new Response('Forbidden', { status: 403 });
     }
 
+    // Get submissionId from request body
+    const { submissionId } = await request.json();
+    if (!submissionId) {
+      return new Response('submissionId is required', { status: 400 });
+    }
+
     // Undo the change
-    const updatedChange = await undoChange(changeId, env);
+    const updatedChange = await undoChange(submissionId, changeId, env);
 
     if (!updatedChange) {
       return new Response('Change not found or cannot be undone', { status: 404 });
     }
+
+    // Note: On undo, the change goes back to pending status. The editor
+    // will display it as a tracked change on top of submission.content.
+    // We don't update submission.content here because the change is no
+    // longer resolved — it needs to be re-accepted or rejected.
 
     return new Response(JSON.stringify({ success: true, change: updatedChange }), {
       headers: { 'Content-Type': 'application/json' }
@@ -615,6 +904,19 @@ export async function batchCreateHandler(request: CustomRequest, env: any): Prom
     for (const change of changes) {
       if (!change.field || !change.oldValue || !change.newValue) {
         return new Response('Each change must have field, oldValue, and newValue', { status: 400 });
+      }
+    }
+
+    // Snapshot original content if not already stored
+    const originalKey = `original_content/${submissionId}`;
+    const existingOriginal = await getObject<any>(originalKey, env);
+    if (!existingOriginal) {
+      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+      if (submission) {
+        await putObject(originalKey, {
+          content: submission.content || '',
+          richTextContent: submission.richTextContent || '',
+        }, env);
       }
     }
 

@@ -48,7 +48,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update' | 'transaction_settled' | 'transaction_undone' | 'transaction_redone';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update' | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
@@ -75,7 +75,10 @@ export class SubmissionWebSocketServer {
   private pingIntervals: Map<WebSocket, any> = new Map();
   protected ctx: DurableObjectState;
   protected env: any;
-  
+
+  // Per-room monotonically increasing sequence counter for gap detection
+  private roomSeqCounters: Map<string, number> = new Map();
+
   // Enhanced ping/pong configuration
   private readonly PING_INTERVAL = 30000; // 30 seconds
   private readonly PING_TIMEOUT = 10000; // 10 seconds timeout for cleanup
@@ -494,9 +497,13 @@ export class SubmissionWebSocketServer {
       return;
     }
 
+    // Stamp monotonically increasing sequence number for gap detection
+    const currentSeq = (this.roomSeqCounters.get(roomId) ?? 0) + 1;
+    this.roomSeqCounters.set(roomId, currentSeq);
+    (message as any).seq = currentSeq;
+
     const messageStr = JSON.stringify(message);
     console.log('📢 Broadcasting to room', roomId, 'with', room.size, 'connections');
-    console.log('📢 Message being broadcast:', message);
     
     let successCount = 0;
     let errorCount = 0;

@@ -75,9 +75,19 @@ const router = AutoRouter({
     finally: [corsify]
 });
 
+// Dev bypass: detect user2 from X-Dev-User header or session token containing "user2"
+function getDevUser(request: Request) {
+    const devUser = request.headers.get('X-Dev-User');
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
+    if (devUser === 'user2' || sessionId.includes('user2')) {
+        return { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre' as const, isAdmin: false, roles: ['CommsCadre'], groups: [] };
+    }
+    return { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin' as const, isAdmin: true, roles: ['Admin'], groups: [] };
+}
+
 const withValidSession = async (request: Request, env: Env) => {
     if (env.DEV_BYPASS_AUTH === 'true') {
-        (request as any).user = { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin', isAdmin: true, roles: ['Admin'], groups: [] };
+        (request as any).user = getDevUser(request);
         return undefined;
     }
 

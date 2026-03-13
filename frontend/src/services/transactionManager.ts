@@ -77,6 +77,9 @@ export class TransactionManager {
   // Current active transaction (at most one)
   private activeTransaction: Transaction | null = null;
 
+  // When true, the manager ignores notifyActivity and won't auto-settle
+  private _pausedForResolution = false;
+
   // Session undo / redo stacks (ephemeral, cleared on session end)
   private undoStack: Transaction[] = [];
   private redoStack: Transaction[] = [];
@@ -204,7 +207,12 @@ export class TransactionManager {
    * Captures the "before" snapshot (Lexical JSON + extracted text).
    * Starting a new transaction clears the redo stack.
    */
-  startTransaction(field: string, beforeLexicalState: string | object): Transaction {
+  startTransaction(field: string, beforeLexicalState: string | object): Transaction | null {
+    // Don't start a transaction while change resolution is in progress
+    if (this._pausedForResolution) {
+      return null;
+    }
+
     // If there is already an active transaction, settle it first with the
     // before snapshot (effectively a no-op change).
     if (this.activeTransaction) {
@@ -246,7 +254,7 @@ export class TransactionManager {
    * (the editor should call `startTransaction` first).
    */
   notifyActivity(afterLexicalState: string | object): void {
-    if (!this.activeTransaction) {
+    if (!this.activeTransaction || this._pausedForResolution) {
       return;
     }
 
@@ -414,8 +422,12 @@ export class TransactionManager {
   private async autosave(tx: Transaction): Promise<void> {
     if (!tx.afterSnapshot) return;
 
-    // Skip saving if before and after text are identical
-    if (tx.beforeSnapshot.text === tx.afterSnapshot.text) return;
+    // Skip saving if before and after text are identical AND there are no
+    // deleted-text nodes. DeletedTextNode.getTextContent() returns '' so
+    // extractTextFromLexical() produces identical before/after text for
+    // deletion-only edits — but we still need to persist the change.
+    if (tx.beforeSnapshot.text === tx.afterSnapshot.text &&
+        !hasDeletedTextNodes(tx.afterSnapshot.lexicalState)) return;
 
     this.savingCount++;
     this.emitSaveStatus();
@@ -499,6 +511,38 @@ export class TransactionManager {
   }
 
   // -----------------------------------------------------------------------
+  // Change resolution coordination
+  // -----------------------------------------------------------------------
+
+  /**
+   * Pause the TransactionManager while a tracked change is being
+   * accepted/rejected. Cancels any pending pause timer and discards
+   * the active transaction so autosave won't fire during resolution.
+   */
+  pauseForChangeResolution(): void {
+    this._pausedForResolution = true;
+    this.cancelPauseTimer();
+    this.latestAfterLexicalState = null;
+    // Discard the active transaction — the editor state is about to be
+    // mutated programmatically and shouldn't be captured as a user edit.
+    this.activeTransaction = null;
+  }
+
+  /**
+   * Resume normal operation after change resolution completes.
+   */
+  resumeAfterChangeResolution(): void {
+    this._pausedForResolution = false;
+  }
+
+  /**
+   * Returns true if the manager is currently paused for change resolution.
+   */
+  isPausedForResolution(): boolean {
+    return this._pausedForResolution;
+  }
+
+  // -----------------------------------------------------------------------
   // Cleanup
   // -----------------------------------------------------------------------
 
@@ -572,6 +616,27 @@ function generateId(): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Check if a Lexical JSON state contains any deleted-text nodes.
+ * Used to detect deletion-only edits that extractTextFromLexical misses.
+ */
+function hasDeletedTextNodes(lexicalState: string | object): boolean {
+  try {
+    const data = typeof lexicalState === 'string' ? JSON.parse(lexicalState) : lexicalState;
+    function walk(node: any): boolean {
+      if (!node) return false;
+      if (node.type === 'deleted-text') return true;
+      if (node.children && Array.isArray(node.children)) {
+        return node.children.some(walk);
+      }
+      return false;
+    }
+    return walk(data?.root);
+  } catch {
+    return false;
+  }
 }
 
 /**

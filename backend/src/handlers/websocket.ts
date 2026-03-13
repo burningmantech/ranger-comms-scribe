@@ -42,14 +42,14 @@ router.get('/test', async (request: Request, env: any) => {
 // WebSocket upgrade endpoint
 router.get('/submissions/:submissionId', async (request: Request, env: any) => {
   console.log('🔌 WebSocket connection attempt for submission:', (request as any).params.submissionId);
-  
+
   const { submissionId } = (request as any).params;
   const url = new URL(request.url);
-  
+
   // Check if this is a WebSocket upgrade request
   const upgradeHeader = request.headers.get('Upgrade');
   console.log('🔍 Upgrade header:', upgradeHeader);
-  
+
   if (!upgradeHeader || upgradeHeader !== 'websocket') {
     console.log('❌ Not a WebSocket upgrade request');
     return json(
@@ -61,52 +61,66 @@ router.get('/submissions/:submissionId', async (request: Request, env: any) => {
   // Get sessionId from query parameters for WebSocket authentication
   const sessionId = url.searchParams.get('sessionId');
   console.log('🔑 Session ID provided:', sessionId ? '***' + sessionId.slice(-8) : 'none');
-  
+
   if (!sessionId) {
     console.log('❌ No session ID provided');
     return json({ error: 'Session ID is required' }, { status: 400 });
   }
 
-  // Validate the session
-  const { GetSession } = await import('../utils/sessionManager');
-  const { getUser } = await import('../services/userService');
-  
-  console.log('🔍 Validating session...');
-  const session = await GetSession(sessionId, env);
-  if (!session) {
-    console.log('❌ Session not found or expired');
-    return json({ error: 'Session not found or expired' }, { status: 403 });
-  }
+  let userEmail = 'dev@localhost';
+  let userName = 'Dev Admin';
 
-  const userData = session.data as { email: string; name: string };
-  console.log('👤 Session user:', userData.email);
-  
-  const user = await getUser(userData.email, env);
-  if (!user) {
-    console.log('❌ User not found in database');
-    return json({ error: 'User not found' }, { status: 403 });
-  }
+  if (env.DEV_BYPASS_AUTH === 'true') {
+    console.log('🔓 DEV_BYPASS_AUTH: skipping session/access validation for WebSocket');
+    const testUser = url.searchParams.get('testUser');
+    if (testUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
+      userEmail = 'user2@localhost';
+      userName = 'Test Reviewer';
+    }
+  } else {
+    // Validate the session
+    const { GetSession } = await import('../utils/sessionManager');
+    const { getUser } = await import('../services/userService');
 
-  console.log('✅ User authenticated:', user.email);
+    console.log('🔍 Validating session...');
+    const session = await GetSession(sessionId, env);
+    if (!session) {
+      console.log('❌ Session not found or expired');
+      return json({ error: 'Session not found or expired' }, { status: 403 });
+    }
 
-  // Check if user has access to this submission
-  const { getObject } = await import('../services/cacheService');
-  const { UserType } = await import('../types');
-  
-  const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
-  if (!submission) {
-    return json({ error: 'Submission not found' }, { status: 404 });
-  }
+    const userData = session.data as { email: string; name: string };
+    console.log('👤 Session user:', userData.email);
+    userEmail = userData.email;
+    userName = userData.name;
 
-  // Check if user has access to this submission
-  const hasAccess = user.userType === UserType.Admin ||
-                   submission.submittedBy === user.id ||
-                   user.userType === UserType.CouncilManager ||
-                   user.userType === UserType.CommsCadre ||
-                   (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+    const user = await getUser(userData.email, env);
+    if (!user) {
+      console.log('❌ User not found in database');
+      return json({ error: 'User not found' }, { status: 403 });
+    }
 
-  if (!hasAccess) {
-    return json({ error: 'Access denied' }, { status: 403 });
+    console.log('✅ User authenticated:', user.email);
+
+    // Check if user has access to this submission
+    const { getObject } = await import('../services/cacheService');
+    const { UserType } = await import('../types');
+
+    const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
+    if (!submission) {
+      return json({ error: 'Submission not found' }, { status: 404 });
+    }
+
+    // Check if user has access to this submission
+    const hasAccess = user.userType === UserType.Admin ||
+                     submission.submittedBy === user.id ||
+                     user.userType === UserType.CouncilManager ||
+                     user.userType === UserType.CommsCadre ||
+                     (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+
+    if (!hasAccess) {
+      return json({ error: 'Access denied' }, { status: 403 });
+    }
   }
   
   // Get the WebSocket Durable Object
@@ -121,9 +135,9 @@ router.get('/submissions/:submissionId', async (request: Request, env: any) => {
     // Create the WebSocket URL with user information
     const wsUrl = new URL(request.url);
     wsUrl.searchParams.set('submissionId', submissionId);
-    wsUrl.searchParams.set('userId', user.id || user.email);
-    wsUrl.searchParams.set('userName', user.name);
-    wsUrl.searchParams.set('userEmail', user.email);
+    wsUrl.searchParams.set('userId', userEmail);
+    wsUrl.searchParams.set('userName', userName);
+    wsUrl.searchParams.set('userEmail', userEmail);
     
     console.log('🔄 Forwarding to Durable Object with URL:', wsUrl.toString());
     
@@ -235,45 +249,59 @@ router.get('/documents/:documentId', async (request: Request, env: any) => {
     return json({ error: 'Session ID is required' }, { status: 400 });
   }
 
-  // Validate the session
-  const { GetSession } = await import('../utils/sessionManager');
-  const { getUser } = await import('../services/userService');
-  
-  console.log('🔍 Validating session...');
-  const session = await GetSession(sessionId, env);
-  if (!session) {
-    console.log('❌ Session not found or expired');
-    return json({ error: 'Session not found or expired' }, { status: 403 });
-  }
+  let docUserEmail = 'dev@localhost';
+  let docUserName = 'Dev Admin';
 
-  const userData = session.data as { email: string; name: string };
-  console.log('👤 Session user:', userData.email);
-  
-  const user = await getUser(userData.email, env);
-  if (!user) {
-    console.log('❌ User not found in database');
-    return json({ error: 'User not found' }, { status: 403 });
-  }
+  if (env.DEV_BYPASS_AUTH === 'true') {
+    console.log('🔓 DEV_BYPASS_AUTH: skipping session/access validation for document WebSocket');
+    const testUser = url.searchParams.get('testUser');
+    if (testUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
+      docUserEmail = 'user2@localhost';
+      docUserName = 'Test Reviewer';
+    }
+  } else {
+    // Validate the session
+    const { GetSession } = await import('../utils/sessionManager');
+    const { getUser } = await import('../services/userService');
 
-  console.log('✅ User authenticated:', user.email);
+    console.log('🔍 Validating session...');
+    const session = await GetSession(sessionId, env);
+    if (!session) {
+      console.log('❌ Session not found or expired');
+      return json({ error: 'Session not found or expired' }, { status: 403 });
+    }
+
+    const userData = session.data as { email: string; name: string };
+    console.log('👤 Session user:', userData.email);
+    docUserEmail = userData.email;
+    docUserName = userData.name;
+
+    const user = await getUser(userData.email, env);
+    if (!user) {
+      console.log('❌ User not found in database');
+      return json({ error: 'User not found' }, { status: 403 });
+    }
+
+    console.log('✅ User authenticated:', user.email);
+  }
 
   // For document-level collaboration, we'll use the DOCUMENT_WEBSOCKET binding
   // (we'll need to add this to wrangler.toml)
   console.log('🏗️ Getting Durable Object for document:', documentId);
-  
+
   try {
     // Use the same SUBMISSION_WEBSOCKET binding for now, but with document- prefix
     const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(`document-${documentId}`);
     const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-    
+
     console.log('📡 Durable Object obtained, forwarding request');
-    
+
     // Create the WebSocket URL with user information
     const wsUrl = new URL(request.url);
     wsUrl.searchParams.set('documentId', documentId);
-    wsUrl.searchParams.set('userId', user.id || user.email);
-    wsUrl.searchParams.set('userName', user.name);
-    wsUrl.searchParams.set('userEmail', user.email);
+    wsUrl.searchParams.set('userId', docUserEmail);
+    wsUrl.searchParams.set('userName', docUserName);
+    wsUrl.searchParams.set('userEmail', docUserEmail);
     
     console.log('🔄 Forwarding to Durable Object with URL:', wsUrl.toString());
     

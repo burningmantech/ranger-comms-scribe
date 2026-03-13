@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
-import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffCharsOptimized } from '../utils/diffAlgorithm';
+import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffCharsOptimized, diffWords } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, replaceFirstInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical, stripDeletedTextNodes } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
 
@@ -186,6 +186,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [batchActionLoading, setBatchActionLoading] = useState(false);
 
+  // Error toast for failed operations
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const errorToastTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const showErrorToast = useCallback((msg: string) => {
+    setErrorToast(msg);
+    if (errorToastTimerRef.current) clearTimeout(errorToastTimerRef.current);
+    errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 6000);
+  }, []);
+
   // Track optimistically removed changes (e.g. via undo) so they disappear immediately
   const [localRemovedChangeIds, setLocalRemovedChangeIds] = useState<Set<string>>(new Set());
 
@@ -204,6 +213,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Remote update state
   const [remoteUpdateStatus, setRemoteUpdateStatus] = useState<'none' | 'applying' | 'applied'>('none');
 
+  // WebSocket connection status for banner
+  const [wsConnectionLost, setWsConnectionLost] = useState(false);
+
   // WebSocket client for sending updates
   const webSocketClientRef = useRef<any>(null);
   const lastCursorPositionRef = useRef<any>(null);
@@ -220,6 +232,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Unlike isRefreshingContentRef (one-shot), this persists through multiple
   // onContentChange events until cleared by a timeout.
   const isResolvingChangeRef = useRef<boolean>(false);
+  const batchSyncInProgressRef = useRef<boolean>(false);
 
   // TransactionManager instance — one per submission editing session
   const transactionManagerRef = useRef<TransactionManager | null>(null);
@@ -1098,19 +1111,36 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Background sync: fire-and-forget PUT to backend
   const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected') => {
+    // Skip individual backend syncs during batch operations — the batch
+    // handler will make a single API call with all changes.
+    if (batchSyncInProgressRef.current) return;
     try {
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) return;
-      await fetch(`${API_URL}/tracked-changes/change/${changeId}/status`, {
+      const response = await fetch(`${API_URL}/tracked-changes/change/${changeId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status, submissionId: submission.id })
       });
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        console.error(`Failed to ${status} change ${changeId}: ${response.status} ${errorText}`);
+        const label = status === 'approved' ? 'accept' : 'reject';
+        showErrorToast(`Failed to ${label} change (${response.status}): ${errorText || 'Unknown error'}`);
+        onRefreshNeeded?.();
+      } else {
+        // Broadcast to other connected users via WebSocket
+        const client = webSocketClientRef.current;
+        if (client?.sendChangeStatusUpdate) {
+          client.sendChangeStatusUpdate(changeId, status);
+        }
+      }
     } catch (error) {
       console.error(`Background sync failed for change ${changeId}:`, error);
+      showErrorToast(`Failed to save change status: network error`);
       onRefreshNeeded?.();
     }
-  }, [onRefreshNeeded]);
+  }, [onRefreshNeeded, submission.id, showErrorToast]);
 
   // Handle change decision (approve/reject) — fully local, no network on hot path
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -1177,9 +1207,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     // 1. Suppress TransactionManager for all editor changes caused by the
     //    resolve (restore text, remove decorations, applyDecorations re-run).
-    //    Cleared after 500ms to allow all debounced editor updates to settle.
-    isResolvingChangeRef.current = true;
-    setTimeout(() => { isResolvingChangeRef.current = false; }, 500);
+    transactionManager.pauseForChangeResolution();
 
     // 2. Resolve DeletedTextNode nodes in the Lexical editor
     //    - approve deletion: removes DeletedTextNode (text stays deleted)
@@ -1211,6 +1239,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     // 5. Backend sync in background (fire-and-forget)
     syncChangeStatusToBackend(changeId, decision === 'approve' ? 'approved' : 'rejected');
+
+    // 6. Resume TransactionManager after a short delay to let all editor
+    //    updates settle (decoration re-application, etc.).
+    setTimeout(() => { transactionManager.resumeAfterChangeResolution(); }, 500);
   }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText]);
 
   // Batch action handlers
@@ -1236,17 +1268,35 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleBatchAction = useCallback(async (changeIds: string[], status: 'approved' | 'rejected') => {
     setBatchActionLoading(true);
     try {
+      // Suppress individual backend syncs — we'll make one batch call
+      batchSyncInProgressRef.current = true;
       const decision = status === 'approved' ? 'approve' : 'reject';
       for (const id of changeIds) {
-        handleChangeDecision(id, decision);
+        await handleChangeDecision(id, decision);
       }
+      batchSyncInProgressRef.current = false;
+
+      // Single batch API call for backend persistence
+      const sessionId = localStorage.getItem('sessionId');
+      if (sessionId) {
+        const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
+          body: JSON.stringify({ changeIds, status, submissionId: submission.id })
+        });
+        if (!response.ok) {
+          console.error('Batch status update failed:', response.statusText);
+        }
+      }
+
       setSelectedChangeIds(new Set());
     } catch (err) {
       console.error('Batch action failed:', err);
+      batchSyncInProgressRef.current = false;
     } finally {
       setBatchActionLoading(false);
     }
-  }, [handleChangeDecision]);
+  }, [handleChangeDecision, submission.id]);
 
   const handleSelectAllChanges = useCallback(() => {
     setSelectedChangeIds(new Set(pendingChanges.map(c => c.id)));
@@ -1888,6 +1938,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
       });
 
+      // Listen for connection status changes
+      client.on('connection_lost', () => {
+        setWsConnectionLost(true);
+      });
+      client.on('connection_restored', () => {
+        setWsConnectionLost(false);
+        // Refresh data after reconnection to pick up missed updates
+        if (onRefreshNeeded) {
+          onRefreshNeeded();
+        }
+      });
+
+      // Listen for gap detection — refetch from REST API
+      client.on('sync_needed', () => {
+        console.log('🔄 Sync needed — refetching from REST API');
+        if (onRefreshNeeded) {
+          onRefreshNeeded();
+        }
+      });
+
       // Listen for transaction-settled from remote users
       client.on('transaction_settled', (message: WebSocketMessage) => {
         if (message.userId === effectiveUserId) return;
@@ -1924,6 +1994,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const data = message.data;
         if (!data?.changeId) return;
         // Trigger a refresh so the re-added tracked change appears
+        if (onRefreshNeeded) {
+          onRefreshNeeded();
+        }
+      });
+
+      // Listen for change status updates (accept/reject) from remote users
+      client.on('change_status_updated', (message: WebSocketMessage) => {
+        if (message.userId === effectiveUserId) return;
+        const data = message.data;
+        if (!data?.changeId || !data?.status) return;
+        // Remove decorations for the resolved change
+        try {
+          removeDecorationsForChange(data.changeId);
+        } catch (err) {
+          console.error('Failed to remove decorations for resolved change:', data.changeId, err);
+        }
+        // Trigger a refresh so the sidebar and editor update
         if (onRefreshNeeded) {
           onRefreshNeeded();
         }
@@ -2298,6 +2385,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   return (
     <div className={`tracked-changes-editor ${reviewMode ? 'review-mode' : ''}`}>
+      {/* Error toast */}
+      {errorToast && (
+        <div className="tce-error-toast" onClick={() => setErrorToast(null)}>
+          {errorToast}
+        </div>
+      )}
+      {/* Connection lost banner */}
+      {wsConnectionLost && (
+        <div className="tce-connection-lost-banner">
+          Connection lost — reconnecting...
+        </div>
+      )}
       {/* Collaborative Editor handles its own WebSocket status and user presence */}
 
       {!reviewMode && <div className="editor-toolbar" ref={toolbarRef}>
@@ -2643,8 +2742,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       }
 
                       // Skip TransactionManager during change resolution (approve/reject).
-                      // The flag stays true for 500ms to cover all resulting editor updates.
-                      if (isResolvingChangeRef.current) {
+                      if (transactionManager.isPausedForResolution()) {
                         setEditedProposedContent(json);
                         return;
                       }
@@ -2776,8 +2874,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     );
                   }
 
-                  // Generate word-level diff for text
-                  const diff = smartDiff(originalText, proposedText);
+                  // Generate word-level diff for text.
+                  // Always use diffWords here — smartDiff falls back to diffChars
+                  // for short texts, which fragments words into per-character changes
+                  // and makes the Original Version column look garbled.
+                  const diff = diffWords(originalText, proposedText);
 
                   // Build position-based mapping of diff segments to tracked change IDs
                   // Track character offsets in original text (for delete segments) and proposed text (for insert segments)

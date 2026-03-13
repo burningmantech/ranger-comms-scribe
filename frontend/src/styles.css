@@ -2306,7 +2306,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   border-top: 4px solid inherit;
 }
 
-.remote-cursor-marker:hover .cursor-label,
+.remote-cursor-marker.cursor-nearby .cursor-label,
 .remote-cursor-marker.active .cursor-label {
   opacity: 1;
   transform: translateY(0);

@@ -323,6 +323,7 @@ export const createTrackedChange = async (
 
 // Update the status of a tracked change
 export const updateChangeStatus = async (
+  submissionId: string,
   changeId: string,
   status: 'approved' | 'rejected',
   env: Env,
@@ -332,26 +333,11 @@ export const updateChangeStatus = async (
   rejectedByName?: string
 ): Promise<TrackedChange | null> => {
   try {
-    // Find the change by listing all tracked changes and finding the one with matching ID
-    const allChanges = await listObjects('tracked-changes/', env);
-    
-    let change: TrackedChange | null = null;
-    let changeKey: string | null = null;
-    
-    // Find the change with the matching ID
-    for (const object of allChanges.objects) {
-      const changeObject = await env.R2.get(object.key);
-      if (changeObject) {
-        const candidateChange = await changeObject.json() as TrackedChange;
-        if (candidateChange.id === changeId) {
-          change = candidateChange;
-          changeKey = object.key;
-          break;
-        }
-      }
-    }
-    
-    if (!change || !changeKey) {
+    // Direct R2 key lookup instead of scanning all objects
+    const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
+    const change = await getObject<TrackedChange>(changeKey, env);
+
+    if (!change) {
       return null;
     }
     
@@ -691,30 +677,33 @@ export const getCompleteProposedVersion = async (
       .filter(change => change.field === field)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-    const activeChanges = allFieldChanges.filter(c => c.status !== 'rejected');
-    if (activeChanges.length === 0) {
+    // Only replay pending changes. Approved changes are already folded into
+    // submission.content by the accept handler, so replaying them would
+    // double-apply edits and produce garbled text.
+    const pendingChanges = allFieldChanges.filter(c => c.status === 'pending');
+    if (pendingChanges.length === 0) {
       return null;
     }
 
-    // Fast path: no rejections exist → the last active change's cpv is correct
+    // Fast path: no rejections exist → the last pending change's cpv is correct
     const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
     if (!hasRejections) {
-      const latestChange = activeChanges[activeChanges.length - 1];
+      const latestChange = pendingChanges[pendingChanges.length - 1];
       if (latestChange.isIncremental && latestChange.completeProposedVersion) {
         return latestChange.completeProposedVersion;
       }
       return latestChange.newValue;
     }
 
-    // Slow path: rejections exist → recompute by replaying non-rejected changes
+    // Slow path: rejections exist → recompute by replaying only pending changes
     const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
     const originalContent = submission ? extractPlainText(submission.content || '') : '';
 
-    // Replay each non-rejected change's individual contribution
+    // Replay each pending change's individual contribution
     let runningText = originalContent;
 
     for (const change of allFieldChanges) {
-      if (change.status === 'rejected') {
+      if (change.status !== 'pending') {
         continue;
       }
 
@@ -752,15 +741,16 @@ export const getCompleteRichTextProposedVersion = async (
       .filter(change => change.field === field)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-    const activeChanges = allFieldChanges.filter(c => c.status !== 'rejected');
-    if (activeChanges.length === 0) {
+    // Only consider pending changes — approved changes are already in submission.content
+    const pendingChanges = allFieldChanges.filter(c => c.status === 'pending');
+    if (pendingChanges.length === 0) {
       return null;
     }
 
-    // Fast path: no rejections → use last active change's rich text directly
+    // Fast path: no rejections → use last pending change's rich text directly
     const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
     if (!hasRejections) {
-      const latestChange = activeChanges[activeChanges.length - 1];
+      const latestChange = pendingChanges[pendingChanges.length - 1];
       if (latestChange.richTextNewValue) {
         return latestChange.richTextNewValue;
       }
@@ -871,15 +861,21 @@ export function mergeTextIntoLexicalJson(originalLexical: string, newText: strin
       (child: any) => child.type === 'paragraph' || child.type === 'heading'
     );
 
-    // Replace text in each paragraph, matching by index
+    // Replace text in each paragraph, matching by index.
+    // Collapse all text nodes into a single node to avoid duplicates
+    // (e.g., when richTextNewValue contains multiple formatted segments).
     for (let i = 0; i < textNodes.length; i++) {
       const node = textNodes[i];
       if (!Array.isArray(node.children) || node.children.length === 0) continue;
 
       const lineText = i < lines.length ? lines[i] : '';
-      const textChild = node.children.find((n: any) => n.type === 'text');
-      if (textChild) {
-        textChild.text = lineText;
+      const firstTextIdx = node.children.findIndex((n: any) => n.type === 'text');
+      if (firstTextIdx >= 0) {
+        node.children[firstTextIdx].text = lineText;
+        // Remove all other text nodes to prevent duplicate content
+        node.children = node.children.filter((n: any, idx: number) =>
+          n.type !== 'text' || idx === firstTextIdx
+        );
       }
     }
 
@@ -906,27 +902,16 @@ export function mergeTextIntoLexicalJson(originalLexical: string, newText: strin
 
 // Undo a change decision (reset status back to pending)
 export const undoChange = async (
+  submissionId: string,
   changeId: string,
   env: Env
 ): Promise<TrackedChange | null> => {
   try {
-    // Get all changes to find the one with the matching ID
-    const allChanges = await listObjects('tracked-changes/', env);
-    
-    // Find the specific change
-    let targetChange: TrackedChange | null = null;
-    let changeKey: string | null = null;
-    
-    for (const object of allChanges.objects) {
-      const change = await getObject<TrackedChange>(object.key, env);
-      if (change && change.id === changeId) {
-        targetChange = change;
-        changeKey = object.key;
-        break;
-      }
-    }
-    
-    if (!targetChange || !changeKey) {
+    // Direct R2 key lookup instead of scanning all objects
+    const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
+    const targetChange = await getObject<TrackedChange>(changeKey, env);
+
+    if (!targetChange) {
       console.error('Change not found:', changeId);
       return null;
     }

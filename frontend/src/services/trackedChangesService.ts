@@ -110,12 +110,12 @@ class TrackedChangesService {
     }
   }
 
-  async batchUpdateStatus(changeIds: string[], status: 'approved' | 'rejected', comment?: string): Promise<{ results: Array<{ changeId: string; success: boolean; error?: string }> }> {
+  async batchUpdateStatus(changeIds: string[], status: 'approved' | 'rejected', submissionId: string, comment?: string): Promise<{ results: Array<{ changeId: string; success: boolean; error?: string }> }> {
     try {
       const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
         method: 'PUT',
         headers: this.getAuthHeaders(),
-        body: JSON.stringify({ changeIds, status, comment })
+        body: JSON.stringify({ changeIds, status, submissionId, comment })
       });
 
       if (!response.ok) {

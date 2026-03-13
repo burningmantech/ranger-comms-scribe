@@ -56,7 +56,7 @@ describe('trackedChangesService', () => {
       // Mock putObject to simulate saving
       mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
 
-      const result = await undoChange(changeId, mockEnv);
+      const result = await undoChange(submissionId, changeId, mockEnv);
 
       expect(result).not.toBeNull();
       expect(result?.status).toBe('pending');
@@ -68,7 +68,7 @@ describe('trackedChangesService', () => {
     it('should successfully undo a rejected change', async () => {
       const changeId = 'test-change-id';
       const submissionId = 'test-submission-id';
-      
+
       // Mock a change that is currently rejected
       const mockChange: TrackedChange = {
         id: changeId,
@@ -85,12 +85,7 @@ describe('trackedChangesService', () => {
         rejectedAt: new Date().toISOString()
       };
 
-      // Mock the listObjects to return our change
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
-        objects: [{ key: `tracked-changes/submission/${submissionId}/${changeId}` }]
-      });
-
-      // Mock getObject to return our change
+      // Mock getObject to return our change via direct key lookup
       mockEnv.R2.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
@@ -98,7 +93,7 @@ describe('trackedChangesService', () => {
       // Mock putObject to simulate saving
       mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
 
-      const result = await undoChange(changeId, mockEnv);
+      const result = await undoChange(submissionId, changeId, mockEnv);
 
       expect(result).not.toBeNull();
       expect(result?.status).toBe('pending');
@@ -109,13 +104,12 @@ describe('trackedChangesService', () => {
 
     it('should return null for non-existent change', async () => {
       const changeId = 'non-existent-change-id';
-      
-      // Mock the listObjects to return empty
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
-        objects: []
-      });
+      const submissionId = 'test-submission-id';
 
-      const result = await undoChange(changeId, mockEnv);
+      // Mock R2.get to return null (change not found at direct key)
+      mockEnv.R2.get = jest.fn().mockResolvedValue(null);
+
+      const result = await undoChange(submissionId, changeId, mockEnv);
 
       expect(result).toBeNull();
     });
@@ -123,7 +117,7 @@ describe('trackedChangesService', () => {
     it('should return null for change that is already pending', async () => {
       const changeId = 'test-change-id';
       const submissionId = 'test-submission-id';
-      
+
       // Mock a change that is currently pending
       const mockChange: TrackedChange = {
         id: changeId,
@@ -137,17 +131,12 @@ describe('trackedChangesService', () => {
         status: 'pending'
       };
 
-      // Mock the listObjects to return our change
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
-        objects: [{ key: `tracked-changes/submission/${submissionId}/${changeId}` }]
-      });
-
-      // Mock getObject to return our change
+      // Mock getObject to return our change via direct key lookup
       mockEnv.R2.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
-      const result = await undoChange(changeId, mockEnv);
+      const result = await undoChange(submissionId, changeId, mockEnv);
 
       expect(result).toBeNull();
     });

@@ -911,7 +911,7 @@ export default function TrackedChangesPlugin({
       }
       debounceTimerRef.current = setTimeout(() => {
         applyDecorations();
-      }, 100);
+      }, 300);
     });
     return () => {
       unregister();

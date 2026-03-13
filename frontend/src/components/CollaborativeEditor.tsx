@@ -484,7 +484,37 @@ const RemoteCursorPlugin: React.FC<{
       }
     }
 
+    // Mousemove listener on the editor container to show/hide cursor labels
+    // based on proximity. Cursor elements stay pointer-events:none so text
+    // selection is never blocked.
+    const PROXIMITY_PX = 40;
+    const handleMouseMove = (e: MouseEvent) => {
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const cursors = overlay.querySelectorAll('.lexical-remote-cursor');
+      cursors.forEach((el) => {
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+        el.classList.toggle('cursor-nearby', dist < PROXIMITY_PX);
+      });
+    };
+    const handleMouseLeave = () => {
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      overlay.querySelectorAll('.cursor-nearby').forEach((el) => {
+        el.classList.remove('cursor-nearby');
+      });
+    };
+
+    const container = editorElement.parentElement;
+    container?.addEventListener('mousemove', handleMouseMove);
+    container?.addEventListener('mouseleave', handleMouseLeave);
+
     return () => {
+      container?.removeEventListener('mousemove', handleMouseMove);
+      container?.removeEventListener('mouseleave', handleMouseLeave);
       if (overlayRef.current) {
         overlayRef.current.remove();
         overlayRef.current = null;
@@ -630,6 +660,8 @@ const RemoteCursorPlugin: React.FC<{
       max-width: 120px;
       text-overflow: ellipsis;
       overflow: hidden;
+      opacity: 0;
+      transition: opacity 0.2s ease;
     `;
 
     // Small triangle pointer
@@ -977,7 +1009,7 @@ const RemoteCursorPlugin: React.FC<{
         transition: left 0.15s ease-out, top 0.15s ease-out, opacity 0.2s ease;
       }
       
-      .lexical-remote-cursor:hover .cursor-label {
+      .lexical-remote-cursor.cursor-nearby .cursor-label {
         opacity: 1 !important;
         transform: translateX(-50%) scale(1.05);
       }

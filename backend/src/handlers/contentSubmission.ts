@@ -360,13 +360,6 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   // Get proposed versions from tracked changes system
   const savedProposedVersions = await getObject(`proposed_versions/${id}`, env) as any;
   
-  console.log('🔍 Content submission GET - checking for proposed versions:', {
-    submissionId: id,
-    hasProposedVersions: !!savedProposedVersions,
-    proposedVersionsRichText: savedProposedVersions?.proposedVersionsRichText ? 'present' : 'missing',
-    proposedVersionsContent: savedProposedVersions?.proposedVersionsContent ? 'present' : 'missing'
-  });
-  
   // Compute approval gates for the frontend approval tracker
   const approvalGates = await computeApprovalGates(submission, env);
 
@@ -381,14 +374,6 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
       lastModifiedBy: savedProposedVersions.lastUpdatedBy
     } : undefined
   };
-
-  console.log('🔍 Content submission GET - response:', {
-    submissionId: id,
-    hasProposedVersions: !!submissionWithProposedVersions.proposedVersions,
-    proposedVersionsRichTextContentLength: submissionWithProposedVersions.proposedVersions?.richTextContent?.length,
-    proposedVersionsContentLength: submissionWithProposedVersions.proposedVersions?.content?.length,
-    proposedVersionsRichTextContentIsLexical: submissionWithProposedVersions.proposedVersions?.richTextContent ? submissionWithProposedVersions.proposedVersions.richTextContent.includes('"root"') : false
-  });
 
   return json(submissionWithProposedVersions);
 });

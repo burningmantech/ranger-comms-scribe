@@ -10,7 +10,7 @@ route = "scrivenly.com/api/*"
 PUBLIC_URL = "https://scrivenly.com/api"
 FRONTEND_URL = "https://scrivenly.com"
 SESKey = "AKIA36OXS3SM4YRL76M4"
-DEV_BYPASS_AUTH = "false"
+DEV_BYPASS_AUTH = "true"
 
 [[r2_buckets]]
 binding = "R2"

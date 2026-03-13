@@ -525,6 +525,15 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
 });
 
 router.get('/session', async (request: Request, env) => {
+    if (env.DEV_BYPASS_AUTH === 'true') {
+        const devUser = request.headers.get('X-Dev-User');
+        const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
+        if (devUser === 'user2' || sessionId.includes('user2')) {
+            return json({ message: 'Session retrieved', session: { userId: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer' } });
+        }
+        return json({ message: 'Session retrieved', session: { userId: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin' } });
+    }
+
     const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
     if (!sessionId) {
         return json({ error: 'Session ID is required' }, { status: 400 });
@@ -541,6 +550,11 @@ router.get('/session', async (request: Request, env) => {
 // Get current user from session
 router.get('/me', async (request: Request, env) => {
     if (env.DEV_BYPASS_AUTH === 'true') {
+        const devUser = request.headers.get('X-Dev-User');
+        const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
+        if (devUser === 'user2' || sessionId.includes('user2')) {
+            return json({ user: { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre', isAdmin: false, roles: ['CommsCadre'], groups: [] } });
+        }
         return json({ user: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin', isAdmin: true, roles: ['Admin'], groups: [] } });
     }
 
