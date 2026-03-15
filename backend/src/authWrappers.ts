@@ -56,10 +56,24 @@ export const withLeadCheck = async (request: Request, env: Env) => {
 
 // Middleware to check if the user is authenticated
 export const withAuth = async (request: Request, env: Env) => {
+  const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+
+  // Try real session first
+  if (sessionId) {
+    const session = await GetSession(sessionId, env);
+    if (session) {
+      const user = await getUser(session.userId, env);
+      if (user) {
+        (request as any).user = user;
+        return undefined;
+      }
+    }
+  }
+
+  // Fall back to dev bypass if no real session/user
   if (env.DEV_BYPASS_AUTH === 'true') {
     const devUser = request.headers.get('X-Dev-User');
-    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
-    if (devUser === 'user2' || sessionId.includes('user2')) {
+    if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
       (request as any).user = { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: UserType.CommsCadre, isAdmin: false, roles: ['CommsCadre'], groups: [] };
     } else {
       (request as any).user = { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: UserType.Admin, isAdmin: true, roles: ['Admin'], groups: [] };
@@ -67,26 +81,7 @@ export const withAuth = async (request: Request, env: Env) => {
     return undefined;
   }
 
-  console.log('withAuth called');
-  const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
-  if (!sessionId) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const session = await GetSession(sessionId, env);
-  if (!session) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Get user by userId (which is the email, the R2 storage key)
-  const user = await getUser(session.userId, env);
-  if (!user) {
-    return json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Set the full User object so handlers can access user.id, user.email, user.userType, etc.
-  (request as any).user = user;
-  return undefined;
+  return json({ error: 'Unauthorized' }, { status: 401 });
 };
 
 // Middleware to check if the user can access a group's content

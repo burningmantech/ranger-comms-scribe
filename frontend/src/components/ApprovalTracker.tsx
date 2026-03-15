@@ -303,7 +303,7 @@ const ApprovalTrackerFull: React.FC<ApprovalTrackerProps> = ({
   // Tracked Changes gate
   const tcStatus = getTrackedChangesStatus(gates.trackedChanges);
   const tcStatusText = gates.trackedChanges.met
-    ? 'All resolved'
+    ? 'All edits resolved'
     : gates.trackedChanges.pending > 0
       ? `${gates.trackedChanges.pending} pending`
       : 'No changes';
@@ -349,7 +349,7 @@ const ApprovalTrackerFull: React.FC<ApprovalTrackerProps> = ({
           expandedContent={raDetails}
         />
         <GateRow
-          label="Tracked Changes"
+          label="Edits Resolved"
           status={tcStatus}
           statusText={tcStatusText}
           onClick={onNavigateToChanges}
@@ -382,7 +382,7 @@ const ApprovalTrackerCompact: React.FC<ApprovalTrackerProps> = ({ gates }) => {
       status: getRequiredApproversStatus(gates.requiredApprovers),
     },
     {
-      label: 'Tracked Changes',
+      label: 'Edits Resolved',
       status: getTrackedChangesStatus(gates.trackedChanges),
     },
   ];

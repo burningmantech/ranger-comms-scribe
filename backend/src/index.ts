@@ -86,29 +86,31 @@ function getDevUser(request: Request) {
 }
 
 const withValidSession = async (request: Request, env: Env) => {
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+
+    // Try real session first
+    if (sessionId) {
+        const session = await GetSession(sessionId, env);
+        if (session) {
+            const userData = session.data as { email: string; name: string };
+            const user = await getUser(userData.email, env);
+            if (user) {
+                (request as any).user = user;
+                return undefined;
+            }
+        }
+    }
+
+    // Fall back to dev bypass if no real session/user
     if (env.DEV_BYPASS_AUTH === 'true') {
         (request as any).user = getDevUser(request);
         return undefined;
     }
 
-    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
     if (!sessionId) {
         return json({ error: 'Session ID is required' }, { status: 400 });
     }
-
-    const session = await GetSession(sessionId, env);
-    if (!session) {
-        return json({ error: 'Session not found or expired' }, { status: 403 });
-    }
-
-    const userData = session.data as { email: string; name: string };
-    const user = await getUser(userData.email, env);
-    if (!user) {
-        return json({ error: 'User not found' }, { status: 403 });
-    }
-
-    (request as any).user = user;
-    return undefined;
+    return json({ error: 'Session not found or expired' }, { status: 403 });
 }
 
 const withOptionalSession = async (request: Request, env: Env) => {

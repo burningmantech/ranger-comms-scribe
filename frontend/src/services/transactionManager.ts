@@ -422,12 +422,16 @@ export class TransactionManager {
   private async autosave(tx: Transaction): Promise<void> {
     if (!tx.afterSnapshot) return;
 
-    // Skip saving if before and after text are identical AND there are no
-    // deleted-text nodes. DeletedTextNode.getTextContent() returns '' so
-    // extractTextFromLexical() produces identical before/after text for
-    // deletion-only edits — but we still need to persist the change.
+    // Skip saving if before and after are truly identical (both text AND structure).
+    // We must still save when:
+    // - Text changed (obvious content change)
+    // - Deleted-text nodes exist (deletion-only edits where extractTextFromLexical
+    //   produces identical text because DeletedTextNode.getTextContent() returns '')
+    // - Lexical structure changed but text didn't (formatting-only changes like
+    //   paragraph→heading, bold toggle, etc.)
     if (tx.beforeSnapshot.text === tx.afterSnapshot.text &&
-        !hasDeletedTextNodes(tx.afterSnapshot.lexicalState)) return;
+        !hasDeletedTextNodes(tx.afterSnapshot.lexicalState) &&
+        !hasStructuralChanges(tx.beforeSnapshot.lexicalState, tx.afterSnapshot.lexicalState)) return;
 
     this.savingCount++;
     this.emitSaveStatus();
@@ -637,6 +641,75 @@ function hasDeletedTextNodes(lexicalState: string | object): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Check if the Lexical JSON structure has changed between two states,
+ * even when the extracted plain text is identical. This catches
+ * formatting-only changes like paragraph→heading, bold/italic toggles, etc.
+ */
+function hasStructuralChanges(before: string | object, after: string | object): boolean {
+  try {
+    const beforeData = typeof before === 'string' ? JSON.parse(before) : before;
+    const afterData = typeof after === 'string' ? JSON.parse(after) : after;
+
+    // Compare the structure of top-level block nodes (paragraphs, headings, etc.)
+    const beforeChildren = beforeData?.root?.children;
+    const afterChildren = afterData?.root?.children;
+    if (!Array.isArray(beforeChildren) || !Array.isArray(afterChildren)) return false;
+    if (beforeChildren.length !== afterChildren.length) return true;
+
+    for (let i = 0; i < beforeChildren.length; i++) {
+      const b = beforeChildren[i];
+      const a = afterChildren[i];
+      // Check node type changes (paragraph ↔ heading, etc.)
+      if (b.type !== a.type) return true;
+      // Check heading tag changes (h1 ↔ h2 ↔ h3)
+      if (b.tag !== a.tag) return true;
+      // Check indent level changes
+      if ((b.indent ?? 0) !== (a.indent ?? 0)) return true;
+      // Check inline format changes on text nodes
+      if (hasInlineFormatChanges(b.children, a.children)) return true;
+      // Recursively check children for indent changes (e.g. list items inside lists)
+      if (hasIndentChanges(b.children, a.children)) return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if any text nodes within a block have different formatting (bold, italic, etc.)
+ */
+function hasInlineFormatChanges(beforeChildren: any[], afterChildren: any[]): boolean {
+  if (!Array.isArray(beforeChildren) || !Array.isArray(afterChildren)) return false;
+  // Get only text-type nodes for comparison
+  const beforeText = beforeChildren.filter((n: any) => n.type === 'text');
+  const afterText = afterChildren.filter((n: any) => n.type === 'text');
+  if (beforeText.length !== afterText.length) return true;
+  for (let i = 0; i < beforeText.length; i++) {
+    if (beforeText[i].format !== afterText[i].format) return true;
+    if (beforeText[i].style !== afterText[i].style) return true;
+  }
+  return false;
+}
+
+/**
+ * Recursively check if any nodes in the tree have different indent levels.
+ * Catches indent changes on nested elements like list items inside lists.
+ */
+function hasIndentChanges(beforeChildren: any[], afterChildren: any[]): boolean {
+  if (!Array.isArray(beforeChildren) || !Array.isArray(afterChildren)) return false;
+  if (beforeChildren.length !== afterChildren.length) return false;
+  for (let i = 0; i < beforeChildren.length; i++) {
+    const b = beforeChildren[i];
+    const a = afterChildren[i];
+    if ((b.indent ?? 0) !== (a.indent ?? 0)) return true;
+    if (b.children && a.children && hasIndentChanges(b.children, a.children)) return true;
+  }
+  return false;
 }
 
 /**

@@ -124,6 +124,9 @@ export const CommsRequest: React.FC = () => {
             setEditorContent(value as string);
           } else if (key === 'selectedTemplateId') {
             setSelectedTemplateId(value as string | null);
+          } else if (key === 'email') {
+            // Always use current user's email, not stale draft value
+            setValue('email', userEmail);
           } else if (key in commsRequestSchema.shape) {
             setValue(key as keyof CommsRequestFormData, value as any);
           }
@@ -306,7 +309,9 @@ export const CommsRequest: React.FC = () => {
         'suggestedSubjectLine',
         'signatureText',
       ];
-      return await trigger(fieldsToValidate);
+      const valid = await trigger(fieldsToValidate);
+      if (!valid) setFormError('Please fill in all required fields before continuing.');
+      return valid;
     }
 
     if (currentStep === 2) {
@@ -327,6 +332,7 @@ export const CommsRequest: React.FC = () => {
           return false;
         }
       }
+      if (!valid) setFormError('Please fill in all required fields before continuing.');
       return valid;
     }
 
@@ -335,7 +341,10 @@ export const CommsRequest: React.FC = () => {
 
   const goNext = async () => {
     const valid = await validateStep(step);
-    if (valid) setStep((s) => Math.min(s + 1, 3));
+    if (valid) {
+      setFormError(null);
+      setStep((s) => Math.min(s + 1, 3));
+    }
   };
 
   const goBack = () => setStep((s) => Math.max(s - 1, 1));
@@ -690,8 +699,6 @@ export const CommsRequest: React.FC = () => {
         <button type="button" className="add-approver-btn" onClick={addApproverField}>
           + Add Approver
         </button>
-
-        {formError && <div className="field-error" style={{ marginTop: 8 }}>{formError}</div>}
       </div>
     </>
   );
@@ -707,7 +714,7 @@ export const CommsRequest: React.FC = () => {
 
       {renderStepper()}
 
-      <div className="wizard-body">
+      <div className={`wizard-body${step >= 2 ? ' has-sidebar' : ''}`}>
         <Form
           className="wizard-main"
           onSubmit={handleSubmit(
@@ -715,9 +722,21 @@ export const CommsRequest: React.FC = () => {
             () => {}
           )}
         >
-          {step === 1 && renderStep1()}
-          {step === 2 && renderStep2()}
-          {step === 3 && renderStep3()}
+          <div style={{ display: step === 1 ? undefined : 'none' }}>
+            {renderStep1()}
+          </div>
+          <div style={{ display: step === 2 ? undefined : 'none' }}>
+            {renderStep2()}
+          </div>
+          <div style={{ display: step === 3 ? undefined : 'none' }}>
+            {renderStep3()}
+          </div>
+
+          {formError && (
+            <div className="field-error" style={{ marginTop: 8, marginBottom: 8 }}>
+              {formError}
+            </div>
+          )}
 
           <div className="wizard-nav">
             {step > 1 ? (

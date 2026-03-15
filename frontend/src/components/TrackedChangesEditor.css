@@ -2950,12 +2950,14 @@ span.tracked-deletion-wrapper {
 /* Tab bar for Proposed / Comparison / Original navigation */
 .tce-tab-bar {
   display: flex;
+  align-items: flex-end;
   gap: 0;
   border-bottom: 1px solid #e0e0e0;
   margin-bottom: 24px;
 }
 
 .tce-tab {
+  flex: 1;
   padding: 12px 24px;
   border: none;
   border-bottom: 2px solid transparent;
@@ -2977,6 +2979,27 @@ span.tracked-deletion-wrapper {
   color: #1a73e8;
   font-weight: 600;
   border-bottom-color: #1a73e8;
+}
+
+.tce-tab-bar__send-pending {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.tce-tab-bar__status-badge {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.tce-tab--disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
 }
 
 /* =============================================================================

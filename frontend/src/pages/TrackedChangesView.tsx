@@ -170,6 +170,7 @@ export const TrackedChangesView: React.FC = () => {
         commsApprovedBy: data.commsApprovedBy,
         sentBy: data.sentBy,
         sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
+        approvalGates: data.approvalGates,
         // Add proposed versions with rich text support
         proposedVersions: {
           // Start with base proposed versions (plain text)
@@ -184,6 +185,9 @@ export const TrackedChangesView: React.FC = () => {
           })
         }
       };
+
+      console.log(`[FETCH-SUBMISSION] proposedVersions.richTextContent first 150 chars:`, transformedSubmission.proposedVersions?.richTextContent?.substring(0, 150));
+      console.log(`[FETCH-SUBMISSION] trackedChanges.proposedVersionsRichText:`, trackedChanges.proposedVersionsRichText ? `type=${typeof trackedChanges.proposedVersionsRichText}, has .content=${!!trackedChanges.proposedVersionsRichText?.content}` : 'null/undefined');
 
       setSubmission(transformedSubmission);
     } catch (err) {
@@ -445,6 +449,26 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  // Update a single change's status locally when a remote user accepts/rejects.
+  // This avoids a full submission refetch which would trigger editor re-initialization
+  // and create phantom tracked changes.
+  const handleRemoteChangeResolved = useCallback((changeId: string, status: string) => {
+    if (submission) {
+      setSubmission({
+        ...submission,
+        changes: submission.changes.map(change =>
+          change.id === changeId
+            ? {
+                ...change,
+                status: status as 'approved' | 'rejected',
+                ...(status === 'approved' ? { approvedBy: 'remote' } : { rejectedBy: 'remote' }),
+              }
+            : change
+        ),
+      });
+    }
+  }, [submission]);
+
   const handleSuggestion = async (suggestion: Change): Promise<Change | undefined> => {
     try {
       const sessionId = localStorage.getItem('sessionId');
@@ -542,6 +566,7 @@ export const TrackedChangesView: React.FC = () => {
           commsApprovedBy: data.commsApprovedBy,
           sentBy: data.sentBy,
           sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
+          approvalGates: data.approvalGates,
           // Add proposed versions with rich text support
           proposedVersions: {
             // Start with base proposed versions (plain text)
@@ -822,6 +847,7 @@ export const TrackedChangesView: React.FC = () => {
         onApproveProposedVersion={handleApproveProposedVersion}
         onRejectProposedVersion={handleRejectProposedVersion}
         onRefreshNeeded={handleRefreshNeeded}
+        onRemoteChangeResolved={handleRemoteChangeResolved}
         onBack={() => navigate('/requests')}
         onSubmissionApprove={handleSubmissionApprove}
         onSubmissionReject={handleSubmissionReject}

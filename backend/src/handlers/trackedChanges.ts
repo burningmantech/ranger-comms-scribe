@@ -90,6 +90,29 @@ function cleanLexicalJson(jsonStr: string): string {
 }
 
 /**
+ * Extract plain text from a parsed Lexical JSON object.
+ * Joins text from paragraph/heading blocks with newlines.
+ */
+function extractPlainTextFromLexicalJson(lexical: any): string {
+  if (!lexical?.root?.children) return '';
+  const lines: string[] = [];
+  for (const block of lexical.root.children) {
+    if (block.type === 'paragraph' || block.type === 'heading') {
+      const texts: string[] = [];
+      if (Array.isArray(block.children)) {
+        for (const child of block.children) {
+          if (child.type === 'text') {
+            texts.push(child.text || '');
+          }
+        }
+      }
+      lines.push(texts.join(''));
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
  * After any accept or reject, recompute submission.content and
  * submission.richTextContent so the persisted state is correct.
  *
@@ -186,9 +209,34 @@ async function recomputeContentAfterResolution(
     // If neither added nor removed, no change for this entry
   }
 
-  // Build rich text from the recomputed plain text
+  // Build rich text from the recomputed plain text.
+  // Strategy: prefer rich text from the last active change (preserves formatting)
+  // and fall back to mergeTextIntoLexicalJson only when necessary.
   let richText: string;
-  if (originalData.richTextContent) {
+
+  // Try using the last active change's richTextNewValue if its plain text
+  // matches our recomputed result. This preserves ALL formatting because
+  // richTextNewValue is the complete Lexical JSON captured at edit time.
+  const lastActive = activeChanges[activeChanges.length - 1];
+  if (lastActive?.richTextNewValue) {
+    // Extract plain text from the rich text to compare
+    let richTextPlain: string;
+    try {
+      const parsed = JSON.parse(lastActive.richTextNewValue);
+      richTextPlain = extractPlainTextFromLexicalJson(parsed);
+    } catch {
+      richTextPlain = '';
+    }
+
+    if (richTextPlain === result) {
+      // Rich text matches the computed result — use it directly
+      richText = cleanLexicalJson(lastActive.richTextNewValue);
+    } else if (originalData.richTextContent) {
+      richText = cleanLexicalJson(mergeTextIntoLexicalJson(originalData.richTextContent, result));
+    } else {
+      richText = result;
+    }
+  } else if (originalData.richTextContent) {
     richText = cleanLexicalJson(mergeTextIntoLexicalJson(originalData.richTextContent, result));
   } else {
     richText = result;
@@ -350,7 +398,7 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
   }
 
   try {
-    const { status, comment, submissionId } = await request.json();
+    const { status, comment, submissionId, revertedRichText } = await request.json();
 
     if (!['approved', 'rejected'].includes(status)) {
       return new Response('Invalid status', { status: 400 });
@@ -423,7 +471,15 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
             submission.richTextContent = cleanLexicalJson(updatedChange.richTextNewValue);
           } else {
             submission.content = recomputed.content;
-            submission.richTextContent = recomputed.richText;
+            // If the client provided the reverted rich text (from the Lexical editor
+            // after format revert), use it directly. The server-side recomputation
+            // can't preserve inline format changes (bold/italic) that were reverted
+            // client-side via Lexical node.setFormat().
+            if (revertedRichText && typeof revertedRichText === 'string' && revertedRichText.includes('"root"')) {
+              submission.richTextContent = revertedRichText;
+            } else {
+              submission.richTextContent = recomputed.richText;
+            }
           }
           await putObject(`content_submissions/${submissionId}`, submission, env);
 

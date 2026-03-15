@@ -51,6 +51,7 @@ export interface ContentSubmission {
   sentBy?: string;
   sentAt?: Date;
   proposedVersions?: Record<string, string>;
+  approvalGates?: ApprovalGates;
   approvalOverride?: boolean;
   approvalOverrideBy?: string;
   approvalOverrideReason?: string;

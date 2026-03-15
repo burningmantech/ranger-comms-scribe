@@ -552,20 +552,31 @@ export class SubmissionWebSocketServer {
 
     console.log('🏠 Room has', room.size, 'connections for room:', roomId);
     const users: Array<{ userId: string; userName: string; userEmail: string; connectedAt: string }> = [];
-    
+    const staleConnections: WebSocket[] = [];
+
     for (const ws of room) {
       const metadata = this.connections.get(ws);
-      if (metadata) {
-        console.log('👤 Found user in room:', metadata);
-        users.push({
-          userId: metadata.userId,
-          userName: metadata.userName,
-          userEmail: metadata.userEmail,
-          connectedAt: metadata.connectedAt
-        });
-      } else {
-        console.log('⚠️ WebSocket in room has no metadata');
+      if (!metadata || ws.readyState !== WebSocket.OPEN) {
+        console.log('🧹 Removing stale connection from room:', metadata?.userId || 'unknown');
+        staleConnections.push(ws);
+        continue;
       }
+      users.push({
+        userId: metadata.userId,
+        userName: metadata.userName,
+        userEmail: metadata.userEmail,
+        connectedAt: metadata.connectedAt
+      });
+    }
+
+    // Clean up stale connections
+    for (const ws of staleConnections) {
+      room.delete(ws);
+      this.connections.delete(ws);
+      this.cleanupConnection(ws);
+    }
+    if (room.size === 0) {
+      this.submissionRooms.delete(roomId);
     }
 
     // Deduplicate users by userId to prevent frontend issues

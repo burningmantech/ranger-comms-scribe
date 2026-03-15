@@ -525,55 +525,59 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
 });
 
 router.get('/session', async (request: Request, env) => {
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+
+    // Try real session first
+    if (sessionId) {
+        const session = await GetSession(sessionId, env);
+        if (session) {
+            return json({ message: 'Session retrieved', session });
+        }
+    }
+
+    // Fall back to dev bypass if no real session
     if (env.DEV_BYPASS_AUTH === 'true') {
         const devUser = request.headers.get('X-Dev-User');
-        const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
-        if (devUser === 'user2' || sessionId.includes('user2')) {
+        if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
             return json({ message: 'Session retrieved', session: { userId: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer' } });
         }
         return json({ message: 'Session retrieved', session: { userId: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin' } });
     }
 
-    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
     if (!sessionId) {
         return json({ error: 'Session ID is required' }, { status: 400 });
     }
-
-    const session = await GetSession(sessionId, env);
-    if (!session) {
-        return json({ error: 'Session not found or expired' }, { status: 404 });
-    }
-
-    return json({ message: 'Session retrieved', session });
+    return json({ error: 'Session not found or expired' }, { status: 404 });
 });
 
 // Get current user from session
 router.get('/me', async (request: Request, env) => {
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+
+    // Try real session first
+    if (sessionId) {
+        const session = await GetSession(sessionId, env);
+        if (session) {
+            const user = await getUser(session.userId, env);
+            if (user) {
+                return json({ user });
+            }
+        }
+    }
+
+    // Fall back to dev bypass if no real session/user
     if (env.DEV_BYPASS_AUTH === 'true') {
         const devUser = request.headers.get('X-Dev-User');
-        const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
-        if (devUser === 'user2' || sessionId.includes('user2')) {
+        if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
             return json({ user: { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre', isAdmin: false, roles: ['CommsCadre'], groups: [] } });
         }
         return json({ user: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin', isAdmin: true, roles: ['Admin'], groups: [] } });
     }
 
-    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
     if (!sessionId) {
         return json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const session = await GetSession(sessionId, env);
-    if (!session) {
-        return json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const user = await getUser(session.userId, env);
-    if (!user) {
-        return json({ error: 'User not found' }, { status: 404 });
-    }
-
-    return json({ user });
+    return json({ error: 'Unauthorized' }, { status: 401 });
 });
 
 router.post('/logout', async (request: Request, env) => {

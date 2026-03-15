@@ -76,6 +76,160 @@ const formatRelativeTime = (date: Date): string => {
   return date.toLocaleDateString();
 };
 
+// Lexical format bitmask constants
+const FORMAT_BOLD = 1;
+const FORMAT_ITALIC = 2;
+const FORMAT_STRIKETHROUGH = 4;
+const FORMAT_UNDERLINE = 8;
+
+const FORMAT_NAMES: Record<number, string> = {
+  [FORMAT_BOLD]: 'bold',
+  [FORMAT_ITALIC]: 'italic',
+  [FORMAT_STRIKETHROUGH]: 'strikethrough',
+  [FORMAT_UNDERLINE]: 'underline',
+};
+
+const HEADING_TAG_NAMES: Record<string, string> = {
+  h1: 'Heading 1',
+  h2: 'Heading 2',
+  h3: 'Heading 3',
+  h4: 'Heading 4',
+  h5: 'Heading 5',
+  h6: 'Heading 6',
+};
+
+/**
+ * Build a per-character format array from a block's text nodes.
+ * Each element is the Lexical format bitmask for that character position.
+ * This handles Lexical's text node splitting (e.g. bolding "nothing" splits
+ * one node into three) by flattening to character level.
+ */
+/**
+ * Recursively collect all text nodes from a JSON subtree.
+ * Handles nested structures (list items, links, etc.) that have text nodes
+ * deeper than direct children.
+ */
+const collectTextNodes = (node: any): any[] => {
+  if (node.type === 'text') return [node];
+  if (!node.children) return [];
+  return node.children.flatMap((child: any) => collectTextNodes(child));
+};
+
+const buildCharFormatMap = (textNodes: any[]): { formats: number[]; fullText: string } => {
+  const formats: number[] = [];
+  let fullText = '';
+  for (const node of textNodes) {
+    const text: string = node.text || '';
+    const format: number = node.format || 0;
+    for (let i = 0; i < text.length; i++) {
+      formats.push(format);
+    }
+    fullText += text;
+  }
+  return { formats, fullText };
+};
+
+/**
+ * Compare two blocks' text nodes at the character level and return
+ * contiguous ranges where the format bitmask changed.
+ */
+const detectInlineFormatChanges = (
+  oldTextNodes: any[],
+  newTextNodes: any[],
+): Array<{ text: string; fromFormat: number; toFormat: number }> => {
+  const oldMap = buildCharFormatMap(oldTextNodes);
+  const newMap = buildCharFormatMap(newTextNodes);
+  // Only compare if the plain text is identical (format-only change)
+  if (oldMap.fullText !== newMap.fullText) return [];
+
+  const results: Array<{ text: string; fromFormat: number; toFormat: number }> = [];
+  let i = 0;
+  while (i < oldMap.formats.length) {
+    if (oldMap.formats[i] !== newMap.formats[i]) {
+      // Start of a changed range
+      const start = i;
+      const fromFmt = oldMap.formats[i];
+      const toFmt = newMap.formats[i];
+      while (
+        i < oldMap.formats.length &&
+        oldMap.formats[i] === fromFmt &&
+        newMap.formats[i] === toFmt
+      ) {
+        i++;
+      }
+      results.push({
+        text: oldMap.fullText.substring(start, i),
+        fromFormat: fromFmt,
+        toFormat: toFmt,
+      });
+    } else {
+      i++;
+    }
+  }
+  return results;
+};
+
+/**
+ * Compare richTextOldValue and richTextNewValue to produce human-readable
+ * descriptions of format-only changes (block type and inline formatting).
+ */
+const describeFormatChanges = (richTextOldValue?: string, richTextNewValue?: string): string[] => {
+  if (!richTextOldValue || !richTextNewValue) return [];
+  try {
+    const oldJson = isLexicalJson(richTextOldValue) ? JSON.parse(richTextOldValue) : null;
+    const newJson = isLexicalJson(richTextNewValue) ? JSON.parse(richTextNewValue) : null;
+    if (!oldJson?.root?.children || !newJson?.root?.children) return [];
+
+    const descriptions: string[] = [];
+    const oldBlocks = oldJson.root.children.filter((n: any) => n.type === 'paragraph' || n.type === 'heading');
+    const newBlocks = newJson.root.children.filter((n: any) => n.type === 'paragraph' || n.type === 'heading');
+
+    for (let i = 0; i < Math.min(oldBlocks.length, newBlocks.length); i++) {
+      const oldBlock = oldBlocks[i];
+      const newBlock = newBlocks[i];
+
+      // Block type changes (paragraph <-> heading, or heading tag changes)
+      if (oldBlock.type !== newBlock.type || oldBlock.tag !== newBlock.tag) {
+        const blockText = (newBlock.children || [])
+          .filter((n: any) => n.type === 'text')
+          .map((n: any) => n.text || '')
+          .join('');
+        const snippet = blockText.length > 40 ? blockText.substring(0, 40) + '...' : blockText;
+        const fromLabel = oldBlock.type === 'heading' && oldBlock.tag
+          ? HEADING_TAG_NAMES[oldBlock.tag] || oldBlock.tag
+          : 'Paragraph';
+        const toLabel = newBlock.type === 'heading' && newBlock.tag
+          ? HEADING_TAG_NAMES[newBlock.tag] || newBlock.tag
+          : 'Paragraph';
+        descriptions.push(`Changed "${snippet}" from ${fromLabel} to ${toLabel}`);
+      }
+
+      // Inline format changes — character-level comparison handles node splits
+      // Use recursive collectTextNodes to handle nested structures (lists, links)
+      const oldTexts = collectTextNodes(oldBlock);
+      const newTexts = collectTextNodes(newBlock);
+      const inlineChanges = detectInlineFormatChanges(oldTexts, newTexts);
+      for (const ic of inlineChanges) {
+        const snippet = ic.text.length > 30 ? ic.text.substring(0, 30) + '...' : ic.text;
+        for (const [bit, name] of Object.entries(FORMAT_NAMES)) {
+          const bitNum = Number(bit);
+          const wasSet = (ic.fromFormat & bitNum) !== 0;
+          const isSet = (ic.toFormat & bitNum) !== 0;
+          if (!wasSet && isSet) {
+            descriptions.push(`Made "${snippet}" ${name}`);
+          } else if (wasSet && !isSet) {
+            descriptions.push(`Removed ${name} from "${snippet}"`);
+          }
+        }
+      }
+    }
+
+    return descriptions;
+  } catch {
+    return [];
+  }
+};
+
 interface TrackedChangesEditorProps {
   submission: ContentSubmission;
   currentUser: User;
@@ -88,6 +242,7 @@ interface TrackedChangesEditorProps {
   onApproveProposedVersion: (approverId: string, comment?: string) => void;
   onRejectProposedVersion: (rejecterId: string, comment?: string) => void;
   onRefreshNeeded?: () => void;
+  onRemoteChangeResolved?: (changeId: string, status: string) => void;
   onSubmissionApprove?: (submission: ContentSubmission) => Promise<void> | void;
   onSubmissionReject?: (submission: ContentSubmission) => Promise<void> | void;
   onBack?: () => void;
@@ -150,6 +305,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onApproveProposedVersion,
   onRejectProposedVersion,
   onRefreshNeeded,
+  onRemoteChangeResolved,
   onSubmissionApprove,
   onSubmissionReject,
   onBack,
@@ -227,11 +383,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const pendingRealTimeUpdateRef = useRef<boolean>(false);
   const realTimeUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isApplyingRealTimeUpdateRef = useRef<boolean>(false);
+  // Monotonic counter: each remote content update bumps this. Timeout
+  // callbacks only clear isApplyingRealTimeUpdateRef when the counter
+  // hasn't moved (no newer update arrived). This replaces a fixed-delay
+  // timeout with a version-safe approach.
+  const remoteUpdateVersionRef = useRef<number>(0);
+  // Tracks whether a WebSocket-triggered refresh (fetchSubmission) is in-flight.
+  // When true, the resulting editor re-init is from remote data, not a user edit.
+  const isRemoteRefreshInFlightRef = useRef<boolean>(false);
   const isRefreshingContentRef = useRef<boolean>(false);
   // Stays true while a change resolution (approve/reject) is in progress.
   // Unlike isRefreshingContentRef (one-shot), this persists through multiple
   // onContentChange events until cleared by a timeout.
   const isResolvingChangeRef = useRef<boolean>(false);
+  // Tracks how many resolve timeouts are pending. isResolvingChangeRef is only
+  // cleared when this reaches 0, preventing the first timeout in a batch from
+  // opening a window for WebSocket overwrites.
+  const pendingResolveCountRef = useRef<number>(0);
   const batchSyncInProgressRef = useRef<boolean>(false);
 
   // TransactionManager instance — one per submission editing session
@@ -337,6 +505,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       onRefreshNeeded();
     }
   }, [onRefreshNeeded, submission.id]);
+
+  // Helper for WebSocket-triggered refreshes. Sets isApplyingRealTimeUpdateRef
+  // so the TransactionManager skips editor re-inits caused by the async
+  // fetchSubmission → setSubmission → proposedEditorContent → initialContent
+  // chain. Uses the version counter so rapid calls don't leave stale flags.
+  const refreshWithRemoteGuard = useCallback(() => {
+    const v = ++remoteUpdateVersionRef.current;
+    isApplyingRealTimeUpdateRef.current = true;
+    isRemoteRefreshInFlightRef.current = true;
+    if (onRefreshNeeded) {
+      onRefreshNeeded();
+    }
+    // 5s ceiling covers: network RTT + React re-render + editor re-init +
+    // applyDecorations. Only clears if no newer remote event has arrived.
+    setTimeout(() => {
+      if (remoteUpdateVersionRef.current === v) {
+        isApplyingRealTimeUpdateRef.current = false;
+        isRemoteRefreshInFlightRef.current = false;
+      }
+    }, 5000);
+  }, [onRefreshNeeded]);
 
   // WebSocket connection is now handled by CollaborativeEditor
   // Removed WebSocket connection setup
@@ -1110,17 +1299,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [editedProposedContent, submission, getDisplayableText, getRichTextContent, saveRevertedContent]);
 
   // Background sync: fire-and-forget PUT to backend
-  const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected') => {
+  const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string) => {
     // Skip individual backend syncs during batch operations — the batch
     // handler will make a single API call with all changes.
     if (batchSyncInProgressRef.current) return;
     try {
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) return;
+      const body: Record<string, string> = { status, submissionId: submission.id };
+      // Include the reverted editor content so the backend uses it instead of
+      // recomputing rich text (which loses format reverts).
+      if (revertedRichText) {
+        body.revertedRichText = revertedRichText;
+      }
       const response = await fetch(`${API_URL}/tracked-changes/change/${changeId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
-        body: JSON.stringify({ status, submissionId: submission.id })
+        body: JSON.stringify(body)
       });
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
@@ -1205,17 +1400,132 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
     }
 
+    // Detect formatting-only changes (block type + inline format) so the
+    // resolve handler can revert them on rejection.
+    let formatChanges: Array<{
+      type?: 'block' | 'inline' | 'indent';
+      text: string;
+      fromType: string;
+      fromTag?: string;
+      toType: string;
+      toTag?: string;
+      fromFormat?: number;
+      toFormat?: number;
+      fromIndent?: number;
+      toIndent?: number;
+    }> = [];
+    if (change && change.richTextOldValue && change.richTextNewValue) {
+      try {
+        const oldJson = isLexicalJson(change.richTextOldValue) ? JSON.parse(change.richTextOldValue) : null;
+        const newJson = isLexicalJson(change.richTextNewValue) ? JSON.parse(change.richTextNewValue) : null;
+        if (oldJson?.root?.children && newJson?.root?.children) {
+          // Helper to extract text from any block (paragraph, heading, list, etc.)
+          const extractBlockText = (block: any): string => {
+            if (!block.children) return '';
+            return block.children
+              .map((n: any) => {
+                if (n.type === 'text') return n.text || '';
+                if (n.children) return extractBlockText(n);
+                return '';
+              })
+              .join('');
+          };
+
+          // Compare all top-level blocks (not just paragraphs/headings)
+          const oldBlocks = oldJson.root.children;
+          const newBlocks = newJson.root.children;
+          for (let i = 0; i < Math.min(oldBlocks.length, newBlocks.length); i++) {
+            // Block type changes (paragraph <-> heading, heading tag changes)
+            if (oldBlocks[i].type !== newBlocks[i].type || oldBlocks[i].tag !== newBlocks[i].tag) {
+              const blockText = extractBlockText(newBlocks[i]);
+              formatChanges.push({
+                type: 'block',
+                text: blockText,
+                fromType: oldBlocks[i].type,
+                fromTag: oldBlocks[i].tag,
+                toType: newBlocks[i].type,
+                toTag: newBlocks[i].tag,
+              });
+            }
+
+            // Indent changes on the block itself
+            if ((oldBlocks[i].indent ?? 0) !== (newBlocks[i].indent ?? 0)) {
+              const blockText = extractBlockText(newBlocks[i]);
+              formatChanges.push({
+                type: 'indent',
+                text: blockText,
+                fromType: newBlocks[i].type,
+                toType: newBlocks[i].type,
+                fromIndent: oldBlocks[i].indent ?? 0,
+                toIndent: newBlocks[i].indent ?? 0,
+              });
+            }
+
+            // Indent changes on children (e.g. list items inside list nodes)
+            if (oldBlocks[i].children && newBlocks[i].children) {
+              const detectChildIndentChanges = (oldChildren: any[], newChildren: any[]) => {
+                for (let j = 0; j < Math.min(oldChildren.length, newChildren.length); j++) {
+                  if ((oldChildren[j].indent ?? 0) !== (newChildren[j].indent ?? 0)) {
+                    const itemText = extractBlockText(newChildren[j]);
+                    formatChanges.push({
+                      type: 'indent',
+                      text: itemText,
+                      fromType: newChildren[j].type,
+                      toType: newChildren[j].type,
+                      fromIndent: oldChildren[j].indent ?? 0,
+                      toIndent: newChildren[j].indent ?? 0,
+                    });
+                  }
+                  // Recurse into nested children
+                  if (oldChildren[j].children && newChildren[j].children) {
+                    detectChildIndentChanges(oldChildren[j].children, newChildren[j].children);
+                  }
+                }
+              };
+              detectChildIndentChanges(oldBlocks[i].children, newBlocks[i].children);
+            }
+
+            // Inline format changes — character-level comparison handles node splits
+            // Use recursive collectTextNodes to handle nested structures (lists, links)
+            const oldTexts = collectTextNodes(oldBlocks[i]);
+            const newTexts = collectTextNodes(newBlocks[i]);
+            const inlineChanges = detectInlineFormatChanges(oldTexts, newTexts);
+            for (const ic of inlineChanges) {
+              formatChanges.push({
+                type: 'inline',
+                text: ic.text,
+                fromType: 'text',
+                toType: 'text',
+                fromFormat: ic.fromFormat,
+                toFormat: ic.toFormat,
+              });
+            }
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
     // 1. Suppress TransactionManager for all editor changes caused by the
     //    resolve (restore text, remove decorations, applyDecorations re-run).
     transactionManager.pauseForChangeResolution();
+
+    // 1b. Block incoming WebSocket content updates during resolution so they
+    //     don't overwrite the format revert with stale content from other users.
+    isResolvingChangeRef.current = true;
+
+    console.log(`[RESOLVE] handleChangeDecision: changeId=${changeId}, decision=${decision}, formatChanges=`, JSON.stringify(formatChanges));
+    console.log(`[RESOLVE] editedProposedContentRef BEFORE dispatch:`, editedProposedContentRef.current?.substring(0, 200));
 
     // 2. Resolve DeletedTextNode nodes in the Lexical editor
     //    - approve deletion: removes DeletedTextNode (text stays deleted)
     //    - reject deletion: replaces DeletedTextNode with TextNode (text restored)
     //      AND removes the corresponding inserted text for replacement pairs
+    //    - reject format change: reverts block type (e.g., heading→paragraph)
     window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-      detail: { changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts }
+      detail: { changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts, formatChanges }
     }));
+
+    console.log(`[RESOLVE] editedProposedContentRef AFTER dispatch:`, editedProposedContentRef.current?.substring(0, 200));
 
     // 3. Remove CSS highlight decorations for additions
     removeDecorationsForChange(changeId);
@@ -1237,12 +1547,55 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return next;
     });
 
-    // 5. Backend sync in background (fire-and-forget)
-    syncChangeStatusToBackend(changeId, decision === 'approve' ? 'approved' : 'rejected');
-
-    // 6. Resume TransactionManager after a short delay to let all editor
+    // 5. Resume TransactionManager after a short delay to let all editor
     //    updates settle (decoration re-application, etc.).
-    setTimeout(() => { transactionManager.resumeAfterChangeResolution(); }, 500);
+    //    Track pending timeouts so that in batch operations, the resolve guard
+    //    stays up until ALL timeouts have completed (not just the first one).
+    pendingResolveCountRef.current++;
+    setTimeout(async () => {
+      transactionManager.resumeAfterChangeResolution();
+
+      // By this point onContentChange has fired and editedProposedContentRef
+      // holds the post-resolution Lexical state (including format reverts).
+      const currentState = editedProposedContentRef.current;
+      console.log(`[RESOLVE] setTimeout(500ms): currentState valid=${!!(currentState && isLexicalJson(currentState))}, pendingResolves=${pendingResolveCountRef.current}, first 200 chars:`, currentState?.substring(0, 200));
+
+      // Broadcast the post-resolution editor state to other users.
+      if (currentState && isLexicalJson(currentState) && webSocketClientRef.current) {
+        try {
+          setLastSavedProposedContent(currentState);
+          webSocketClientRef.current.send({
+            type: 'content_updated',
+            data: {
+              field: 'proposedVersions.richTextContent',
+              newValue: extractTextFromLexical(currentState),
+              lexicalContent: currentState,
+              isAutoSave: true,
+            }
+          });
+        } catch (e) {
+          console.error('Failed to broadcast post-resolution content:', e);
+        }
+      }
+
+      // Sync change status to backend, passing the reverted content so the
+      // backend stores it atomically instead of recomputing (which loses
+      // format reverts). This triggers other users' change_status_updated →
+      // fetchSubmission(), which will get the correct reverted content.
+      // Await the sync so isResolvingChangeRef stays true until the backend
+      // has stored the reverted content — prevents a refresh from fetching
+      // stale (pre-revert) data.
+      await syncChangeStatusToBackend(changeId, decision === 'approve' ? 'approved' : 'rejected', currentState);
+
+      // Only unblock incoming WebSocket content updates when ALL pending
+      // resolve timeouts have completed. In a batch, the first timeout
+      // must not clear the flag while later ones are still in flight.
+      pendingResolveCountRef.current--;
+      if (pendingResolveCountRef.current <= 0) {
+        pendingResolveCountRef.current = 0;
+        isResolvingChangeRef.current = false;
+      }
+    }, 500);
   }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText]);
 
   // Batch action handlers
@@ -1268,13 +1621,31 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const handleBatchAction = useCallback(async (changeIds: string[], status: 'approved' | 'rejected') => {
     setBatchActionLoading(true);
     try {
-      // Suppress individual backend syncs — we'll make one batch call
+      // Suppress individual backend syncs — we'll make one batch call.
+      // Also keep the resolve guard up for the entire batch so that
+      // incoming WebSocket updates can't overwrite reverts mid-batch.
       batchSyncInProgressRef.current = true;
+      isResolvingChangeRef.current = true;
       const decision = status === 'approved' ? 'approve' : 'reject';
       for (const id of changeIds) {
-        await handleChangeDecision(id, decision);
+        handleChangeDecision(id, decision);
       }
       batchSyncInProgressRef.current = false;
+
+      // Wait for all per-change resolve timeouts to complete before
+      // making the batch API call (they need to broadcast content and
+      // resume the TransactionManager).
+      await new Promise<void>(resolve => {
+        const check = () => {
+          if (pendingResolveCountRef.current <= 0) {
+            resolve();
+          } else {
+            setTimeout(check, 100);
+          }
+        };
+        // Start checking after the 500ms timeout window
+        setTimeout(check, 600);
+      });
 
       // Single batch API call for backend persistence
       const sessionId = localStorage.getItem('sessionId');
@@ -1294,6 +1665,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       console.error('Batch action failed:', err);
       batchSyncInProgressRef.current = false;
     } finally {
+      // Ensure the resolve guard is cleared when the batch completes
+      // (including after the backend has stored the reverted content).
+      pendingResolveCountRef.current = 0;
+      isResolvingChangeRef.current = false;
       setBatchActionLoading(false);
     }
   }, [handleChangeDecision, submission.id]);
@@ -1724,6 +2099,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return;
     }
 
+    // Skip incoming content updates while a change resolution (approve/reject)
+    // is in progress. The local editor has just reverted formatting or text
+    // and the reverted state hasn't been broadcast yet — applying stale content
+    // from the other user would overwrite the revert.
+    if (isResolvingChangeRef.current &&
+        (message.type === 'content_updated' || message.type === 'realtime_content_update')) {
+      console.log(`[RESOLVE-GUARD] Blocked incoming ${message.type} while resolving`);
+      return;
+    }
+
     // Handle real-time content updates (character-by-character)
     if (message.type === 'realtime_content_update' && message.data) {
       const { content, lexicalContent, cursorPosition, isRealTime, userId, userName } = message.data;
@@ -1743,6 +2128,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       // Apply the real-time update immediately
       // Try to use the specialized real-time update function first
+      const rtVersion = ++remoteUpdateVersionRef.current;
       if (webSocketClientRef.current && webSocketClientRef.current.applyRealTimeUpdate) {
         try {
           // Set flag to prevent feedback loop
@@ -1779,13 +2165,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             }, 300); // Shorter delay for real-time updates
           }
 
-          // Reset flag after a short delay to ensure the change event is processed
+          // Version-safe reset: only clear if no newer update arrived
           setTimeout(() => {
-            isApplyingRealTimeUpdateRef.current = false;
-          }, 100);
+            if (remoteUpdateVersionRef.current === rtVersion) {
+              isApplyingRealTimeUpdateRef.current = false;
+            }
+          }, 500);
         } catch (error) {
           console.error('❌ TrackedChangesEditor: Error applying real-time update via specialized function:', error);
-          isApplyingRealTimeUpdateRef.current = false;
+          if (remoteUpdateVersionRef.current === rtVersion) {
+            isApplyingRealTimeUpdateRef.current = false;
+          }
         }
       } else if (remoteUpdateFunctionRef.current) {
         try {
@@ -1823,13 +2213,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             }, 300); // Shorter delay for real-time updates
           }
 
-          // Reset flag after a short delay to ensure the change event is processed
+          // Version-safe reset: only clear if no newer update arrived
           setTimeout(() => {
-            isApplyingRealTimeUpdateRef.current = false;
-          }, 100);
+            if (remoteUpdateVersionRef.current === rtVersion) {
+              isApplyingRealTimeUpdateRef.current = false;
+            }
+          }, 500);
         } catch (error) {
           console.error('❌ TrackedChangesEditor: Error applying real-time update via fallback function:', error);
-          isApplyingRealTimeUpdateRef.current = false;
+          if (remoteUpdateVersionRef.current === rtVersion) {
+            isApplyingRealTimeUpdateRef.current = false;
+          }
         }
       } else {
         // Fallback to state update - but only if we have valid Lexical content
@@ -1839,10 +2233,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
           setEditedProposedContent(lexicalContent);
 
-          // Reset flag after a short delay
+          // Version-safe reset
           setTimeout(() => {
-            isApplyingRealTimeUpdateRef.current = false;
-          }, 100);
+            if (remoteUpdateVersionRef.current === rtVersion) {
+              isApplyingRealTimeUpdateRef.current = false;
+            }
+          }, 500);
         } else {
           console.error('❌ TrackedChangesEditor: Cannot apply real-time update - invalid Lexical content');
         }
@@ -1854,11 +2250,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Handle regular content updates (auto-save, manual save)
     if (message.type === 'content_updated' && message.data) {
       const { field, newValue, lexicalContent, isAutoSave, cursorPosition, preserveEditingState } = message.data;
+      console.log(`[WS-CONTENT] content_updated received: field=${field}, hasLexical=${!!lexicalContent}, isAutoSave=${isAutoSave}`);
 
       if (field === 'proposedVersions.richTextContent' && lexicalContent) {
         // Apply remote content updates
         {
-          // Set flag to prevent feedback loop (same as realtime_content_update handler)
+          // Bump the version counter FIRST, then set the flag.
+          // The timeout callback only clears the flag if the version
+          // hasn't changed — a newer update arriving in the meantime
+          // keeps the flag alive automatically.
+          const thisVersion = ++remoteUpdateVersionRef.current;
           isApplyingRealTimeUpdateRef.current = true;
 
           // Show visual feedback that a remote update is being applied
@@ -1875,8 +2276,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             setEditedProposedContent(lexicalContent);
           }
 
-          // Also update our state
+          // Also update our state — both React state AND the ref synchronously.
+          // Synchronous ref update ensures editedProposedContentRef.current is
+          // up-to-date if onContentChange fires later (preventing the
+          // TransactionManager from using stale before-state).
           setEditedProposedContent(lexicalContent);
+          editedProposedContentRef.current = lexicalContent;
           setLastSavedProposedContent(lexicalContent);
 
           // Show applied status briefly
@@ -1905,15 +2310,24 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             }, 500); // Wait for content to settle before requesting cursors
           }
 
-          // Reset flag after a short delay to ensure the change event is processed
+          // Version-safe flag reset: only clear if no newer update arrived.
+          // Covers downstream processing (applyDecorations ~300ms, cursor
+          // restoration ~200-400ms, potential decoration re-runs). The 1500ms
+          // delay is a ceiling; the version check means rapid updates won't
+          // leave stale flags behind.
           setTimeout(() => {
-            isApplyingRealTimeUpdateRef.current = false;
-          }, 100);
+            if (remoteUpdateVersionRef.current === thisVersion) {
+              isApplyingRealTimeUpdateRef.current = false;
+            }
+          }, 1500);
 
-          // Show a notification about the update
-          if (onRefreshNeeded) {
-            onRefreshNeeded();
-          }
+          // NOTE: Do NOT call onRefreshNeeded() here. The content is already
+          // applied via remoteUpdateFunctionRef above. Calling onRefreshNeeded
+          // triggers fetchSubmission → setSubmission → proposedEditorContent
+          // recalculation → editor re-initialization, which causes the
+          // TransactionManager to detect a phantom "change" and create a
+          // spurious tracked change. Change list/status refreshes are handled
+          // by their own WebSocket events (change_status_updated, etc.).
         }
       }
     }
@@ -1944,18 +2358,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       });
       client.on('connection_restored', () => {
         setWsConnectionLost(false);
-        // Refresh data after reconnection to pick up missed updates
-        if (onRefreshNeeded) {
-          onRefreshNeeded();
-        }
+        // Refresh data after reconnection to pick up missed updates.
+        // Use guarded refresh to prevent phantom tracked changes from
+        // the async fetchSubmission → editor re-init chain.
+        refreshWithRemoteGuard();
       });
 
       // Listen for gap detection — refetch from REST API
       client.on('sync_needed', () => {
         console.log('🔄 Sync needed — refetching from REST API');
-        if (onRefreshNeeded) {
-          onRefreshNeeded();
-        }
+        refreshWithRemoteGuard();
       });
 
       // Listen for transaction-settled from remote users
@@ -1964,9 +2376,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const data = message.data;
         if (!data?.changeId) return;
         // Trigger a refresh so the new tracked change appears in the sidebar
-        if (onRefreshNeeded) {
-          onRefreshNeeded();
-        }
+        refreshWithRemoteGuard();
       });
 
       // Listen for transaction-undone from remote users
@@ -1983,9 +2393,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           }
         }
         // Trigger a refresh so the sidebar updates
-        if (onRefreshNeeded) {
-          onRefreshNeeded();
-        }
+        refreshWithRemoteGuard();
       });
 
       // Listen for transaction-redone from remote users
@@ -1994,29 +2402,37 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const data = message.data;
         if (!data?.changeId) return;
         // Trigger a refresh so the re-added tracked change appears
-        if (onRefreshNeeded) {
-          onRefreshNeeded();
-        }
+        refreshWithRemoteGuard();
       });
 
       // Listen for change status updates (accept/reject) from remote users
       client.on('change_status_updated', (message: WebSocketMessage) => {
+        console.log(`[WS-STATUS] change_status_updated: userId=${message.userId}, effectiveUserId=${effectiveUserId}, changeId=${message.data?.changeId}, status=${message.data?.status}`);
         if (message.userId === effectiveUserId) return;
         const data = message.data;
         if (!data?.changeId || !data?.status) return;
+        console.log(`[WS-STATUS] Processing remote change_status_updated — removing decorations and updating status locally`);
+        // Guard with __isApplyingDecorations to prevent TransactionManager
+        // from treating the decoration removal as a user edit
+        (window as any).__isApplyingDecorations = true;
         // Remove decorations for the resolved change
         try {
           removeDecorationsForChange(data.changeId);
         } catch (err) {
           console.error('Failed to remove decorations for resolved change:', data.changeId, err);
         }
-        // Trigger a refresh so the sidebar and editor update
-        if (onRefreshNeeded) {
-          onRefreshNeeded();
+        setTimeout(() => {
+          (window as any).__isApplyingDecorations = false;
+        }, 100);
+        // Update the change status locally instead of calling onRefreshNeeded().
+        // A full submission refetch would trigger proposedEditorContent →
+        // initialContent change → editor re-initialization → phantom tracked change.
+        if (onRemoteChangeResolved) {
+          onRemoteChangeResolved(data.changeId, data.status);
         }
       });
     }
-  }, [handleWebSocketUpdate, currentUser.id, currentUser.email, effectiveUserId, onRefreshNeeded]);
+  }, [handleWebSocketUpdate, currentUser.id, currentUser.email, effectiveUserId, onRemoteChangeResolved, refreshWithRemoteGuard]);
 
   // TransactionHistoryPlugin callback: broadcast undo over WebSocket
   const handleTransactionUndone = useCallback((tx: Transaction) => {
@@ -2367,6 +2783,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       submission.proposedVersions?.content ||
       submission.richTextContent ||
       submission.content || '';
+    console.log(`[CONTENT-MEMO] proposedEditorContent recalculated. Source: ${submission.proposedVersions?.richTextContent ? 'proposedVersions.richTextContent' : submission.proposedVersions?.content ? 'proposedVersions.content' : submission.richTextContent ? 'richTextContent' : 'content'}, first 150 chars:`, content.substring(0, 150));
 
     // Pass the content directly to the CollaborativeEditor
     // The CollaborativeEditor will handle the proper conversion based on content type:
@@ -2661,13 +3078,25 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               >
                 Original Version
               </button>
-              {['approved', 'comms_approved', 'sent'].includes(submission.status) && (
+              {['approved', 'comms_approved', 'sent'].includes(submission.status) ? (
                 <button
                   className={`tce-tab ${activeTab === 'send' ? 'active' : ''}`}
                   onClick={() => setActiveTab('send')}
                 >
                   Send
                 </button>
+              ) : (
+                <div className="tce-tab-bar__send-pending">
+                  {(submission as any).approvalGates && (
+                    <div className="tce-tab-bar__status-badge">
+                      <ApprovalTracker
+                        variant="compact"
+                        gates={(submission as any).approvalGates as ApprovalGates}
+                      />
+                    </div>
+                  )}
+                  <span className="tce-tab tce-tab--disabled">Send</span>
+                </div>
               )}
             </div>
 
@@ -2731,6 +3160,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       // Skip processing if we're still initializing content to prevent auto-save on load
                       if (!hasInitializedContentRef.current) {
                         return;
+                      }
+                      // Log when content changes happen during resolution
+                      if (isResolvingChangeRef.current || transactionManager.isPausedForResolution()) {
+                        console.log(`[CONTENT-CHANGE] During resolution: isPaused=${transactionManager.isPausedForResolution()}, isResolving=${isResolvingChangeRef.current}, first 150:`, json?.substring(0, 150));
                       }
 
                       // If this onChange was triggered by a programmatic content refresh
@@ -3462,17 +3895,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                       Incremental Change
                                     </span>
                                   </div>
-                                  {change.oldValue && (
-                                    <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
-                                      <strong style={{ marginRight: '6px' }}>From:</strong>
-                                      {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
-                                    </span>
-                                  )}
-                                  {change.newValue && (
-                                    <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
-                                      <strong style={{ marginRight: '6px' }}>To:</strong>
-                                      {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
-                                    </span>
+                                  {change.oldValue === change.newValue ? (
+                                    // Format-only change — show descriptions
+                                    describeFormatChanges(change.richTextOldValue, change.richTextNewValue).map((desc, i) => (
+                                      <div key={i} style={{ fontSize: '12px', color: '#555', marginTop: '4px', lineHeight: '1.4' }}>
+                                        {desc}
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <>
+                                      {change.oldValue && (
+                                        <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                          <strong style={{ marginRight: '6px' }}>From:</strong>
+                                          {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
+                                        </span>
+                                      )}
+                                      {change.newValue && (
+                                        <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                          <strong style={{ marginRight: '6px' }}>To:</strong>
+                                          {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
+                                        </span>
+                                      )}
+                                    </>
                                   )}
                                 </>
                               ) : (
@@ -3745,17 +4189,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                           Incremental Change
                                         </span>
                                       </div>
-                                      {change.oldValue && (
-                                        <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
-                                          <strong style={{ marginRight: '6px' }}>From:</strong>
-                                          {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
-                                        </span>
-                                      )}
-                                      {change.newValue && (
-                                        <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
-                                          <strong style={{ marginRight: '6px' }}>To:</strong>
-                                          {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
-                                        </span>
+                                      {change.oldValue === change.newValue ? (
+                                        // Format-only change — show descriptions
+                                        describeFormatChanges(change.richTextOldValue, change.richTextNewValue).map((desc, i) => (
+                                          <div key={i} style={{ fontSize: '12px', color: '#555', marginTop: '4px', lineHeight: '1.4' }}>
+                                            {desc}
+                                          </div>
+                                        ))
+                                      ) : (
+                                        <>
+                                          {change.oldValue && (
+                                            <span className="diff-old" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                              <strong style={{ marginRight: '6px' }}>From:</strong>
+                                              {renderCharDiff(change.oldValue, change.newValue || '', 'old')}
+                                            </span>
+                                          )}
+                                          {change.newValue && (
+                                            <span className="diff-new" style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                                              <strong style={{ marginRight: '6px' }}>To:</strong>
+                                              {renderCharDiff(change.oldValue || '', change.newValue, 'new')}
+                                            </span>
+                                          )}
+                                        </>
                                       )}
                                     </>
                                   ) : (

@@ -23,6 +23,7 @@ import { ImageNode } from './editor/nodes/ImageNode';
 import { DeletedTextNode } from './editor/nodes/DeletedTextNode';
 import TrackedChangesPlugin from './editor/plugins/TrackedChangesPlugin';
 import DeletionInterceptionPlugin from './editor/plugins/DeletionInterceptionPlugin';
+import { IndentationPlugin } from './editor/plugins/IndentationPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { UserPresence, UserPresenceData } from './UserPresence';
 import { User } from '../types/content';
@@ -1690,6 +1691,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
   // Remote content update function
   const applyRemoteContentUpdate = useCallback((content: string) => {
+    console.log(`[REMOTE-UPDATE] applyRemoteContentUpdate called. First 150 chars:`, content?.substring(0, 150));
     if (editorRef.current && content) {
       // Store current content and cursor positions before update
       const oldContent = editorRef.current.getEditorState().read(() => {
@@ -2101,6 +2103,22 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         preservedCursorsRef.current.set(cursorPosition.userId, cursorPosition);
         return newCursors;
       });
+
+      // Also ensure this user appears in the presence list
+      setUsers(prev => {
+        const existingUser = prev.find(u => u.userId === baseUserId);
+        if (!existingUser) {
+          return [...prev, {
+            userId: baseUserId,
+            userName: cursorPosition.userName,
+            userEmail: cursorPosition.userEmail,
+            status: 'online' as const,
+            lastSeen: new Date().toISOString(),
+            currentActivity: 'viewing' as const
+          }];
+        }
+        return prev;
+      });
     }
   }, [currentUser.id, currentUser.email]);
 
@@ -2194,6 +2212,19 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
           client.on('connected', () => {
             setConnectionStatus('connected');
+            // Always add the current user to presence
+            const baseUserId = currentUser.id || currentUser.email;
+            setUsers(prev => {
+              if (prev.find(u => u.userId === baseUserId)) return prev;
+              return [...prev, {
+                userId: baseUserId,
+                userName: currentUser.name || currentUser.email,
+                userEmail: currentUser.email,
+                status: 'online' as const,
+                lastSeen: new Date().toISOString(),
+                currentActivity: 'viewing' as const
+              }];
+            });
           });
 
           client.on('cursor_position', handleRemoteCursorUpdate);
@@ -2341,14 +2372,27 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
           client.on('room_state', (message) => {
             if (message.users) {
-              setUsers(message.users.map(user => ({
+              const baseUserId = currentUser.id || currentUser.email;
+              const roomUsers = message.users.map(user => ({
                 userId: user.userId,
                 userName: user.userName,
                 userEmail: user.userEmail,
                 status: 'online' as const,
                 lastSeen: user.connectedAt,
                 currentActivity: 'viewing' as const
-              })));
+              }));
+              // Ensure current user is included
+              if (!roomUsers.find(u => u.userId === baseUserId)) {
+                roomUsers.push({
+                  userId: baseUserId,
+                  userName: currentUser.name || currentUser.email,
+                  userEmail: currentUser.email,
+                  status: 'online' as const,
+                  lastSeen: new Date().toISOString(),
+                  currentActivity: 'viewing' as const
+                });
+              }
+              setUsers(roomUsers);
             }
           });
 
@@ -2762,6 +2806,9 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   useEffect(() => {
     if (editorRef.current && initialContent && !isInitializedRef.current) {
 
+      console.log(`[EDITOR-INIT] RE-INITIALIZING editor with initialContent. First 150 chars:`, initialContent?.substring(0, 150));
+      console.trace('[EDITOR-INIT] Call stack for re-initialization');
+
       // Set flag to prevent re-initialization
       isInitializedRef.current = true;
 
@@ -2938,6 +2985,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
   // Reset initialization flag when initialContent changes
   useEffect(() => {
+    console.log(`[EDITOR-INIT] initialContent changed — resetting isInitializedRef to false. First 150 chars:`, initialContent?.substring(0, 150));
     isInitializedRef.current = false;
     // Also reset the saved content tracking when initialContent changes
     setLastSavedContent('');
@@ -2977,21 +3025,43 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   // Remove the separate save logic since TrackedChangesEditor handles all saving via auto-save
   // const hasUnsavedChanges = currentContent !== lastSavedContent;
 
+  const handlePresenceClick = useCallback((userId: string) => {
+    const baseUserId = currentUser.id || currentUser.email;
+    if (userId === baseUserId) return; // Don't scroll to own cursor
+
+    // Find the remote cursor element — cursor IDs use effectiveUserId which has session suffix
+    // Try to find any cursor element that starts with this base userId
+    const allCursors = document.querySelectorAll('.lexical-remote-cursor');
+    for (const el of allCursors) {
+      if (el.id.includes(userId.replace(/[^a-zA-Z0-9]/g, '-'))) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Brief highlight
+        (el as HTMLElement).style.transform = 'scale(1.5)';
+        setTimeout(() => { (el as HTMLElement).style.transform = ''; }, 600);
+        return;
+      }
+    }
+  }, [currentUser.id, currentUser.email]);
+
   return (
     <div className={`collaborative-editor ${className}`}>
       {/* Minimal user presence - Google Docs style */}
       {users.length > 0 && (
         <div className="collaborative-presence-bar">
-          {users.map(user => (
-            <div
-              key={user.userId}
-              className={`presence-avatar ${user.status}${user.userId === (currentUser.id || currentUser.email) ? ' is-you' : ''}`}
-              style={{ backgroundColor: getUserColor(user.userId) }}
-              title={`${user.userName}${user.userId === (currentUser.id || currentUser.email) ? ' (you)' : ''}`}
-            >
-              {user.userName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
-            </div>
-          ))}
+          {users.map(user => {
+            const isYou = user.userId === (currentUser.id || currentUser.email);
+            return (
+              <div
+                key={user.userId}
+                className={`presence-avatar ${user.status}${isYou ? ' is-you' : ''}`}
+                style={{ backgroundColor: getUserColor(user.userId), cursor: isYou ? 'default' : 'pointer' }}
+                title={`${user.userName}${isYou ? ' (you)' : ' — click to scroll to cursor'}`}
+                onClick={() => handlePresenceClick(user.userId)}
+              >
+                {user.userName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
+              </div>
+            );
+          })}
           {typingUsers.size > 0 && (
             <span className="presence-typing-hint">
               {Array.from(typingUsers).slice(0, 2).map(uid =>
@@ -3029,6 +3099,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               />
               <ListPlugin />
               <LinkPlugin />
+              <IndentationPlugin />
               <ImagePlugin currentUser={currentUser} />
               <ImageDragPlugin />
               <ImageResizePlugin />

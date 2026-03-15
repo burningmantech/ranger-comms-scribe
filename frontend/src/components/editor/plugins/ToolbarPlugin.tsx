@@ -682,6 +682,35 @@ export const ToolbarPlugin: React.FC = () => {
         </div>
 
         <div className="toolbar-group">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              indent();
+            }}
+            className="toolbar-item"
+            title="Indent"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M3 20h18M11 12h10M11 8h10M11 16h10M3 8l4 4-4 4" />
+            </svg>
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              outdent();
+            }}
+            className="toolbar-item"
+            title="Outdent"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M3 20h18M11 12h10M11 8h10M11 16h10M7 8L3 12l4 4" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="toolbar-group">
           <div className="relative">
             <button
               onClick={(e) => {

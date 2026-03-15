@@ -757,13 +757,27 @@ export const getCompleteRichTextProposedVersion = async (
       return latestChange.newValue;
     }
 
-    // Slow path: compute correct plain text, then merge into original Lexical JSON
+    // Slow path: compute correct plain text first
     const correctPlainText = await getCompleteProposedVersion(submissionId, field, env);
     if (!correctPlainText) {
       return null;
     }
 
-    // Get the original submission's rich text to use as the Lexical structure base
+    // Try to find a pending change whose richTextNewValue matches the computed text.
+    // This preserves all inline formatting (bold, italic, etc.) instead of losing it
+    // through mergeTextIntoLexicalJson.
+    const latestPending = pendingChanges[pendingChanges.length - 1];
+    if (latestPending?.richTextNewValue) {
+      try {
+        const parsed = JSON.parse(latestPending.richTextNewValue);
+        const richTextPlain = extractPlainTextFromLexical(parsed);
+        if (richTextPlain === correctPlainText) {
+          return latestPending.richTextNewValue;
+        }
+      } catch { /* fall through to merge */ }
+    }
+
+    // Fallback: merge plain text into original Lexical JSON structure
     const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
     if (submission?.richTextContent) {
       return mergeTextIntoLexicalJson(submission.richTextContent, correctPlainText);
@@ -847,7 +861,29 @@ export const getChangeHistory = async (
   }
 };
 
-// Helper: Merge plain text into Lexical JSON (replaces text in first paragraph/heading node)
+// Helper: Extract plain text from a parsed Lexical JSON object
+function extractPlainTextFromLexical(lexical: any): string {
+  if (!lexical?.root?.children) return '';
+  const lines: string[] = [];
+  for (const block of lexical.root.children) {
+    if (block.type === 'paragraph' || block.type === 'heading') {
+      const texts: string[] = [];
+      if (Array.isArray(block.children)) {
+        for (const child of block.children) {
+          if (child.type === 'text') {
+            texts.push(child.text || '');
+          }
+        }
+      }
+      lines.push(texts.join(''));
+    }
+  }
+  return lines.join('\n');
+}
+
+// Helper: Merge plain text into Lexical JSON (replaces text in paragraph/heading nodes)
+// IMPORTANT: When a paragraph's text hasn't changed, all child nodes are preserved
+// (keeping bold, italic, underline, and other inline formatting intact).
 export function mergeTextIntoLexicalJson(originalLexical: string, newText: string): string {
   try {
     const json = JSON.parse(originalLexical);
@@ -862,20 +898,76 @@ export function mergeTextIntoLexicalJson(originalLexical: string, newText: strin
     );
 
     // Replace text in each paragraph, matching by index.
-    // Collapse all text nodes into a single node to avoid duplicates
-    // (e.g., when richTextNewValue contains multiple formatted segments).
     for (let i = 0; i < textNodes.length; i++) {
       const node = textNodes[i];
       if (!Array.isArray(node.children) || node.children.length === 0) continue;
 
       const lineText = i < lines.length ? lines[i] : '';
-      const firstTextIdx = node.children.findIndex((n: any) => n.type === 'text');
-      if (firstTextIdx >= 0) {
-        node.children[firstTextIdx].text = lineText;
-        // Remove all other text nodes to prevent duplicate content
-        node.children = node.children.filter((n: any, idx: number) =>
-          n.type !== 'text' || idx === firstTextIdx
+
+      // Get the current concatenated text from all text-type children
+      const currentText = node.children
+        .filter((n: any) => n.type === 'text')
+        .map((n: any) => n.text || '')
+        .join('');
+
+      // If text is unchanged, skip this paragraph entirely — this preserves
+      // all inline formatting (bold, italic, underline, strikethrough, etc.)
+      if (lineText === currentText) continue;
+
+      // Text changed — we need to update. Try to distribute text across
+      // existing nodes to preserve as much formatting as possible.
+      const textChildren = node.children.filter((n: any) => n.type === 'text');
+      const nonTextChildren = node.children.filter((n: any) => n.type !== 'text');
+
+      if (textChildren.length <= 1) {
+        // Single text node or no text nodes — simple replacement
+        const firstTextIdx = node.children.findIndex((n: any) => n.type === 'text');
+        if (firstTextIdx >= 0) {
+          node.children[firstTextIdx].text = lineText;
+        }
+      } else {
+        // Multiple formatted text nodes. Try to redistribute text across
+        // existing nodes by mapping character positions.
+        let remaining = lineText;
+        let usedNodes = 0;
+
+        for (let j = 0; j < textChildren.length; j++) {
+          const origLen = (textChildren[j].text || '').length;
+          if (j === textChildren.length - 1) {
+            // Last text node gets all remaining text
+            textChildren[j].text = remaining;
+            usedNodes++;
+          } else if (remaining.length === 0) {
+            // No more text to distribute — remove excess nodes
+            break;
+          } else {
+            // Distribute proportionally based on original length
+            const portion = remaining.substring(0, origLen);
+            textChildren[j].text = portion;
+            remaining = remaining.substring(origLen);
+            usedNodes++;
+          }
+        }
+
+        // Rebuild children: non-text nodes + used text nodes (remove empty ones)
+        const keptTextNodes = textChildren.slice(0, usedNodes).filter(
+          (n: any) => n.text !== ''
         );
+        // Reconstruct children preserving original order (interleaved non-text nodes)
+        const newChildren: any[] = [];
+        let textIdx = 0;
+        let nonTextIdx = 0;
+        for (const child of node.children) {
+          if (child.type === 'text') {
+            if (textIdx < keptTextNodes.length) {
+              newChildren.push(keptTextNodes[textIdx]);
+              textIdx++;
+            }
+          } else {
+            newChildren.push(child);
+          }
+        }
+        node.children = newChildren;
       }
     }
 

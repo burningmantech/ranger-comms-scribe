@@ -12,7 +12,9 @@ import {
   ElementNode,
   $nodesOfType,
   $createTextNode,
+  $createParagraphNode,
 } from 'lexical';
+import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
@@ -957,7 +959,7 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleResolve = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { changeId, action, deletedTexts, replacementPairs, insertedTexts } = customEvent.detail;
+      const { changeId, action, deletedTexts, replacementPairs, insertedTexts, formatChanges } = customEvent.detail;
       if (changeId && action) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
@@ -1101,6 +1103,128 @@ export default function TrackedChangesPlugin({
                     }
                     found = true;
                     break;
+                  }
+                }
+              }
+            }
+          }
+
+          // Handle formatting changes (block type + inline format reversions)
+          if (action === 'reject' && Array.isArray(formatChanges) && formatChanges.length > 0) {
+            console.log('[FORMAT-REVERT] Starting format revert for', formatChanges.length, 'changes:', JSON.stringify(formatChanges));
+            const root = $getRoot();
+            const blocks = root.getChildren();
+
+            for (const fc of formatChanges) {
+              if (fc.type === 'inline' && fc.fromFormat !== undefined && fc.toFormat !== undefined) {
+                // Inline format revert: find the text containing fc.text and
+                // restore the original format.  Lexical SPLITS nodes when adding
+                // format (bold "nothing" → 3 nodes) and MERGES them when removing
+                // format (unbold → 1 node).  So the target text may be an exact
+                // node OR a substring within a larger merged node.
+                //
+                // Search recursively through the entire tree to handle nested
+                // structures (list items, links, etc.) where text nodes aren't
+                // direct children of root blocks.
+                let found = false;
+
+                const searchAndRevertFormat = (nodes: LexicalNode[]): void => {
+                  for (const node of nodes) {
+                    if (found) break;
+
+                    if ($isTextNode(node)) {
+                      const content = node.getTextContent();
+
+                      // Case 1: exact match (node was split for this format span)
+                      if (content === fc.text) {
+                        console.log(`[FORMAT-REVERT] Case 1: Exact match "${fc.text}" — setFormat(${fc.fromFormat}), was format=${node.getFormat()}`);
+                        node.setFormat(fc.fromFormat);
+                        found = true;
+                        return;
+                      }
+
+                      // Case 2: substring match (node was merged after format removal)
+                      const idx = content.indexOf(fc.text);
+                      if (idx !== -1) {
+                        console.log(`[FORMAT-REVERT] Case 2: Substring match "${fc.text}" in "${content}" at idx=${idx} — splitting and setFormat(${fc.fromFormat})`);
+                        const splitPoints: number[] = [];
+                        if (idx > 0) splitPoints.push(idx);
+                        splitPoints.push(idx + fc.text.length);
+                        const parts = node.splitText(...splitPoints);
+                        const targetIdx = idx > 0 ? 1 : 0;
+                        if (parts[targetIdx]) {
+                          parts[targetIdx].setFormat(fc.fromFormat);
+                        }
+                        found = true;
+                        return;
+                      }
+                    }
+
+                    // Recurse into element nodes (paragraphs, list items, links, etc.)
+                    if ($isElementNode(node)) {
+                      searchAndRevertFormat(node.getChildren());
+                    }
+                  }
+                };
+
+                searchAndRevertFormat(blocks);
+                if (!found) {
+                  console.warn(`[FORMAT-REVERT] NOT FOUND: text="${fc.text}" in any block`);
+                }
+              } else if (fc.type === 'indent' && fc.fromIndent !== undefined && fc.toIndent !== undefined) {
+                // Indent revert: find the element by text content and restore indent
+                let found = false;
+                const searchAndRevertIndent = (nodes: LexicalNode[]) => {
+                  for (const node of nodes) {
+                    if (found) break;
+                    if (!$isElementNode(node)) continue;
+                    const nodeText = node.getTextContent();
+                    if (nodeText === fc.text && typeof node.setIndent === 'function') {
+                      console.log(`[FORMAT-REVERT] Indent revert: "${fc.text}" indent ${fc.toIndent} → ${fc.fromIndent}`);
+                      node.setIndent(fc.fromIndent!);
+                      found = true;
+                      break;
+                    }
+                    // Recurse into children (e.g. list items inside lists)
+                    searchAndRevertIndent(node.getChildren());
+                  }
+                };
+                searchAndRevertIndent(blocks);
+                if (!found) {
+                  console.warn(`[FORMAT-REVERT] Indent revert NOT FOUND: text="${fc.text}"`);
+                }
+              } else {
+                // Block type revert: find the block by matching text content
+                for (const block of blocks) {
+                  if (!$isElementNode(block)) continue;
+                  const blockType = block.getType();
+                  const blockText = block.getTextContent();
+
+                  // Match: current block type matches the "to" type and text matches
+                  if (blockType === fc.toType && blockText === fc.text) {
+                    // Also check heading tag if applicable
+                    if (fc.toType === 'heading' && 'getTag' in block) {
+                      const currentTag = (block as any).getTag();
+                      if (currentTag !== fc.toTag) continue;
+                    }
+
+                    // Create the target node (reverting to the "from" type)
+                    let newBlock: ElementNode;
+                    if (fc.fromType === 'heading' && fc.fromTag) {
+                      newBlock = $createHeadingNode(fc.fromTag as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
+                    } else {
+                      newBlock = $createParagraphNode();
+                    }
+
+                    // Move all children to the new block
+                    const children = block.getChildren();
+                    for (const child of children) {
+                      newBlock.append(child);
+                    }
+
+                    // Replace the old block with the new one
+                    block.replace(newBlock);
+                    break; // Found and reverted, move to next format change
                   }
                 }
               }

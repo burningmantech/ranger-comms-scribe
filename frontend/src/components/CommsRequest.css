@@ -10,9 +10,13 @@
 
 .wizard-body {
   display: grid;
-  grid-template-columns: 1fr 240px;
+  grid-template-columns: 1fr;
   gap: 20px;
   align-items: start;
+}
+
+.wizard-body.has-sidebar {
+  grid-template-columns: 1fr 240px;
 }
 
 .wizard-main {
@@ -26,7 +30,7 @@
 }
 
 @media (max-width: 900px) {
-  .wizard-body {
+  .wizard-body.has-sidebar {
     grid-template-columns: 1fr;
   }
 }
