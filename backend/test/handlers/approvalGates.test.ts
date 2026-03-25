@@ -18,7 +18,7 @@ jest.mock('../../src/services/trackedChangesService', () => ({
   getTrackedChanges: jest.fn(),
 }));
 
-import { computeApprovalGates } from '../../src/handlers/contentSubmission';
+import { computeApprovalGates, recomputeApprovalStatus } from '../../src/handlers/contentSubmission';
 import { ContentSubmission, ContentApproval, UserType, CouncilRole, ApprovalGates } from '../../src/types';
 import { getObject } from '../../src/services/cacheService';
 import { getCouncilManagersForRole } from '../../src/services/councilManagerService';
@@ -101,8 +101,8 @@ describe('computeApprovalGates', () => {
     expect(gates.commsCadre.approverName).toBeUndefined();
     expect(gates.commsCadre.date).toBeUndefined();
 
-    // Required approvers: met (vacuously — 0 of 0)
-    expect(gates.requiredApprovers.met).toBe(true);
+    // Required approvers: not met (empty list no longer vacuously true)
+    expect(gates.requiredApprovers.met).toBe(false);
     expect(gates.requiredApprovers.approved).toBe(0);
     expect(gates.requiredApprovers.total).toBe(0);
     expect(gates.requiredApprovers.details).toEqual([]);
@@ -600,7 +600,7 @@ describe('computeApprovalGates', () => {
 
     expect(gates.councilManager.met).toBe(false);
     expect(gates.commsCadre.met).toBe(false);
-    expect(gates.requiredApprovers.met).toBe(true);
+    expect(gates.requiredApprovers.met).toBe(false);
     expect(gates.trackedChanges.met).toBe(true);
   });
 
@@ -640,5 +640,36 @@ describe('computeApprovalGates', () => {
 
     expect(gates.commsCadre.met).toBe(true);
     expect(gates.commsCadre.comment).toBe('Approved with minor notes');
+  });
+});
+
+describe('recomputeApprovalStatus — empty required approvers', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetCouncilManagersForRole.mockResolvedValue([]);
+    mockGetObject.mockResolvedValue(null);
+    mockGetTrackedChanges.mockResolvedValue([]);
+  });
+
+  it('should NOT mark submission as approved when requiredApprovers is empty, even with council + comms cadre approval', async () => {
+    mockGetCouncilManagersForRole.mockImplementation(async (role) => {
+      if (role === CouncilRole.CommunicationsManager) {
+        return [{ id: 'cm-1', userId: 'u', role: CouncilRole.CommunicationsManager, email: 'council@example.com', name: 'Council', active: true, createdAt: '', updatedAt: '' }];
+      }
+      return [];
+    });
+    mockGetObject.mockResolvedValue([{ email: 'cadre@example.com', active: true }]);
+
+    const submission = makeSubmission({
+      requiredApprovers: [],
+      status: 'in_review',
+      approvals: [
+        makeApproval({ approverEmail: 'council@example.com', approverType: UserType.CouncilManager, status: 'approved' }),
+        makeApproval({ approverEmail: 'cadre@example.com', approverType: UserType.CommsCadre, status: 'approved' }),
+      ],
+    });
+
+    const result = await recomputeApprovalStatus(submission, mockEnv);
+    expect(result.status).toBe('in_review');
   });
 });

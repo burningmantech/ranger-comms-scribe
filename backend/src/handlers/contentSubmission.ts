@@ -13,7 +13,7 @@ import { getTrackedChanges } from '../services/trackedChangesService';
 export const router = AutoRouter({ base: '/api/content' });
 
 // Helper: recompute approval status using unique latest decisions and membership lists
-async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
+export async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
   // Deduplicate by latest decision per approver
   const approvalsByApprover = new Map<string, ContentApproval>();
   for (const a of submission.approvals || []) {
@@ -33,7 +33,7 @@ async function recomputeApprovalStatus(submission: ContentSubmission, env: any):
   // Normalize required approvers
   const required = (submission.requiredApprovers || []).map(e => (e || '').trim().toLowerCase());
 
-  const allRequiredApproversApproved = required.every(email =>
+  const allRequiredApproversApproved = required.length > 0 && required.every(email =>
     uniqueApprovals.some(a => (a.approverEmail || '').trim().toLowerCase() === email && a.status === 'approved')
   );
 
@@ -166,7 +166,7 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
       comment: commsCadreApproval?.comment,
     },
     requiredApprovers: {
-      met: required.length === 0 || approvedCount === required.length,
+      met: required.length > 0 && approvedCount === required.length,
       approved: approvedCount,
       total: required.length,
       details: requiredDetails,
