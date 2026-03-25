@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { ContentEditable } from '@lexical/react/LexicalContentEditable';
-import { HistoryPlugin } from '@lexical/react/LexicalHistoryPlugin';
+import TransactionHistoryPlugin from './plugins/TransactionHistoryPlugin';
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin';
 import { AutoFocusPlugin } from '@lexical/react/LexicalAutoFocusPlugin';
 import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
@@ -20,6 +20,8 @@ import { $getRoot, $createParagraphNode, $createTextNode } from 'lexical';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { ToolbarPlugin } from './plugins/ToolbarPlugin';
 import { ImagePlugin } from './plugins/ImagePlugin';
+import ImageDragPlugin from './plugins/ImageDragPlugin';
+import ImageResizePlugin from './plugins/ImageResizePlugin';
 import { ImageNode } from './nodes/ImageNode';
 import { CheckboxNode } from './nodes/CheckboxNode';
 import { DraftJsImportPlugin } from './plugins/DraftJsImportPlugin';
@@ -34,12 +36,14 @@ import FontFamilyPlugin from './plugins/FontFamilyPlugin';
 import AlignmentPlugin from './plugins/AlignmentPlugin';
 import QuotePlugin from './plugins/QuotePlugin';
 import { SuggestionNode } from './nodes/SuggestionNode';
+import { DeletedTextNode } from './nodes/DeletedTextNode';
 import SuggestionPlugin from './plugins/SuggestionPlugin';
 import './LexicalEditor.css';
 import './styles/TableControlsPlugin.css';
 import './styles/IndentationStyles.css';
 import './styles/SuggestionStyles.css';
 import './styles/ContextMenuStyles.css';
+import './styles/ImageResizePlugin.css';
 
 import { CursorPosition } from '../../services/websocketService';
 import CollaborativeCursorPlugin, { RemoteCursor } from './plugins/CollaborativeCursorPlugin';
@@ -295,6 +299,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       ImageNode,
       CheckboxNode,
       SuggestionNode,
+      DeletedTextNode,
     ],
     onError: (error: Error) => {
       console.error('Lexical Editor Error:', error);
@@ -337,7 +342,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
             />
             {!readOnly && <TableControlsPlugin />}
           </div>
-          <HistoryPlugin />
+          <TransactionHistoryPlugin transactionManager={null} />
           {!readOnly && <AutoFocusPlugin />}
           <OnChangePlugin onChange={handleChange} />
           <ListPlugin />
@@ -349,6 +354,8 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
             <DraftJsImportPlugin initialContent={initialContent} />
           )}
           <ImagePlugin onImageSelect={onImageSelect} currentUser={currentUser} />
+          {!readOnly && <ImageDragPlugin />}
+          {!readOnly && <ImageResizePlugin />}
           <IndentationPlugin />
           <TextColorPlugin />
           <FontSizePlugin />

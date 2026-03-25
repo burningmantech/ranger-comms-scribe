@@ -2,7 +2,8 @@ import { Env } from '../utils/sessionManager';
 import { getUserNotificationSettings, getUser, getAllUsers } from './userService';
 import { getGroup } from './userService';
 import { sendReplyNotification, sendGroupContentNotification } from '../utils/email';
-import { User, Group } from '../types';
+import { User, Group, AppNotification, NotificationType } from '../types';
+import { putObject, getObject } from './cacheService';
 
 // Use the frontend URL for links in emails
 const FRONTEND_URL = 'https://scrivenly.com';
@@ -164,4 +165,103 @@ export async function notifyGroupAboutNewContent(
     console.error('Error sending group content notifications:', error);
     return { success: false, emailsSent: 0 };
   }
+}
+
+// =============================================================================
+// In-App Notifications
+// =============================================================================
+
+interface CreateNotificationParams {
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  submissionId?: string;
+  submissionTitle?: string;
+  actorName?: string;
+}
+
+export async function createInAppNotification(
+  params: CreateNotificationParams,
+  env: Env
+): Promise<AppNotification | null> {
+  try {
+    const notification: AppNotification = {
+      id: crypto.randomUUID(),
+      userId: params.userId,
+      type: params.type,
+      title: params.title,
+      message: params.message,
+      submissionId: params.submissionId,
+      submissionTitle: params.submissionTitle,
+      actorName: params.actorName,
+      read: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    await putObject(`notifications/${params.userId}/${notification.id}`, notification, env);
+    return notification;
+  } catch (error) {
+    console.error('Error creating in-app notification:', error);
+    return null;
+  }
+}
+
+export async function notifyApprovalDecision(
+  submissionId: string,
+  submissionTitle: string,
+  submittedBy: string,
+  decision: 'approved' | 'rejected',
+  actorName: string,
+  env: Env
+): Promise<void> {
+  const type: NotificationType = decision === 'approved' ? 'approval_received' : 'rejection_received';
+  const verb = decision === 'approved' ? 'approved' : 'rejected';
+
+  await createInAppNotification({
+    userId: submittedBy,
+    type,
+    title: `Submission ${verb}`,
+    message: `${actorName} ${verb} "${submissionTitle}"`,
+    submissionId,
+    submissionTitle,
+    actorName,
+  }, env);
+}
+
+export async function notifyTrackedChanges(
+  submissionId: string,
+  submissionTitle: string,
+  submittedBy: string,
+  changerName: string,
+  changeCount: number,
+  env: Env
+): Promise<void> {
+  await createInAppNotification({
+    userId: submittedBy,
+    type: 'changes_made',
+    title: 'Changes made',
+    message: `${changerName} made ${changeCount} edit${changeCount !== 1 ? 's' : ''} to "${submissionTitle}"`,
+    submissionId,
+    submissionTitle,
+    actorName: changerName,
+  }, env);
+}
+
+export async function notifyAssignedAsApprover(
+  submissionId: string,
+  submissionTitle: string,
+  approverEmail: string,
+  assignerName: string,
+  env: Env
+): Promise<void> {
+  await createInAppNotification({
+    userId: approverEmail,
+    type: 'assigned_as_approver',
+    title: 'Review requested',
+    message: `${assignerName} requested your review on "${submissionTitle}"`,
+    submissionId,
+    submissionTitle,
+    actorName: assignerName,
+  }, env);
 }

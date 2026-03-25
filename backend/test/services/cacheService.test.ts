@@ -54,8 +54,8 @@ describe('Cache Service', () => {
       
       // Basic SQL parsing logic for INSERT/DELETE operations
       if (query.includes('INSERT OR REPLACE') && params.length >= 4) {
-        const [key, value, lastUpdated, ttl] = params;
-        mockD1Storage[key] = { key, value, lastUpdated, ttl };
+        const [key, value, last_updated, ttl] = params;
+        mockD1Storage[key] = { key, value, last_updated, ttl };
       } else if (query.includes('DELETE') && params.length > 0) {
         if (query.includes('LIKE')) {
           // For prefix deletion
@@ -151,7 +151,7 @@ describe('Cache Service', () => {
       // Mock the D1 storage (simulating what would happen in the real D1)
       mockD1Storage['test-key'] = {
         value: JSON.stringify(testData),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       
@@ -167,7 +167,7 @@ describe('Cache Service', () => {
       // Set expired entry directly in mock storage
       mockD1Storage['expired-key'] = {
         value: JSON.stringify(testData),
-        lastUpdated: Date.now() - 4000000, // Set a time in the past
+        last_updated: Date.now() - 4000000, // Set a time in the past
         ttl: 3600
       };
       
@@ -184,7 +184,7 @@ describe('Cache Service', () => {
       // Set up an item in mock storage
       mockD1Storage['remove-key'] = {
         value: JSON.stringify({ data: 'to be removed' }),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       
@@ -205,17 +205,17 @@ describe('Cache Service', () => {
       // Set up items in mock storage
       mockD1Storage['prefix-key1'] = {
         value: JSON.stringify({ id: 1 }),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       mockD1Storage['prefix-key2'] = {
         value: JSON.stringify({ id: 2 }),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       mockD1Storage['other-key'] = {
         value: JSON.stringify({ id: 3 }),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       
@@ -234,12 +234,12 @@ describe('Cache Service', () => {
       // Set up expired and valid items in mock storage
       mockD1Storage['expired-key1'] = {
         value: JSON.stringify({ id: 1 }),
-        lastUpdated: Date.now() - 4000000, // expired
+        last_updated: Date.now() - 4000000, // expired
         ttl: 3600
       };
       mockD1Storage['valid-key'] = {
         value: JSON.stringify({ id: 2 }),
-        lastUpdated: Date.now(), // still valid
+        last_updated: Date.now(), // still valid
         ttl: 3600
       };
       
@@ -259,7 +259,7 @@ describe('Cache Service', () => {
       // Set up the cache entry
       mockD1Storage['cached-key'] = {
         value: JSON.stringify(testData),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       
@@ -345,7 +345,7 @@ describe('Cache Service', () => {
       // Setup cache with the object
       mockD1Storage['delete-key'] = {
         value: JSON.stringify({ some: 'data' }),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       
@@ -403,7 +403,7 @@ describe('Cache Service', () => {
       // Set up cache entry to simulate what would happen after first request
       mockD1Storage['integration-key'] = {
         value: JSON.stringify(testObject),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       
@@ -421,7 +421,7 @@ describe('Cache Service', () => {
       // 4. Get the updated object
       mockD1Storage['integration-key'] = {
         value: JSON.stringify(updatedObject),
-        lastUpdated: Date.now(),
+        last_updated: Date.now(),
         ttl: 3600
       };
       

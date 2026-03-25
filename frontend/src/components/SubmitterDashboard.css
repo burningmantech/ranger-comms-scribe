@@ -1,0 +1,153 @@
+/* =============================================================================
+   SubmitterDashboard — Three-column triage layout for submitters
+   ============================================================================= */
+
+.submitter-dashboard--columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 24px;
+  padding: 0;
+}
+
+/* Empty State (full-width, no submissions at all) */
+
+.submitter-dashboard__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 64px 24px;
+  text-align: center;
+}
+
+.submitter-dashboard__empty i {
+  font-size: 48px;
+  color: var(--text-medium);
+  opacity: 0.4;
+}
+
+.submitter-dashboard__empty h3 {
+  font-family: 'Poppins', sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin: 0;
+}
+
+.submitter-dashboard__empty p {
+  font-size: 14px;
+  color: var(--text-medium);
+  margin: 0;
+}
+
+/* Column */
+
+.submitter-dashboard__column {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+}
+
+.submitter-dashboard__column-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid transparent;
+}
+
+.submitter-dashboard__column--attention .submitter-dashboard__column-header {
+  border-bottom-color: var(--danger);
+}
+
+.submitter-dashboard__column--review .submitter-dashboard__column-header {
+  border-bottom-color: var(--accent-gold);
+}
+
+.submitter-dashboard__column--completed .submitter-dashboard__column-header {
+  border-bottom-color: #ccc;
+}
+
+.submitter-dashboard__column-header h3 {
+  font-family: 'Poppins', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin: 0;
+}
+
+.submitter-dashboard__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 12px;
+  background: var(--primary-light);
+  font-family: 'Poppins', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.submitter-dashboard__column--attention .submitter-dashboard__count {
+  background: #fee2e2;
+  color: var(--danger);
+}
+
+/* Cards List */
+
+.submitter-dashboard__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Card border accent per column */
+.submitter-dashboard__column--attention .submission-card {
+  border-left: 3px solid var(--danger);
+}
+
+.submitter-dashboard__column--review .submission-card {
+  border-left: 3px solid var(--accent-gold);
+}
+
+.submitter-dashboard__column--completed .submission-card {
+  border-left: 3px solid #ccc;
+}
+
+/* Empty column state */
+
+.submitter-dashboard__empty-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 16px;
+  color: var(--text-medium);
+  font-size: 14px;
+}
+
+.submitter-dashboard__empty-col i {
+  font-size: 24px;
+  opacity: 0.5;
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 992px) {
+  .submitter-dashboard--columns {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+
+  .submitter-dashboard__column {
+    min-height: auto;
+  }
+}

@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { API_URL } from '../config';
 import { LogoutUserReact, USER_LOGIN_EVENT } from '../utils/userActions';
 import { User } from '../types';
+import NotificationBell from './NotificationBell';
 
 interface NavbarProps {
     skipNavbar?: boolean;
@@ -129,6 +130,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                 )}
                 {isLoggedIn ? (
                     <>
+                        <NotificationBell />
                         <Link to="/settings" className={`navbar-item ${currentPageSlug === 'settings' ? 'active' : ''}`} onClick={handleMenuItemClick}>Settings</Link>
                         <button onClick={() => { handleLogout(); handleMenuItemClick(); }} className="navbar-item logout-button">Logout</button>
                     </>

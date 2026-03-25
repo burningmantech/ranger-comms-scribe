@@ -18,6 +18,11 @@ export interface TrackedChangeResponse {
   approvedAt?: string;
   rejectedAt?: string;
   comments: ChangeComment[];
+  isIncremental?: boolean;
+  completeProposedVersion?: string;
+  richTextOldValue?: string;
+  richTextNewValue?: string;
+  regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
 }
 
 export interface ChangeComment {
@@ -68,6 +73,7 @@ class TrackedChangesService {
     field: string;
     oldValue: string;
     newValue: string;
+    regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
   }): Promise<TrackedChangeResponse> {
     try {
       const response = await fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {
@@ -100,6 +106,25 @@ class TrackedChangesService {
       }
     } catch (error) {
       console.error('Error updating change status:', error);
+      throw error;
+    }
+  }
+
+  async batchUpdateStatus(changeIds: string[], status: 'approved' | 'rejected', submissionId: string, comment?: string): Promise<{ results: Array<{ changeId: string; success: boolean; error?: string }> }> {
+    try {
+      const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
+        method: 'PUT',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({ changeIds, status, submissionId, comment })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to batch update: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error in batch status update:', error);
       throw error;
     }
   }
@@ -150,6 +175,87 @@ class TrackedChangesService {
     }
   }
 
+  /**
+   * Send multiple tracked changes in a single request.
+   * Used by orphaned-transaction recovery (save-on-close flow).
+   */
+  async batchCreate(
+    submissionId: string,
+    changes: Array<{
+      field: string;
+      oldValue: string;
+      newValue: string;
+      regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
+    }>,
+  ): Promise<TrackedChangeResponse[]> {
+    try {
+      const response = await fetch(
+        `${API_URL}/tracked-changes/submission/${submissionId}/batch`,
+        {
+          method: 'POST',
+          headers: this.getAuthHeaders(),
+          body: JSON.stringify({ changes }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to batch-create tracked changes: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error batch-creating tracked changes:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch the cascade dependency chain for a tracked change.
+   * Returns the changeId and an ordered list of dependent change IDs.
+   */
+  async getCascadeDependencies(
+    submissionId: string,
+    changeId: string,
+  ): Promise<{ changeId: string; dependentIds: string[] }> {
+    try {
+      const response = await fetch(
+        `${API_URL}/tracked-changes/submission/${submissionId}/cascade/${changeId}`,
+        { headers: this.getAuthHeaders() },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch cascade dependencies: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching cascade dependencies:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a tracked change from the backend.
+   */
+  async deleteTrackedChange(submissionId: string, changeId: string): Promise<void> {
+    try {
+      const response = await fetch(
+        `${API_URL}/tracked-changes/submission/${submissionId}/change/${changeId}`,
+        {
+          method: 'DELETE',
+          headers: this.getAuthHeaders(),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete tracked change: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error deleting tracked change:', error);
+      throw error;
+    }
+  }
+
   // Helper method to convert API response to frontend Change type
   convertToChange(apiChange: TrackedChangeResponse): Change {
     return {
@@ -158,7 +264,13 @@ class TrackedChangesService {
       oldValue: apiChange.oldValue,
       newValue: apiChange.newValue,
       changedBy: apiChange.changedByName || apiChange.changedBy,
-      timestamp: new Date(apiChange.timestamp)
+      timestamp: new Date(apiChange.timestamp),
+      status: apiChange.status,
+      isIncremental: apiChange.isIncremental,
+      completeProposedVersion: apiChange.completeProposedVersion,
+      richTextOldValue: apiChange.richTextOldValue,
+      richTextNewValue: apiChange.richTextNewValue,
+      regionMap: apiChange.regionMap,
     };
   }
 

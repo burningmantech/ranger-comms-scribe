@@ -5,7 +5,7 @@ export interface User {
   roles: UserRole[];
 }
 
-export type UserRole = 
+export type UserRole =
   | 'Public'
   | 'Member'
   | 'Lead'
@@ -51,6 +51,7 @@ export interface ContentSubmission {
   sentBy?: string;
   sentAt?: Date;
   proposedVersions?: Record<string, string>;
+  approvalGates?: ApprovalGates;
   approvalOverride?: boolean;
   approvalOverrideBy?: string;
   approvalOverrideReason?: string;
@@ -131,6 +132,59 @@ export interface Change {
   completeProposedVersion?: string;
   richTextOldValue?: string;
   richTextNewValue?: string;
+  regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
+}
+
+export interface ApprovalGateDetail {
+  met: boolean;
+  approver?: string;
+  approverName?: string;
+  date?: string;
+  comment?: string;
+}
+
+export interface ApprovalGates {
+  councilManager: ApprovalGateDetail;
+  commsCadre: ApprovalGateDetail;
+  requiredApprovers: {
+    met: boolean;
+    approved: number;
+    total: number;
+    details: Array<{
+      email: string;
+      name?: string;
+      status: 'approved' | 'rejected' | 'pending';
+      date?: string;
+    }>;
+  };
+  trackedChanges: {
+    met: boolean;
+    pending: number;
+    total: number;
+  };
+}
+
+export type TimelineEventType =
+  | 'submission_created'
+  | 'status_changed'
+  | 'approval_decision'
+  | 'tracked_changes_made'
+  | 'tracked_change_reviewed'
+  | 'comment_added'
+  | 'approver_added'
+  | 'approver_removed'
+  | 'override_approval';
+
+export interface TimelineEvent {
+  id: string;
+  type: TimelineEventType;
+  timestamp: string;
+  actorId: string;
+  actorName: string;
+  actorEmail: string;
+  summary: string;
+  details?: Record<string, any>;
+  groupKey?: string;
 }
 
 interface RolePermissions {

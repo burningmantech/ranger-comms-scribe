@@ -1,7 +1,7 @@
 import { GetSession, Env } from '../utils/sessionManager';
 import { MediaItem, UserType, User } from '../types';
 import { getUser, canAccessGroup } from '../services/userService';
-import { getObject, putObject, deleteObject, listObjects } from './cacheService';
+import { getObject, putObject, deleteObject, listObjects, removeFromCache } from './cacheService';
 
 // Define types for metadata objects
 interface MediaMetadata {
@@ -396,6 +396,10 @@ export const uploadMedia = async (
             }
         }
         
+        // Invalidate gallery listing caches so new uploads appear immediately
+        await removeFromCache('__list__:gallery/', env);
+        await removeFromCache('__list__:', env);
+
         // Create and return a MediaItem object
         const mediaItem: MediaItem = {
             id: mediaKey,

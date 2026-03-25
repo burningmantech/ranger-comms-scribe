@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
-import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR, COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getRoot, $createParagraphNode, $createTextNode, $createLineBreakNode, LexicalNode } from 'lexical';
+import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR, COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getRoot, $createParagraphNode, $createTextNode, $createLineBreakNode, $setSelection, LexicalNode, RangeSelection } from 'lexical';
 import { createCommand } from 'lexical';
 import { $createHeadingNode } from '@lexical/rich-text';
 import { $createListNode, $createListItemNode } from '@lexical/list';
@@ -40,6 +40,9 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
   
   // Ref to store the downloadAndReplaceImage function to avoid circular dependencies
   const downloadAndReplaceImageRef = useRef<((src: string, width?: string, height?: string, placeholderId?: string) => Promise<void>) | null>(null);
+
+  // Ref to save cursor selection when opening the image dialog (editor loses focus)
+  const savedSelectionRef = useRef<RangeSelection | null>(null);
 
   // Helper function to create a skeleton placeholder while image loads
   const createSkeletonImageData = useCallback((width?: string, height?: string, placeholderId?: string) => {
@@ -1246,7 +1249,17 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
     const removeInsertImageCommand = editor.registerCommand(
       INSERT_IMAGE_COMMAND,
       (payload: any) => {
-        
+        // Handle toolbar request to show the upload dialog
+        if (payload && payload.showDialog) {
+          // Save current selection so we can restore it after the dialog closes
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            savedSelectionRef.current = selection.clone() as RangeSelection;
+          }
+          setShowImageDialog(true);
+          return true;
+        }
+
         // Handle different payload structures
         const src = payload.src || payload.url;
         const altText = payload.altText || payload.alt || '';
@@ -1273,32 +1286,37 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
         testImg.src = src;
         
         editor.update(() => {
-          const selection = $getSelection();
+          // Restore saved selection if current selection is lost (e.g. after dialog interaction)
+          let selection = $getSelection();
+          if (!$isRangeSelection(selection) && savedSelectionRef.current) {
+            $setSelection(savedSelectionRef.current);
+            selection = $getSelection();
+            savedSelectionRef.current = null;
+          }
           const root = $getRoot();
-          
-          
-          
+
           if ($isRangeSelection(selection)) {
-            
-            // Add a paragraph after the image for text input
+            // Find the top-level block containing the cursor
+            const anchorNode = selection.anchor.getNode();
+            let topBlock: LexicalNode = anchorNode;
+            while (topBlock.getParent() && topBlock.getParent() !== root) {
+              topBlock = topBlock.getParent()!;
+            }
+
+            // Insert the image as a block after the current block,
+            // followed by a paragraph for continued typing
             const paragraphNode = $createParagraphNode();
-            
-            // Insert both image and paragraph together
-            selection.insertNodes([imageNode, paragraphNode]);
-            
-            // Move cursor to the new paragraph
+            topBlock.insertAfter(imageNode);
+            imageNode.insertAfter(paragraphNode);
             paragraphNode.select();
           } else {
             root.append(imageNode);
-            
+
             // Add a paragraph after the image for text input
             const paragraphNode = $createParagraphNode();
             root.append(paragraphNode);
-            // Move cursor to the new paragraph
             paragraphNode.select();
           }
-          
-          
         });
         
         return true;
@@ -1505,31 +1523,8 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
     });
   };
 
-  // Add image button to toolbar
-  useEffect(() => {
-    const toolbarElement = document.querySelector('.lexical-toolbar');
-    if (toolbarElement && !toolbarElement.querySelector('.image-toolbar-button')) {
-      const imageButton = document.createElement('button');
-      imageButton.className = 'lexical-toolbar-button image-toolbar-button';
-      imageButton.innerHTML = '🖼️';
-      imageButton.title = 'Insert Image';
-      imageButton.type = 'button';
-      
-      imageButton.addEventListener('click', (e) => {
-        e.preventDefault();
-        setShowImageDialog(true);
-      });
-      
-      toolbarElement.appendChild(imageButton);
-    }
-    
-    return () => {
-      const button = document.querySelector('.image-toolbar-button');
-      if (button) {
-        button.remove();
-      }
-    };
-  }, []);
+  // Image button is rendered by ToolbarPlugin, which dispatches INSERT_IMAGE_COMMAND
+  // with { showDialog: true } - handled by the command listener above
 
   return (
     <>
@@ -1766,19 +1761,6 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
             color: #666;
           }
 
-          .image-toolbar-button {
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 4px;
-            padding: 6px 12px;
-            margin: 0 2px;
-            cursor: pointer;
-            font-size: 14px;
-          }
-
-          .image-toolbar-button:hover {
-            background: #e9ecef;
-          }
         `
       }} />
     </>

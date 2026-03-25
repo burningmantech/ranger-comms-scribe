@@ -206,6 +206,58 @@ export interface ContentApproval {
   updatedAt: string;
 }
 
+export interface ApprovalGateDetail {
+  met: boolean;
+  approver?: string;
+  approverName?: string;
+  date?: string;
+  comment?: string;
+}
+
+export interface ApprovalGates {
+  councilManager: ApprovalGateDetail;
+  commsCadre: ApprovalGateDetail;
+  requiredApprovers: {
+    met: boolean;
+    approved: number;
+    total: number;
+    details: Array<{
+      email: string;
+      name?: string;
+      status: 'approved' | 'rejected' | 'pending';
+      date?: string;
+    }>;
+  };
+  trackedChanges: {
+    met: boolean;
+    pending: number;
+    total: number;
+  };
+}
+
+export type TimelineEventType =
+  | 'submission_created'
+  | 'status_changed'
+  | 'approval_decision'
+  | 'tracked_changes_made'
+  | 'tracked_change_reviewed'
+  | 'comment_added'
+  | 'approver_added'
+  | 'approver_removed'
+  | 'override_approval';
+
+export interface TimelineEvent {
+  id: string;
+  type: TimelineEventType;
+  timestamp: string;
+  actorId: string;
+  actorName: string;
+  actorEmail: string;
+  summary: string;
+  details?: Record<string, any>;
+  groupKey?: string; // For grouping related events (e.g., same author within 2 min)
+}
+
 export interface ContentChange {
   id: string;
   submissionId: string;
@@ -347,4 +399,46 @@ export interface CursorPosition {
   selectionStart?: number;
   selectionEnd?: number;
   timestamp: string;
+}
+
+export interface SubmissionTemplate {
+  id: string;
+  name: string;
+  description: string;
+  fields: {
+    audience?: string[];
+    signatureText?: string;
+    suggestedSubjectLine?: string;
+    description?: string;
+    [key: string]: any;
+  };
+  sortOrder: number;
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationType =
+  | 'approval_received'
+  | 'rejection_received'
+  | 'changes_made'
+  | 'assigned_as_approver'
+  | 'submission_waiting'
+  | 'ready_to_send'
+  | 'comment_on_change'
+  | 'comment_reply'
+  | 'changes_requested';
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  submissionId?: string;
+  submissionTitle?: string;
+  actorName?: string;
+  read: boolean;
+  createdAt: string;
 }
