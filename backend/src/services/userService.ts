@@ -4,11 +4,15 @@ import { hashPassword, verifyPassword } from '../utils/password';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
 import { DEFAULT_ROLES, Role } from './roleService';
 
-// Persist a user to R2 + cache (keyed by email)
+// Persist a user to R2 + cache (keyed by email, with UUID index)
 export async function saveUser(user: User, env: Env): Promise<void> {
   await putObject(`user/${user.email}`, user, env, {
     httpMetadata: { contentType: 'application/json' },
     customMetadata: { userId: user.id }
+  });
+  // Secondary index: UUID → email for fast lookup by either key
+  await putObject(`user-by-id/${user.id}`, { email: user.email }, env, {
+    httpMetadata: { contentType: 'application/json' }
   });
 }
 
@@ -88,39 +92,41 @@ export async function getUser(id: string, env: Env): Promise<User | null> {
 }
 
 export async function getUserInternal(id: string, env: Env): Promise<User | null> {
-  console.log('🔍 Getting user from storage:', id);
   try {
     if (!id) {
-      console.log('❌ No ID provided');
       return null;
     }
-    
-    // Try to get from cache first, then fallback to R2
+
+    // Try direct lookup (works when id is an email, since users are keyed by email)
     const user = await getObject<User>(`user/${id}`, env);
-    console.log('👤 Retrieved user from storage:', user);
-    
-    if (!user) {
-      console.log('❌ User not found in storage');
-      return null;
+    if (user) {
+      return ensureUserDefaults(user);
     }
-    
-    // Ensure user has a groups array
-    if (!user.groups) {
-      console.log('📝 Initializing empty groups array');
-      user.groups = [];
+
+    // If not found, id may be a UUID — check the secondary index
+    const index = await getObject<{ email: string }>(`user-by-id/${id}`, env);
+    if (index?.email) {
+      const user = await getObject<User>(`user/${index.email}`, env);
+      if (user) {
+        return ensureUserDefaults(user);
+      }
     }
-    
-    // Ensure user has a roles array
-    if (!user.roles) {
-      console.log('📝 Initializing empty roles array');
-      user.roles = [];
-    }
-    
-    return user;
+
+    return null;
   } catch (error) {
-    console.error(`❌ Error fetching user ${id}:`, error);
+    console.error(`Error fetching user ${id}:`, error);
     return null;
   }
+}
+
+function ensureUserDefaults(user: User): User {
+  if (!user.groups) {
+    user.groups = [];
+  }
+  if (!user.roles) {
+    user.roles = [];
+  }
+  return user;
 }
 
 export async function approveUser(id: string, env: Env): Promise<User | null> {

@@ -12,6 +12,8 @@ import { API_URL } from '../config';
 import TemplatePicker from './TemplatePicker';
 import AudienceCard from './AudienceCard';
 import FormSummarySidebar from './FormSummarySidebar';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 import './CommsRequest.css';
 
 const commsRequestSchema = z.object({
@@ -41,19 +43,17 @@ const AUDIENCE_LABELS: Record<string, string> = {
   newsletter: 'Include in Ranger Newsletter (sent over Ranger Announce)',
   singular: 'Singular announcement (outside of Ranger Newsletter)',
   allcom: 'Allcom',
-  website_fix: 'Website - fix',
-  website_update: 'Website - update',
+  website_update: 'Website - new or changed content',
   jrs: 'JRS/Event Ops/Other BMP Audience',
   event: "Let's plan an event",
   other: 'Other',
 };
 
 const AUDIENCE_CARDS = [
-  { id: 'newsletter', label: 'Newsletter', description: 'Included in the next Ranger newsletter — reaches all active Rangers', icon: 'fas fa-newspaper' },
-  { id: 'singular', label: 'Singular Announcement', description: 'A standalone announcement sent directly to all Rangers', icon: 'fas fa-bullhorn' },
+  { id: 'newsletter', label: 'Newsletter', description: 'Included in the next Ranger newsletter — sent over Ranger Announce', icon: 'fas fa-newspaper' },
+  { id: 'singular', label: 'Singular Announcement', description: 'A standalone announcement sent over Ranger Announce', icon: 'fas fa-bullhorn' },
   { id: 'allcom', label: 'Allcom', description: 'Broadcast to the full Allcom distribution list', icon: 'fas fa-broadcast-tower' },
-  { id: 'website_fix', label: 'Website Fix', description: 'Fix or correction to existing website content', icon: 'fas fa-wrench' },
-  { id: 'website_update', label: 'Website Update', description: 'New or updated content for the Ranger website', icon: 'fas fa-globe' },
+  { id: 'website_update', label: 'Website Update', description: 'New or changed content for the Ranger website', icon: 'fas fa-globe' },
   { id: 'jrs', label: 'JRS / Event Ops', description: 'Communication targeted at JRS, Event Ops, or other BMP teams', icon: 'fas fa-users' },
   { id: 'event', label: 'Plan an Event', description: 'Coordination for an upcoming Ranger event', icon: 'fas fa-calendar-alt' },
   { id: 'other', label: 'Other', description: 'Something else — describe below', icon: 'fas fa-ellipsis-h' },
@@ -74,6 +74,12 @@ export const CommsRequest: React.FC = () => {
   const userEmail = user?.email || '';
   const userId = user?.id || user?.email || '';
 
+  const getDefaultPublishBy = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  };
+
   const {
     register,
     handleSubmit,
@@ -90,6 +96,7 @@ export const CommsRequest: React.FC = () => {
       audience: [],
       urgentRequest: false,
       otherAudienceText: '',
+      publishBy: getDefaultPublishBy(),
     },
   });
 
@@ -135,17 +142,62 @@ export const CommsRequest: React.FC = () => {
     } catch { /* ignore parse errors */ }
   }, [setValue]);
 
-  const getMinDate = () => {
-    const days = urgentRequestValue ? 1 : 7;
+  const getTomorrow = () => {
     const d = new Date();
-    d.setDate(d.getDate() + days);
-    return d.toISOString().split('T')[0];
+    d.setDate(d.getDate() + 1);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const getOneWeekOut = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const isDateInUrgentRange = (date: Date) => {
+    const tomorrow = getTomorrow();
+    const oneWeek = getOneWeekOut();
+    return date >= tomorrow && date < oneWeek;
+  };
+
+  const getPublishByDateClassName = (date: Date) => {
+    if (isDateInUrgentRange(date)) {
+      return 'urgent-date';
+    }
+    return '';
+  };
+
+  const publishByDate = publishByValue ? new Date(publishByValue + 'T00:00:00') : null;
+
+  // Auto-check urgent when selecting a date within the next week
+  useEffect(() => {
+    if (!publishByValue) return;
+    const selected = new Date(publishByValue + 'T00:00:00');
+    if (isDateInUrgentRange(selected) && !urgentRequestValue) {
+      setValue('urgentRequest', true);
+    }
+  }, [publishByValue]);
+
+  // When unchecking urgent, ensure date is at least a week out
+  const handleUrgentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const isChecked = e.target.checked;
+    if (!isChecked && publishByValue) {
+      const selected = new Date(publishByValue + 'T00:00:00');
+      if (isDateInUrgentRange(selected)) {
+        // Reset date to one week out
+        setValue('publishBy', getDefaultPublishBy());
+      }
+    }
+    setValue('urgentRequest', isChecked);
   };
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [councilManagers, setCouncilManagers] = useState<any[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [approverEmails, setApproverEmails] = useState<string[]>(['']);
+  const [skipApprovers, setSkipApprovers] = useState(false);
   const [suggestions, setSuggestions] = useState<{ [key: number]: User[] }>({});
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<{ [key: number]: number }>({});
 
@@ -155,10 +207,10 @@ export const CommsRequest: React.FC = () => {
         const sessionId = localStorage.getItem('sessionId');
         if (!sessionId) return;
 
-        const usersResponse = await fetch(`${API_URL}/admin/users`, {
+        const usersResponse = await fetch(`${API_URL}/user/approvers`, {
           headers: { Authorization: `Bearer ${sessionId}` },
         });
-        if (!usersResponse.ok) throw new Error('Failed to fetch users');
+        if (!usersResponse.ok) throw new Error('Failed to fetch approvers');
         const usersData = await usersResponse.json();
         setAllUsers(usersData.users || []);
 
@@ -351,9 +403,9 @@ export const CommsRequest: React.FC = () => {
 
   const onSubmit = async (data: CommsRequestFormData) => {
     try {
-      const validApprovers = approverEmails.filter((e) => e.trim() !== '');
-      if (validApprovers.length === 0) {
-        setFormError('At least one approver is required');
+      const validApprovers = skipApprovers ? [] : approverEmails.filter((e) => e.trim() !== '');
+      if (!skipApprovers && validApprovers.length === 0) {
+        setFormError('Please add at least one approver, or select "I don\'t know who should approve this"');
         return;
       }
 
@@ -550,39 +602,26 @@ export const CommsRequest: React.FC = () => {
           {errors.audience && <div className="field-error">{errors.audience.message}</div>}
         </div>
 
-        <div className="form-row">
-          <div className="form-field">
-            <label>Owner <span className="required">*</span></label>
-            <Form.Control
-              type="text"
-              {...register('owner')}
-              placeholder="Who owns this content?"
-            />
-            <div className="field-hint">Cadre, team, or individual responsible for accuracy</div>
-            {errors.owner && <div className="field-error">{errors.owner.message}</div>}
-          </div>
-          <div className="form-field">
-            <label>Publish By <span className="required">*</span></label>
-            <Form.Control
-              type="date"
-              {...register('publishBy')}
-              min={getMinDate()}
-              onClick={(e: React.MouseEvent<HTMLInputElement>) => {
-                try { e.currentTarget.showPicker(); } catch {}
-              }}
-            />
-            {!urgentRequestValue && (
-              <div className="field-hint">Dates must be at least 7 days from today</div>
-            )}
-            {errors.publishBy && <div className="field-error">{errors.publishBy.message}</div>}
-          </div>
+        <div className="form-field">
+          <label>Owner <span className="required">*</span></label>
+          <Form.Control
+            type="text"
+            {...register('owner')}
+            placeholder="Who owns this content?"
+          />
+          <div className="field-hint">Cadre, team, or individual responsible for accuracy</div>
+          {errors.owner && <div className="field-error">{errors.owner.message}</div>}
         </div>
 
         <div className="form-field">
           <label
             className={`urgent-checkbox-label ${urgentRequestValue ? 'checked' : ''}`}
           >
-            <input type="checkbox" {...register('urgentRequest')} />
+            <input
+              type="checkbox"
+              checked={urgentRequestValue || false}
+              onChange={handleUrgentChange}
+            />
             <span>This is an urgent request</span>
           </label>
           {urgentRequestValue && (
@@ -598,6 +637,28 @@ export const CommsRequest: React.FC = () => {
           )}
         </div>
 
+        <div className="form-field">
+          <label>Publish By <span className="required">*</span></label>
+          <DatePicker
+            selected={publishByDate}
+            onChange={(date: Date | null) => {
+              if (date) {
+                const iso = date.toISOString().split('T')[0];
+                setValue('publishBy', iso, { shouldValidate: true });
+              }
+            }}
+            minDate={getTomorrow()}
+            dayClassName={(date: Date) => getPublishByDateClassName(date)}
+            dateFormat="yyyy-MM-dd"
+            className="form-control"
+            placeholderText="Select a date"
+          />
+          <div className="field-hint">
+            <span className="urgent-date-legend"></span> Dates within the next week are urgent
+          </div>
+          {errors.publishBy && <div className="field-error">{errors.publishBy.message}</div>}
+        </div>
+
         <div className="form-row">
           <div className="form-field">
             <label>Email <span className="required">*</span></label>
@@ -610,6 +671,7 @@ export const CommsRequest: React.FC = () => {
               {...register('replyToAddress')}
               placeholder="Who should recipients reply to?"
             />
+            <div className="field-hint">Every announcement includes a reply-to address at the top, what should it be?</div>
             {errors.replyToAddress && (
               <div className="field-error">{errors.replyToAddress.message}</div>
             )}
@@ -624,81 +686,111 @@ export const CommsRequest: React.FC = () => {
       <div className="wizard-card">
         <div className="wizard-card-header">
           <h3>Required Approvers</h3>
-          <p>Add at least one approver who will review this request.</p>
+          <p>Add approvers who should review this request, or let Comms Cadre assign them later.</p>
         </div>
 
-        <div className="approver-list">
-          {approverEmails.map((email, index) => {
-            const items = suggestions[index] || [];
-            const activeIdx = activeSuggestionIndex[index] ?? 0;
-            const showDropdown = items.length > 0;
+        <div className="form-field">
+          <label
+            className={`urgent-checkbox-label ${skipApprovers ? 'checked' : ''}`}
+            style={skipApprovers ? { borderColor: 'var(--accent-teal)', background: 'rgba(61, 104, 105, 0.05)' } : {}}
+          >
+            <input
+              type="checkbox"
+              checked={skipApprovers}
+              onChange={(e) => {
+                setSkipApprovers(e.target.checked);
+                if (e.target.checked) {
+                  setApproverEmails(['']);
+                  setFormError(null);
+                }
+              }}
+              style={{ accentColor: 'var(--accent-teal)' }}
+            />
+            <span>I don't know who should approve this</span>
+          </label>
+          {skipApprovers && (
+            <div className="field-hint" style={{ marginTop: 8 }}>
+              No problem — Comms Cadre will assign approvers after submission.
+            </div>
+          )}
+        </div>
 
-            return (
-              <div key={index} className="approver-row">
-                <div className="approver-input-wrap">
-                  <Form.Control
-                    type="email"
-                    value={email}
-                    onChange={(e) => handleEmailChange(index, e.target.value)}
-                    onKeyDown={(e) => handleEmailKeyDown(index, e)}
-                    onFocus={() => {
-                      if (!email) showCouncilManagerDefaults(index);
-                    }}
-                    onBlur={() => {
-                      setTimeout(() => {
-                        setSuggestions((prev) => ({ ...prev, [index]: [] }));
-                      }, 150);
-                    }}
-                    placeholder="Search by name or email..."
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  {showDropdown && (
-                    <div className="approver-dropdown">
-                      {items.slice(0, 6).map((u, i) => {
-                        const isManager = councilManagers.some((m) => m.email === u.email);
-                        return (
-                          <div
-                            key={u.email}
-                            className={`approver-dropdown-item ${i === activeIdx ? 'active' : ''}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              handleSuggestionClick(index, u.email);
-                            }}
-                          >
-                            <div className="approver-dropdown-info">
-                              <span className="approver-dropdown-name">
-                                {u.name || u.email.split('@')[0]}
-                              </span>
-                              <span className="approver-dropdown-email">{u.email}</span>
-                            </div>
-                            {isManager && (
-                              <span className="approver-badge-cm">Council Manager</span>
-                            )}
-                          </div>
-                        );
-                      })}
+        {!skipApprovers && (
+          <>
+            <div className="approver-list">
+              {approverEmails.map((email, index) => {
+                const items = suggestions[index] || [];
+                const activeIdx = activeSuggestionIndex[index] ?? 0;
+                const showDropdown = items.length > 0;
+
+                return (
+                  <div key={index} className="approver-row">
+                    <div className="approver-input-wrap">
+                      <Form.Control
+                        type="email"
+                        value={email}
+                        onChange={(e) => handleEmailChange(index, e.target.value)}
+                        onKeyDown={(e) => handleEmailKeyDown(index, e)}
+                        onFocus={() => {
+                          if (!email) showCouncilManagerDefaults(index);
+                        }}
+                        onBlur={() => {
+                          setTimeout(() => {
+                            setSuggestions((prev) => ({ ...prev, [index]: [] }));
+                          }, 150);
+                        }}
+                        placeholder="Search by name or email..."
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                      {showDropdown && (
+                        <div className="approver-dropdown">
+                          {items.slice(0, 6).map((u, i) => {
+                            const isManager = councilManagers.some((m) => m.email === u.email);
+                            return (
+                              <div
+                                key={u.email}
+                                className={`approver-dropdown-item ${i === activeIdx ? 'active' : ''}`}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  handleSuggestionClick(index, u.email);
+                                }}
+                              >
+                                <div className="approver-dropdown-info">
+                                  <span className="approver-dropdown-name">
+                                    {u.name || u.email.split('@')[0]}
+                                  </span>
+                                  <span className="approver-dropdown-email">{u.email}</span>
+                                </div>
+                                {isManager && (
+                                  <span className="approver-badge-cm">Council Manager</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                {approverEmails.length > 1 && (
-                  <button
-                    type="button"
-                    className="remove-approver-btn"
-                    onClick={() => removeApproverField(index)}
-                    title="Remove approver"
-                  >
-                    &times;
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                    {approverEmails.length > 1 && (
+                      <button
+                        type="button"
+                        className="remove-approver-btn"
+                        onClick={() => removeApproverField(index)}
+                        title="Remove approver"
+                      >
+                        &times;
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
-        <button type="button" className="add-approver-btn" onClick={addApproverField}>
-          + Add Approver
-        </button>
+            <button type="button" className="add-approver-btn" onClick={addApproverField}>
+              + Add Approver
+            </button>
+          </>
+        )}
       </div>
     </>
   );
