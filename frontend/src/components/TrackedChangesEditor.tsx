@@ -239,12 +239,8 @@ interface TrackedChangesEditorProps {
   onReject: (changeId: string) => void;
   onSuggestion: (suggestion: Change) => void;
   onUndo: (changeId: string) => void;
-  onApproveProposedVersion: (approverId: string, comment?: string) => void;
-  onRejectProposedVersion: (rejecterId: string, comment?: string) => void;
   onRefreshNeeded?: () => void;
   onRemoteChangeResolved?: (changeId: string, status: string) => void;
-  onSubmissionApprove?: (submission: ContentSubmission) => Promise<void> | void;
-  onSubmissionReject?: (submission: ContentSubmission) => Promise<void> | void;
   onBack?: () => void;
   onReset?: () => void;
   onDelete?: () => void;
@@ -302,12 +298,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onReject,
   onSuggestion,
   onUndo,
-  onApproveProposedVersion,
-  onRejectProposedVersion,
   onRefreshNeeded,
   onRemoteChangeResolved,
-  onSubmissionApprove,
-  onSubmissionReject,
   onBack,
   onReset,
   onDelete,
@@ -331,8 +323,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const editedProposedContentRef = useRef(editedProposedContent);
   const initialEditorContentRef = useRef<string>('');
   const [lastSavedProposedContent, setLastSavedProposedContent] = useState<string>('');
-  const [showProposedVersionApprovalDialog, setShowProposedVersionApprovalDialog] = useState(false);
-  const [proposedVersionApprovalComment, setProposedVersionApprovalComment] = useState('');
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [replyToComment, setReplyToComment] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
@@ -1878,23 +1868,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onUndo(changeId);
   }, [onUndo]);
 
-  // Handle proposed version approval
-  const handleProposedVersionApproval = useCallback(() => {
-    onApproveProposedVersion(currentUser.id, proposedVersionApprovalComment);
-    setProposedVersionApprovalComment('');
-    setShowProposedVersionApprovalDialog(false);
-
-    // Real-time status changes are now handled by CollaborativeEditor
-  }, [currentUser.id, proposedVersionApprovalComment, onApproveProposedVersion]);
-
-  // Handle proposed version rejection
-  const handleProposedVersionRejection = useCallback(() => {
-    onRejectProposedVersion(currentUser.id, proposedVersionApprovalComment);
-    setProposedVersionApprovalComment('');
-    setShowProposedVersionApprovalDialog(false);
-
-    // Real-time status changes are now handled by CollaborativeEditor
-  }, [currentUser.id, proposedVersionApprovalComment, onRejectProposedVersion]);
 
   // Scroll to and highlight matching text in the diff section when a change is clicked
   const scrollToChangeInDiff = useCallback((change: TrackedChange) => {
@@ -2738,28 +2711,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [sidebarCollapsed, sidebarAutoCollapsed, isSmallScreen]);
 
   // Check if user can approve the proposed version
-  const canApproveProposedVersion = useCallback(() => {
-    return currentUser.roles.includes('CommsCadre') ||
-      currentUser.roles.includes('CouncilManager') ||
-      currentUser.roles.includes('REVIEWER');
-  }, [currentUser.roles]);
-
-  // Check if proposed version is already approved
-  const isProposedVersionApproved = useMemo(() => {
-    return submission.approvals?.some(approval =>
-      approval.status === 'APPROVED' &&
-      approval.approverId !== submission.submittedBy
-    ) || false;
-  }, [submission.approvals, submission.submittedBy]);
-
-  // Get proposed version approval info
-  const proposedVersionApprovalInfo = useMemo(() => {
-    const approval = submission.approvals?.find(a =>
-      a.status === 'APPROVED' &&
-      a.approverId !== submission.submittedBy
-    );
-    return approval;
-  }, [submission.approvals, submission.submittedBy]);
 
   // Helper function to organize comments into a tree structure
   const organizeCommentsIntoTree = useCallback((comments: Comment[]) => {
@@ -3177,6 +3128,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   <input
                     type="text"
                     placeholder="Search by name or email..."
+                    autoComplete="new-password"
                     value={newApproverEmail}
                     onChange={(e) => handleApproverSearchChange(e.target.value)}
                     onFocus={() => { if (!newApproverEmail) showApproverDefaults(); }}
@@ -3261,52 +3213,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             {/* Proposed Version */}
             {activeTab === 'proposed' && <div className="proposed-version-section">
               {/* Action bar - only shown when there are actions available */}
-              {(submission.status === 'in_review' || (canApproveProposedVersion() && !isProposedVersionApproved) || (isProposedVersionApproved && proposedVersionApprovalInfo)) && (
-                <div className="proposed-actions-bar">
-                  {/* Submission-level Approve/Reject controls */}
-                  {submission.status === 'in_review' && (
-                    <>
-                      <button
-                        className={`btn btn-primary btn-sm ${hasApprovedSubmission || hasPendingTrackedChanges ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        onClick={() => { if (!hasApprovedSubmission && !hasPendingTrackedChanges) { onSubmissionApprove ? onSubmissionApprove(submission) : undefined; } }}
-                        disabled={hasApprovedSubmission || hasPendingTrackedChanges}
-                        title={hasPendingTrackedChanges ? 'Resolve all pending tracked changes before approving' : 'Approve submission'}
-                      >
-                        Approve
-                      </button>
-                      <button
-                        className={`btn btn-danger btn-sm ${hasRejectedSubmission ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        onClick={() => { if (!hasRejectedSubmission) { onSubmissionReject ? onSubmissionReject(submission) : undefined; } }}
-                        disabled={hasRejectedSubmission}
-                        title="Reject submission"
-                      >
-                        Reject
-                      </button>
-                    </>
-                  )}
-                  {canApproveProposedVersion() && !isProposedVersionApproved && (
-                    <button
-                      className="btn btn-primary approve-button"
-                      onClick={() => setShowProposedVersionApprovalDialog(true)}
-                      title="Approve proposed version"
-                    >
-                      Approve Proposed
-                    </button>
-                  )}
-                  {isProposedVersionApproved && proposedVersionApprovalInfo && (
-                    <div className="approval-info">
-                      <span className="approved-badge">
-                        Approved by {proposedVersionApprovalInfo.approverId}
-                      </span>
-                      {proposedVersionApprovalInfo.comment && (
-                        <span className="approval-comment">
-                          "{proposedVersionApprovalInfo.comment}"
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
               <div className="proposed-content">
                 <div className="rich-text-editor-container">
                   <CollaborativeEditor
@@ -4536,33 +4442,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <button className="btn btn-neutral" onClick={() => setShowSuggestionDialog(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleSuggestionSubmit}>
                 Suggest Edit
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Proposed Version Approval Dialog */}
-      {showProposedVersionApprovalDialog && (
-        <div className="dialog-overlay" onClick={() => setShowProposedVersionApprovalDialog(false)}>
-          <div className="dialog" onClick={e => e.stopPropagation()}>
-            <h3>Approve Proposed Version</h3>
-            <div className="approval-options">
-              <p>Are you sure you want to approve this proposed version?</p>
-              <textarea
-                value={proposedVersionApprovalComment}
-                onChange={(e) => setProposedVersionApprovalComment(e.target.value)}
-                placeholder="Add an optional comment about your approval..."
-                rows={3}
-              />
-            </div>
-            <div className="dialog-actions">
-              <button className="btn btn-neutral" onClick={() => setShowProposedVersionApprovalDialog(false)}>Cancel</button>
-              <button className="btn btn-danger" onClick={handleProposedVersionRejection}>
-                Reject
-              </button>
-              <button className="btn btn-primary" onClick={handleProposedVersionApproval}>
-                Approve
               </button>
             </div>
           </div>

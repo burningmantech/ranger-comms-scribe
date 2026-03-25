@@ -740,7 +740,7 @@ export const CommsRequest: React.FC = () => {
                           }, 150);
                         }}
                         placeholder="Search by name or email..."
-                        autoComplete="off"
+                        autoComplete="new-password"
                         spellCheck={false}
                       />
                       {showDropdown && (
