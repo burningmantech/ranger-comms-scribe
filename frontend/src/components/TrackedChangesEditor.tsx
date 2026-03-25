@@ -435,6 +435,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Required approvers management
   const [newApproverEmail, setNewApproverEmail] = useState('');
+  const [allApproverUsers, setAllApproverUsers] = useState<Array<{name: string; email: string}>>([]);
+  const [councilManagersList, setCouncilManagersList] = useState<Array<{email: string; role?: string}>>([]);
+  const [approverSuggestions, setApproverSuggestions] = useState<Array<{name: string; email: string}>>([]);
+  const [activeSuggestionIdx, setActiveSuggestionIdx] = useState(0);
 
   const canEditRequiredApprovers = useMemo(() => {
     const isSubmitter = currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy;
@@ -462,6 +466,71 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     };
     onSave(updated);
   }, [submission, onSave]);
+
+  // Fetch approver users and council managers for autocomplete
+  useEffect(() => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) return;
+    Promise.all([
+      fetch(`${API_URL}/user/approvers`, { headers: { Authorization: `Bearer ${sessionId}` } }).then(r => r.ok ? r.json() : { users: [] }),
+      fetch(`${API_URL}/council/members`, { headers: { Authorization: `Bearer ${sessionId}` } }).then(r => r.ok ? r.json() : []),
+    ]).then(([usersData, managersData]) => {
+      setAllApproverUsers(usersData.users || []);
+      setCouncilManagersList(managersData || []);
+    }).catch(err => console.error('Error fetching approver data:', err));
+  }, []);
+
+  const showApproverDefaults = useCallback(() => {
+    const cmUsers = allApproverUsers.filter(u =>
+      councilManagersList.some(m => m.email === u.email)
+    );
+    if (cmUsers.length > 0) {
+      setApproverSuggestions(cmUsers);
+      setActiveSuggestionIdx(0);
+    }
+  }, [allApproverUsers, councilManagersList]);
+
+  const handleApproverSearchChange = useCallback((value: string) => {
+    setNewApproverEmail(value);
+    if (value && allApproverUsers.length > 0) {
+      const filtered = allApproverUsers.filter(
+        u => u.email.toLowerCase().includes(value.toLowerCase()) ||
+             (u.name && u.name.toLowerCase().includes(value.toLowerCase()))
+      );
+      setApproverSuggestions(filtered);
+      setActiveSuggestionIdx(0);
+    } else if (!value) {
+      showApproverDefaults();
+    } else {
+      setApproverSuggestions([]);
+      setActiveSuggestionIdx(0);
+    }
+  }, [allApproverUsers, showApproverDefaults]);
+
+  const handleSuggestionSelect = useCallback((email: string) => {
+    const updated = {
+      ...submission,
+      requiredApprovers: Array.from(new Set([...(submission.requiredApprovers || []), email]))
+    };
+    onSave(updated);
+    setNewApproverEmail('');
+    setApproverSuggestions([]);
+  }, [submission, onSave]);
+
+  const handleApproverKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (approverSuggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveSuggestionIdx(prev => Math.min(prev + 1, Math.min(approverSuggestions.length, 6) - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveSuggestionIdx(prev => Math.max(prev - 1, 0));
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      const selected = approverSuggestions.slice(0, 6)[activeSuggestionIdx];
+      if (selected) handleSuggestionSelect(selected.email);
+    }
+  }, [approverSuggestions, activeSuggestionIdx, handleSuggestionSelect]);
 
   // Use refs to access current state values without causing re-renders
   const sidebarCollapsedRef = useRef(sidebarCollapsed);
@@ -3087,6 +3156,59 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             )}
           </div>
 
+          <div className="document-field-row required-approvers-row">
+            <span className="field-row-label">Approvers:</span>
+            <div className="required-approvers-content">
+              {(submission.requiredApprovers || []).length === 0 && !canEditRequiredApprovers && (
+                <span className="field-row-value" style={{ color: '#9ca3af' }}>None assigned</span>
+              )}
+              {(submission.requiredApprovers || []).map((email) => (
+                <span key={email} className="approver-chip">
+                  {email}
+                  {canEditRequiredApprovers && (
+                    <button onClick={() => handleRemoveRequiredApprover(email)} className="approver-chip-remove" title="Remove approver">
+                      <i className="fas fa-times" />
+                    </button>
+                  )}
+                </span>
+              ))}
+              {canEditRequiredApprovers && (
+                <div className="approver-search-wrap">
+                  <input
+                    type="text"
+                    placeholder="Search by name or email..."
+                    value={newApproverEmail}
+                    onChange={(e) => handleApproverSearchChange(e.target.value)}
+                    onFocus={() => { if (!newApproverEmail) showApproverDefaults(); }}
+                    onBlur={() => setTimeout(() => setApproverSuggestions([]), 200)}
+                    onKeyDown={handleApproverKeyDown}
+                    className="approver-search-input"
+                  />
+                  {approverSuggestions.length > 0 && (
+                    <div className="approver-dropdown">
+                      {approverSuggestions.slice(0, 6).map((u, i) => {
+                        const isManager = councilManagersList.some(m => m.email === u.email);
+                        return (
+                          <div
+                            key={u.email}
+                            className={`approver-dropdown-item ${i === activeSuggestionIdx ? 'active' : ''}`}
+                            onMouseDown={(e) => { e.preventDefault(); handleSuggestionSelect(u.email); }}
+                          >
+                            <div className="approver-dropdown-info">
+                              <span className="approver-dropdown-name">{u.name || u.email.split('@')[0]}</span>
+                              <span className="approver-dropdown-email">{u.email}</span>
+                            </div>
+                            {isManager && <span className="approver-badge-cm">Council Manager</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="document-meta">
             <span>Submitted by {submission.submittedBy}</span>
             <span className="separator">•</span>
@@ -4155,77 +4277,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   </div>
                 ) : (
                   <>
-                    {/* Required Approvers management */}
-                    <div className="required-approvers-panel" style={{
-                      padding: '12px 16px',
-                      borderBottom: '1px solid #e5e7eb',
-                      fontSize: '13px',
-                    }}>
-                      <div style={{ fontWeight: 600, marginBottom: '8px', color: '#374151' }}>
-                        Required Approvers
-                      </div>
-                      {(submission.requiredApprovers || []).length === 0 ? (
-                        <div style={{ color: '#9ca3af', fontSize: '12px', marginBottom: '8px' }}>
-                          No approvers assigned yet
-                        </div>
-                      ) : (
-                        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px 0' }}>
-                          {(submission.requiredApprovers || []).map((email) => (
-                            <li key={email} style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              padding: '4px 0',
-                              fontSize: '12px',
-                            }}>
-                              <span style={{ color: '#374151' }}>{email}</span>
-                              {canEditRequiredApprovers && (
-                                <button
-                                  onClick={() => handleRemoveRequiredApprover(email)}
-                                  style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: '#ef4444',
-                                    cursor: 'pointer',
-                                    fontSize: '11px',
-                                    padding: '2px 6px',
-                                  }}
-                                  title="Remove approver"
-                                >
-                                  <i className="fas fa-times" />
-                                </button>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      {canEditRequiredApprovers && (
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <input
-                            type="email"
-                            placeholder="Add approver email"
-                            value={newApproverEmail}
-                            onChange={(e) => setNewApproverEmail(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleAddRequiredApprover(); }}
-                            style={{
-                              flex: 1,
-                              padding: '4px 8px',
-                              border: '1px solid #d1d5db',
-                              borderRadius: '4px',
-                              fontSize: '12px',
-                            }}
-                          />
-                          <button
-                            onClick={handleAddRequiredApprover}
-                            disabled={!newApproverEmail.trim()}
-                            className="btn btn-primary btn-sm"
-                            style={{ fontSize: '11px', padding: '4px 8px' }}
-                          >
-                            Add
-                          </button>
-                        </div>
-                      )}
-                    </div>
                     {canMakeEditorialDecisions() && pendingChanges.length > 0 && (
                       <BatchActionBar
                         selectedCount={selectedChangeIds.size}
