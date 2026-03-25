@@ -3113,16 +3113,20 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               {(submission.requiredApprovers || []).length === 0 && !canEditRequiredApprovers && (
                 <span className="field-row-value" style={{ color: '#9ca3af' }}>None assigned</span>
               )}
-              {(submission.requiredApprovers || []).map((email) => (
-                <span key={email} className="approver-chip">
-                  {email}
-                  {canEditRequiredApprovers && (
-                    <button onClick={() => handleRemoveRequiredApprover(email)} className="approver-chip-remove" title="Remove approver">
-                      <i className="fas fa-times" />
-                    </button>
-                  )}
-                </span>
-              ))}
+              {(submission.requiredApprovers || []).map((email) => {
+                const user = allApproverUsers.find(u => u.email === email);
+                const displayName = user?.name || email.split('@')[0];
+                return (
+                  <span key={email} className="approver-chip" title={email}>
+                    {displayName}
+                    {canEditRequiredApprovers && (
+                      <button onClick={() => handleRemoveRequiredApprover(email)} className="approver-chip-remove" title="Remove approver">
+                        <i className="fas fa-times" />
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
               {canEditRequiredApprovers && (
                 <div className="approver-search-wrap">
                   <input
