@@ -261,7 +261,7 @@ const ApprovalTrackerFull: React.FC<ApprovalTrackerProps> = ({
   const raStatus = getRequiredApproversStatus(gates.requiredApprovers);
   const raStatusText =
     gates.requiredApprovers.total === 0
-      ? 'None required'
+      ? 'Needs assignment'
       : `${gates.requiredApprovers.approved} of ${gates.requiredApprovers.total}`;
   const raDetails =
     gates.requiredApprovers.details.length > 0 ? (

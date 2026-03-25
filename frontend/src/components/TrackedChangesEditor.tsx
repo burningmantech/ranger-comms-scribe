@@ -433,6 +433,36 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState<boolean>(false); // Start with manual control
 
+  // Required approvers management
+  const [newApproverEmail, setNewApproverEmail] = useState('');
+
+  const canEditRequiredApprovers = useMemo(() => {
+    const isSubmitter = currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy;
+    const isCommsCadre = currentUser.roles.includes('CommsCadre');
+    const isCouncilManager = currentUser.roles.includes('CouncilManager');
+    const isAdmin = currentUser.roles.includes('Admin');
+    return isSubmitter || isCommsCadre || isCouncilManager || isAdmin;
+  }, [currentUser, submission.submittedBy]);
+
+  const handleAddRequiredApprover = useCallback(() => {
+    const email = newApproverEmail.trim();
+    if (!email) return;
+    const updated = {
+      ...submission,
+      requiredApprovers: Array.from(new Set([...(submission.requiredApprovers || []), email]))
+    };
+    onSave(updated);
+    setNewApproverEmail('');
+  }, [newApproverEmail, submission, onSave]);
+
+  const handleRemoveRequiredApprover = useCallback((email: string) => {
+    const updated = {
+      ...submission,
+      requiredApprovers: (submission.requiredApprovers || []).filter(e => e !== email)
+    };
+    onSave(updated);
+  }, [submission, onSave]);
+
   // Use refs to access current state values without causing re-renders
   const sidebarCollapsedRef = useRef(sidebarCollapsed);
   const sidebarAutoCollapsedRef = useRef(sidebarAutoCollapsed);
@@ -598,6 +628,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           status: 'pending',
           isIncremental: true,
           regionMap: tx.regionMap ?? undefined,
+          richTextOldValue: typeof tx.beforeSnapshot.lexicalState === 'string'
+            ? tx.beforeSnapshot.lexicalState
+            : JSON.stringify(tx.beforeSnapshot.lexicalState),
+          richTextNewValue: typeof tx.afterSnapshot.lexicalState === 'string'
+            ? tx.afterSnapshot.lexicalState
+            : JSON.stringify(tx.afterSnapshot.lexicalState),
         };
         setLocalAddedChanges(prev => [...prev, optimisticChange]);
       }
@@ -4119,6 +4155,77 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   </div>
                 ) : (
                   <>
+                    {/* Required Approvers management */}
+                    <div className="required-approvers-panel" style={{
+                      padding: '12px 16px',
+                      borderBottom: '1px solid #e5e7eb',
+                      fontSize: '13px',
+                    }}>
+                      <div style={{ fontWeight: 600, marginBottom: '8px', color: '#374151' }}>
+                        Required Approvers
+                      </div>
+                      {(submission.requiredApprovers || []).length === 0 ? (
+                        <div style={{ color: '#9ca3af', fontSize: '12px', marginBottom: '8px' }}>
+                          No approvers assigned yet
+                        </div>
+                      ) : (
+                        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 8px 0' }}>
+                          {(submission.requiredApprovers || []).map((email) => (
+                            <li key={email} style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '4px 0',
+                              fontSize: '12px',
+                            }}>
+                              <span style={{ color: '#374151' }}>{email}</span>
+                              {canEditRequiredApprovers && (
+                                <button
+                                  onClick={() => handleRemoveRequiredApprover(email)}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#ef4444',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    padding: '2px 6px',
+                                  }}
+                                  title="Remove approver"
+                                >
+                                  <i className="fas fa-times" />
+                                </button>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {canEditRequiredApprovers && (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <input
+                            type="email"
+                            placeholder="Add approver email"
+                            value={newApproverEmail}
+                            onChange={(e) => setNewApproverEmail(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleAddRequiredApprover(); }}
+                            style={{
+                              flex: 1,
+                              padding: '4px 8px',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                            }}
+                          />
+                          <button
+                            onClick={handleAddRequiredApprover}
+                            disabled={!newApproverEmail.trim()}
+                            className="btn btn-primary btn-sm"
+                            style={{ fontSize: '11px', padding: '4px 8px' }}
+                          >
+                            Add
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {canMakeEditorialDecisions() && pendingChanges.length > 0 && (
                       <BatchActionBar
                         selectedCount={selectedChangeIds.size}
