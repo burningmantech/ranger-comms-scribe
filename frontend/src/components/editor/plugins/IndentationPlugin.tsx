@@ -57,7 +57,7 @@ function setNodeIndent(node: ElementNode, level: number): void {
       // Fallback method if setIndent isn't available
       const existingAttrs = (node as any).getAttributes() || {};
       const newAttrs = { ...existingAttrs };
-      
+
       if (level <= 0) {
         delete newAttrs['indent'];
         delete newAttrs['data-indent'];
@@ -65,9 +65,9 @@ function setNodeIndent(node: ElementNode, level: number): void {
         newAttrs['indent'] = level;
         newAttrs['data-indent'] = `${level}`;
       }
-      
+
       (node as any).setAttributes(newAttrs);
-      
+
       // Force re-render to make the indentation visible
       const key = node.getKey();
       if (key) {
@@ -156,10 +156,12 @@ export function IndentationPlugin(): null {
         margin-left: 0 !important;
       }
       
-      /* Specific styles for list items */
-      [data-lexical-editor] ul li[data-indent],
-      [data-lexical-editor] ol li[data-indent] {
-        margin-left: ${INDENT_SIZE}px !important;
+      /* Hide ghost bullets on empty wrapper list items created by nesting.
+         When Lexical nests a list item, it creates a wrapper <li> whose only
+         child is the nested <ul>/<ol>. Hide the bullet on those wrappers. */
+      [data-lexical-editor] li:has(> ul:only-child),
+      [data-lexical-editor] li:has(> ol:only-child) {
+        list-style-type: none;
       }
 
       /* Specific styles for checkboxes */

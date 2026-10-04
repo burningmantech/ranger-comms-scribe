@@ -74,6 +74,8 @@ export const LogoutUserReact = async (navigate?: (path: string) => void) => {
     });
     localStorage.removeItem('user');
     localStorage.removeItem('sessionId');
+    localStorage.removeItem('userPermissions');
+    localStorage.removeItem('commsRequestDraft');
     dispatchLoginStateChange(null);
 
 

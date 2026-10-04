@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User, SuggestedEdit } from '../types/content';
+import { ContentSubmission as ContentSubmissionType, FormField, Comment, Approval, Change, User, SuggestedEdit, ApprovalGates } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { SuggestionsList } from './SuggestionsList';
 import SubmissionCollaborators from './SubmissionCollaborators';
+import ApprovalTracker from './ApprovalTracker';
 import { WebSocketMessage } from '../services/websocketService';
 import { API_URL } from '../config';
 import { useContent } from '../contexts/ContentContext';
@@ -685,18 +686,25 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
         </div>
       )}
 
-      {/* Status information */}
-      <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-        <h3 className="text-lg font-semibold mb-2">Status Information</h3>
-        <p>Current Status: {submission.status}</p>
-        {submission.approvalOverride && (
-          <p className="text-amber-700">Approval overridden by {submission.approvalOverrideBy} on {submission.approvalOverrideAt ? new Date(submission.approvalOverrideAt as any).toLocaleString() : ''}</p>
+      {/* Approval Tracker */}
+      <div className="mt-4">
+        {(submission as any).approvalGates && (
+          <ApprovalTracker
+            variant="full"
+            gates={(submission as any).approvalGates as ApprovalGates}
+            showOverride={!!submission.approvalOverride}
+            overrideInfo={submission.approvalOverride ? {
+              by: submission.approvalOverrideBy || '',
+              reason: submission.approvalOverrideReason || '',
+              at: submission.approvalOverrideAt ? new Date(submission.approvalOverrideAt as any).toISOString() : '',
+            } : undefined}
+          />
         )}
         {submission.commsApprovedBy && (
-          <p>Comms Approved by: {submission.commsApprovedBy}</p>
+          <p className="mt-2 text-sm text-gray-600">Comms Approved by: {submission.commsApprovedBy}</p>
         )}
         {submission.sentBy && (
-          <p>Sent by: {submission.sentBy} on {submission.sentAt?.toLocaleDateString()}</p>
+          <p className="mt-1 text-sm text-gray-600">Sent by: {submission.sentBy} on {submission.sentAt?.toLocaleDateString()}</p>
         )}
         <div className="mt-2">
           <h4 className="font-medium">Required Approvers:</h4>

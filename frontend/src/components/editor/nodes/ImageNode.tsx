@@ -9,11 +9,14 @@ import {
   ElementFormatType
 } from 'lexical';
 
+export type ImageAlignment = 'none' | 'left' | 'center' | 'right';
+
 export interface ImagePayload {
   src: string;
   altText?: string;
   width?: string | number;
   height?: string | number;
+  alignment?: ImageAlignment;
   fullSizeSrc?: string;
   thumbnailSrc?: string;
   mediumSrc?: string;
@@ -28,6 +31,7 @@ export type SerializedImageNode = Spread<
     altText: string;
     width?: string | number;
     height?: string | number;
+    alignment?: ImageAlignment;
     fullSizeSrc?: string;
     thumbnailSrc?: string;
     mediumSrc?: string;
@@ -50,6 +54,7 @@ export class ImageNode extends ElementNode {
   __altText: string;
   __width: string | number | undefined;
   __height: string | number | undefined;
+  __alignment: ImageAlignment;
   __fullSizeSrc: string | undefined;
   __thumbnailSrc: string | undefined;
   __mediumSrc: string | undefined;
@@ -61,18 +66,44 @@ export class ImageNode extends ElementNode {
     return 'image';
   }
 
+  // Block-level image — not inline
+  isInline(): boolean {
+    return false;
+  }
+
+  // Image has no text children
+  canBeEmpty(): boolean {
+    return true;
+  }
+
+  // Prevent text insertion directly before/after within the same container
+  canInsertTextBefore(): boolean {
+    return false;
+  }
+
+  canInsertTextAfter(): boolean {
+    return false;
+  }
+
+  // Treat as an isolated, non-editable block
+  isIsolated(): boolean {
+    return true;
+  }
+
   static clone(node: ImageNode): ImageNode {
     return new ImageNode(
       node.__src,
       node.__altText,
       node.__width,
       node.__height,
+      node.__alignment,
       node.__fullSizeSrc,
       node.__thumbnailSrc,
       node.__mediumSrc,
       node.__imageId,
       node.__uploadedBy,
-      node.__uploadedAt
+      node.__uploadedAt,
+      node.__key
     );
   }
 
@@ -81,6 +112,7 @@ export class ImageNode extends ElementNode {
     altText: string = '',
     width?: string | number,
     height?: string | number,
+    alignment?: ImageAlignment,
     fullSizeSrc?: string,
     thumbnailSrc?: string,
     mediumSrc?: string,
@@ -94,6 +126,7 @@ export class ImageNode extends ElementNode {
     this.__altText = altText;
     this.__width = width;
     this.__height = height;
+    this.__alignment = alignment || 'none';
     this.__fullSizeSrc = fullSizeSrc;
     this.__thumbnailSrc = thumbnailSrc;
     this.__mediumSrc = mediumSrc;
@@ -142,29 +175,51 @@ export class ImageNode extends ElementNode {
     return this.__uploadedAt;
   }
 
+  setWidthAndHeight(width: number, height: number): void {
+    const writable = this.getWritable();
+    writable.__width = width;
+    writable.__height = height;
+  }
+
+  setAltText(altText: string): void {
+    const writable = this.getWritable();
+    writable.__altText = altText;
+  }
+
+  getAlignment(): ImageAlignment {
+    return this.__alignment;
+  }
+
+  setAlignment(alignment: ImageAlignment): void {
+    const writable = this.getWritable();
+    writable.__alignment = alignment;
+  }
+
   static importJSON(serializedNode: SerializedImageNode): ImageNode {
-    const { 
-      src, 
-      altText, 
-      width, 
-      height, 
-      fullSizeSrc, 
-      thumbnailSrc, 
-      mediumSrc, 
-      imageId, 
-      uploadedBy, 
-      uploadedAt 
+    const {
+      src,
+      altText,
+      width,
+      height,
+      alignment,
+      fullSizeSrc,
+      thumbnailSrc,
+      mediumSrc,
+      imageId,
+      uploadedBy,
+      uploadedAt
     } = serializedNode;
     return new ImageNode(
-      src, 
-      altText, 
-      width, 
-      height, 
-      fullSizeSrc, 
-      thumbnailSrc, 
-      mediumSrc, 
-      imageId, 
-      uploadedBy, 
+      src,
+      altText,
+      width,
+      height,
+      alignment,
+      fullSizeSrc,
+      thumbnailSrc,
+      mediumSrc,
+      imageId,
+      uploadedBy,
       uploadedAt
     );
   }
@@ -177,6 +232,7 @@ export class ImageNode extends ElementNode {
       altText: this.__altText,
       width: this.__width,
       height: this.__height,
+      alignment: this.__alignment,
       fullSizeSrc: this.__fullSizeSrc,
       thumbnailSrc: this.__thumbnailSrc,
       mediumSrc: this.__mediumSrc,
@@ -187,35 +243,70 @@ export class ImageNode extends ElementNode {
     };
   }
 
+  _applyAlignment(img: HTMLImageElement): void {
+    // Reset alignment styles
+    img.style.float = '';
+    img.style.display = '';
+    img.style.margin = '';
+    img.classList.remove('editor-image-align-left', 'editor-image-align-right', 'editor-image-align-center');
+
+    switch (this.__alignment) {
+      case 'left':
+        img.style.float = 'left';
+        img.style.margin = '4px 16px 8px 0';
+        img.classList.add('editor-image-align-left');
+        break;
+      case 'right':
+        img.style.float = 'right';
+        img.style.margin = '4px 0 8px 16px';
+        img.classList.add('editor-image-align-right');
+        break;
+      case 'center':
+        img.style.display = 'block';
+        img.style.margin = '8px auto';
+        img.classList.add('editor-image-align-center');
+        break;
+      default: // 'none'
+        img.style.display = 'block';
+        img.style.margin = '8px 0';
+        break;
+    }
+  }
+
   createDOM(config: EditorConfig): HTMLElement {
     const img = document.createElement('img');
     img.src = this.__src;
     img.alt = this.__altText;
     img.className = 'editor-image';
-    img.style.display = 'block';
-    img.style.margin = '8px 0';
-    
+
     // Handle dimensions with priority over defaults
     if (this.__width || this.__height) {
       // If custom dimensions are provided, use them exactly
       if (this.__width) {
-        const width = typeof this.__width === 'number' ? `${this.__width}px` : 
+        const width = typeof this.__width === 'number' ? `${this.__width}px` :
                      this.__width.toString().includes('px') ? this.__width : `${this.__width}px`;
         img.style.width = width;
       }
       if (this.__height) {
-        const height = typeof this.__height === 'number' ? `${this.__height}px` : 
+        const height = typeof this.__height === 'number' ? `${this.__height}px` :
                       this.__height.toString().includes('px') ? this.__height : `${this.__height}px`;
         img.style.height = height;
       }
-      
+
       // Don't set maxWidth when custom dimensions are specified to avoid scaling conflicts
     } else {
       // Only apply responsive defaults when no custom dimensions
       img.style.maxWidth = '100%';
       img.style.height = 'auto';
     }
-    
+
+    // Apply alignment
+    this._applyAlignment(img);
+
+    // Enable native drag-and-drop repositioning
+    img.draggable = true;
+    img.dataset.lexicalImageKey = this.getKey();
+
     // Add image metadata as data attributes
     if (this.__imageId) {
       img.dataset.imageId = this.__imageId;
@@ -239,7 +330,26 @@ export class ImageNode extends ElementNode {
     return img;
   }
 
-  updateDOM(): false {
+  updateDOM(prevNode: ImageNode, dom: HTMLElement): false {
+    const img = dom as HTMLImageElement;
+    if (prevNode.__width !== this.__width || prevNode.__height !== this.__height) {
+      if (this.__width) {
+        const width = typeof this.__width === 'number' ? `${this.__width}px` :
+                     this.__width.toString().includes('px') ? this.__width : `${this.__width}px`;
+        img.style.width = width;
+      }
+      if (this.__height) {
+        const height = typeof this.__height === 'number' ? `${this.__height}px` :
+                      this.__height.toString().includes('px') ? this.__height : `${this.__height}px`;
+        img.style.height = height;
+      }
+    }
+    if (prevNode.__altText !== this.__altText) {
+      img.alt = this.__altText;
+    }
+    if (prevNode.__alignment !== this.__alignment) {
+      this._applyAlignment(img);
+    }
     return false;
   }
 
@@ -254,6 +364,7 @@ export class ImageNode extends ElementNode {
       altText: this.__altText,
       width: this.__width,
       height: this.__height,
+      alignment: this.__alignment,
       fullSizeSrc: this.__fullSizeSrc,
       thumbnailSrc: this.__thumbnailSrc,
       mediumSrc: this.__mediumSrc,
@@ -271,6 +382,7 @@ export function $createImageNode(payload: ImagePayload): ImageNode {
     payload.altText || '',
     payload.width,
     payload.height,
+    payload.alignment,
     payload.fullSizeSrc,
     payload.thumbnailSrc,
     payload.mediumSrc,

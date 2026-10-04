@@ -4,6 +4,12 @@
   z-index: 20;
   pointer-events: none;
   transform: translateX(-1px);
+  transition: opacity 0.5s ease-out;
+}
+
+/* Stale cursors fade out after 5s of no updates */
+.remote-cursor-marker.cursor-stale {
+  opacity: 0.3;
 }
 
 .remote-cursor-marker .cursor-line {
@@ -54,8 +60,8 @@
   border-top: 4px solid inherit;
 }
 
-/* Show label on hover or when cursor is active */
-.remote-cursor-marker:hover .cursor-label,
+/* Show label when mouse is nearby (toggled via JS) or when cursor is active */
+.remote-cursor-marker.cursor-nearby .cursor-label,
 .remote-cursor-marker.active .cursor-label {
   opacity: 1;
   transform: translateY(0);

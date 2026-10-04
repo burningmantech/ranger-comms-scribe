@@ -1,25 +1,28 @@
-import React, { useState, useEffect } from 'react';
-import { Form, Button, Alert, Modal } from 'react-bootstrap';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Form } from 'react-bootstrap';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useContent } from '../contexts/ContentContext';
-import { Link, useNavigate } from 'react-router-dom';
-import { ContentSubmission, FormField, CouncilRole } from '../types/content';
+import { useNavigate } from 'react-router-dom';
+import { ContentSubmission } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { User } from '../types';
 import { API_URL } from '../config';
+import TemplatePicker from './TemplatePicker';
+import AudienceCard from './AudienceCard';
+import FormSummarySidebar from './FormSummarySidebar';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 import './CommsRequest.css';
 
-// Define the form schema using Zod
 const commsRequestSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
   owner: z.string().min(1, 'Owner is required'),
   publishBy: z.string().min(1, 'Publish date is required'),
-  urgency: z.enum(['no', 'yes'], {
-    required_error: 'Please select an urgency level',
-  }),
-  audience: z.string().min(1, 'Please select an audience'),
+  urgentRequest: z.boolean().optional(),
+  audience: z.array(z.string()).min(1, 'Please select at least one audience'),
+  otherAudienceText: z.string().optional(),
   description: z.string().min(1, 'Description is required'),
   suggestedSubjectLine: z.string().min(1, 'Subject line is required'),
   replyToAddress: z.string().email('Please enter a valid reply-to email address'),
@@ -30,85 +33,227 @@ const commsRequestSchema = z.object({
 
 type CommsRequestFormData = z.infer<typeof commsRequestSchema>;
 
+const STEPS = [
+  { label: 'Content', number: 1 },
+  { label: 'Audience & Timing', number: 2 },
+  { label: 'Approvers', number: 3 },
+];
+
+const AUDIENCE_LABELS: Record<string, string> = {
+  newsletter: 'Include in Ranger Newsletter (sent over Ranger Announce)',
+  singular: 'Singular announcement (outside of Ranger Newsletter)',
+  allcom: 'Allcom',
+  website_update: 'Website - new or changed content',
+  jrs: 'JRS/Event Ops/Other BMP Audience',
+  event: "Let's plan an event",
+  other: 'Other',
+};
+
+const AUDIENCE_CARDS = [
+  { id: 'newsletter', label: 'Newsletter', description: 'Included in the next Ranger newsletter — sent over Ranger Announce', icon: 'fas fa-newspaper' },
+  { id: 'singular', label: 'Singular Announcement', description: 'A standalone announcement sent over Ranger Announce', icon: 'fas fa-bullhorn' },
+  { id: 'allcom', label: 'Allcom', description: 'Broadcast to the full Allcom distribution list', icon: 'fas fa-broadcast-tower' },
+  { id: 'website_update', label: 'Website Update', description: 'New or changed content for the Ranger website', icon: 'fas fa-globe' },
+  { id: 'jrs', label: 'JRS / Event Ops', description: 'Communication targeted at JRS, Event Ops, or other BMP teams', icon: 'fas fa-users' },
+  { id: 'event', label: 'Plan an Event', description: 'Coordination for an upcoming Ranger event', icon: 'fas fa-calendar-alt' },
+  { id: 'other', label: 'Other', description: 'Something else — describe below', icon: 'fas fa-ellipsis-h' },
+];
+
 export const CommsRequest: React.FC = () => {
+  const [step, setStep] = useState(1);
   const [showSuccess, setShowSuccess] = useState(false);
   const [editorContent, setEditorContent] = useState('');
+  const [stepErrors, setStepErrors] = useState<string[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const { saveSubmission } = useContent();
   const navigate = useNavigate();
-  
-  // Get the logged-in user from localStorage
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const userJson = localStorage.getItem('user');
   const user = userJson ? JSON.parse(userJson) : null;
   const userEmail = user?.email || '';
-  const userId = user?.id || user?.email || '';  // Use email as fallback if id is not available
-  
+  const userId = user?.id || user?.email || '';
+
+  const getDefaultPublishBy = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  };
+
   const {
     register,
     handleSubmit,
     formState: { errors },
     reset,
     setValue,
+    getValues,
+    trigger,
+    watch,
   } = useForm<CommsRequestFormData>({
     resolver: zodResolver(commsRequestSchema),
     defaultValues: {
-      email: userEmail, // Use the logged-in user's email instead of hardcoded value
+      email: userEmail,
+      audience: [],
+      urgentRequest: false,
+      otherAudienceText: '',
+      publishBy: getDefaultPublishBy(),
     },
   });
 
+  const publishByValue = watch('publishBy');
+  const audienceValue = watch('audience');
+  const urgentRequestValue = watch('urgentRequest');
+
+  // Auto-save draft on field changes (debounced 2s)
+  const watchedValues = watch();
+  useEffect(() => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem('commsRequestDraft', JSON.stringify({
+          ...watchedValues,
+          editorContent,
+          selectedTemplateId,
+        }));
+      } catch { /* ignore quota errors */ }
+    }, 2000);
+    return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
+  }, [watchedValues, editorContent, selectedTemplateId]);
+
+  // Restore draft on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('commsRequestDraft');
+      if (saved) {
+        const draft = JSON.parse(saved);
+        Object.entries(draft).forEach(([key, value]) => {
+          if (key === 'editorContent') {
+            setEditorContent(value as string);
+          } else if (key === 'selectedTemplateId') {
+            setSelectedTemplateId(value as string | null);
+          } else if (key === 'email') {
+            // Always use current user's email, not stale draft value
+            setValue('email', userEmail);
+          } else if (key in commsRequestSchema.shape) {
+            setValue(key as keyof CommsRequestFormData, value as any);
+          }
+        });
+      }
+    } catch { /* ignore parse errors */ }
+  }, [setValue]);
+
+  const getTomorrow = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const getOneWeekOut = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  const isDateInUrgentRange = (date: Date) => {
+    const tomorrow = getTomorrow();
+    const oneWeek = getOneWeekOut();
+    return date >= tomorrow && date < oneWeek;
+  };
+
+  const getPublishByDateClassName = (date: Date) => {
+    if (isDateInUrgentRange(date)) {
+      return 'urgent-date';
+    }
+    return '';
+  };
+
+  const publishByDate = publishByValue ? new Date(publishByValue + 'T00:00:00') : null;
+
+  // Auto-check urgent when selecting a date within the next week
+  useEffect(() => {
+    if (!publishByValue) return;
+    const selected = new Date(publishByValue + 'T00:00:00');
+    if (isDateInUrgentRange(selected) && !urgentRequestValue) {
+      setValue('urgentRequest', true);
+    }
+  }, [publishByValue]);
+
+  // When unchecking urgent, ensure date is at least a week out
+  const handleUrgentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const isChecked = e.target.checked;
+    if (!isChecked && publishByValue) {
+      const selected = new Date(publishByValue + 'T00:00:00');
+      if (isDateInUrgentRange(selected)) {
+        // Reset date to one week out
+        setValue('publishBy', getDefaultPublishBy());
+      }
+    }
+    setValue('urgentRequest', isChecked);
+  };
+
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [councilManagers, setCouncilManagers] = useState<any[]>([]);
-  const [selectedApprovers, setSelectedApprovers] = useState<string[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [approverEmails, setApproverEmails] = useState<string[]>(['']);
+  const [skipApprovers, setSkipApprovers] = useState(false);
   const [suggestions, setSuggestions] = useState<{ [key: number]: User[] }>({});
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<{ [key: number]: number }>({});
 
-  // Fetch all users and council managers when component mounts
   useEffect(() => {
     const fetchUsers = async () => {
       try {
         const sessionId = localStorage.getItem('sessionId');
         if (!sessionId) return;
 
-        // Fetch all users
-        const usersResponse = await fetch(`${API_URL}/admin/users`, {
-          headers: {
-            Authorization: `Bearer ${sessionId}`,
-          },
+        const usersResponse = await fetch(`${API_URL}/user/approvers`, {
+          headers: { Authorization: `Bearer ${sessionId}` },
         });
-        
-        if (!usersResponse.ok) {
-          throw new Error('Failed to fetch users');
-        }
-        
+        if (!usersResponse.ok) throw new Error('Failed to fetch approvers');
         const usersData = await usersResponse.json();
-        // Extract the users array from the response
         setAllUsers(usersData.users || []);
 
-        // Fetch council managers
-        const managersResponse = await fetch(`${API_URL}/admin/council-managers`, {
-          headers: {
-            Authorization: `Bearer ${sessionId}`,
-          },
+        const managersResponse = await fetch(`${API_URL}/council/members`, {
+          headers: { Authorization: `Bearer ${sessionId}` },
         });
-        
-        if (!managersResponse.ok) {
-          throw new Error('Failed to fetch council managers');
-        }
-        
+        if (!managersResponse.ok) throw new Error('Failed to fetch council managers');
         const managersData = await managersResponse.json();
         setCouncilManagers(managersData);
       } catch (error) {
         console.error('Error fetching users:', error);
       }
     };
-
     fetchUsers();
   }, []);
 
-  const handleEditorChange = (editor: any, json: string) => {
+  const handleEditorChange = (_editor: any, json: string) => {
     setEditorContent(json);
     setValue('text', json);
+  };
+
+  const handleTemplateSelect = (template: any) => {
+    if (!template) {
+      setSelectedTemplateId(null);
+      return;
+    }
+    setSelectedTemplateId(template.id);
+    if (template.fields) {
+      if (template.fields.audience) setValue('audience', template.fields.audience);
+      if (template.fields.signatureText) setValue('signatureText', template.fields.signatureText);
+      if (template.fields.suggestedSubjectLine) setValue('suggestedSubjectLine', template.fields.suggestedSubjectLine);
+      if (template.fields.description) setValue('description', template.fields.description);
+    }
+  };
+
+  const showCouncilManagerDefaults = (index: number) => {
+    const cmUsers = allUsers.filter((u) =>
+      councilManagers.some((m) => m.email === u.email)
+    );
+    if (cmUsers.length > 0) {
+      setSuggestions((prev) => ({ ...prev, [index]: cmUsers }));
+      setActiveSuggestionIndex((prev) => ({ ...prev, [index]: 0 }));
+    }
   };
 
   const handleEmailChange = (index: number, value: string) => {
@@ -116,17 +261,19 @@ export const CommsRequest: React.FC = () => {
     newEmails[index] = value;
     setApproverEmails(newEmails);
 
-    // Filter suggestions based on input
     if (value && allUsers.length > 0) {
-      const filtered = allUsers.filter(user => 
-        user.email.toLowerCase().includes(value.toLowerCase()) ||
-        (user.name && user.name.toLowerCase().includes(value.toLowerCase()))
+      const filtered = allUsers.filter(
+        (u) =>
+          u.email.toLowerCase().includes(value.toLowerCase()) ||
+          (u.name && u.name.toLowerCase().includes(value.toLowerCase()))
       );
-      setSuggestions(prev => ({ ...prev, [index]: filtered }));
-      setActiveSuggestionIndex(prev => ({ ...prev, [index]: 0 }));
+      setSuggestions((prev) => ({ ...prev, [index]: filtered }));
+      setActiveSuggestionIndex((prev) => ({ ...prev, [index]: 0 }));
+    } else if (!value) {
+      showCouncilManagerDefaults(index);
     } else {
-      setSuggestions(prev => ({ ...prev, [index]: [] }));
-      setActiveSuggestionIndex(prev => ({ ...prev, [index]: 0 }));
+      setSuggestions((prev) => ({ ...prev, [index]: [] }));
+      setActiveSuggestionIndex((prev) => ({ ...prev, [index]: 0 }));
     }
   };
 
@@ -134,44 +281,28 @@ export const CommsRequest: React.FC = () => {
     const newEmails = [...approverEmails];
     newEmails[index] = email;
     setApproverEmails(newEmails);
-    setSuggestions(prev => ({ ...prev, [index]: [] }));
+    setSuggestions((prev) => ({ ...prev, [index]: [] }));
 
-    // If this is a council manager, ensure they're properly registered
-    const isCouncilManager = councilManagers.some(manager => manager.email === email);
+    const isCouncilManager = councilManagers.some((m) => m.email === email);
     if (!isCouncilManager) {
       try {
         const sessionId = localStorage.getItem('sessionId');
         if (!sessionId) return;
-
         const response = await fetch(`${API_URL}/admin/council-managers`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${sessionId}`,
           },
-          body: JSON.stringify({
-            email,
-            role: 'CommunicationsManager',
-            action: 'add'
-          })
+          body: JSON.stringify({ email, role: 'CommunicationsManager', action: 'add' }),
         });
-
-        if (!response.ok) {
-          const error = await response.json();
-          console.error('Failed to add council manager:', error);
-          return;
-        }
-
-        // Refresh council managers list
-        const managersResponse = await fetch(`${API_URL}/admin/council-managers`, {
-          headers: {
-            Authorization: `Bearer ${sessionId}`,
-          },
-        });
-        
-        if (managersResponse.ok) {
-          const managersData = await managersResponse.json();
-          setCouncilManagers(managersData);
+        if (response.ok) {
+          const managersResponse = await fetch(`${API_URL}/council/members`, {
+            headers: { Authorization: `Bearer ${sessionId}` },
+          });
+          if (managersResponse.ok) {
+            setCouncilManagers(await managersResponse.json());
+          }
         }
       } catch (error) {
         console.error('Error updating council manager:', error);
@@ -181,18 +312,17 @@ export const CommsRequest: React.FC = () => {
 
   const handleEmailKeyDown = (index: number, e: React.KeyboardEvent<any>) => {
     if (!suggestions[index] || suggestions[index].length === 0) return;
-    
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setActiveSuggestionIndex(prev => ({
+      setActiveSuggestionIndex((prev) => ({
         ...prev,
-        [index]: Math.min((prev[index] ?? 0) + 1, suggestions[index].length - 1)
+        [index]: Math.min((prev[index] ?? 0) + 1, suggestions[index].length - 1),
       }));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setActiveSuggestionIndex(prev => ({
+      setActiveSuggestionIndex((prev) => ({
         ...prev,
-        [index]: Math.max((prev[index] ?? 0) - 1, 0)
+        [index]: Math.max((prev[index] ?? 0) - 1, 0),
       }));
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
@@ -203,60 +333,82 @@ export const CommsRequest: React.FC = () => {
     }
   };
 
-  const addApproverField = () => {
-    setApproverEmails([...approverEmails, '']);
-  };
+  const addApproverField = () => setApproverEmails([...approverEmails, '']);
 
   const removeApproverField = (index: number) => {
     if (approverEmails.length === 1) return;
-    const newEmails = approverEmails.filter((_, i) => i !== index);
-    setApproverEmails(newEmails);
-    setSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[index];
-      return newSuggestions;
+    setApproverEmails(approverEmails.filter((_, i) => i !== index));
+    setSuggestions((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
     });
-    setActiveSuggestionIndex(prev => {
-      const newActive = { ...prev };
-      delete newActive[index];
-      return newActive;
+    setActiveSuggestionIndex((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
     });
   };
 
+  // Step validation
+  const validateStep = async (currentStep: number): Promise<boolean> => {
+    setStepErrors([]);
+    setFormError(null);
+
+    if (currentStep === 1) {
+      const fieldsToValidate: (keyof CommsRequestFormData)[] = [
+        'description',
+        'suggestedSubjectLine',
+        'signatureText',
+      ];
+      const valid = await trigger(fieldsToValidate);
+      if (!valid) setFormError('Please fill in all required fields before continuing.');
+      return valid;
+    }
+
+    if (currentStep === 2) {
+      const fieldsToValidate: (keyof CommsRequestFormData)[] = [
+        'email',
+        'replyToAddress',
+        'owner',
+        'publishBy',
+        'audience',
+      ];
+      const valid = await trigger(fieldsToValidate);
+
+      const currentAudience = getValues('audience') || [];
+      if (currentAudience.includes('other')) {
+        const otherText = getValues('otherAudienceText') || '';
+        if (!otherText.trim()) {
+          setFormError('Please describe your "Other" audience');
+          return false;
+        }
+      }
+      if (!valid) setFormError('Please fill in all required fields before continuing.');
+      return valid;
+    }
+
+    return true;
+  };
+
+  const goNext = async () => {
+    const valid = await validateStep(step);
+    if (valid) {
+      setFormError(null);
+      setStep((s) => Math.min(s + 1, 3));
+    }
+  };
+
+  const goBack = () => setStep((s) => Math.max(s - 1, 1));
+
   const onSubmit = async (data: CommsRequestFormData) => {
     try {
-      // Filter out empty email fields
-      const validApprovers = approverEmails.filter(email => email.trim() !== '');
-      
-      if (validApprovers.length === 0) {
-        setFormError('At least one approver is required');
+      const validApprovers = skipApprovers ? [] : approverEmails.filter((e) => e.trim() !== '');
+      if (!skipApprovers && validApprovers.length === 0) {
+        setFormError('Please add at least one approver, or select "I don\'t know who should approve this"');
         return;
       }
 
-      // Check if at least one council manager is selected
-      
-      // First check if any of the approvers are in the council managers list
-      let hasCouncilManager = validApprovers.some(email => {
-        const isManager = councilManagers.some(manager => manager.email === email);
-        return isManager;
-      });
-      
-      // If no council managers found in the list, check if any of the approvers have CouncilManager role
-      if (!hasCouncilManager && allUsers.length > 0) {
-        hasCouncilManager = validApprovers.some(email => {
-          const user = allUsers.find(u => u.email === email);
-          const hasRole = user && user.roles && user.roles.includes('CouncilManager');
-          return hasRole;
-        });
-      }
-      
-      if (!hasCouncilManager) {
-        // Temporary bypass for testing - remove this after fixing the issue
-        // setFormError('At least one council manager must be selected as an approver');
-        // return;
-      }
-
-      // Create a content submission from the form data
       const submission: Partial<ContentSubmission> = {
         id: crypto.randomUUID(),
         title: data.suggestedSubjectLine,
@@ -268,8 +420,10 @@ export const CommsRequest: React.FC = () => {
         formFields: [
           { id: 'owner', label: 'Owner', value: data.owner, type: 'text', required: true },
           { id: 'publishBy', label: 'Publish By', value: data.publishBy, type: 'date', required: true },
-          { id: 'urgency', label: 'Urgency', value: data.urgency, type: 'text', required: true },
-          { id: 'audience', label: 'Audience', value: data.audience, type: 'text', required: true },
+          { id: 'urgentRequest', label: 'Urgent Request', value: data.urgentRequest ? 'Yes' : 'No', type: 'text', required: false },
+          { id: 'audience', label: 'Audience', value: data.audience.map((a) =>
+            a === 'other' && data.otherAudienceText ? `Other: ${data.otherAudienceText}` : AUDIENCE_LABELS[a] || a
+          ).join(', '), type: 'text', required: true },
           { id: 'description', label: 'Description', value: data.description, type: 'text', required: true },
           { id: 'replyToAddress', label: 'Reply-To Address', value: data.replyToAddress, type: 'text', required: true },
           { id: 'signatureText', label: 'Signature Text', value: data.signatureText, type: 'text', required: true },
@@ -280,16 +434,19 @@ export const CommsRequest: React.FC = () => {
         changes: [],
         assignedReviewers: [],
         assignedCouncilManagers: [],
-        requiredApprovers: validApprovers
+        requiredApprovers: validApprovers,
       };
 
       await saveSubmission(submission as ContentSubmission);
+      localStorage.removeItem('commsRequestDraft');
       setShowSuccess(true);
       reset();
       setEditorContent('');
-      setSelectedApprovers([]);
+      setApproverEmails(['']);
+      setSelectedTemplateId(null);
+      setStep(1);
     } catch (error) {
-      console.error('❌ Error submitting form:', error);
+      console.error('Error submitting form:', error);
     }
   };
 
@@ -298,330 +455,438 @@ export const CommsRequest: React.FC = () => {
     navigate('/requests');
   };
 
-  return (
-    <div className="content-management">
-      <div className="content-body">
-        <h2>Comms Request</h2>
-        <p className="mb-4">
-          Ranger Communications can write, edit, facilitate and make your message heard. 
-          We can help you tell the Rangers what you need them to know.
-        </p>
+  const values = getValues();
 
-        <Form onSubmit={handleSubmit((data) => {
-          onSubmit(data);
-        }, (errors) => {
-          // Form validation failed
-        })}>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Contact Information */}
-            <div className="col-span-2">
-              <h3 className="text-lg font-semibold mb-3">Contact Information</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Form.Group>
-                  <Form.Label>Email *</Form.Label>
-                  <Form.Control
-                    type="email"
-                    {...register('email')}
-                    readOnly
-                  />
-                </Form.Group>
+  // --- Render helpers ---
 
-                <Form.Group>
-                  <Form.Label>Reply-To Address *</Form.Label>
-                  <Form.Control
-                    type="email"
-                    {...register('replyToAddress')}
-                    placeholder="Who should recipients send their questions to?"
-                  />
-                  {errors.replyToAddress && (
-                    <Form.Text className="text-danger">{errors.replyToAddress.message}</Form.Text>
-                  )}
-                </Form.Group>
-              </div>
+  const renderStepper = () => (
+    <div className="wizard-stepper">
+      {STEPS.map((s, i) => (
+        <React.Fragment key={s.number}>
+          <div className="step-node">
+            <div
+              className={`step-circle ${step === s.number ? 'active' : ''} ${step > s.number ? 'completed' : ''}`}
+            >
+              {step > s.number ? '\u2713' : s.number}
             </div>
-
-            {/* Request Details */}
-            <div className="col-span-2">
-              <h3 className="text-lg font-semibold mb-3">Request Details</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Form.Group>
-                  <Form.Label>Owner *</Form.Label>
-                  <Form.Control
-                    type="text"
-                    {...register('owner')}
-                    placeholder="Cadre, team, or individual responsible for making sure the content is accurate"
-                  />
-                  {errors.owner && (
-                    <Form.Text className="text-danger">{errors.owner.message}</Form.Text>
-                  )}
-                </Form.Group>
-
-                {/* Required Approvers Section */}
-                <div className="col-span-2">
-                  <h3 className="text-lg font-semibold mb-3">Required Approvers</h3>
-                  <p className="text-sm text-gray-600 mb-3">
-                    At least one council manager must be selected as an approver. You can also add other registered users or email addresses.
-                  </p>
-                  {approverEmails.map((email, index) => {
-                    const suggestionUser = suggestions[index]?.[activeSuggestionIndex[index] ?? 0];
-                    let completion = '';
-                    let ghostName = '';
-                    let ghostBadge = '';
-                    if (suggestionUser) {
-                      const inputValue = email.toLowerCase();
-                      const emailLower = suggestionUser.email.toLowerCase();
-                      if (emailLower.startsWith(inputValue)) {
-                        completion = suggestionUser.email.slice(email.length);
-                        ghostName = suggestionUser.name ? ` (${suggestionUser.name})` : '';
-                        ghostBadge = councilManagers.some(manager => manager.email === suggestionUser.email)
-                          ? '  Council Manager' : '';
-                      }
-                    }
-                    return (
-                      <div key={index} className="mb-3">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-grow relative approver-field">
-                            <div className="input-ghost-wrapper">
-                              {completion && (
-                                <span className="input-ghost-suggestion">
-                                  {email}{completion}{ghostName}{ghostBadge}
-                                </span>
-                              )}
-                              <Form.Control
-                                type="email"
-                                value={email}
-                                onChange={(e) => handleEmailChange(index, e.target.value)}
-                                onKeyDown={(e) => handleEmailKeyDown(index, e)}
-                                placeholder="Enter approver email"
-                                className="form-input"
-                                autoComplete="off"
-                                spellCheck={false}
-                                style={{ background: 'transparent', position: 'relative', zIndex: 2 }}
-                              />
-                            </div>
-                          </div>
-                          {approverEmails.length > 1 && (
-                            <Button
-                              variant="danger"
-                              size="sm"
-                              onClick={() => removeApproverField(index)}
-                              className="remove-approver-btn"
-                            >
-                              <i className="fas fa-times"></i>
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <Button
-                    variant="outline-primary"
-                    onClick={addApproverField}
-                    className="add-approver-btn mt-2"
-                    type="button"
-                  >
-                    <i className="fas fa-plus"></i> Add Approver
-                  </Button>
-                  {formError && <div className="error-message mt-2">{formError}</div>}
-                  
-                  {/* Debug info */}
-                  <div className="mt-2 text-sm text-gray-600">
-                    <p>Council managers found: {councilManagers.length}</p>
-                    <p>Users with CouncilManager role: {allUsers.filter(u => u.roles?.includes('CouncilManager')).length}</p>
-                  </div>
-                  
-                  {/* Add council manager button for testing */}
-                  {councilManagers.length === 0 && (
-                    <div className="mt-2">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            const sessionId = localStorage.getItem('sessionId');
-                            if (!sessionId) return;
-                            
-                            // Add the first approver as a council manager
-                            const firstApprover = approverEmails.find(email => email.trim() !== '');
-                            if (firstApprover) {
-                              const response = await fetch(`${API_URL}/admin/council-managers`, {
-                                method: 'PUT',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  Authorization: `Bearer ${sessionId}`,
-                                },
-                                body: JSON.stringify({
-                                  email: firstApprover,
-                                  role: 'CommunicationsManager',
-                                  action: 'add'
-                                })
-                              });
-                              
-                              if (response.ok) {
-                                // Refresh the page to reload council managers
-                                window.location.reload();
-                              } else {
-                                console.error('Failed to add council manager');
-                              }
-                            }
-                          } catch (error) {
-                            console.error('Error adding council manager:', error);
-                          }
-                        }}
-                        className="btn btn-secondary btn-sm"
-                      >
-                        Add First Approver as Council Manager
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <Form.Group>
-                  <Form.Label>Publish By *</Form.Label>
-                  <Form.Control
-                    type="date"
-                    {...register('publishBy')}
-                  />
-                  {errors.publishBy && (
-                    <Form.Text className="text-danger">{errors.publishBy.message}</Form.Text>
-                  )}
-                </Form.Group>
-
-                <Form.Group>
-                  <Form.Label>Urgency *</Form.Label>
-                  <Form.Select {...register('urgency')}>
-                    <option value="">Select urgency level</option>
-                    <option value="no">No, it can be included in the monthly newsletter</option>
-                    <option value="yes">Yes, this is urgent</option>
-                  </Form.Select>
-                  {errors.urgency && (
-                    <Form.Text className="text-danger">{errors.urgency.message}</Form.Text>
-                  )}
-                </Form.Group>
-
-                <Form.Group>
-                  <Form.Label>Audience *</Form.Label>
-                  <Form.Select {...register('audience')}>
-                    <option value="">Select audience</option>
-                    <option value="newsletter">Monthly-ish Newsletter (sent over Ranger Announce)</option>
-                    <option value="urgent">More urgent announcement (sent over Ranger Announce)</option>
-                    <option value="allcom">Allcom (Can include off topic things, as well as copies of department announcements)</option>
-                    <option value="website_fix">Website - something on the web site is wrong</option>
-                    <option value="website_add">Website - something needs to be added</option>
-                    <option value="jrs">JRS/Event Ops/Other BMP Audience</option>
-                    <option value="event">Let's plan an event</option>
-                    <option value="other">Other</option>
-                  </Form.Select>
-                  {errors.audience && (
-                    <Form.Text className="text-danger">{errors.audience.message}</Form.Text>
-                  )}
-                </Form.Group>
-              </div>
-            </div>
-
-            {/* Content Information */}
-            <div className="col-span-2">
-              <h3 className="text-lg font-semibold mb-3">Content Information</h3>
-              <div className="grid grid-cols-1 gap-4">
-                <Form.Group>
-                  <Form.Label>Description *</Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={3}
-                    {...register('description')}
-                    placeholder="Briefly describe the document this request is about"
-                  />
-                  {errors.description && (
-                    <Form.Text className="text-danger">{errors.description.message}</Form.Text>
-                  )}
-                </Form.Group>
-
-                <Form.Group>
-                  <Form.Label>Suggested Subject Line *</Form.Label>
-                  <Form.Control
-                    type="text"
-                    {...register('suggestedSubjectLine')}
-                    placeholder="What should the subject line say?"
-                  />
-                  {errors.suggestedSubjectLine && (
-                    <Form.Text className="text-danger">{errors.suggestedSubjectLine.message}</Form.Text>
-                  )}
-                </Form.Group>
-
-                <Form.Group>
-                  <Form.Label>Text</Form.Label>
-                  <LexicalEditorComponent
-                    initialContent={editorContent}
-                    onChange={handleEditorChange}
-                    placeholder="Include any text you'd like us to use or paste content and links here"
-                    className="h-64"
-                    currentUserId={userId}
-                  />
-                </Form.Group>
-
-                <Form.Group>
-                  <Form.Label>Signature Text *</Form.Label>
-                  <Form.Control
-                    type="text"
-                    {...register('signatureText')}
-                    placeholder="What text do you want at the end of the email?"
-                  />
-                  {errors.signatureText && (
-                    <Form.Text className="text-danger">{errors.signatureText.message}</Form.Text>
-                  )}
-                </Form.Group>
-              </div>
-            </div>
-
-            {/* Additional Information */}
-            <div className="col-span-2">
-              <h3 className="text-lg font-semibold mb-3">Additional Information</h3>
-              <div className="grid grid-cols-1 gap-4">
-                <Form.Group>
-                  <Form.Label>Notes</Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={3}
-                    {...register('notes')}
-                    placeholder="Notes, questions, issues, etc.; anything you want us to know about this project"
-                  />
-                </Form.Group>
-              </div>
+            <div
+              className={`step-label ${step === s.number ? 'active' : ''} ${step > s.number ? 'completed' : ''}`}
+            >
+              {s.label}
             </div>
           </div>
+          {i < STEPS.length - 1 && (
+            <div className={`step-connector ${step > s.number ? 'completed' : ''}`} />
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
 
-          <div className="mt-6 flex justify-end space-x-3">
-            <Button 
-              variant="primary" 
-              type="submit" 
-              className="submit-button"
-            >
-              Submit Comms Request
-            </Button>
+  const renderStep1 = () => (
+    <>
+      <div className="wizard-card">
+        <div className="wizard-card-header">
+          <h3>Content</h3>
+          <p>Describe what you need communicated and provide any draft text.</p>
+        </div>
+
+        <TemplatePicker
+          selectedId={selectedTemplateId}
+          onSelect={handleTemplateSelect}
+        />
+
+        <div className="form-field">
+          <label>Suggested Subject Line <span className="required">*</span></label>
+          <Form.Control
+            type="text"
+            {...register('suggestedSubjectLine')}
+            placeholder="What should the subject line say?"
+          />
+          {errors.suggestedSubjectLine && (
+            <div className="field-error">{errors.suggestedSubjectLine.message}</div>
+          )}
+        </div>
+
+        <div className="form-field">
+          <label>Description <span className="required">*</span></label>
+          <Form.Control
+            as="textarea"
+            rows={3}
+            {...register('description')}
+            placeholder="Briefly describe the document this request is about"
+          />
+          {errors.description && <div className="field-error">{errors.description.message}</div>}
+        </div>
+
+        <div className="form-field">
+          <label>Text</label>
+          <div className="field-hint" style={{ marginBottom: 8 }}>
+            Include any text you'd like us to use, or paste content and links here.
+          </div>
+          <LexicalEditorComponent
+            initialContent={editorContent}
+            onChange={handleEditorChange}
+            placeholder="Start typing or paste your content..."
+            className="h-64"
+            currentUserId={userId}
+          />
+        </div>
+
+        <div className="form-field">
+          <label>Signature Text <span className="required">*</span></label>
+          <Form.Control
+            type="text"
+            {...register('signatureText')}
+            placeholder="What text do you want at the end of the email?"
+          />
+          {errors.signatureText && (
+            <div className="field-error">{errors.signatureText.message}</div>
+          )}
+        </div>
+
+        <div className="form-field" style={{ marginTop: 8 }}>
+          <label>Notes</label>
+          <Form.Control
+            as="textarea"
+            rows={2}
+            {...register('notes')}
+            placeholder="Notes, questions, issues, or anything else you want us to know"
+          />
+        </div>
+      </div>
+    </>
+  );
+
+  const renderStep2 = () => (
+    <>
+      <div className="wizard-card">
+        <div className="wizard-card-header">
+          <h3>Audience & Timing</h3>
+          <p>Who should see this and when?</p>
+        </div>
+
+        <div className="form-field">
+          <label>Audience <span className="required">*</span></label>
+          <div className="audience-cards-grid">
+            {AUDIENCE_CARDS.map((card) => {
+              const checked = audienceValue?.includes(card.id) ?? false;
+              return (
+                <AudienceCard
+                  key={card.id}
+                  id={card.id}
+                  label={card.label}
+                  description={card.description}
+                  icon={card.icon}
+                  selected={checked}
+                  onToggle={() => {
+                    const current = audienceValue || [];
+                    const next = checked
+                      ? current.filter((v: string) => v !== card.id)
+                      : [...current, card.id];
+                    setValue('audience', next, { shouldValidate: true });
+                  }}
+                />
+              );
+            })}
+          </div>
+          {audienceValue?.includes('other') && (
+            <div className="other-audience-field" style={{ marginTop: 8 }}>
+              <Form.Control
+                type="text"
+                {...register('otherAudienceText')}
+                placeholder="Please describe your audience..."
+              />
+            </div>
+          )}
+          {errors.audience && <div className="field-error">{errors.audience.message}</div>}
+        </div>
+
+        <div className="form-field">
+          <label>Owner <span className="required">*</span></label>
+          <Form.Control
+            type="text"
+            {...register('owner')}
+            placeholder="Who owns this content?"
+          />
+          <div className="field-hint">Cadre, team, or individual responsible for accuracy</div>
+          {errors.owner && <div className="field-error">{errors.owner.message}</div>}
+        </div>
+
+        <div className="form-field">
+          <label
+            className={`urgent-checkbox-label ${urgentRequestValue ? 'checked' : ''}`}
+          >
+            <input
+              type="checkbox"
+              checked={urgentRequestValue || false}
+              onChange={handleUrgentChange}
+            />
+            <span>This is an urgent request</span>
+          </label>
+          {urgentRequestValue && (
+            <div className="urgent-help-text">
+              Is this an urgent request that will require less than a week's turnaround time?
+              Please note that Comms might not always be able to meet last-minute requests.
+              If you need a fast turnaround, please also send an email to{' '}
+              <a href="mailto:ranger-comm-cadre-list@burningman.org">
+                ranger-comm-cadre-list@burningman.org
+              </a>{' '}
+              to let us know, and please try to give us more notice next time. Thanks!
+            </div>
+          )}
+        </div>
+
+        <div className="form-field">
+          <label>Publish By <span className="required">*</span></label>
+          <DatePicker
+            selected={publishByDate}
+            onChange={(date: Date | null) => {
+              if (date) {
+                const iso = date.toISOString().split('T')[0];
+                setValue('publishBy', iso, { shouldValidate: true });
+              }
+            }}
+            minDate={getTomorrow()}
+            dayClassName={(date: Date) => getPublishByDateClassName(date)}
+            dateFormat="yyyy-MM-dd"
+            className="form-control"
+            placeholderText="Select a date"
+          />
+          <div className="field-hint">
+            <span className="urgent-date-legend"></span> Dates within the next week are urgent
+          </div>
+          {errors.publishBy && <div className="field-error">{errors.publishBy.message}</div>}
+        </div>
+
+        <div className="form-row">
+          <div className="form-field">
+            <label>Email <span className="required">*</span></label>
+            <Form.Control type="email" {...register('email')} readOnly />
+          </div>
+          <div className="form-field">
+            <label>Reply-To Address <span className="required">*</span></label>
+            <Form.Control
+              type="email"
+              {...register('replyToAddress')}
+              placeholder="Who should recipients reply to?"
+            />
+            <div className="field-hint">Every announcement includes a reply-to address at the top, what should it be?</div>
+            {errors.replyToAddress && (
+              <div className="field-error">{errors.replyToAddress.message}</div>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderStep3 = () => (
+    <>
+      <div className="wizard-card">
+        <div className="wizard-card-header">
+          <h3>Required Approvers</h3>
+          <p>Add approvers who should review this request, or let Comms Cadre assign them later.</p>
+        </div>
+
+        <div className="form-field">
+          <label
+            className={`urgent-checkbox-label ${skipApprovers ? 'checked' : ''}`}
+            style={skipApprovers ? { borderColor: 'var(--accent-teal)', background: 'rgba(61, 104, 105, 0.05)' } : {}}
+          >
+            <input
+              type="checkbox"
+              checked={skipApprovers}
+              onChange={(e) => {
+                setSkipApprovers(e.target.checked);
+                if (e.target.checked) {
+                  setApproverEmails(['']);
+                  setFormError(null);
+                }
+              }}
+              style={{ accentColor: 'var(--accent-teal)' }}
+            />
+            <span>I don't know who should approve this</span>
+          </label>
+          {skipApprovers && (
+            <div className="field-hint" style={{ marginTop: 8 }}>
+              No problem — Comms Cadre will assign approvers after submission.
+            </div>
+          )}
+        </div>
+
+        {!skipApprovers && (
+          <>
+            <div className="approver-list">
+              {approverEmails.map((email, index) => {
+                const items = suggestions[index] || [];
+                const activeIdx = activeSuggestionIndex[index] ?? 0;
+                const showDropdown = items.length > 0;
+
+                return (
+                  <div key={index} className="approver-row">
+                    <div className="approver-input-wrap">
+                      <Form.Control
+                        type="email"
+                        value={email}
+                        onChange={(e) => handleEmailChange(index, e.target.value)}
+                        onKeyDown={(e) => handleEmailKeyDown(index, e)}
+                        onFocus={() => {
+                          if (!email) showCouncilManagerDefaults(index);
+                        }}
+                        onBlur={() => {
+                          setTimeout(() => {
+                            setSuggestions((prev) => ({ ...prev, [index]: [] }));
+                          }, 150);
+                        }}
+                        placeholder="Search by name or email..."
+                        autoComplete="new-password"
+                        spellCheck={false}
+                      />
+                      {showDropdown && (
+                        <div className="approver-dropdown">
+                          {items.slice(0, 6).map((u, i) => {
+                            const isManager = councilManagers.some((m) => m.email === u.email);
+                            return (
+                              <div
+                                key={u.email}
+                                className={`approver-dropdown-item ${i === activeIdx ? 'active' : ''}`}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  handleSuggestionClick(index, u.email);
+                                }}
+                              >
+                                <div className="approver-dropdown-info">
+                                  <span className="approver-dropdown-name">
+                                    {u.name || u.email.split('@')[0]}
+                                  </span>
+                                  <span className="approver-dropdown-email">{u.email}</span>
+                                </div>
+                                {isManager && (
+                                  <span className="approver-badge-cm">Council Manager</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    {approverEmails.length > 1 && (
+                      <button
+                        type="button"
+                        className="remove-approver-btn"
+                        onClick={() => removeApproverField(index)}
+                        title="Remove approver"
+                      >
+                        &times;
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <button type="button" className="add-approver-btn" onClick={addApproverField}>
+              + Add Approver
+            </button>
+          </>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="comms-wizard">
+      <div className="wizard-intro">
+        <h2>New Comms Request</h2>
+        <p>
+          Ranger Communications can write, edit, and help you get your message out.
+        </p>
+      </div>
+
+      {renderStepper()}
+
+      <div className={`wizard-body${step >= 2 ? ' has-sidebar' : ''}`}>
+        <Form
+          className="wizard-main"
+          onSubmit={handleSubmit(
+            (data) => onSubmit(data),
+            () => {}
+          )}
+        >
+          <div style={{ display: step === 1 ? undefined : 'none' }}>
+            {renderStep1()}
+          </div>
+          <div style={{ display: step === 2 ? undefined : 'none' }}>
+            {renderStep2()}
+          </div>
+          <div style={{ display: step === 3 ? undefined : 'none' }}>
+            {renderStep3()}
+          </div>
+
+          {formError && (
+            <div className="field-error" style={{ marginTop: 8, marginBottom: 8 }}>
+              {formError}
+            </div>
+          )}
+
+          <div className="wizard-nav">
+            {step > 1 ? (
+              <button type="button" className="btn-back" onClick={goBack}>
+                Back
+              </button>
+            ) : (
+              <div />
+            )}
+
+            {step < 3 ? (
+              <button type="button" className="btn-next" onClick={goNext}>
+                Next
+              </button>
+            ) : (
+              <button type="submit" className="btn-submit">
+                Submit Request
+              </button>
+            )}
           </div>
         </Form>
 
-        <Modal show={showSuccess} onHide={() => setShowSuccess(false)} centered>
-          <Modal.Header closeButton>
-            <Modal.Title>Request Submitted Successfully!</Modal.Title>
-          </Modal.Header>
-          <Modal.Body>
-            <p>Your comms request has been submitted and is now under review.</p>
-            <p className="mt-3">
-              You can track the status of your request and add comments in the submissions area.
-            </p>
-          </Modal.Body>
-          <Modal.Footer>
-            <Button variant="secondary" onClick={() => setShowSuccess(false)}>
-              Close
-            </Button>
-            <Button variant="primary" onClick={handleViewSubmissions}>
-              View Submissions
-            </Button>
-          </Modal.Footer>
-        </Modal>
+        {step >= 2 && (
+          <FormSummarySidebar
+            title={values.suggestedSubjectLine}
+            description={values.description}
+            audience={values.audience}
+            audienceLabels={AUDIENCE_LABELS}
+            publishBy={values.publishBy}
+            urgent={values.urgentRequest}
+            replyTo={values.replyToAddress}
+            signature={values.signatureText}
+            approvers={approverEmails}
+            hasContent={!!editorContent}
+          />
+        )}
       </div>
+
+      {showSuccess && (
+        <div className="modal-overlay" onClick={() => setShowSuccess(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Request Submitted!</h3>
+              <button className="modal-close" onClick={() => setShowSuccess(false)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <p>Your comms request has been submitted and is now under review.</p>
+              <p>You can track the status of your request in the submissions area.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-neutral" onClick={() => setShowSuccess(false)}>Close</button>
+              <button className="btn btn-primary" onClick={handleViewSubmissions}>View Submissions</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-export default CommsRequest; 
+export default CommsRequest;

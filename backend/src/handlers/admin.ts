@@ -498,6 +498,10 @@ router.post('/roles/sync-groups', withAdminCheck, async (request: Request, env: 
 
 // Add a new endpoint to get all roles for a user
 router.get('/user-roles', async (request: Request, env: Env) => {
+  if (env.DEV_BYPASS_AUTH === 'true') {
+    return json({ roles: ['Admin'], permissions: { canEdit: true, canApprove: true, canCreateSuggestions: true, canReviewTrackedChanges: true, canManageSubmissions: true } });
+  }
+
   const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
   if (!sessionId) {
     return json({ error: 'Session ID is required' }, { status: 400 });

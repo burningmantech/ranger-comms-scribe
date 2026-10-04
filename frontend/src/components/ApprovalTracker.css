@@ -1,0 +1,315 @@
+/* =============================================================================
+   ApprovalTracker — Four-gate approval progress display
+   ============================================================================= */
+
+/* ---------------------------------------------------------------------------
+   Full Variant
+   --------------------------------------------------------------------------- */
+
+.approval-tracker--full {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: #fff;
+  overflow: hidden;
+}
+
+.approval-tracker__gates {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Gate Row */
+
+.approval-gate-row {
+  border-bottom: 1px solid var(--border-color);
+}
+
+.approval-gate-row:last-child {
+  border-bottom: none;
+}
+
+.approval-gate-row__header {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  gap: 12px;
+  user-select: none;
+}
+
+.approval-gate-row__header--interactive {
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.approval-gate-row__header--interactive:hover {
+  background-color: var(--primary-light);
+}
+
+.approval-gate-row__header--interactive:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: -2px;
+}
+
+.approval-gate-row__icon {
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+  font-size: 16px;
+}
+
+.approval-gate-row__label {
+  flex: 1;
+  font-family: 'Poppins', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-dark);
+}
+
+.approval-gate-row__status {
+  font-family: 'Poppins', sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.approval-gate-row__status--met {
+  color: var(--accent-teal);
+}
+
+.approval-gate-row__status--warning {
+  color: var(--accent-gold);
+}
+
+.approval-gate-row__status--not-started {
+  color: var(--text-medium);
+}
+
+.approval-gate-row__status--rejected {
+  color: var(--danger);
+}
+
+.approval-gate-row__chevron {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-medium);
+}
+
+/* Expandable Details */
+
+.approval-gate-row__details {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.approval-gate-row__details--expanded {
+  max-height: 300px;
+}
+
+.approval-gate-row__details-inner {
+  padding: 0 16px 12px 48px;
+}
+
+/* Detail Rows */
+
+.approval-gate-detail__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 13px;
+}
+
+.approval-gate-detail__label {
+  color: var(--text-medium);
+  flex-shrink: 0;
+}
+
+.approval-gate-detail__value {
+  color: var(--text-dark);
+}
+
+/* Required Approvers List */
+
+.approval-gate-detail__approver {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.approval-gate-detail__approver-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.approval-gate-detail__approver-name {
+  flex: 1;
+  color: var(--text-dark);
+}
+
+.approval-gate-detail__approver-date {
+  color: var(--text-medium);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Override Banner
+   --------------------------------------------------------------------------- */
+
+.approval-tracker__override-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  background-color: #fef3cd;
+  border-bottom: 1px solid #f0d78c;
+}
+
+.approval-tracker__override-icon {
+  color: var(--accent-gold);
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.approval-tracker__override-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.approval-tracker__override-title {
+  font-family: 'Poppins', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.approval-tracker__override-detail {
+  font-size: 13px;
+  color: var(--text-medium);
+}
+
+.approval-tracker__override-reason {
+  font-size: 13px;
+  color: var(--text-dark);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Compact Variant
+   --------------------------------------------------------------------------- */
+
+.approval-tracker--compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.approval-tracker-compact__dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.approval-tracker-compact__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.approval-tracker--compact:hover .approval-tracker-compact__dot {
+  transform: scale(1.15);
+}
+
+.approval-tracker-compact__text {
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  color: var(--text-medium);
+  white-space: nowrap;
+}
+
+/* Compact Tooltip */
+
+.approval-tracker-compact__tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  background: var(--text-dark);
+  color: var(--text-light);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  min-width: 200px;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.approval-tracker-compact__tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  border: 6px solid transparent;
+  border-top-color: var(--text-dark);
+}
+
+.approval-tracker-compact__tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.approval-tracker-compact__tooltip-row i {
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.approval-tracker-compact__tooltip-label {
+  color: var(--text-light);
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 576px) {
+  .approval-gate-row__header {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .approval-gate-row__label {
+    font-size: 13px;
+  }
+
+  .approval-gate-row__status {
+    font-size: 12px;
+  }
+
+  .approval-gate-row__details-inner {
+    padding-left: 36px;
+  }
+
+  .approval-tracker-compact__tooltip {
+    left: -20px;
+  }
+
+  .approval-tracker-compact__tooltip::after {
+    left: 36px;
+  }
+}

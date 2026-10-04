@@ -10,6 +10,9 @@ import { router as councilMemberRouter } from './handlers/councilMembers';
 import reminderRouter from './handlers/reminders';
 import { router as commsCadreRouter } from './handlers/commsCadre';
 import { router as trackedChangesRouter } from './handlers/trackedChanges';
+import { timelineRouter } from './handlers/timeline';
+import { router as templatesRouter } from './handlers/templates';
+import { router as notificationsRouter } from './handlers/notifications';
 import { router as websocketRouter } from './handlers/websocket';
 import { SubmissionWebSocketServer } from './services/websocketService';
 import { AutoRouter, cors } from 'itty-router';
@@ -17,6 +20,7 @@ import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin, getUser } from './services/userService';
 import { setExistingContentPublic } from './migrations/setExistingContentPublic';
 import { ensureUserGroups } from './migrations/ensureUserGroups';
+import { backfillUserIdIndex } from './migrations/backfillUserIdIndex';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
 import { sendReminders } from './handlers/reminders';
@@ -72,25 +76,42 @@ const router = AutoRouter({
     finally: [corsify]
 });
 
+// Dev bypass: detect user2 from X-Dev-User header or session token containing "user2"
+function getDevUser(request: Request) {
+    const devUser = request.headers.get('X-Dev-User');
+    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
+    if (devUser === 'user2' || sessionId.includes('user2')) {
+        return { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre' as const, isAdmin: false, roles: ['CommsCadre'], groups: [] };
+    }
+    return { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin' as const, isAdmin: true, roles: ['Admin'], groups: [] };
+}
+
 const withValidSession = async (request: Request, env: Env) => {
     const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
+
+    // Try real session first
+    if (sessionId) {
+        const session = await GetSession(sessionId, env);
+        if (session) {
+            const userData = session.data as { email: string; name: string };
+            const user = await getUser(userData.email, env);
+            if (user) {
+                (request as any).user = user;
+                return undefined;
+            }
+        }
+    }
+
+    // Fall back to dev bypass if no real session/user
+    if (env.DEV_BYPASS_AUTH === 'true') {
+        (request as any).user = getDevUser(request);
+        return undefined;
+    }
+
     if (!sessionId) {
         return json({ error: 'Session ID is required' }, { status: 400 });
     }
-
-    const session = await GetSession(sessionId, env);
-    if (!session) {
-        return json({ error: 'Session not found or expired' }, { status: 403 });
-    }
-
-    const userData = session.data as { email: string; name: string };
-    const user = await getUser(userData.email, env);
-    if (!user) {
-        return json({ error: 'User not found' }, { status: 403 });
-    }
-
-    (request as any).user = user;
-    return undefined;
+    return json({ error: 'Session not found or expired' }, { status: 403 });
 }
 
 const withOptionalSession = async (request: Request, env: Env) => {
@@ -98,9 +119,10 @@ const withOptionalSession = async (request: Request, env: Env) => {
     if (sessionId) {
         const session = await GetSession(sessionId, env);
         if (session) {
-            const user = session.data.email;
-            request.user = user
-            request.userId = session.userId
+            const user = await getUser(session.userId, env);
+            if (user) {
+                (request as any).user = user;
+            }
         }
     }
 }
@@ -124,6 +146,7 @@ const initializeApp = async (env: Env) => {
         // Run migrations
         await setExistingContentPublic(env);
         await ensureUserGroups(env);
+        await backfillUserIdIndex(env);
 
         // Identify Council managers from org chart
         await identifyCouncilManagers(env);
@@ -177,6 +200,12 @@ router
     .all('/api/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
     .all('/api/tracked-changes/*', withValidSession) // Middleware to check session for tracked changes routes
     .all('/api/tracked-changes/*', trackedChangesRouter.fetch) // Handle all tracked changes routes
+    .all('/api/timeline/*', withValidSession) // Middleware to check session for timeline routes
+    .all('/api/timeline/*', timelineRouter.fetch) // Handle all timeline routes
+    .all('/api/templates/*', withValidSession) // Middleware to check session for templates routes
+    .all('/api/templates/*', templatesRouter.fetch) // Handle all template routes
+    .all('/api/notifications/*', withValidSession) // Middleware to check session for notification routes
+    .all('/api/notifications/*', notificationsRouter.fetch) // Handle all notification routes
     .all('/api/ws/*', websocketRouter.fetch) // Handle all WebSocket routes (auth is handled in the router)
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);

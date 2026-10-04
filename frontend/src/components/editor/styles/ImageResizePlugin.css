@@ -1,0 +1,142 @@
+img.editor-image-selected {
+  outline: 2px solid #4a90d9;
+  outline-offset: 2px;
+}
+
+/* Image alignment */
+img.editor-image-align-left {
+  float: left;
+  margin: 4px 16px 8px 0;
+}
+
+img.editor-image-align-right {
+  float: right;
+  margin: 4px 0 8px 16px;
+}
+
+img.editor-image-align-center {
+  display: block;
+  margin: 8px auto;
+}
+
+/* Clear floats after image nodes so subsequent content flows correctly */
+.editor-input > *:not(img) {
+  clear: none;
+}
+
+.image-resize-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #4a90d9;
+  border: 1px solid #fff;
+  z-index: 11;
+}
+
+.image-resize-handle.nw {
+  top: -4px;
+  left: -4px;
+  cursor: nw-resize;
+}
+
+.image-resize-handle.ne {
+  top: -4px;
+  right: -4px;
+  cursor: ne-resize;
+}
+
+.image-resize-handle.sw {
+  bottom: -4px;
+  left: -4px;
+  cursor: sw-resize;
+}
+
+.image-resize-handle.se {
+  bottom: -4px;
+  right: -4px;
+  cursor: se-resize;
+}
+
+.image-controls-toolbar {
+  position: absolute;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 11;
+  white-space: nowrap;
+}
+
+.image-control-button {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.image-control-button:hover {
+  background: #e0e0e0;
+}
+
+.image-control-button.active {
+  background: #d0e4f7;
+  border-color: #4a90d9;
+  color: #2a6cb6;
+}
+
+.image-control-button.delete {
+  background-color: #fff0f0;
+  border-color: #ffcccc;
+  color: #c00;
+}
+
+.image-control-button.delete:hover {
+  background-color: #ffebeb;
+}
+
+.image-controls-divider {
+  width: 1px;
+  height: 20px;
+  background: #ddd;
+  flex-shrink: 0;
+}
+
+.image-dimensions {
+  font-size: 11px;
+  color: #888;
+  padding: 0 4px;
+  user-select: none;
+}
+
+.image-alt-input {
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  width: 150px;
+}
+
+.image-alt-input:focus {
+  outline: none;
+  border-color: #4a90d9;
+}
+
+.image-resize-handles-container {
+  position: absolute;
+  pointer-events: none;
+}
+
+.image-resize-handles-container .image-resize-handle {
+  pointer-events: auto;
+}

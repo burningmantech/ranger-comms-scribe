@@ -1,11 +1,12 @@
 import { Env } from '../utils/sessionManager';
 
 // Interface for cached objects
+// Column names must match D1 snake_case columns exactly since .first<T>() returns raw column names
 interface CachedObject {
-    key: string;      // R2 object key
-    value: string;    // JSON string of the object
-    lastUpdated: number; // Timestamp of when the object was last updated
-    ttl: number;      // Cache TTL in seconds
+    key: string;          // R2 object key
+    value: string;        // JSON string of the object
+    last_updated: number; // Timestamp of when the object was last updated
+    ttl: number;          // Cache TTL in seconds
 }
 
 /**
@@ -87,7 +88,7 @@ export const getFromCache = async <T>(key: string, env: Env): Promise<T | null> 
 
         // Check if the cache entry has expired
         const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();
-        if (result.lastUpdated + result.ttl * 1000 < now) {
+        if (result.last_updated + result.ttl * 1000 < now) {
             // Cache entry has expired, remove it
             await removeFromCache(key, env);
             return null;

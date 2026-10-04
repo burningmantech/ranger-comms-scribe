@@ -25,6 +25,19 @@ jest.mock('./editor/LexicalEditor', () => {
   };
 });
 
+jest.mock('./SaveIndicator', () => {
+  return function MockSaveIndicator() {
+    return <span data-testid="save-indicator">saved</span>;
+  };
+});
+
+jest.mock('./editor/plugins/TrackedChangesPlugin', () => ({
+  __esModule: true,
+  default: () => null,
+  removeDecorationsForChange: jest.fn(),
+  addDecorationsForChange: jest.fn(),
+}));
+
 // Mock window resize
 const mockResizeWindow = (width: number) => {
   Object.defineProperty(window, 'innerWidth', {

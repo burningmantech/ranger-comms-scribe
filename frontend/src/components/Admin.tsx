@@ -7,6 +7,7 @@ import { RoleManagement } from './RoleManagement';
 import { CouncilManagerManagement } from './CouncilManagerManagement';
 import { CommsCadreManagement } from './CommsCadreManagement';
 import { ApprovalReminders } from './ApprovalReminders';
+import TemplateManagement from './TemplateManagement';
 import { useContent } from '../contexts/ContentContext';
 import './RoleManagement.css';
 
@@ -39,7 +40,8 @@ enum AdminTab {
   Roles = 'roles',
   Council = 'council',
   CommsCadre = 'commsCadre',
-  Reminders = 'reminders'
+  Reminders = 'reminders',
+  Templates = 'templates'
 }
 
 // Email dialog interface
@@ -732,6 +734,12 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
           >
             Reminders
           </button>
+          <button
+            className={activeTab === AdminTab.Templates ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.Templates)}
+          >
+            Templates
+          </button>
         </div>
 
         {error && <div className="error-message">{error}</div>}
@@ -890,11 +898,14 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
             
             <div className="groups-list">
               <h3>Existing Groups</h3>
-              {groups.length === 0 ? (
+              {(() => {
+                const SYSTEM_MANAGED_GROUPS = ['CouncilManager', 'CommsCadre', 'Admin', 'Public'];
+                const userGroups = groups.filter(g => !SYSTEM_MANAGED_GROUPS.includes(g.name));
+                return userGroups.length === 0 ? (
                 <p>No groups found. Create a new group to get started.</p>
               ) : (
                 <div className="groups-container">
-                  {groups.map(group => (
+                  {userGroups.map(group => (
                     <div 
                       key={group.id} 
                       className="group-card"
@@ -984,7 +995,8 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
                     </div>
                   ))}
                 </div>
-              )}
+              );
+              })()}
             </div>
           </div>
         )}
@@ -1103,6 +1115,9 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
             councilManagers={councilManagers}
             onSendReminder={sendReminder}
           />
+        )}
+        {activeTab === AdminTab.Templates && (
+          <TemplateManagement />
         )}
       </div>
       

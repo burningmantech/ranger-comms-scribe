@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env, GetSession } from '../utils/sessionManager';
 import { withAuth } from '../authWrappers';
-import { getUserNotificationSettings, updateUserNotificationSettings } from '../services/userService';
+import { getUserNotificationSettings, updateUserNotificationSettings, getAllUsers } from '../services/userService';
 
 // Extend the Request interface to include user property
 interface ExtendedRequest extends Request {
@@ -11,6 +11,20 @@ interface ExtendedRequest extends Request {
 }
 
 export const router = AutoRouter({ base: '/api/user' });
+
+// Get approved users (name + email only) for approver suggestions
+router.get('/approvers', withAuth, async (request: ExtendedRequest, env: Env) => {
+  try {
+    const users = await getAllUsers(env);
+    const approvers = users
+      .filter(u => u.approved)
+      .map(u => ({ name: u.name, email: u.email }));
+    return json({ users: approvers });
+  } catch (error) {
+    console.error('Error fetching approvers:', error);
+    return json({ error: 'Error fetching approvers' }, { status: 500 });
+  }
+});
 
 // Get user settings
 router.get('/settings', withAuth, async (request: ExtendedRequest, env: Env) => {

@@ -30,7 +30,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update' | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
@@ -54,7 +54,7 @@ export class SubmissionWebSocketClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private isIntentionallyClosed = false;
-  
+
   // Enhanced ping/pong system
   private pingInterval: NodeJS.Timeout | null = null;
   private pongTimeoutId: NodeJS.Timeout | null = null;
@@ -63,16 +63,28 @@ export class SubmissionWebSocketClient {
   private readonly PONG_TIMEOUT = 5000; // 5 seconds to wait for pong
   private connectionHealthChecks = 0;
   private readonly MAX_MISSED_PONGS = 2; // Fail after 2 missed pongs
-  
+
   // Connection activity monitoring
   private lastActivityTime: number = 0;
   private activityCheckInterval: NodeJS.Timeout | null = null;
   private readonly ACTIVITY_CHECK_INTERVAL = 10000; // Check every 10 seconds
   private readonly MAX_INACTIVITY_TIME = 60000; // Consider stale after 60 seconds of no activity
-  
+
+  // Slow-poll reconnection after rapid attempts exhausted
+  private slowPollTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly SLOW_POLL_INTERVAL = 30000; // 30 seconds between slow-poll attempts
+  private _connectionLost = false;
+
+  // Message sequencing for gap detection
+  private lastSeenSeq = 0;
+
   private messageQueue: Array<Omit<WebSocketMessage, 'submissionId' | 'userId' | 'userName' | 'userEmail' | 'timestamp'>> = [];
   private isConnecting = false;
   public applyRealTimeUpdate?: (content: string) => void;
+
+  // Browser event listener references for cleanup
+  private onlineHandler: (() => void) | null = null;
+  private visibilityHandler: (() => void) | null = null;
 
   constructor(
     submissionId: string,
@@ -84,6 +96,24 @@ export class SubmissionWebSocketClient {
     this.userId = userId;
     this.userName = userName;
     this.userEmail = userEmail;
+
+    // Auto-reconnect when network comes back online
+    this.onlineHandler = () => {
+      if (!this.isIntentionallyClosed && !this.isConnected) {
+        console.log('🌐 Network online — attempting reconnect');
+        this.reconnect();
+      }
+    };
+    window.addEventListener('online', this.onlineHandler);
+
+    // Auto-reconnect when tab becomes visible
+    this.visibilityHandler = () => {
+      if (document.visibilityState === 'visible' && !this.isIntentionallyClosed && !this.isConnected) {
+        console.log('👁️ Tab visible — attempting reconnect');
+        this.reconnect();
+      }
+    };
+    document.addEventListener('visibilitychange', this.visibilityHandler);
   }
 
   async connect(): Promise<void> {
@@ -132,14 +162,28 @@ export class SubmissionWebSocketClient {
         this.connectionHealthChecks = 0;
         this.lastPongReceived = Date.now();
         this.lastActivityTime = Date.now();
-        
+        this.cancelSlowPoll();
+
+        // Emit connection_restored if previously lost
+        if (this._connectionLost) {
+          this._connectionLost = false;
+          this.emit('connection_restored', {
+            type: 'connected',
+            submissionId: this.submissionId,
+            userId: this.userId,
+            userName: this.userName,
+            userEmail: this.userEmail,
+            timestamp: new Date().toISOString()
+          } as WebSocketMessage);
+        }
+
         // Start enhanced ping/pong system
         this.startPingPong();
         this.startActivityMonitoring();
-        
+
         // Process queued messages
         this.processMessageQueue();
-        
+
         this.emit('connected', {
           type: 'connected',
           submissionId: this.submissionId,
@@ -153,21 +197,39 @@ export class SubmissionWebSocketClient {
       this.ws.onmessage = (event) => {
         // Update activity time on any message
         this.lastActivityTime = Date.now();
-        
+
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
-          
+          const msgAny = message as any;
+
           // Handle ping/pong messages
           if (message.type === 'ping') {
             this.handlePing();
             return;
           }
-          
+
           if (message.type === 'pong' || message.type === 'heartbeat_response') {
             this.handlePong();
             return;
           }
-          
+
+          // Gap detection: check for missed messages via seq counter
+          if (typeof msgAny.seq === 'number' && msgAny.seq > 0) {
+            if (this.lastSeenSeq > 0 && msgAny.seq > this.lastSeenSeq + 1) {
+              console.warn(`⚠️ WebSocket gap detected: expected seq ${this.lastSeenSeq + 1}, got ${msgAny.seq}`);
+              this.emit('sync_needed', {
+                type: 'error',
+                submissionId: this.submissionId,
+                userId: this.userId,
+                userName: this.userName,
+                userEmail: this.userEmail,
+                data: { missedFrom: this.lastSeenSeq + 1, missedTo: msgAny.seq - 1 },
+                timestamp: new Date().toISOString()
+              } as WebSocketMessage);
+            }
+            this.lastSeenSeq = msgAny.seq;
+          }
+
           this.emit(message.type, message);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -181,19 +243,31 @@ export class SubmissionWebSocketClient {
           wasClean: event.wasClean,
           submissionId: this.submissionId
         });
-        
+
         this.stopPingPong();
         this.stopActivityMonitoring();
         this.ws = null;
         this.isConnecting = false;
-        
+
         if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
           this.reconnectAttempts++;
           const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
           console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
           setTimeout(() => this.connect(), delay);
-        } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-          console.error('❌ Max reconnection attempts reached. WebSocket connection failed permanently.');
+        } else if (!this.isIntentionallyClosed && this.reconnectAttempts >= this.maxReconnectAttempts) {
+          // Switch to slow-poll reconnection instead of giving up permanently
+          console.log('⏳ Rapid reconnection exhausted — switching to slow poll every 30s');
+          this._connectionLost = true;
+          this.emit('connection_lost', {
+            type: 'error',
+            submissionId: this.submissionId,
+            userId: this.userId,
+            userName: this.userName,
+            userEmail: this.userEmail,
+            data: { error: 'Connection lost — reconnecting in background' },
+            timestamp: new Date().toISOString()
+          } as WebSocketMessage);
+          this.startSlowPoll();
         }
       };
 
@@ -410,17 +484,71 @@ export class SubmissionWebSocketClient {
     }, 1000 + jitter);
   }
 
+  /**
+   * Public reconnect method — resets attempt counter and tries immediately.
+   * Useful after network comes back or tab becomes visible.
+   */
+  reconnect(): void {
+    this.cancelSlowPoll();
+    this.reconnectAttempts = 0;
+    this.connectionHealthChecks = 0;
+    this.isConnecting = false;
+
+    if (this.ws) {
+      this.ws.close(1000, 'Manual reconnect');
+      this.ws = null;
+    }
+
+    this.connect().catch(err => {
+      console.error('Reconnect failed:', err);
+    });
+  }
+
+  private startSlowPoll(): void {
+    this.cancelSlowPoll();
+    this.slowPollTimer = setTimeout(() => {
+      if (!this.isIntentionallyClosed && !this.isConnected) {
+        // Reset rapid attempts for this slow-poll cycle
+        this.reconnectAttempts = 0;
+        this.connect().catch(() => {
+          // If it fails, schedule another slow poll
+          if (!this.isIntentionallyClosed) {
+            this.startSlowPoll();
+          }
+        });
+      }
+    }, this.SLOW_POLL_INTERVAL);
+  }
+
+  private cancelSlowPoll(): void {
+    if (this.slowPollTimer) {
+      clearTimeout(this.slowPollTimer);
+      this.slowPollTimer = null;
+    }
+  }
+
   disconnect(): void {
     this.isIntentionallyClosed = true;
     this.isConnecting = false;
     this.stopPingPong();
     this.stopActivityMonitoring();
-    
+    this.cancelSlowPoll();
+
+    // Remove browser event listeners
+    if (this.onlineHandler) {
+      window.removeEventListener('online', this.onlineHandler);
+      this.onlineHandler = null;
+    }
+    if (this.visibilityHandler) {
+      document.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+
     if (this.ws) {
       this.ws.close(1000, 'Intentional disconnect');
       this.ws = null;
     }
-    
+
     // Clear message queue on intentional disconnect
     this.messageQueue = [];
   }
@@ -499,6 +627,53 @@ export class SubmissionWebSocketClient {
 
   notifyContentUpdated(changes: any): void {
     this.send({ type: 'content_updated', data: changes });
+  }
+
+  /**
+   * Broadcast when a local transaction settles (pause-detected or manual).
+   * Remote clients use this to add the change to their tracked changes list
+   * and render decorations.
+   */
+  sendTransactionSettled(changeData: {
+    changeId: string;
+    field: string;
+    oldValue: string;
+    newValue: string;
+    regionMap?: any;
+  }): void {
+    this.send({ type: 'transaction_settled', data: changeData });
+  }
+
+  /**
+   * Broadcast when a transaction is undone (Ctrl+Z at transaction level).
+   * Remote clients use this to remove the listed change IDs and their
+   * decorations.
+   */
+  sendTransactionUndone(removedChangeIds: string[]): void {
+    this.send({ type: 'transaction_undone', data: { removedChangeIds } });
+  }
+
+  /**
+   * Broadcast when a previously undone transaction is redone (Ctrl+Y).
+   * Remote clients use this to re-add the change and its decorations.
+   */
+  sendTransactionRedone(changeData: {
+    changeId: string;
+    field: string;
+    oldValue: string;
+    newValue: string;
+    regionMap?: any;
+  }): void {
+    this.send({ type: 'transaction_redone', data: changeData });
+  }
+
+  /**
+   * Broadcast when a tracked change is accepted or rejected.
+   * Remote clients use this to update the change status in their sidebar
+   * and remove resolved decorations from the editor.
+   */
+  sendChangeStatusUpdate(changeId: string, status: 'approved' | 'rejected'): void {
+    this.send({ type: 'change_status_updated', data: { changeId, status } });
   }
 
   get isConnected(): boolean {

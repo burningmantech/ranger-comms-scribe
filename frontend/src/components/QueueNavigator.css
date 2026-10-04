@@ -1,0 +1,42 @@
+/* =============================================================================
+   QueueNavigator — Previous/Next submission navigation
+   ============================================================================= */
+
+.queue-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.queue-nav__btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-medium);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.queue-nav__btn:hover:not(:disabled) {
+  border-color: var(--accent-teal);
+  color: var(--accent-teal);
+}
+
+.queue-nav__btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.queue-nav__position {
+  font-size: 12px;
+  color: var(--text-medium);
+  white-space: nowrap;
+  min-width: 48px;
+  text-align: center;
+}

@@ -140,7 +140,14 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
                     Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
                   </p>
                   <p className="text-sm text-gray-600">Status: {submission.status}</p>
-                  
+                  {(() => {
+                    const audienceField = submission.formFields?.find(f => f.id === 'audience');
+                    const audienceValue = audienceField?.value;
+                    if (!audienceValue) return null;
+                    const display = Array.isArray(audienceValue) ? audienceValue.join(', ') : audienceValue;
+                    return display ? <p className="text-sm text-gray-500">Audience: {display}</p> : null;
+                  })()}
+
                   <div className="mt-3 flex space-x-2">
                     <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800">
                       {`${submission.comments?.length || 0} Comments `}

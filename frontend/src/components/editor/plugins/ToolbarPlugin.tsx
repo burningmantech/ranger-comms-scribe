@@ -16,6 +16,8 @@ import {
   createCommand,
   LexicalCommand,
   COMMAND_PRIORITY_EDITOR,
+  COMMAND_PRIORITY_LOW,
+  SELECTION_CHANGE_COMMAND,
   LexicalNode,
   $isElementNode,
   ElementNode,
@@ -137,24 +139,54 @@ export const ToolbarPlugin: React.FC = () => {
   const [currentFontSize, setCurrentFontSize] = useState('16px');
   const [currentFontFamily, setCurrentFontFamily] = useState('Arial');
   const [currentAlignment, setCurrentAlignment] = useState('left');
-  
+
+  const updateToolbar = useCallback(() => {
+    const selection = $getSelection();
+    if ($isRangeSelection(selection)) {
+      setIsBold(selection.hasFormat('bold'));
+      setIsItalic(selection.hasFormat('italic'));
+      setIsUnderline(selection.hasFormat('underline'));
+      setIsStrikethrough(selection.hasFormat('strikethrough'));
+      setIsList($isListNode(selection.anchor.getNode().getParent()));
+      setIsQuote(selection.anchor.getNode().getParent()?.getType() === 'quote');
+
+      // Check if selection is within a link
+      const node = selection.anchor.getNode();
+      const parent = node.getParent();
+      setIsLink(parent?.getType() === 'link');
+
+      // Get style values — only TextNodes have getStyle()
+      const styleString = typeof node.getStyle === 'function' ? (node.getStyle() || '') : '';
+      const color = getStyleValue(styleString, 'color', '#000000');
+      const fontSize = getStyleValue(styleString, 'font-size', '16px');
+      const fontFamily = getStyleValue(styleString, 'font-family', 'Arial');
+      const alignment = getStyleValue(styleString, 'text-align', 'left');
+
+      setCurrentColor(color);
+      setCurrentFontSize(fontSize);
+      setCurrentFontFamily(fontFamily);
+      setCurrentAlignment(alignment);
+    }
+  }, []);
+
   // Track current selection state for proper toggling
   useEffect(() => {
     return editor.registerUpdateListener(({editorState}) => {
       editorState.read(() => {
+        // Update all formatting state from current selection
+        updateToolbar();
+
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
           // Check if current selection is in a list
           const anchorNode = selection.anchor.getNode();
-          const focusNode = selection.focus.getNode();
-          
+
           const anchorListItem = $findMatchingParent(anchorNode, $isListItemNode);
-          const focusListItem = $findMatchingParent(focusNode, $isListItemNode);
-          
+
           // Check for list type
           let hasOrderedList = false;
           let hasUnorderedList = false;
-          
+
           if (anchorListItem) {
             const parentList = anchorListItem.getParent();
             if (parentList && $isListNode(parentList)) {
@@ -163,13 +195,25 @@ export const ToolbarPlugin: React.FC = () => {
               if (listType === 'bullet') hasUnorderedList = true;
             }
           }
-          
+
           setIsOrderedList(hasOrderedList);
           setIsUnorderedList(hasUnorderedList);
         }
       });
     });
-  }, [editor]);
+  }, [editor, updateToolbar]);
+
+  // Update toolbar on selection change (cursor movement, clicking on text)
+  useEffect(() => {
+    return editor.registerCommand(
+      SELECTION_CHANGE_COMMAND,
+      () => {
+        updateToolbar();
+        return false;
+      },
+      COMMAND_PRIORITY_LOW
+    );
+  }, [editor, updateToolbar]);
 
   const insertCheckbox = useCallback(() => {
     if (!editor) return;
@@ -391,35 +435,6 @@ export const ToolbarPlugin: React.FC = () => {
     editor.dispatchCommand(FONT_FAMILY_COMMAND, font);
   };
 
-  const updateToolbar = useCallback(() => {
-    const selection = $getSelection();
-    if ($isRangeSelection(selection)) {
-      setIsBold(selection.hasFormat('bold'));
-      setIsItalic(selection.hasFormat('italic'));
-      setIsUnderline(selection.hasFormat('underline'));
-      setIsStrikethrough(selection.hasFormat('strikethrough'));
-      setIsList($isListNode(selection.anchor.getNode().getParent()));
-      setIsQuote(selection.anchor.getNode().getParent()?.getType() === 'quote');
-
-      // Check if selection is within a link
-      const node = selection.anchor.getNode();
-      const parent = node.getParent();
-      setIsLink(parent?.getType() === 'link');
-
-      // Get style values from the selection
-      const styleString = node.getStyle() || '';
-      const color = getStyleValue(styleString, 'color', '#000000');
-      const fontSize = getStyleValue(styleString, 'font-size', '16px');
-      const fontFamily = getStyleValue(styleString, 'font-family', 'Arial');
-      const alignment = getStyleValue(styleString, 'text-align', 'left');
-
-      setCurrentColor(color);
-      setCurrentFontSize(fontSize);
-      setCurrentFontFamily(fontFamily);
-      setCurrentAlignment(alignment);
-    }
-  }, []);
-
   const formatColor = (color: string) => {
     editor.update(() => {
       const selection = $getSelection();
@@ -487,7 +502,16 @@ export const ToolbarPlugin: React.FC = () => {
 
   return (
     <>
-      <div className="lexical-editor-toolbar" aria-label="Formatting options">
+      <div
+        className="lexical-editor-toolbar"
+        aria-label="Formatting options"
+        onMouseDown={(e) => {
+          // Prevent toolbar clicks from stealing focus from the editor.
+          // Without this, the editor selection is lost before FORMAT_TEXT_COMMAND
+          // dispatches, so formatting (especially underline/strikethrough) fails.
+          e.preventDefault();
+        }}
+      >
         <div className="toolbar-group">
           <button
             onClick={(e) => {
@@ -653,6 +677,35 @@ export const ToolbarPlugin: React.FC = () => {
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0V4a1 1 0 011-1h16a1 1 0 011 1v16a1 1 0 01-1 1H4a1 1 0 01-1-1V10z" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="toolbar-group">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              indent();
+            }}
+            className="toolbar-item"
+            title="Indent"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M3 20h18M11 12h10M11 8h10M11 16h10M3 8l4 4-4 4" />
+            </svg>
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              outdent();
+            }}
+            className="toolbar-item"
+            title="Outdent"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M3 20h18M11 12h10M11 8h10M11 16h10M7 8L3 12l4 4" />
             </svg>
           </button>
         </div>
