@@ -6,9 +6,14 @@
 
 Move Comms Scribe off Cloudflare (Workers, R2, D1, Durable Objects, Workers Sites) and onto the AWS services the Ranger tech team already runs: ECS Fargate, ECR, S3, CloudFront, SES and GitHub Actions with `ranger-deploy`.
 
-The stack is set up **from scratch, with empty data**, in Alex's own AWS account first, for further development and validation. Later the same infrastructure code sets up a fresh copy in the Ranger tech team's account. No data is copied between environments.
+The stack is set up **from scratch, with empty data**, in two places, both from the same infrastructure code:
 
-Estimated effort for one developer: **about 2½–3½ weeks** of focused work to reach a validated deployment in Alex's account (Phases 0–4).
+- **Alex's own AWS account first.** This is a **low-cost development environment**: one Spot task, and it can be put to sleep when not in use. Expect about **$5–15 a month** (§7.7).
+- **The Ranger tech team's account later,** using the **standard** profile: always-on staging and production services and the tech team's usual development flow, where changes go to staging first and are then promoted to production.
+
+No data is copied between environments.
+
+Estimated effort for one developer: **about 2½–4 weeks** of focused work to reach a validated development environment in Alex's account (Phases 0–4).
 
 ## 2. Background
 
@@ -48,6 +53,11 @@ Estimated effort for one developer: **about 2½–3½ weeks** of focused work to
   - requires **exactly one container per task definition**;
   - refuses to run unless `CI=true`.
 - **Clubhouse is an OAuth2/OIDC provider.** That's a possible future login option for Scribe; see Non-goals.
+- **No existing Ranger WebSocket server to reuse.**
+  - Clubhouse has no browser push at all. Its "Broadcast" code (`app/Lib/RBS.php`) is the Ranger Broadcasting Service, which sends SMS and email.
+  - IMS pushes incident updates with Server-Sent Events, keeping the list of listeners in memory inside its own app process (`src/ims/application/_eventsource.py`).
+
+  So Scribe will build its own real-time server (§8, R2.2), and IMS's in-process listener list is the precedent for that design.
 
 ## 3. Goals
 
@@ -55,6 +65,7 @@ Estimated effort for one developer: **about 2½–3½ weeks** of focused work to
 2. Make the whole stack **repeatable**: one set of infrastructure code that sets up a working, empty environment in any AWS account from per-environment config.
 3. Validate fully in Alex's account, then hand the same code to the tech team for a fresh setup in their account.
 4. Keep the current app behavior, including login, workflow, tracked changes and real-time collaboration, without a large rewrite.
+5. **Keep Alex's development account cheap.** Use Spot capacity, allow the environment to be put to sleep when not in use, use no NAT Gateway, and avoid paid features. The target is under $15 a month for typical part-time use.
 
 ## 4. Non-goals
 
@@ -74,33 +85,49 @@ Estimated effort for one developer: **about 2½–3½ weeks** of focused work to
 | Data | **S3**, keeping the key-prefix model | Smallest change from R2's object model. |
 | Cache | **In-process TTL map** | D1 only cached S3/R2 reads, and with one task an in-process cache stays consistent. |
 | Infrastructure as code | **AWS CDK (TypeScript)** in `infra/` | Same language as the repo, with per-environment config. *Confirm with the tech team (§11).* |
-| Deploys | **`ranger-deploy` through GitHub Actions** | Same deploy path as Clubhouse and IMS, so handoff only needs secrets set. |
+| Deploys | **`ranger-deploy`**. Standard profile: through GitHub Actions. Dev: `bin/dev-deploy` from Alex's laptop | Same deploy tool as Clubhouse and IMS. In dev, running from the laptop keeps personal AWS keys out of the `burningmantech` repo's secrets, and avoids failed automatic deploys while dev is asleep. |
+| Environment profiles | **`dev`** (Alex's account) and **`standard`** (Rangers account) | Same app and the same infrastructure code. Only capacity type, the sleep option and the number of environments differ (§7.6). |
 | Login | Unchanged | See Non-goals. |
 
-## 6. Target architecture (identical in every account)
+## 6. Target architecture (same shape in every account)
 
 ```
 DNS ──► CloudFront (ACM cert in us-east-1, HSTS response-headers policy)
-         ├─ default        → S3 bucket (SPA, OAC; 403/404 → /index.html)
+         ├─ default        → S3 bucket (SPA, OAC; CloudFront Function: extensionless paths → /index.html)
          ├─ /api/gallery/* → ALB (cached, honours 1-yr Cache-Control)
          └─ /api/*         → ALB (no cache; WebSocket upgrade for /api/ws/*)
-ALB ──► ECS Fargate service, desiredCount = 1, one Node 20 container
-        (two services per account: scribe-staging and scribe-production)
-          ├─ S3 data bucket (task role)       ← replaces R2
-          ├─ SES v2 (task role)               ← replaces static SES keys
-          └─ Secrets Manager: TURNSTILESECRET
+ALB ──► ECS Fargate service, desiredCount = 1
+        ┌─ one Node 20 container (one process, one port) ─────────────┐
+        │  HTTP API      itty-router handlers (REST)                  │
+        │  WebSocket     `ws` rooms on /api/ws/* (replaces the DO)    │
+        │  Cache         in-memory TTL map (replaces D1)              │
+        └──────────────────────────────────────────────────────────────┘
+          ├─ S3 data bucket (task role; S3 gateway endpoint)  ← replaces R2
+          ├─ SES v2 (task role)                               ← replaces static SES keys
+          └─ TURNSTILESECRET (Secrets Manager, or SSM Parameter Store in dev)
 ECR repo for the image · CloudWatch Logs
 ```
 
+- **One process serves both REST and WebSockets.** The REST handlers broadcast to rooms directly, and rooms and the cache share memory. `ranger-deploy` allows only one container per task, which also rules out a separate WebSocket sidecar.
+- **Profiles** (§7.6):
+  - **standard:** two services, `scribe-staging` and `scribe-production`, on on-demand Fargate.
+  - **dev:** one service on Fargate Spot. The ALB and service exist only while dev is awake.
 - The SPA and API stay on **one origin** (`<host>/` and `<host>/api/...`). Login uses `Authorization: Bearer`, so no cookies or extra CORS setup are needed in production.
-- CloudFront must forward the `Authorization` header, all query strings (WebSockets use `?sessionId=`), and the viewer `Host` header (needed for the ALB's host rules).
+- CloudFront must forward the `Authorization` header and all query strings (WebSockets use `?sessionId=`). In the standard profile it must also forward the viewer `Host` header, which the shared ALB's host rules need.
+- **SPA fallback uses a CloudFront Function, not custom error responses.** Custom error responses apply to the whole distribution. An API 403 or 404 would be replaced by `index.html` with status 200, which breaks access-denied and not-found handling in the frontend.
+- **Network** (when the stack creates its own VPC, which is the dev profile):
+  - Public subnets only, with `natGateways: 0`.
+  - An S3 gateway endpoint, which is free.
+  - The task gets a public IP for outbound traffic: ECR pulls, SES, SSM or Secrets Manager, Google tokeninfo, Turnstile siteverify, and the Google Docs image proxy. Its security group accepts inbound traffic only from the ALB.
+  - In the standard profile, the stack uses whatever network the tech team provides.
 
 ## 7. Repeatability across accounts
 
 ### 7.1 Per-environment config
 
-`infra/config/{alex-staging,alex-production,rangers-staging,rangers-production}.ts` hold:
+`infra/config/{alex-dev,rangers-staging,rangers-production}.ts` hold:
 
+- `profile: 'dev' | 'standard'` (§7.6)
 - account and region
 - hostname, plus the hosted zone or certificate ARN
 - bucket names
@@ -110,10 +137,12 @@ ECR repo for the image · CloudWatch Logs
 ### 7.2 Working with `ranger-deploy`
 
 - **One container per task definition.** No sidecars; logs go through the `awslogs` driver.
-- **Two ECS services per account**, `scribe-staging` and `scribe-production`, on one cluster and one ECR repo. Each has its own data bucket, SPA bucket and CloudFront distribution. They share one ALB using host-header rules.
+- **Standard profile: two ECS services**, `scribe-staging` and `scribe-production`, on one cluster and one ECR repo. Each has its own data bucket, SPA bucket and CloudFront distribution. They share one ALB using host-header rules.
+- **Dev profile: one ECS service.** `ranger-deploy`'s `staging` command targets it. Promotion to production is first tested on Rangers staging (§9).
 - **Who owns what in the task definition:**
   - **CDK owns the structure and the environment variables.** `ranger-deploy` only swaps the image. Don't use `deploy_aws_ecs environment` for this service.
-  - Every `cdk deploy` must be given the currently deployed image tag, either as a context value or by reading it from the live service. Otherwise CloudFormation rolls the image back.
+  - **Standard:** every `cdk deploy` must be given the currently deployed image tag, either as a context value or by reading it from the live service. Otherwise CloudFormation rolls the image back.
+  - **Dev:** use a fixed tag, `AWS_ECR_IMAGE_NAME=<repo>:dev`. `ranger-deploy` only adds the commit-ID tag when the name has no `:`. CDK and the deploy script then always agree on the image, and waking dev runs the latest `:dev` image.
 - **Deployment settings:** minimum healthy 0% and maximum 100%. Two tasks never run at once with split rooms or diverging caches. The cost is a few seconds of downtime per deploy, which the client's WebSocket reconnect handles.
 - `NOTIFY_SMTP_*` (deploy notification emails) can use SES SMTP credentials.
 
@@ -123,7 +152,8 @@ ECR repo for the image · CloudWatch Logs
 - `.github/workflows/deploy.yml` is a manual `workflow_dispatch` that runs `bin/deploy production`, limited to a list of approved users.
 - `bin/deploy` copies Clubhouse's wrapper, which downloads and runs `deploy_aws_ecs`.
 - **Frontend:** each workflow builds it, runs `aws s3 sync frontend/build` to that environment's SPA bucket, and invalidates its CloudFront distribution. Production syncs the same commit's build.
-- **One GitHub Environment per account**, `alex` and `rangers`, each with its own `AWS_*`, `AWS_ECS_SERVICE_*`, `AWS_ECR_IMAGE_NAME` and `NOTIFY_*` secrets. The repo is already at `burningmantech/ranger-comms-scribe`, so handoff means the tech team filling in the `rangers` environment.
+- **One GitHub Environment, `rangers`,** holds the `AWS_*`, `AWS_ECS_SERVICE_*`, `AWS_ECR_IMAGE_NAME` and `NOTIFY_*` secrets. The repo is already at `burningmantech/ranger-comms-scribe`, so handoff means the tech team filling in that environment. Until then, the deploy steps in the workflows are skipped and only tests and the Docker build run.
+- **Dev deploys don't use GitHub Actions.** `bin/dev-deploy` builds the image and runs `deploy_aws_ecs staging` with `CI=true` and Alex's local AWS profile. It then syncs the frontend and invalidates CloudFront. No personal AWS keys go into the org repo's secrets.
 
 ### 7.4 Configuration
 
@@ -139,11 +169,71 @@ ECR repo for the image · CloudWatch Logs
 | `S3_ENDPOINT` | Optional. Points at MinIO for local development |
 | `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` | From and BCC are currently hardcoded. `EMAIL_BCC` must be empty in Rangers environments |
 | `BOOTSTRAP_ADMIN_EMAILS` | First-admin bootstrap (§8, Phase 2) |
-| `TURNSTILESECRET` | Secrets Manager, through the task definition's `secrets` field |
+| `TURNSTILESECRET` | Through the task definition's `secrets` field. Standard: Secrets Manager. Dev: SSM Parameter Store SecureString, which is free |
 
 ### 7.5 Hostnames
 
-A hostname can be attached to only one CloudFront distribution in all of AWS. Alex's account uses its own names, e.g. `aws-staging.scrivenly.com` and `aws.scrivenly.com`. Bare `scrivenly.com`, or whatever final names the tech team chooses, stays free for the tech team's account.
+A hostname can be attached to only one CloudFront distribution in all of AWS.
+
+- **Alex's account** uses `aws-dev.scrivenly.com`, in a Route 53 hosted zone for `aws-dev.scrivenly.com` delegated from the Cloudflare zone by NS records (about $0.50/month). That zone also holds:
+  - `origin.aws-dev.scrivenly.com`, the stable name CloudFront uses for the API origin (§7.6);
+  - automated ACM DNS validation.
+- **The tech team's account** keeps bare `scrivenly.com`, or whatever final names they choose.
+
+### 7.6 Environment profiles
+
+| | `dev` (Alex's account) | `standard` (Rangers account) |
+|---|---|---|
+| Environments | One (`alex-dev`) | Staging and production |
+| Capacity | Fargate Spot only, 0.25 vCPU / 0.5 GB | On-demand Fargate, sized by the tech team |
+| Availability | **Wakes and sleeps on demand.** The ALB and ECS service exist only while dev is awake | Always on |
+| Network | Stack-created VPC: public subnets, no NAT, S3 gateway endpoint | Tech team's existing VPC and cluster (or stack-created) |
+| ALB | Own ALB, created on wake | Shared ALB with host rules (possibly the tech team's existing one) |
+| Deploys | `bin/dev-deploy` from a laptop, `:dev` image tag | GitHub Actions: pushes to `main` deploy staging, then manual promotion to production |
+| Secrets | SSM Parameter Store | Secrets Manager |
+| Cost guardrail | AWS Budgets alert at $15/month | Tech team's normal monitoring |
+
+**How the dev profile sleeps and wakes.** The CDK app has two stacks:
+
+- **`scribe-dev-persistent`:** buckets, ECR, CloudFront, certificates, the Route 53 zone, the cluster, IAM roles, SES identity, SSM parameters and log groups. It stays deployed, and costs about $1–3 a month at rest.
+- **`scribe-dev-compute`:** the ALB, listener, target group, ECS service and the `origin.aws-dev.scrivenly.com` alias record pointing at the ALB.
+  - `bin/dev-up` deploys this stack. It takes about 5 minutes: creating the ALB and starting the task.
+  - `bin/dev-down` destroys it.
+  - CloudFront is never changed when dev wakes or sleeps, because its API origin is the stable `origin.` name. The ALB's regional ACM certificate covers both `origin.aws-dev.scrivenly.com` and `aws-dev.scrivenly.com`.
+  - While asleep, the SPA still loads, and `/api/*` fails until `bin/dev-up` runs.
+- **Data persists while dev is asleep.** Everything stateful lives in S3.
+
+**Spot interruptions.** The ECS cluster enables the Fargate capacity providers. The dev service's capacity strategy uses only `FARGATE_SPOT`. If AWS reclaims the task, ECS starts a replacement, and clients reconnect their WebSockets.
+
+### 7.7 Estimated monthly cost
+
+These are estimates from us-east-1 list prices, not a quote. Check them in the AWS Pricing Calculator before relying on them.
+
+**Dev profile (Alex's account)**
+
+| Item | While awake | While asleep |
+|---|---|---|
+| ALB (base plus minimal LCU) | ~$0.03/h | $0 (deleted) |
+| Public IPv4: 2 on the ALB, 1 on the task | ~$0.015/h | $0 |
+| Fargate Spot task, 0.25 vCPU / 0.5 GB | ~$0.003–0.005/h | $0 |
+| Route 53 zone, S3, ECR (lifecycle-limited), CloudWatch Logs (7-day retention), SSM, CloudFront (free allowance), ACM, Budgets | n/a | ~$1–3/month |
+
+| Usage pattern | Estimated monthly total |
+|---|---|
+| Awake ~20 h/week | **~$5–7** |
+| Awake ~40 h/week | **~$10–12** |
+| Left awake all month by mistake | ~$38–40 (the $15 Budgets alert catches this early) |
+
+**Do public IPs need to be paid for at all?** Only while dev is awake.
+
+- **Inbound:** an internet-facing ALB needs public IPs.
+- **Outbound:** the task needs internet access for ECR, SES, SSM, Google and Turnstile. A task public IP is the cheapest way to get it. A NAT Gateway costs about $33 per AZ per month. A NAT instance needs its own public IP. Interface endpoints cost about $7 each per AZ per month and still don't reach Google or Turnstile.
+- **IPv6-only networking** might remove the IPv4 charges. Whether every dependency supports it is unverified, so it's not part of this plan.
+
+**Standard profile (Rangers account):**
+
+- **Running alone,** two always-on services with their own ALB and network: ~$55–60/month.
+- **Sharing the tech team's existing cluster, VPC and ALB:** probably ~$15–25/month on top of what they already pay.
 
 ## 8. Requirements by phase
 
@@ -202,37 +292,52 @@ A hostname can be attached to only one CloudFront distribution in all of AWS. Al
 - Restarting the container leads to a client reconnect.
 - `npm test` passes.
 
-### Phase 3: Infrastructure and CI (≈3–5 days)
+### Phase 3: Infrastructure and CI (≈3½–6 days)
 
 **Requirements**
-- R3.1: CDK stacks in `infra/` covering §6:
-  - SPA bucket with OAC
-  - CloudFront with three behaviors, an HSTS headers policy, the SPA error fallback, and forwarding of `Authorization`, query strings and `Host`
-  - data bucket with versioning, plus lifecycle expiry on `session/`, `verification-token/` and `reset-token/`
-  - ALB with host rules and idle timeout ≥ 120 s
-  - ECS Fargate services with deployment settings from §7.2
-  - ECR, the task role (data bucket and `ses:SendEmail`), Secrets Manager and CloudWatch Logs
-  - SES domain identity, with the DKIM records as outputs
-- R3.2: Add `.github/workflows/cicd.yml`, `.github/workflows/deploy.yml` and `bin/deploy` as described in §7.3.
-- R3.3: Remove the frontend's Cloudflare pieces: the `wrangler deploy` script, `frontend/worker/`, `frontend/wrangler.toml` and `@cloudflare/kv-asset-handler`.
+- R3.1: CDK stacks in `infra/` covering §6, driven by `profile`:
+  - SPA bucket with OAC.
+  - CloudFront with three behaviors, an HSTS headers policy, and a **CloudFront Function** on the default behavior that rewrites extensionless paths to `/index.html`. No custom error responses. It forwards `Authorization` and query strings, plus `Host` in the standard profile.
+  - Data bucket:
+    - versioning;
+    - lifecycle expiry on `session/`, `verification-token/` and `reset-token/`;
+    - noncurrent object versions expire after 30 days.
+  - ALB with idle timeout ≥ 120 s. Host rules in the standard profile.
+  - ECS Fargate service or services with deployment settings from §7.2. Capacity strategy: `FARGATE_SPOT` only in dev, `FARGATE` in standard.
+  - ECR with a lifecycle rule that expires untagged images and keeps the last 10 tagged ones.
+  - Task role (data bucket and `ses:SendEmail`).
+  - Secrets: SSM Parameter Store in dev, Secrets Manager in standard.
+  - CloudWatch Logs with 7-day retention in dev and 30-day retention in standard.
+  - SES domain identity, with the DKIM records as outputs.
+  - Network when the stack creates the VPC: public subnets only, `natGateways: 0`, an S3 gateway endpoint, the task gets a public IP, and the task security group accepts traffic only from the ALB.
+- R3.2: Dev sleep and wake (§7.6):
+  - split the CDK app into `scribe-dev-persistent` and `scribe-dev-compute`;
+  - Route 53 zone for `aws-dev.scrivenly.com` with the stable `origin.` alias;
+  - `bin/dev-up`, `bin/dev-down` and `bin/dev-deploy`;
+  - an AWS Budgets alert at $15/month.
+- R3.3: Add `.github/workflows/cicd.yml`, `.github/workflows/deploy.yml` and `bin/deploy` as described in §7.3. Deploy steps are skipped until the `rangers` environment is configured.
+- R3.4: Remove the frontend's Cloudflare pieces: the `wrangler deploy` script, `frontend/worker/`, `frontend/wrangler.toml` and `@cloudflare/kv-asset-handler`.
+- R3.5: Write `infra/README.md` covering the profiles, the wake and sleep commands, image-tag rules (§7.2) and expected costs (§7.7).
 
 **Acceptance criteria**
 - `cdk synth` succeeds for every config file.
+- The synthesized dev template contains no NAT Gateway.
 - The CI workflow passes on a pull request.
 
-### Phase 4: Fresh setup and validation in Alex's account (≈2–3 days)
+### Phase 4: Fresh setup and validation in Alex's development account (≈2–3 days)
 
 **Steps**
-1. Run `cdk bootstrap` and `cdk deploy` with the `alex-*` configs.
-2. Add DNS records for `aws-staging.scrivenly.com` (and `aws.scrivenly.com` if used) pointing at CloudFront, plus the SES DKIM records.
-3. Add the hostnames to the Google OAuth client's authorized JavaScript origins and to the Turnstile widget's allowed domains.
-4. Set the GitHub `alex` environment secrets, push to `main`, and confirm the staging deploy runs through `ranger-deploy`.
+1. Run `cdk bootstrap`, then deploy `scribe-dev-persistent` with the `alex-dev` config.
+2. In the Cloudflare zone, add NS records delegating `aws-dev.scrivenly.com` to the new Route 53 zone, plus the SES DKIM records.
+3. Add `aws-dev.scrivenly.com` to the Google OAuth client's authorized JavaScript origins and to the Turnstile widget's allowed domains.
+4. Run `bin/dev-up`, then `bin/dev-deploy`. Confirm the deploy goes through `ranger-deploy` (`deploy_aws_ecs staging`, `:dev` tag).
 5. Register with a `BOOTSTRAP_ADMIN_EMAILS` address, then create users, groups and council and cadre roles through the UI.
 
 SES sandbox mode is acceptable here.
 
-**Acceptance criteria** (on `aws-staging.scrivenly.com`)
+**Acceptance criteria** (on `aws-dev.scrivenly.com`)
 - Refreshing a deep link loads the SPA, and the HSTS header is present.
+- An API 403 and an API 404 through CloudFront return JSON with the correct status, not `index.html`.
 - An authenticated API call works through CloudFront, so `Authorization` is forwarded.
 - A WebSocket with `?sessionId=` connects through CloudFront and the ALB, and two-browser collaboration works.
 - An upload above 6 MB succeeds.
@@ -240,21 +345,41 @@ SES sandbox mode is acceptable here.
 - A password-reset email arrives through SES using the task role, with no static keys.
 - Turnstile and Google login work.
 - The S3 lifecycle rule exists on `session/`.
-- `bin/deploy production` promotes staging's image to production.
-- `cdk destroy` followed by `cdk deploy` on staging sets up a working, empty environment. This is the same path the Rangers account will take.
+- The task runs on `FARGATE_SPOT`, and the account has no NAT Gateway.
+- **Sleep and wake:**
+  - after `bin/dev-down`, no ALB, ECS task or public IPv4 address remains in the account;
+  - after `bin/dev-up`, the app works again within about 10 minutes, with all data intact and no CloudFront change.
+- Destroying both dev stacks and redeploying sets up a working, empty environment.
+- The AWS Budgets alert exists.
+
+The GitHub Actions deploy path and `bin/deploy production` promotion are first tested on Rangers staging (§9).
 
 ## 9. Later: fresh setup in the Ranger tech team's account
 
-- Repeat Phase 4 with the `rangers-*` configs, importing the existing VPC and cluster if the tech team prefers.
+This uses the **standard** profile: the tech team's regular production setup, with development going to staging first and then promoted.
+
+- Deploy with the `rangers-staging` and `rangers-production` configs: on-demand Fargate, always on, importing the existing VPC, cluster and ALB if the tech team prefers.
+- Configure the `rangers` GitHub Environment. From then on:
+  - pushes to `main` run tests and `bin/deploy staging`;
+  - promotion is the manual `deploy.yml` workflow (`bin/deploy production`).
 - Request SES production access in their account, and set `EMAIL_BCC` to empty.
-- Point the final hostname, for example `scrivenly.com`, at that account's CloudFront distribution.
+- Point the final hostname, for example `scrivenly.com`, at the production CloudFront distribution.
 - Retire the Cloudflare deployment whenever Alex chooses. Its content isn't migrated.
+
+**Acceptance criteria**, in addition to Phase 4's app checks on the staging hostname:
+- A push to `main` deploys to staging through GitHub Actions.
+- `bin/deploy production` promotes staging's image to production.
+- Production stays up through a staging deploy.
 
 ## 10. Risks
 
 | Risk | Mitigation |
 |---|---|
-| `cdk deploy` rolls back an image that `ranger-deploy` deployed | Always pass the current image tag to CDK (§7.2), and document it in `infra/README.md`. |
+| `cdk deploy` rolls back an image that `ranger-deploy` deployed | Standard: always pass the current image tag to CDK. Dev: the fixed `:dev` tag (§7.2). Documented in `infra/README.md`. |
+| Dev left awake and costs creep up | AWS Budgets alert at $15/month. Asleep, dev costs about $1–3 a month. |
+| Spot interruption in dev drops sessions briefly | ECS starts a replacement task automatically, and clients reconnect their WebSockets. Dev only; standard uses on-demand. |
+| SPA fallback hides API errors | A CloudFront Function rewrite instead of distribution-wide custom error responses (§6), checked in Phase 4. |
+| A CDK-created VPC adds NAT Gateways by default (~$65/month) | `natGateways: 0`, checked in Phase 3 acceptance. |
 | In-memory rooms and cache break if a second task runs | `desiredCount = 1` and minimum healthy 0%. Scaling out is a later Redis project. |
 | WebSocket drops through CloudFront or the ALB | Idle timeout ≥ 120 s, plus the existing 30 s ping/heartbeat and client reconnect. Checked in Phase 4. |
 | Absolute media URLs tie content to a hostname | R2.5 (relative paths). Accounts start empty anyway. |
@@ -285,7 +410,7 @@ These are outside the migration's scope except where a phase is noted.
 | 0: Security fixes | ≈½ day |
 | 1: Storage layer on S3 | 3–4 days |
 | 2: Node server, rooms, bootstrap | 3–5 days |
-| 3: Infrastructure and CI | 3–5 days |
-| 4: Fresh setup and validation (Alex's account) | 2–3 days |
-| **Total to a validated deployment** | **≈ 2½–3½ weeks** |
+| 3: Infrastructure and CI, including the dev sleep/wake setup | 3½–6 days |
+| 4: Fresh setup and validation (Alex's development account) | 2–3 days |
+| **Total to a validated development environment** | **≈ 2½–4 weeks** |
 | Later: Rangers account setup | 1–2 days plus coordination |
