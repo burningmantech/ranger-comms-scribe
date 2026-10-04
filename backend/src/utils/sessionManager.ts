@@ -24,6 +24,7 @@ export interface Env {
     R2: R2Bucket;
     PUBLIC_URL?: string;
     FRONTEND_URL?: string;
+    GOOGLE_CLIENT_ID?: string; // OAuth client ID that Google ID tokens must be issued to
     SESKey?: string;
     SESSecret?: string;
     TURSTILESECRET?: string; // Added Turnstile secret binding
