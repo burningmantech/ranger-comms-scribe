@@ -3010,6 +3010,7 @@
 ::highlight(tracked-addition-7) { background-color: rgba(121, 85, 72, 0.12); color: #795548; }
 ::highlight(tracked-addition-8) { background-color: rgba(96, 125, 139, 0.12); color: #607d8b; }
 ::highlight(tracked-addition-9) { background-color: rgba(233, 30, 99, 0.12); color: #e91e63; }
+::highlight(tracked-addition-10) { background-color: rgba(189, 183, 107, 0.18); color: #bdb76b; } /* Current user — khaki */
 
 /* Deleted text inline markers (per-user color via inline styles, strikethrough here) */
 .tracked-deletion {

@@ -30,7 +30,7 @@ import { User } from '../types/content';
 import { WebSocketManager, CursorPosition, WebSocketMessage } from '../services/websocketService';
 import { TransactionManager, Transaction } from '../services/transactionManager';
 import { isLexicalJson, extractTextFromLexical } from '../utils/lexicalUtils';
-import { getUserColor } from '../utils/userColors';
+import { getUserColor, CURRENT_USER_COLOR } from '../utils/userColors';
 import './CollaborativeEditor.css';
 
 // ===================================================================
@@ -603,7 +603,8 @@ const RemoteCursorPlugin: React.FC<{
     const baseUserId = cursor.userId.includes('_')
       ? cursor.userId.split('_')[0]
       : cursor.userId;
-    const userColor = getUserColor(baseUserId);
+    const isCurrentUser = baseUserId === currentUserId || cursor.userId === currentUserId;
+    const userColor = isCurrentUser ? CURRENT_USER_COLOR : getUserColor(baseUserId);
 
     const cursorEl = document.createElement('div');
     cursorEl.className = 'lexical-remote-cursor';
@@ -955,7 +956,8 @@ const RemoteCursorPlugin: React.FC<{
     const triangle = label.querySelector('div') as HTMLElement;
     if (triangle) {
       const triBaseId = cursor.userId.includes('_') ? cursor.userId.split('_')[0] : cursor.userId;
-      triangle.style.borderTop = `4px solid ${getUserColor(triBaseId)}`;
+      const triColor = (triBaseId === currentUserId || cursor.userId === currentUserId) ? CURRENT_USER_COLOR : getUserColor(triBaseId);
+      triangle.style.borderTop = `4px solid ${triColor}`;
       triangle.style.borderBottom = 'none';
       triangle.style.top = '-2px';
     }
@@ -968,8 +970,9 @@ const RemoteCursorPlugin: React.FC<{
       // Flip the triangle
       if (triangle) {
         const triBaseId = cursor.userId.includes('_') ? cursor.userId.split('_')[0] : cursor.userId;
+        const triColor = (triBaseId === currentUserId || cursor.userId === currentUserId) ? CURRENT_USER_COLOR : getUserColor(triBaseId);
         triangle.style.borderTop = 'none';
-        triangle.style.borderBottom = `4px solid ${getUserColor(triBaseId)}`;
+        triangle.style.borderBottom = `4px solid ${triColor}`;
         triangle.style.top = '-6px';
       }
     }
@@ -3054,7 +3057,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <div
                 key={user.userId}
                 className={`presence-avatar ${user.status}${isYou ? ' is-you' : ''}`}
-                style={{ backgroundColor: getUserColor(user.userId), cursor: isYou ? 'default' : 'pointer' }}
+                style={{ backgroundColor: isYou ? CURRENT_USER_COLOR : getUserColor(user.userId), cursor: isYou ? 'default' : 'pointer' }}
                 title={`${user.userName}${isYou ? ' (you)' : ' — click to scroll to cursor'}`}
                 onClick={() => handlePresenceClick(user.userId)}
               >

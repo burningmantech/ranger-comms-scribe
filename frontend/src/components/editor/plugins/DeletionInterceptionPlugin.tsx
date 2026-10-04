@@ -45,7 +45,7 @@ import {
     $isDeletedTextNode,
     FormattedSegment,
 } from '../nodes/DeletedTextNode';
-import { getUserColor } from '../../../utils/userColors';
+import { CURRENT_USER_COLOR } from '../../../utils/userColors';
 
 interface DeletionInterceptionPluginProps {
     enabled: boolean;
@@ -67,7 +67,7 @@ export default function DeletionInterceptionPlugin({
     useEffect(() => {
         if (!enabled) return;
 
-        const authorColor = currentUserId ? getUserColor(currentUserId) : undefined;
+        const authorColor = currentUserId ? CURRENT_USER_COLOR : undefined;
 
         // When KEY_BACKSPACE/DELETE allows a deletion through (returns false),
         // the subsequent DELETE_CHARACTER_COMMAND must also allow it through.

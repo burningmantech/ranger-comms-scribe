@@ -16,6 +16,10 @@ export const USER_COLORS: string[] = [
   '#e91e63', // Pink
 ];
 
+/** Khaki color used for the current user's own changes. Index 10 (beyond the 0–9 palette). */
+export const CURRENT_USER_COLOR = '#bdb76b'; // DarkKhaki
+export const CURRENT_USER_COLOR_INDEX = 10;
+
 /** Hash a userId to a consistent palette index (0–9). */
 export function getUserColorIndex(userId: string): number {
   let hash = 0;
@@ -28,4 +32,16 @@ export function getUserColorIndex(userId: string): number {
 /** Return the palette color for the given userId. */
 export function getUserColor(userId: string): string {
   return USER_COLORS[getUserColorIndex(userId)];
+}
+
+/** Return the color index for a change author, using the current-user khaki when applicable. */
+export function getChangeColorIndex(authorId: string, currentUserId?: string): number {
+  if (currentUserId && authorId === currentUserId) return CURRENT_USER_COLOR_INDEX;
+  return getUserColorIndex(authorId);
+}
+
+/** Return the color for a change author, using the current-user khaki when applicable. */
+export function getChangeColor(authorId: string, currentUserId?: string): string {
+  if (currentUserId && authorId === currentUserId) return CURRENT_USER_COLOR;
+  return getUserColor(authorId);
 }

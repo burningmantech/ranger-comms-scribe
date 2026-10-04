@@ -194,6 +194,8 @@ const describeFormatChanges = (richTextOldValue?: string, richTextNewValue?: str
           .filter((n: any) => n.type === 'text')
           .map((n: any) => n.text || '')
           .join('');
+        // Skip empty blocks — no useful information to display
+        if (!blockText.trim()) continue;
         const snippet = blockText.length > 40 ? blockText.substring(0, 40) + '...' : blockText;
         const fromLabel = oldBlock.type === 'heading' && oldBlock.tag
           ? HEADING_TAG_NAMES[oldBlock.tag] || oldBlock.tag
@@ -1508,6 +1510,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       toFormat?: number;
       fromIndent?: number;
       toIndent?: number;
+      blockIndex?: number;
     }> = [];
     if (change && change.richTextOldValue && change.richTextNewValue) {
       try {
@@ -1515,11 +1518,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const newJson = isLexicalJson(change.richTextNewValue) ? JSON.parse(change.richTextNewValue) : null;
         if (oldJson?.root?.children && newJson?.root?.children) {
           // Helper to extract text from any block (paragraph, heading, list, etc.)
+          // Must match Lexical's getTextContent() behavior for reliable block matching.
           const extractBlockText = (block: any): string => {
             if (!block.children) return '';
             return block.children
               .map((n: any) => {
                 if (n.type === 'text') return n.text || '';
+                if (n.type === 'linebreak') return '\n';
+                if (n.type === 'tab') return '\t';
                 if (n.children) return extractBlockText(n);
                 return '';
               })
@@ -1536,6 +1542,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               formatChanges.push({
                 type: 'block',
                 text: blockText,
+                blockIndex: i,
                 fromType: oldBlocks[i].type,
                 fromTag: oldBlocks[i].tag,
                 toType: newBlocks[i].type,

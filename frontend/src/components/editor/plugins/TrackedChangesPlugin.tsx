@@ -18,7 +18,7 @@ import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
-import { getUserColorIndex, getUserColor } from '../../../utils/userColors';
+import { getUserColorIndex, getUserColor, getChangeColorIndex, getChangeColor } from '../../../utils/userColors';
 
 export interface TrackedChange {
   id: string;
@@ -598,7 +598,7 @@ export default function TrackedChangesPlugin({
                     proposedCharOffset: insertOffset,
                     deletedText,
                     authorName: change.changedBy,
-                    authorColor: getUserColor(change.changedBy || ''),
+                    authorColor: getChangeColor(change.changedBy || '', currentUserId),
                   });
                 }
                 continue;
@@ -630,8 +630,8 @@ export default function TrackedChangesPlugin({
                   diffOldText, diffNewText, { paragraphAligned: true },
                 );
                 let ctxNewOff = 0;
-                const ctxColorIndex = getUserColorIndex(change.changedBy || '');
-                const ctxColor = getUserColor(change.changedBy || '');
+                const ctxColorIndex = getChangeColorIndex(change.changedBy || '', currentUserId);
+                const ctxColor = getChangeColor(change.changedBy || '', currentUserId);
                 const CTX_LEN = 50;
                 for (const seg of ctxDiff) {
                   if (seg.type === 'equal') {
@@ -681,8 +681,8 @@ export default function TrackedChangesPlugin({
               );
 
               let newOffset = 0;
-              const changeColorIndex = getUserColorIndex(change.changedBy || '');
-              const changeColor = getUserColor(change.changedBy || '');
+              const changeColorIndex = getChangeColorIndex(change.changedBy || '', currentUserId);
+              const changeColor = getChangeColor(change.changedBy || '', currentUserId);
               for (const seg of charDiff) {
                 if (seg.type === 'equal') {
                   newOffset += seg.value.length;
@@ -1194,38 +1194,73 @@ export default function TrackedChangesPlugin({
                   console.warn(`[FORMAT-REVERT] Indent revert NOT FOUND: text="${fc.text}"`);
                 }
               } else {
-                // Block type revert: find the block by matching text content
+                // Block type revert: find the block by matching text content,
+                // with fallback to normalized text and block index matching.
+                const normalizeText = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+                const revertBlock = (block: ElementNode) => {
+                  let newBlock: ElementNode;
+                  if (fc.fromType === 'heading' && fc.fromTag) {
+                    newBlock = $createHeadingNode(fc.fromTag as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
+                  } else {
+                    newBlock = $createParagraphNode();
+                  }
+                  const children = block.getChildren();
+                  for (const child of children) {
+                    newBlock.append(child);
+                  }
+                  block.replace(newBlock);
+                };
+
+                const matchesTag = (block: ElementNode): boolean => {
+                  if (fc.toType === 'heading' && 'getTag' in block) {
+                    return (block as any).getTag() === fc.toTag;
+                  }
+                  return true;
+                };
+
+                // Pass 1: Exact text + type match (most reliable)
+                let found = false;
                 for (const block of blocks) {
                   if (!$isElementNode(block)) continue;
-                  const blockType = block.getType();
-                  const blockText = block.getTextContent();
-
-                  // Match: current block type matches the "to" type and text matches
-                  if (blockType === fc.toType && blockText === fc.text) {
-                    // Also check heading tag if applicable
-                    if (fc.toType === 'heading' && 'getTag' in block) {
-                      const currentTag = (block as any).getTag();
-                      if (currentTag !== fc.toTag) continue;
-                    }
-
-                    // Create the target node (reverting to the "from" type)
-                    let newBlock: ElementNode;
-                    if (fc.fromType === 'heading' && fc.fromTag) {
-                      newBlock = $createHeadingNode(fc.fromTag as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
-                    } else {
-                      newBlock = $createParagraphNode();
-                    }
-
-                    // Move all children to the new block
-                    const children = block.getChildren();
-                    for (const child of children) {
-                      newBlock.append(child);
-                    }
-
-                    // Replace the old block with the new one
-                    block.replace(newBlock);
-                    break; // Found and reverted, move to next format change
+                  if (block.getType() === fc.toType && block.getTextContent() === fc.text && matchesTag(block)) {
+                    console.log(`[FORMAT-REVERT] Block exact match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+                    revertBlock(block);
+                    found = true;
+                    break;
                   }
+                }
+
+                // Pass 2: Normalized text match (handles whitespace/linebreak differences)
+                if (!found && fc.text) {
+                  const normalizedTarget = normalizeText(fc.text);
+                  for (const block of blocks) {
+                    if (!$isElementNode(block)) continue;
+                    if (block.getType() === fc.toType && normalizeText(block.getTextContent()) === normalizedTarget && matchesTag(block)) {
+                      console.log(`[FORMAT-REVERT] Block normalized match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+                      revertBlock(block);
+                      found = true;
+                      break;
+                    }
+                  }
+                }
+
+                // Pass 3: Block index fallback (if text changed since snapshot).
+                // Re-read blocks from root since prior replacements make the original array stale.
+                if (!found && fc.blockIndex !== undefined) {
+                  const freshBlocks = root.getChildren();
+                  if (fc.blockIndex < freshBlocks.length) {
+                    const block = freshBlocks[fc.blockIndex];
+                    if ($isElementNode(block) && block.getType() === fc.toType && matchesTag(block)) {
+                      console.log(`[FORMAT-REVERT] Block index fallback [${fc.blockIndex}]: "${block.getTextContent().substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+                      revertBlock(block);
+                      found = true;
+                    }
+                  }
+                }
+
+                if (!found) {
+                  console.warn(`[FORMAT-REVERT] Block revert NOT FOUND: text="${fc.text.substring(0, 40)}" type=${fc.toType} tag=${fc.toTag} blockIndex=${fc.blockIndex}`);
                 }
               }
             }
@@ -1660,8 +1695,8 @@ function applyDecorationsForSingleChange(
         );
 
         let newOffset = 0;
-        const changeColorIndex = getUserColorIndex(change.changedBy || '');
-        const changeColor = getUserColor(change.changedBy || '');
+        const changeColorIndex = getChangeColorIndex(change.changedBy || '');
+        const changeColor = getChangeColor(change.changedBy || '');
         for (const seg of charDiff) {
           if (seg.type === 'equal') {
             newOffset += seg.value.length;

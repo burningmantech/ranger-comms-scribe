@@ -624,66 +624,6 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  const handleApproveProposedVersion = async (approverId: string, comment?: string) => {
-    try {
-
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      const response = await fetch(`${API_URL}/content/submissions/${submissionId}/approve-proposed`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({
-          approverId,
-          comment
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to approve proposed version: ${response.status} - ${errorText}`);
-      }
-
-      // Refresh the data after approval by refetching
-      window.location.reload();
-    } catch (err) {
-      console.error('Error approving proposed version:', err);
-    }
-  };
-
-  const handleRejectProposedVersion = async (rejecterId: string, comment?: string) => {
-    try {
-
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      const response = await fetch(`${API_URL}/content/submissions/${submissionId}/reject-proposed`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({
-          rejecterId,
-          comment
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to reject proposed version: ${response.status} - ${errorText}`);
-      }
-
-      // Refresh the data after rejection by refetching
-      window.location.reload();
-    } catch (err) {
-      console.error('Error rejecting proposed version:', err);
-    }
-  };
-
   const handleSendEmail = async () => {
     if (!submission) return;
     await sendAnnouncementEmail(submission);
@@ -845,13 +785,9 @@ export const TrackedChangesView: React.FC = () => {
         onReject={handleReject}
         onSuggestion={handleSuggestion}
         onUndo={handleUndo}
-        onApproveProposedVersion={handleApproveProposedVersion}
-        onRejectProposedVersion={handleRejectProposedVersion}
         onRefreshNeeded={handleRefreshNeeded}
         onRemoteChangeResolved={handleRemoteChangeResolved}
         onBack={() => navigate('/requests')}
-        onSubmissionApprove={handleSubmissionApprove}
-        onSubmissionReject={handleSubmissionReject}
         reviewMode={true}
         onReset={handleReset}
         onDelete={handleDelete}
@@ -926,6 +862,9 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
         <div className="request-changes-overlay" onClick={() => setShowRequestChanges(false)}>
           <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
             <h3>Request Changes</h3>
+            <p style={{ margin: '0 0 12px', color: '#666', fontSize: '0.9em' }}>
+              The submitter will be notified and can revise their submission. This does not reject the submission.
+            </p>
             <textarea
               value={requestChangesComment}
               onChange={e => setRequestChangesComment(e.target.value)}
