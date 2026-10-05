@@ -342,89 +342,24 @@ export const TrackedChangesView: React.FC = () => {
         throw new Error(`Failed to add comment: ${response.status}`);
       }
 
-      const data = await response.json();
-
-      // Determine the content to use for the tracked changes editor
-      let content = data.content || '';
-
-      // Handle different content formats (same logic as above)
-      if (content) {
-        // If content is an object, it might be Lexical JSON
-        if (typeof content === 'object') {
-          if (isLexicalJson(content)) {
-            const extractedText = extractTextFromLexical(content);
-            if (extractedText) {
-              content = extractedText;
-
-            }
-          }
-        }
-        // If content is a string that looks like JSON
-        else if (typeof content === 'string' && content.trim().startsWith('{') && isLexicalJson(content)) {
-          const extractedText = extractTextFromLexical(content);
-          if (extractedText) {
-            content = extractedText;
-
-          }
-        }
-      }
-
-      // If we still don't have readable content, try richTextContent
-      if (!content || content.trim() === '') {
-        if (data.richTextContent && isLexicalJson(data.richTextContent)) {
-          const extractedText = extractTextFromLexical(data.richTextContent);
-          if (extractedText) {
-            content = extractedText;
-
-          }
-        }
-      }
-
-      // Transform backend data to frontend format
-      const transformedSubmission: ContentSubmission = {
-        id: data.id,
-        title: data.title,
-        content: content,
-        richTextContent: data.richTextContent,
-        status: data.status,
-        submittedBy: data.submittedBy,
-        submittedAt: new Date(data.submittedAt),
-        formFields: data.formFields || [],
-        comments: (data.comments || []).map((comment: any) => ({
-          id: comment.id,
-          content: comment.content,
-          authorId: comment.authorId,
-          createdAt: new Date(comment.createdAt),
-          type: comment.isSuggestion ? 'SUGGESTION' : 'COMMENT',
-          resolved: comment.resolved || false
-        })),
-        approvals: (data.approvals || []).map((approval: any) => ({
-          id: approval.id,
-          approverId: approval.approverId,
-          status: approval.status.toUpperCase(),
-          comment: approval.comment,
-          timestamp: new Date(approval.createdAt)
-        })),
-        changes: (data.changes || []).map((change: any) => ({
-          id: change.id,
-          field: change.field,
-          oldValue: change.oldValue,
-          newValue: change.newValue,
-          changedBy: change.changedBy,
-          timestamp: new Date(change.changedAt || change.timestamp),
-          richTextOldValue: change.richTextOldValue,
-          richTextNewValue: change.richTextNewValue,
-          regionMap: change.regionMap,
-        })),
-        assignedReviewers: [],
-        assignedCouncilManagers: data.assignedCouncilManagers || [],
-        suggestedEdits: [],
-        requiredApprovers: data.requiredApprovers || [],
-        commsApprovedBy: data.commsApprovedBy,
-        sentBy: data.sentBy,
-        sentAt: data.sentAt ? new Date(data.sentAt) : undefined
+      // The endpoint returns the new comment (not the submission). Add it to the current
+      // submission with a functional update and keep everything else as it is: rebuilding
+      // the submission from this response would drop the changes' status (and who
+      // resolved them), the proposed versions and the other comments, and an accept or
+      // reject that arrived while the POST was in flight must not be overwritten.
+      const saved = await response.json();
+      const newComment: Comment = {
+        id: saved?.id || comment.id,
+        content: saved?.content ?? comment.content,
+        authorId: saved?.authorId || comment.authorId,
+        createdAt: saved?.createdAt ? new Date(saved.createdAt) : new Date(comment.createdAt),
+        type: saved ? (saved.isSuggestion ? 'SUGGESTION' : 'COMMENT') : comment.type,
+        resolved: saved?.resolved || false,
       };
-      setSubmission(transformedSubmission);
+      setSubmission(prev => {
+        if (!prev || prev.comments.some(c => c.id === newComment.id)) return prev;
+        return { ...prev, comments: [...prev.comments, newComment] };
+      });
     } catch (err) {
       console.error('Error adding comment:', err);
     }
