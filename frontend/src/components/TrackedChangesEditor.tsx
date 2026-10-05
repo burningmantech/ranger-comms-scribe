@@ -17,6 +17,8 @@ import BatchActionBar from './BatchActionBar';
 import ChangeGroup, { groupChanges } from './ChangeGroup';
 import { ApprovalGates } from '../types/content';
 import type { CollabMode } from '../services/collabConfig';
+import type { CollabSession } from './editor/collab/YjsCollaboration';
+import type { LocalEditSession } from './editor/collab/localEditTracker';
 import './TrackedChangesEditor.css';
 
 const webSocketManager = new WebSocketManager();
@@ -405,9 +407,33 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // TransactionManager instance — one per submission editing session
   const transactionManagerRef = useRef<TransactionManager | null>(null);
+  // Collaborative mode: the live Yjs session, and the local-edit session of the active
+  // transaction (records this user's own edits so the transaction can stay open while
+  // other users' edits merge in).
+  const collabSessionRef = useRef<CollabSession | null>(null);
+  const localEditSessionRef = useRef<LocalEditSession | null>(null);
   if (!transactionManagerRef.current) {
     transactionManagerRef.current = isCollab
-      ? new TransactionManager(submission.id, { diffAgainstOldValue: true })
+      ? new TransactionManager(submission.id, {
+          diffAgainstOldValue: true,
+          // At settle: before = the current document minus this user's edits since the
+          // transaction began, after = the current document. Both include everything
+          // merged from other users, so the change holds only this user's text.
+          resolveSnapshots: () => {
+            const session = localEditSessionRef.current;
+            const collab = collabSessionRef.current;
+            localEditSessionRef.current = null;
+            if (!session || !collab || !session.active) return null;
+            try {
+              return { before: collab.tracker.baselineJson(session), after: collab.tracker.currentJson() };
+            } catch (error) {
+              console.error('[YJS] Could not rebuild the tracked change from the shared document', error);
+              return null;
+            } finally {
+              collab.tracker.end(session);
+            }
+          },
+        })
       : new TransactionManager(submission.id);
   }
   const transactionManager = transactionManagerRef.current;
@@ -2978,6 +3004,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       if (!tm.getActiveTransaction()) {
         const beforeState = editedProposedContentRef.current || json;
         hasActiveTransactionRef.current = !!tm.startTransaction('content', beforeState);
+        // The editor reports a local edit before @lexical/yjs writes it to the Y.Doc, so
+        // the session also records this first edit.
+        if (hasActiveTransactionRef.current && collabSessionRef.current) {
+          localEditSessionRef.current = collabSessionRef.current.tracker.begin();
+        }
       }
       tm.notifyActivity(json);
       lastLocalJsonRef.current = json;
@@ -2997,11 +3028,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const tm = transactionManagerRef.current;
     if (tm && tm.getActiveTransaction()) {
       if (kind === 'remote') {
-        if (lastLocalJsonRef.current) {
-          tm.settleTransaction(lastLocalJsonRef.current);
+        // With a local-edit session the transaction stays open: its before-state is
+        // rebuilt at settle time without this user's edits. Without one, settle now with
+        // the user's own last state so the other user's edit isn't credited to them.
+        if (!localEditSessionRef.current) {
+          if (lastLocalJsonRef.current) {
+            tm.settleTransaction(lastLocalJsonRef.current);
+          }
+          hasActiveTransactionRef.current = false;
+          lastLocalJsonRef.current = null;
         }
-        hasActiveTransactionRef.current = false;
-        lastLocalJsonRef.current = null;
       } else {
         // Local bookkeeping during the user's own transaction: part of their after-state.
         lastLocalJsonRef.current = json;
@@ -3009,6 +3045,37 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
     editedProposedContentRef.current = json;
     setEditedProposedContent(json);
+  }, []);
+
+  /** The live Yjs session came or went (a long outage starts a new one with a new doc). */
+  const handleCollabSessionReady = useCallback((session: CollabSession | null) => {
+    if (session === null && localEditSessionRef.current) {
+      // The session's doc is going away: settle the open transaction with the user's own
+      // last state while the recorded edits can't be used any more.
+      const tm = transactionManagerRef.current;
+      localEditSessionRef.current = null;
+      if (tm?.getActiveTransaction() && lastLocalJsonRef.current) {
+        tm.settleTransaction(lastLocalJsonRef.current);
+        hasActiveTransactionRef.current = false;
+      }
+    }
+    collabSessionRef.current = session;
+  }, []);
+
+  /** Before-state text for DeletionInterceptionPlugin: the document without this user's open edits. */
+  const getCollabBeforeText = useCallback((): string | null => {
+    const tm = transactionManagerRef.current;
+    const session = localEditSessionRef.current;
+    const collab = collabSessionRef.current;
+    if (!tm?.getActiveTransaction()) return null;
+    if (session && collab) {
+      try {
+        return extractTextFromLexical(collab.tracker.baselineJson(session));
+      } catch (error) {
+        console.error('[YJS] Could not rebuild the before-state', error);
+      }
+    }
+    return tm.getActiveTransaction()?.beforeSnapshot?.text ?? null;
   }, []);
 
   /**
@@ -3413,6 +3480,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     collabMode={collabMode}
                     onRemoteContentChange={isCollab ? handleCollabRemoteChange : undefined}
                     getCollabSeedContent={isCollab ? getCollabSeedContent : undefined}
+                    onCollabSessionReady={isCollab ? handleCollabSessionReady : undefined}
+                    getCollabBeforeText={isCollab ? getCollabBeforeText : undefined}
                     onContentChange={isCollab ? handleCollabLocalChange : (json, cursorPosition) => {
                       // Skip processing if we're still initializing content to prevent auto-save on load
                       if (!hasInitializedContentRef.current) {

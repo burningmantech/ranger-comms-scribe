@@ -22,7 +22,7 @@ export function yjsServerUrl(apiUrl: string = API_URL): string {
 /**
  * Provider factory for Lexical's CollaborationPlugin.
  *
- * - Creates a fresh Y.Doc on every call and registers it in `yjsDocMap` synchronously,
+ * - Creates a fresh Y.Doc (without garbage collection) on every call and registers it in `yjsDocMap` synchronously,
  *   as CollaborationPlugin requires. A fresh doc per editor mount means a client never
  *   brings an old Yjs history into a room that was seeded again from saved content.
  * - `connect: false`: CollaborationPlugin connects only after it has registered its
@@ -41,7 +41,9 @@ export function createSubmissionYjsProvider(
     WebSocketPolyfill?: unknown;
   } = {},
 ): { provider: Provider; websocketProvider: WebsocketProvider; doc: Y.Doc } {
-  const doc = new Y.Doc();
+  // gc: false keeps deleted content, so a tracked change's before-state can restore text
+  // the user deleted (localEditTracker). The doc lives only as long as the editor session.
+  const doc = new Y.Doc({ gc: false });
   yjsDocMap.set(submissionId, doc);
   const websocketProvider = new WebsocketProvider(yjsServerUrl(options.apiUrl ?? API_URL), submissionId, doc, {
     params: { sessionId },

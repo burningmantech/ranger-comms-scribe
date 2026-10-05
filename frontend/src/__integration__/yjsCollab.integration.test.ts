@@ -53,6 +53,7 @@ import { ImageNode } from '../components/editor/nodes/ImageNode';
 import { DeletedTextNode } from '../components/editor/nodes/DeletedTextNode';
 import { $populateRootFromSavedContent } from '../components/editor/collab/YjsCollaboration';
 import { createSubmissionYjsProvider } from '../services/yjsProvider';
+import { registerCaretPreservation } from '../components/editor/collab/caretPreservation';
 
 jest.mock('../config', () => ({
   API_URL: process.env.YJS_E2E_API_URL || 'http://localhost:8080/api',
@@ -144,6 +145,12 @@ function connectClient(name: string, room: string, opts: { seed?: string; bootst
     }
   };
   binding.root.getSharedType().observeDeep(onYjs);
+  // As YjsSession does: note whether the update being synced is the user's own edit
+  // (registered before the sync listener, so it runs first).
+  let ownEdit = false;
+  const removeTagListener = editor.registerUpdateListener(({ tags }) => {
+    ownEdit = !tags.has('collaboration') && !tags.has('history-merge') && !tags.has('historic');
+  });
   const removeUpdateListener = editor.registerUpdateListener(
     ({ prevEditorState, editorState, dirtyElements, dirtyLeaves, normalizedNodes, tags }) => {
       if (!tags.has('skip-collab')) {
@@ -164,9 +171,20 @@ function connectClient(name: string, room: string, opts: { seed?: string; bootst
     }
   };
   websocketProvider.on('sync', onSync);
+  // As in the browser editor (headless clients always count as focused).
+  const removeCaret = registerCaretPreservation({
+    editor,
+    doc,
+    isRemoteOrigin: (origin) => origin === websocketProvider,
+    getLocalAwarenessState: () => websocketProvider.awareness.getLocalState() as any,
+    isFocused: () => true,
+    isOwnEdit: (tr) => ownEdit && tr.origin === binding,
+  });
   websocketProvider.connect();
 
   client.close = () => {
+    removeCaret();
+    removeTagListener();
     websocketProvider.off('sync', onSync);
     binding.root.getSharedType().unobserveDeep(onYjs);
     removeUpdateListener();
@@ -328,7 +346,9 @@ describeE2E('Yjs collaboration against the running backend', () => {
       if (!$isRangeSelection(selection)) throw new Error('no selection');
       selection.insertParagraph();
     });
-    edit(b, () => { const { node } = $findText(3, 'here'); node.spliceText(node.getTextContentSize(), 0, ' and more', false); });
+    // B types (caret at the end of the paragraph) while offline.
+    edit(b, () => { const { node } = $findText(3, 'here'); $selectRange(node, node.getTextContentSize(), node.getTextContentSize()); });
+    for (const ch of ' and more') edit(b, () => { const sel = $getSelection(); if ($isRangeSelection(sel)) sel.insertText(ch); });
     a.ws.connect();
     b.ws.connect();
     await converge(a, b, observer);
@@ -336,9 +356,9 @@ describeE2E('Yjs collaboration against the running backend', () => {
     expect(blocks.length).toBe(blocksBefore + 1);
     const texts = observer.editor.getEditorState().read(() => $getRoot().getChildren().map((n) => n.getTextContent()));
     expect(countOf(texts.join('\n'), ' and more')).toBe(1);
-    // KNOWN LIMIT (@lexical/yjs 0.30): text typed concurrently into the part that was split
-    // off lands at the split point instead of moving with it. Intended: ['Third ', 'paragraph here and more'].
-    expect(texts.slice(3)).toEqual(['Third  and more', 'paragraph here']);
+    // @lexical/yjs syncs the split as delete + re-insert, so Yjs leaves B's offline text at
+    // the split point; B's caret preservation moves its own just-typed text after the moved text.
+    expect(texts.slice(3)).toEqual(['Third ', 'paragraph here and more']);
   });
 
   it('converges on bold of a word with typing inside that word', async () => {
@@ -352,20 +372,21 @@ describeE2E('Yjs collaboration against the running backend', () => {
       if (!$isRangeSelection(selection)) throw new Error('no selection');
       selection.formatText('bold');
     });
-    edit(b, () => { const { node, offset } = $findText(0, 'quick'); node.spliceText(offset + 2, 0, 'ZZ', false); });
+    edit(b, () => { const { node, offset } = $findText(0, 'quick'); $selectRange(node, offset + 2, offset + 2); });
+    for (const ch of 'ZZ') edit(b, () => { const sel = $getSelection(); if ($isRangeSelection(sel)) sel.insertText(ch); });
     a.ws.connect();
     b.ws.connect();
     await converge(a, b, observer);
     const t = text(observer);
     expect(countOf(t, 'ZZ')).toBe(1);
     const firstBlock = JSON.parse(json(observer)).root.children[0].children;
-    expect(firstBlock.filter((n: any) => n.type === 'text' && n.format & 1).map((n: any) => n.text)).toEqual(['quick', ' jumps.']);
-    // KNOWN LIMIT (@lexical/yjs 0.30): bolding splits the text node (delete + insert), so the
-    // concurrent insert inside the word lands at the split point. Intended: 'The quZZick'.
-    expect(t.startsWith('The ZZquick brown fox')).toBe(true);
+    expect(firstBlock.filter((n: any) => n.type === 'text' && n.format & 1).map((n: any) => n.text).join('|')).toContain('qu');
+    // Bolding splits the text node (delete + re-insert); B's own just-typed text is moved
+    // back inside the word by its caret preservation.
+    expect(t.startsWith('The quZZick brown fox')).toBe(true);
   });
 
-  it('KNOWN LIMIT: a remote Enter before your caret in your paragraph moves your caret to the split point', async () => {
+  it('a remote Enter before your caret in your paragraph keeps your caret where you were typing', async () => {
     const [a, b, observer] = await seededPair();
     edit(b, () => { const { node } = $findText(3, 'here'); $selectRange(node, node.getTextContentSize(), node.getTextContentSize()); });
     edit(a, () => {
@@ -379,10 +400,72 @@ describeE2E('Yjs collaboration against the running backend', () => {
     edit(b, () => { const selection = $getSelection(); if ($isRangeSelection(selection)) selection.insertText(' typed'); });
     await converge(a, b, observer);
     const texts = observer.editor.getEditorState().read(() => $getRoot().getChildren().map((n) => n.getTextContent()));
-    // Intended: ['Third ', 'paragraph here typed']. @lexical/yjs 0.30 moves split-off text
-    // into a new node (delete + insert), so B's caret falls back to the split point.
-    expect(texts.slice(3)).toEqual(['Third  typed', 'paragraph here']);
+    expect(texts.slice(3)).toEqual(['Third ', 'paragraph here typed']);
   });
+
+  // Real-time typing: one keystroke at a time while the other user edits, 10 runs each.
+  const RUNS = Number(process.env.YJS_E2E_RUNS || 10);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  async function typeChars(c: Client, chars: string, delayMs: number): Promise<void> {
+    for (const ch of chars) {
+      edit(c, () => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) throw new Error(`${c.name} has no selection`);
+        selection.insertText(ch);
+      });
+      await sleep(delayMs);
+    }
+  }
+  const blockTexts = (c: Client) => c.editor.getEditorState().read(() => $getRoot().getChildren().map((n) => n.getTextContent()));
+
+  for (let run = 1; run <= RUNS; run++) {
+    it(`same position, typed at the same time, stays two contiguous blocks (run ${run})`, async () => {
+      const [a, b, observer] = await seededPair();
+      edit(a, () => { const { node, offset } = $findText(3, 'paragraph'); $selectRange(node, offset, offset); });
+      edit(b, () => { const { node, offset } = $findText(3, 'paragraph'); $selectRange(node, offset, offset); });
+      await Promise.all([typeChars(a, 'xxxx', 25), typeChars(b, 'yyyy', 25)]);
+      await converge(a, b, observer);
+      expect(blockTexts(observer)[3]).toMatch(/^Third (xxxxyyyy|yyyyxxxx)paragraph here$/);
+    });
+
+    it(`Enter before the other user's typing: their characters continue where they were typing (run ${run})`, async () => {
+      const [a, b, observer] = await seededPair();
+      edit(a, () => { const { node } = $findText(3, 'here'); $selectRange(node, node.getTextContentSize(), node.getTextContentSize()); });
+      edit(b, () => { const { node, offset } = $findText(3, 'paragraph'); $selectRange(node, offset, offset); });
+      await Promise.all([
+        typeChars(a, 'ZZZZZZZZ', 30),
+        (async () => {
+          await sleep(70 + run * 7); // vary where the split lands in A's typing
+          edit(b, () => { const sel = $getSelection(); if ($isRangeSelection(sel)) sel.insertParagraph(); });
+        })(),
+      ]);
+      await converge(a, b, observer);
+      expect(blockTexts(observer).slice(3)).toEqual(['Third ', 'paragraph hereZZZZZZZZ']);
+    });
+
+    it(`bold inside the word the other user is typing in: their characters stay in the word (run ${run})`, async () => {
+      const [a, b, observer] = await seededPair();
+      edit(a, () => { const { node, offset } = $findText(0, 'quick'); $selectRange(node, offset + 2, offset + 2); });
+      await Promise.all([
+        typeChars(a, 'QQQQQQ', 30),
+        (async () => {
+          await sleep(60 + run * 7);
+          edit(b, () => {
+            const t = $getRoot().getChildAtIndex(0)!.getTextContent();
+            const start = t.indexOf('qu');
+            const end = t.indexOf('ick', start) + 3;
+            const nodes = ($getRoot().getChildAtIndex(0) as any).getChildren().filter((n: any) => $isTextNode(n));
+            const node = nodes[0] as TextNode;
+            $selectRange(node, start, end);
+            const sel = $getSelection();
+            if ($isRangeSelection(sel)) sel.formatText('bold');
+          });
+        })(),
+      ]);
+      await converge(a, b, observer);
+      expect(text(observer)).toContain('The quQQQQQQick brown fox');
+    });
+  }
 
   it('merges edits made by both clients in the same tick while connected', async () => {
     const [a, b, observer] = await seededPair();

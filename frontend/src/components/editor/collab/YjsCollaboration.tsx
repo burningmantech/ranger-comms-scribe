@@ -28,11 +28,14 @@ import {
   $isElementNode,
   $parseSerializedNode,
   EditorState,
+  Klass,
   LexicalEditor,
   LexicalNode,
   ParagraphNode,
 } from 'lexical';
 import { createSubmissionYjsProvider } from '../../../services/yjsProvider';
+import { registerCaretPreservation } from './caretPreservation';
+import { createLocalEditTracker, LocalEditTracker } from './localEditTracker';
 import { isLexicalJson } from '../../../utils/lexicalUtils';
 
 /**
@@ -114,6 +117,16 @@ interface YjsCollaborationProps {
   cursorsContainerRef: React.MutableRefObject<HTMLElement | null>;
   /** Editing is enabled only while the room is synced (and not readOnly). */
   readOnly?: boolean;
+  /** The editor's node classes (to rebuild documents headlessly for tracked changes). */
+  nodes: ReadonlyArray<Klass<LexicalNode>>;
+  /** The current Yjs session's API, or null between sessions. */
+  onSessionReady?: (session: CollabSession | null) => void;
+}
+
+/** What the tracked-changes layer needs from a live Yjs session. */
+export interface CollabSession {
+  /** The local user's own edits since a point in time (keeps a tracked change open across remote edits). */
+  tracker: LocalEditTracker;
 }
 
 /**
@@ -158,6 +171,8 @@ function YjsSession({
   cursorColor,
   cursorsContainerRef,
   readOnly,
+  nodes,
+  onSessionReady,
   isFreshSession,
   onLongOutage,
 }: YjsCollaborationProps & { isFreshSession: boolean; onLongOutage: () => void }): JSX.Element {
@@ -172,6 +187,10 @@ function YjsSession({
   getSeedContentRef.current = getSeedContent;
   const onLongOutageRef = useRef(onLongOutage);
   onLongOutageRef.current = onLongOutage;
+  const onSessionReadyRef = useRef(onSessionReady);
+  onSessionReadyRef.current = onSessionReady;
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
 
   // Stable identities: CollaborationPlugin re-creates its connection whenever
   // providerFactory or initialEditorState changes.
@@ -300,6 +319,33 @@ function YjsSession({
       undoManager.destroy();
     };
   }, [editor, doc]);
+
+  // Caret preservation across remote edits, and the local-edit tracker for tracked changes.
+  useEffect(() => {
+    if (!doc || !websocketProvider) return;
+    const isLocalEdit = (tr: Transaction) =>
+      tr.origin instanceof UndoManager ||
+      (captureNextRef.current && !!tr.origin && typeof tr.origin === 'object' && 'collabNodeMap' in tr.origin);
+    const tracker = createLocalEditTracker(doc, nodesRef.current, isLocalEdit);
+    const removeCaret = registerCaretPreservation({
+      editor,
+      doc,
+      isRemoteOrigin: (origin) => origin === websocketProvider,
+      isOwnEdit: isLocalEdit,
+      getLocalAwarenessState: () => websocketProvider.awareness.getLocalState() as any,
+      isFocused: () => {
+        const root = editor.getRootElement();
+        const active = typeof document !== 'undefined' ? document.activeElement : null;
+        return !!root && !!active && (root === active || root.contains(active));
+      },
+    });
+    onSessionReadyRef.current?.({ tracker });
+    return () => {
+      onSessionReadyRef.current?.(null);
+      removeCaret();
+      tracker.destroy();
+    };
+  }, [editor, doc, websocketProvider]);
 
   // CollaborationPlugin only disconnects its provider on unmount; also destroy it (timers,
   // awareness) and its doc. Deferred so React StrictMode's simulated unmount/remount, which
