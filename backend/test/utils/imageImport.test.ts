@@ -8,6 +8,11 @@ import {
   TransportResponse,
 } from '../../src/utils/imageImport';
 import { importEditorImage } from '../../src/handlers/contentSubmission';
+import { AddressInfo } from 'net';
+import { createAppServer } from '../../src/httpServer';
+import { configureCors } from '../../src/index';
+import { loadConfig } from '../../src/config/env';
+import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
 
 type Reply = { status?: number; headers?: Record<string, string>; chunks?: Uint8Array[] };
 
@@ -286,5 +291,46 @@ describe('importEditorImage (route handler)', () => {
   it.each([[{}], [{ imageUrl: 42 }], ['not json']])('rejects a bad body %p', async (body) => {
     const response = await importEditorImage(post(body));
     expect(response.status).toBe(400);
+  });
+});
+
+describe('import routes through the app server', () => {
+  async function post(path: string, body: unknown, extraEnv: Record<string, string> = {}, headers: Record<string, string> = {}) {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    const env = loadConfig(
+      {
+        PUBLIC_URL: 'http://localhost/api', FRONTEND_URL: 'http://localhost:3000', GOOGLE_CLIENT_ID: 'c',
+        TURNSTILESECRET: 's', STORE_DRIVER: 'memory', ...extraEnv,
+      },
+      { store: new MemoryObjectStore() },
+    ).env;
+    configureCors(env.CORS_ORIGINS);
+    const app = createAppServer(env);
+    await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', () => resolve()));
+    const { port } = app.server.address() as AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    } finally {
+      await app.close();
+      jest.restoreAllMocks();
+    }
+  }
+
+  const paths = ['/api/content/editor-images/import', '/api/content/editor-images/proxy-google-docs'];
+
+  it.each(paths)('%s needs a session', async (path) => {
+    expect(await post(path, { imageUrl: 'https://example.com/a.png' })).toEqual({ status: 400, body: { error: 'Session ID is required' } });
+    expect((await post(path, { imageUrl: 'https://example.com/a.png' }, {}, { Authorization: 'Bearer nope' })).status).toBe(403);
+  });
+
+  it.each(paths)('%s is mounted and runs the guarded import', async (path) => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = await post(path, { imageUrl: 'https://169.254.169.254/latest/meta-data/' }, { DEV_BYPASS_AUTH: 'true' });
+    expect(res).toEqual({ status: 400, body: { error: 'Image URL points to a non-public address' } });
   });
 });

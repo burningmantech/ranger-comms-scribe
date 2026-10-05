@@ -138,6 +138,9 @@ export function ImagePlugin({ currentUser }: ImagePluginProps) {
   // Pasted / dropped images: placeholders, uploads, swaps and cleanup.
   useEffect(() => {
     const inFlight = new Set<string>();
+    // Placeholders this client already finished (swapped or removed). One that comes back
+    // (undo of the swap) has nobody to finish it.
+    const finished = new Set<string>();
     let sweepTimer: ReturnType<typeof setTimeout> | null = null;
     let sweepAt = Infinity;
 
@@ -176,11 +179,12 @@ export function ImagePlugin({ currentUser }: ImagePluginProps) {
       } finally {
         clearTimeout(timer);
         inFlight.delete(id);
+        finished.add(id);
       }
     };
 
-    // Remove placeholders nobody is finishing (another client's that went stale, or one
-    // loaded from saved content). Bookkeeping, not a user edit: 'history-merge' keeps it
+    // Remove placeholders nobody is finishing (another client's that went stale, one loaded
+    // from saved content, or one an undo brought back). Bookkeeping, not a user edit: 'history-merge' keeps it
     // out of undo and change tracking. Read-only editors leave it (the node renders hidden).
     const sweepStale = () => {
       sweepTimer = null;
@@ -190,8 +194,9 @@ export function ImagePlugin({ currentUser }: ImagePluginProps) {
       let nextDue = Infinity;
       editor.getEditorState().read(() => {
         for (const node of $getPendingImageNodes()) {
-          if (inFlight.has(node.getImageId() || '')) continue;
-          if (node.isStalePending(now)) stale.push(node.getKey());
+          const id = node.getImageId() || '';
+          if (inFlight.has(id)) continue;
+          if (finished.has(id) || node.isStalePending(now)) stale.push(node.getKey());
           else nextDue = Math.min(nextDue, (node.getPendingSince() || 0) + PENDING_IMAGE_STALE_MS);
         }
       });
@@ -213,7 +218,8 @@ export function ImagePlugin({ currentUser }: ImagePluginProps) {
       const claimed: Array<[string, PendingImageSource]> = [];
       editor.getEditorState().read(() => {
         mutations.forEach((mutation, key) => {
-          if (mutation !== 'created') return;
+          // 'updated' too: undoing a swap (Yjs) turns the same node back into a placeholder.
+          if (mutation === 'destroyed') return;
           const node = $getNodeByKey(key);
           if (!$isImageNode(node) || !node.isPending()) return;
           const id = node.getImageId() || '';
@@ -221,7 +227,7 @@ export function ImagePlugin({ currentUser }: ImagePluginProps) {
           if (source) {
             claimed.push([id, source]);
           } else if (!inFlight.has(id)) {
-            scheduleSweep((node.getPendingSince() || 0) + PENDING_IMAGE_STALE_MS);
+            scheduleSweep(finished.has(id) ? Date.now() : (node.getPendingSince() || 0) + PENDING_IMAGE_STALE_MS);
           }
         });
       });

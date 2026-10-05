@@ -234,6 +234,40 @@ describe('ImagePlugin: orphaned placeholders', () => {
   });
 });
 
+describe('ImagePlugin: undo after a finished import', () => {
+  it('removes a placeholder that an undo of the swap brings back', async () => {
+    const { editor } = setup();
+    const inFlight = gate();
+    mockResolve.mockImplementation(async () => {
+      await inFlight.wait;
+      return new File(['x'], 'a.png', { type: 'image/png' });
+    });
+    mockUpload.mockResolvedValue(uploaded(5));
+    await pasteHtml(editor, '<p><img src="https://example.com/a.png"></p>');
+    const placeholderId = editor.getEditorState().read(() => $getPendingImageNodes()[0].getImageId()!);
+    inFlight.open();
+    await settle();
+    expect(images(editor).map((i) => i.src)).toEqual(['/api/gallery/5.png']);
+
+    // Yjs undo reverts the swap's attributes on the same node: an 'updated' mutation.
+    await act(async () => {
+      editor.update(() => {
+        const writable = $getRoot().getChildren().find($isImageNode)!.getWritable();
+        writable.__src = '';
+        writable.__imageId = placeholderId;
+        writable.__pendingSince = Date.now();
+      });
+    });
+    expect(images(editor).map((i) => i.pending)).toEqual([true]);
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1100));
+    });
+    expect(images(editor)).toEqual([]);
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+  });
+});
+
 function docWithPlaceholder(pendingSince: number): string {
   return JSON.stringify({
     root: {
