@@ -564,11 +564,14 @@ Deployed with `COLLAB_MODE=yjs` and tested with two real Chrome profiles on app.
 | Second user joins: content seeded once, no duplicate | ✅ |
 | Simultaneous typing, different paragraphs | ✅ Both strings intact and in place |
 | Simultaneous typing, same paragraph | ✅ Both strings intact and in place |
-| Enter in a paragraph while the other user types in it | ❌ Converges with nothing lost, but the typist's remaining characters land at the split point |
+| Enter in a paragraph while the other user types in it | ✅ after the cursor fix (both directions); before it, the typist's characters landed at the split point |
+| Bold inside the line being typed | ✅ |
+| Both typing at the same position | ✅ Contiguous blocks, no interleaving |
+| Converged document survives a reload | ✅ |
+| Change attribution: different paragraphs, same position, bold | ✅ One change per user, only their own text |
+| Change attribution: concurrent Enter | ❌ The splitter is credited with some of the typist's characters (the split syncs as delete plus re-insert under the splitter) |
 
-**In progress:**
-- restore each user's cursor after remote updates (Yjs relative positions, with a fallback that finds the cursor's surrounding text), which covers Enter, bold and typing at the same position;
-- one tracked change per user per edit instead of one per keystroke during concurrent typing.
+**In progress:** attribution for concurrent paragraph splits.
 
 ## 13. Estimates
 
