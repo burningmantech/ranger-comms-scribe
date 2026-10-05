@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin } from '../services/userService';
+import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
@@ -158,8 +158,9 @@ router.post('/register', async (request: Request, env) => {
             return json({ error: 'User with this email already exists' }, { status: 409 });
         }
 
-        // Create the user with password (bootstrap admins are promoted here)
-        const user = await applyBootstrapAdmin(await getOrCreateUser({ name, email, password }, env), env);
+        // Create the user with password. Not promoted to bootstrap admin here: the
+        // address is unproven until /verify-email (see applyBootstrapAdmin).
+        const user = await getOrCreateUser({ name, email, password }, env);
 
         if (!user.verified) {
             // Generate and store verification token
@@ -210,11 +211,12 @@ router.post('/verify-email', async (request: Request, env) => {
             return json({ error: 'Invalid or expired verification token' }, { status: 400 });
         }
 
-        // Mark user as verified
+        // Mark user as verified (and promote a bootstrap admin, now that the address is proven)
         const user = await markUserAsVerified(tokenData.userId, env);
         if (!user) {
             return json({ error: 'Failed to verify user' }, { status: 500 });
         }
+        await applyBootstrapAdmin(user, env);
 
         // Delete the used token
         await env.STORE.delete(`verification-token/${token}`);
@@ -506,8 +508,10 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         const payload = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
         const { email, name, sub } = payload; // Extract email, name, and user ID (sub)
 
-        // Create or get the user (bootstrap admins are promoted here)
-        const user = await applyBootstrapAdmin(await getOrCreateUser({ name, email }, env), env);
+        // Create or get the user. Google has verified the address, so mark it
+        // verified (dropping any unproven password) and promote bootstrap admins.
+        const existingOrNew = await getOrCreateUser({ name, email }, env);
+        const user = await applyBootstrapAdmin(await markVerifiedByGoogle(existingOrNew, env), env);
 
         const sessionId = await createUserSession(user, env);
 

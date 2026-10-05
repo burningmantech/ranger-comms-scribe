@@ -164,7 +164,8 @@ cd infra && npm ci
    bin/dev-up       # ~5 min; pushes a first :dev image if the repository is empty
    bin/dev-deploy   # backend through ranger-deploy (deploy_aws_ecs staging, :dev), then the frontend
    ```
-9. **Sign in.** Register or sign in with an address in `BOOTSTRAP_ADMIN_EMAILS` (`alexander.young@gmail.com` by default), then
+9. **Sign in.** Sign in with Google using an address in `BOOTSTRAP_ADMIN_EMAILS` (`alexander.young@gmail.com` by default).
+   A password registration is promoted only after its email is verified (SES must be able to send to it). Then
    create users, groups and council and cadre roles through the UI.
 
 Backend settings for alex-dev are in `config/alex-dev.ts`. Some can be overridden at deploy time with environment variables:

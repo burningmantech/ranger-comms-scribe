@@ -528,16 +528,21 @@ export function isBootstrapAdminEmail(email: string | undefined | null, env: Env
 
 /**
  * First-admin bootstrap: a user whose email is in BOOTSTRAP_ADMIN_EMAILS becomes
- * an approved, verified Admin. Called on register, login and Google login, before
- * the session is created. Saves only when something changes; returns the
- * (possibly updated) user.
+ * an approved Admin. Called on register, email verification, login and Google
+ * login, before the session is created. Saves only when something changes;
+ * returns the (possibly updated) user.
+ *
+ * Only users who have proven they own the address are promoted (`verified`:
+ * set by /auth/verify-email or by a Google sign-in). Otherwise anyone who knows
+ * a listed address could register it with a password and get an Admin session.
  */
 export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
   if (!isBootstrapAdminEmail(user.email, env)) return user;
+  if (user.verified !== true) return user;
 
   const roles = user.roles || [];
   const alreadyAdmin = user.userType === UserType.Admin && user.isAdmin === true &&
-    user.approved === true && user.verified === true && roles.includes('Admin');
+    user.approved === true && roles.includes('Admin');
   if (alreadyAdmin) return user;
 
   console.log(`👑 Bootstrap admin: promoting ${user.email}`);
@@ -546,7 +551,6 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
     userType: UserType.Admin,
     isAdmin: true,
     approved: true,
-    verified: true,
     roles: roles.includes('Admin') ? roles : [...roles.filter((r) => r !== 'Public'), 'Admin'],
   };
   await saveUser(promoted, env);
@@ -554,8 +558,22 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
 }
 
 /**
- * Runs once at boot: promote BOOTSTRAP_ADMIN_EMAILS users that already exist.
- * Users that don't exist yet are promoted when they first register or log in.
+ * A Google sign-in proves the user owns the email address. Mark the account
+ * verified. If it was not verified before, any password on it was set by
+ * whoever registered the address without proving ownership (possibly not the
+ * owner), so drop it; the owner can set one with "forgot password".
+ */
+export async function markVerifiedByGoogle(user: User, env: Env): Promise<User> {
+  if (user.verified === true) return user;
+  const { passwordHash: _unproven, ...rest } = user;
+  const verifiedUser: User = { ...rest, verified: true };
+  await saveUser(verifiedUser, env);
+  return verifiedUser;
+}
+
+/**
+ * Runs once at boot: promote BOOTSTRAP_ADMIN_EMAILS users that already exist
+ * and are verified. Others are promoted when they verify their email or log in.
  * (Replaces the old hardcoded first-admin, which pre-created a password-less
  * account that anyone could then claim through /auth/register.)
  */
