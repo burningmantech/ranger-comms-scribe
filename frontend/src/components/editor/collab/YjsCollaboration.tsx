@@ -131,6 +131,7 @@ export function YjsCollaboration(props: YjsCollaborationProps): JSX.Element {
   }, [editor]);
 
   const startFreshSession = useCallback(() => {
+    console.info(`[YJS] Socket down for ${FRESH_DOC_AFTER_OFFLINE_MS / 1000} s; reconnecting with a fresh document`);
     editor.setEditable(false);
     setSession((n) => n + 1);
   }, [editor]);
