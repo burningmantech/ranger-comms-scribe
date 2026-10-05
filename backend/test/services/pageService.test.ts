@@ -62,7 +62,7 @@ describe('Page Service', () => {
       expect(result.page?.createdBy).toBe('Admin User');
       expect(result.page?.isPublic).toBe(true);
       
-      // Verify the page was stored in R2
+      // Verify the page was stored
       const storedPage = await getPage(result.page!.id, env);
       expect(storedPage).toBeDefined();
       expect(storedPage?.title).toBe('Test Page');
@@ -370,7 +370,7 @@ describe('Page Service', () => {
       expect(result.page?.content).toBe('Updated content');
       expect(result.page?.published).toBe(false);
       
-      // Verify the page was updated in R2
+      // Verify the page was updated
       const updatedPage = await getPage(pageId, env);
       expect(updatedPage?.title).toBe('Updated Page Title');
     });

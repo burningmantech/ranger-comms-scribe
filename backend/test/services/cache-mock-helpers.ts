@@ -1,13 +1,11 @@
 import { jest } from '@jest/globals';
 
-// Define a simple Env type for testing purposes
+import { ObjectStore } from '../../src/storage/objectStore';
+
+// Define a simple Env type for testing purposes. The mocked cacheService never touches the
+// store; it keeps everything in `globalStorage` below.
 type Env = {
-  CACHE?: {
-    get: (key: string) => Promise<string | null>;
-    put: (key: string, value: string, options?: any) => Promise<void>;
-    delete: (key: string) => Promise<void>;
-    list: () => Promise<{ keys: Array<{ name: string }> }>;
-  };
+  STORE?: ObjectStore;
 };
 
 // Using any type to avoid complex type issues with Jest mocks
@@ -119,5 +117,13 @@ export function createCacheServiceMock() {
     setInCache: putObjectMock,
     removeFromCache: deleteObjectMock,
     initCache: jest.fn(() => Promise.resolve()),
+    invalidateCacheWithPrefix: jest.fn((prefix: string, _env?: Env): Promise<void> => {
+      Object.keys(storage).forEach(key => {
+        if (key.startsWith(prefix)) delete storage[key];
+      });
+      return Promise.resolve();
+    }),
+    cleanupExpiredCache: jest.fn(() => Promise.resolve()),
+    clearMemoryCache: jest.fn(() => undefined),
   };
 }

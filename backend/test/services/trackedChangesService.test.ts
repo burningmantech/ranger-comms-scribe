@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { undoChange, deleteChange, getCascadeDependencies, batchCreateTrackedChanges, createTrackedChange, TrackedChange, calculateIncrementalChange, RegionMap } from '../../src/services/trackedChangesService';
 import { createCacheServiceMock } from './cache-mock-helpers';
+import { clearMemoryCache } from '../../src/services/cacheService';
 
 describe('trackedChangesService', () => {
   let mockEnv: any;
 
   beforeEach(() => {
+    clearMemoryCache();
     const cacheMocks = createCacheServiceMock();
     mockEnv = {
-      R2: {
+      STORE: {
         list: jest.fn(),
         get: jest.fn(),
         put: jest.fn(),
@@ -44,17 +46,17 @@ describe('trackedChangesService', () => {
       };
 
       // Mock the listObjects to return our change
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: [{ key: `tracked-changes/submission/${submissionId}/${changeId}` }]
       });
 
       // Mock getObject to return our change
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
       // Mock putObject to simulate saving
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
 
       const result = await undoChange(submissionId, changeId, mockEnv);
 
@@ -86,12 +88,12 @@ describe('trackedChangesService', () => {
       };
 
       // Mock getObject to return our change via direct key lookup
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
       // Mock putObject to simulate saving
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
 
       const result = await undoChange(submissionId, changeId, mockEnv);
 
@@ -106,8 +108,8 @@ describe('trackedChangesService', () => {
       const changeId = 'non-existent-change-id';
       const submissionId = 'test-submission-id';
 
-      // Mock R2.get to return null (change not found at direct key)
-      mockEnv.R2.get = jest.fn().mockResolvedValue(null);
+      // Mock STORE.get to return null (change not found at direct key)
+      mockEnv.STORE.get = jest.fn().mockResolvedValue(null);
 
       const result = await undoChange(submissionId, changeId, mockEnv);
 
@@ -132,7 +134,7 @@ describe('trackedChangesService', () => {
       };
 
       // Mock getObject to return our change via direct key lookup
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
@@ -226,24 +228,24 @@ describe('trackedChangesService', () => {
         status: 'pending'
       };
 
-      // Mock R2.get to return the change when fetched by constructed key
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      // Mock STORE.get to return the change when fetched by constructed key
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
 
       const result = await deleteChange(submissionId, changeId, mockEnv);
 
       expect(result).not.toBeNull();
       expect(result?.submissionId).toBe(submissionId);
-      // Verify R2.delete was called (the deleteObject function calls env.R2.delete)
-      expect(mockEnv.R2.delete).toHaveBeenCalled();
+      // Verify STORE.delete was called (the deleteObject function calls env.STORE.delete)
+      expect(mockEnv.STORE.delete).toHaveBeenCalled();
     });
 
     it('should return null for non-existent change', async () => {
-      // Mock R2.get to return null (change doesn't exist at constructed key)
-      mockEnv.R2.get = jest.fn().mockResolvedValue(null);
+      // Mock STORE.get to return null (change doesn't exist at constructed key)
+      mockEnv.STORE.get = jest.fn().mockResolvedValue(null);
 
       const result = await deleteChange('test-submission-id', 'non-existent-id', mockEnv);
 
@@ -269,11 +271,11 @@ describe('trackedChangesService', () => {
         approvedAt: new Date().toISOString()
       };
 
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
 
       const result = await deleteChange(submissionId, changeId, mockEnv);
 
@@ -281,7 +283,7 @@ describe('trackedChangesService', () => {
       expect(result?.submissionId).toBe(submissionId);
     });
 
-    it('should construct the R2 key from submissionId and changeId without scanning', async () => {
+    it('should construct the storage key from submissionId and changeId without scanning', async () => {
       const changeId = 'test-change-id';
       const submissionId = 'test-submission-id';
 
@@ -297,17 +299,17 @@ describe('trackedChangesService', () => {
         status: 'pending'
       };
 
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.list = jest.fn();
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.list = jest.fn();
 
       await deleteChange(submissionId, changeId, mockEnv);
 
-      // R2.list should NOT have been called — we construct the key directly
-      expect(mockEnv.R2.list).not.toHaveBeenCalled();
+      // STORE.list should NOT have been called — we construct the key directly
+      expect(mockEnv.STORE.list).not.toHaveBeenCalled();
     });
   });
 
@@ -329,11 +331,11 @@ describe('trackedChangesService', () => {
         // No regionMap
       };
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: [{ key: `tracked-changes/submission/${submissionId}/${changeId}` }]
       });
 
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange)
       });
 
@@ -383,8 +385,8 @@ describe('trackedChangesService', () => {
         regionMap: { field: 'content', ranges: [{ start: 50, end: 60 }] }
       };
 
-      // Mock R2.list to return all three changes
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      // Mock STORE.list to return all three changes
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: [
           { key: `tracked-changes/submission/${submissionId}/change-1` },
           { key: `tracked-changes/submission/${submissionId}/change-2` },
@@ -392,8 +394,8 @@ describe('trackedChangesService', () => {
         ]
       });
 
-      // Mock R2.get to return the correct change for each key
-      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+      // Mock STORE.get to return the correct change for each key
+      mockEnv.STORE.get = jest.fn().mockImplementation((key: string) => {
         if (key.endsWith('change-1')) {
           return Promise.resolve({ json: () => Promise.resolve(change1) });
         }
@@ -442,14 +444,14 @@ describe('trackedChangesService', () => {
         regionMap: { field: 'content', ranges: [{ start: 15, end: 25 }] }
       };
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: [
           { key: `tracked-changes/submission/${submissionId}/change-1` },
           { key: `tracked-changes/submission/${submissionId}/change-2` }
         ]
       });
 
-      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+      mockEnv.STORE.get = jest.fn().mockImplementation((key: string) => {
         if (key.endsWith('change-1')) {
           return Promise.resolve({ json: () => Promise.resolve(change1) });
         }
@@ -523,7 +525,7 @@ describe('trackedChangesService', () => {
         regionMap: { field: 'content', ranges: [{ start: 10, end: 20 }] }
       };
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: [
           { key: `tracked-changes/submission/${submissionId}/change-1` },
           { key: `tracked-changes/submission/${submissionId}/change-2` },
@@ -532,7 +534,7 @@ describe('trackedChangesService', () => {
         ]
       });
 
-      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+      mockEnv.STORE.get = jest.fn().mockImplementation((key: string) => {
         if (key.endsWith('change-1')) {
           return Promise.resolve({ json: () => Promise.resolve(change1) });
         }
@@ -584,14 +586,14 @@ describe('trackedChangesService', () => {
         regionMap: { field: 'title', ranges: [{ start: 10, end: 20 }] }
       };
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: [
           { key: `tracked-changes/submission/${submissionId}/change-1` },
           { key: `tracked-changes/submission/${submissionId}/change-2` }
         ]
       });
 
-      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+      mockEnv.STORE.get = jest.fn().mockImplementation((key: string) => {
         if (key.endsWith('change-1')) {
           return Promise.resolve({ json: () => Promise.resolve(change1) });
         }
@@ -609,7 +611,7 @@ describe('trackedChangesService', () => {
     it('should return empty for non-existent target change', async () => {
       const submissionId = 'test-submission-id';
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: []
       });
 
@@ -646,14 +648,14 @@ describe('trackedChangesService', () => {
         regionMap: { field: 'content', ranges: [{ start: 15, end: 25 }] }
       };
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({
         objects: [
           { key: `tracked-changes/submission/${submissionId}/change-1` },
           { key: `tracked-changes/submission/${submissionId}/change-2` }
         ]
       });
 
-      mockEnv.R2.get = jest.fn().mockImplementation((key: string) => {
+      mockEnv.STORE.get = jest.fn().mockImplementation((key: string) => {
         if (key.endsWith('change-1')) {
           return Promise.resolve({ json: () => Promise.resolve(change1) });
         }
@@ -674,9 +676,9 @@ describe('trackedChangesService', () => {
     it('should create multiple changes and return them all', async () => {
       const submissionId = 'test-submission-id';
 
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({ objects: [] });
 
       const changesData = [
         {
@@ -712,9 +714,9 @@ describe('trackedChangesService', () => {
     it('should include regionMap when provided', async () => {
       const submissionId = 'test-submission-id';
 
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({ objects: [] });
 
       const regionMap: RegionMap = {
         field: 'content',
@@ -742,16 +744,16 @@ describe('trackedChangesService', () => {
       const submissionId = 'test-submission-id';
 
       let putCallCount = 0;
-      mockEnv.R2.put = jest.fn().mockImplementation(() => {
+      mockEnv.STORE.put = jest.fn().mockImplementation(() => {
         putCallCount++;
-        // Fail on the third put call (second change's R2 write, after the first change's R2 + cache writes)
+        // Fail on the third put call (second change's store write, after the first change's store + cache writes)
         if (putCallCount >= 3) {
-          return Promise.reject(new Error('R2 write failed'));
+          return Promise.reject(new Error('store write failed'));
         }
         return Promise.resolve(undefined);
       });
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({ objects: [] });
 
       const changesData = [
         {
@@ -771,18 +773,18 @@ describe('trackedChangesService', () => {
       ];
 
       await expect(batchCreateTrackedChanges(submissionId, changesData, mockEnv))
-        .rejects.toThrow('R2 write failed');
+        .rejects.toThrow('store write failed');
 
-      // Verify R2.delete was called for rollback
-      expect(mockEnv.R2.delete).toHaveBeenCalled();
+      // Verify STORE.delete was called for rollback
+      expect(mockEnv.STORE.delete).toHaveBeenCalled();
     });
 
     it('should preserve custom timestamps when provided', async () => {
       const submissionId = 'test-submission-id';
 
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({ objects: [] });
 
       const customTimestamp = '2024-06-15T12:00:00Z';
 
@@ -849,10 +851,10 @@ describe('trackedChangesService', () => {
     it('should store regionMap when provided', async () => {
       const submissionId = 'test-submission-id';
 
-      // Mock R2 and list for getLatestProposedVersion (returns no prior changes)
-      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      // Mock the store and list for getLatestProposedVersion (returns no prior changes)
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
 
       const regionMap: RegionMap = {
         field: 'content',
@@ -880,9 +882,9 @@ describe('trackedChangesService', () => {
     it('should create change without regionMap when not provided', async () => {
       const submissionId = 'test-submission-id';
 
-      mockEnv.R2.list = jest.fn().mockResolvedValue({ objects: [] });
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({ objects: [] });
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
 
       const result = await createTrackedChange(
         submissionId,
