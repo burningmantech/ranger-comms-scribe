@@ -48,6 +48,7 @@ export interface ObjectStore {
 ```
 
 - **Metadata casing.** S3 returns user-metadata keys in lowercase. `S3ObjectStore` maps them back to the camelCase keys the code uses: `userId`, `createdAt`, `updatedAt`, `isPublic`, `groupId`, `takenBy`, `memberId`, and any other keys found in `backend/src`. The memory store keeps keys as given.
+- **Metadata values are percent-encoded** by `S3ObjectStore` on write and decoded on read, because S3 metadata travels as HTTP headers and non-ASCII values would otherwise be rejected. Anything reading objects outside `S3ObjectStore` (the AWS CLI or console) sees encoded values.
 - **R2 → ObjectStore mapping:**
   - `httpMetadata.contentType` → `contentType`
   - `customMetadata` → `metadata`
@@ -86,7 +87,7 @@ AWS credentials come from the default credential chain: the task role on ECS, an
 
 ## 4. Container
 
-- **Image:** `backend/Dockerfile`, build context `backend/`, multi-stage, Node 20 Alpine. Runs `node dist/server.js`.
+- **Image:** `backend/Dockerfile`, build context `backend/`, multi-stage, Node 24 LTS Alpine (`node:24-alpine`; Node 20 reached end-of-life in April 2026). Runs `node dist/server.js`.
 - **Process:** one process on `PORT` serving REST under `/api/*` and WebSocket upgrades under `/api/ws/*`.
 - **Health:** `GET /healthz` returns `200 {"ok":true}` (outside `/api`, used by the ALB target group).
 - **Image name:** ECR repository `comms-scribe`. The dev tag is `:dev`; the standard profile uses commit-ID tags (from `ranger-deploy`).

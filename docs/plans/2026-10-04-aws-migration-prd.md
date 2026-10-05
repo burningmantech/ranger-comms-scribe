@@ -80,7 +80,7 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
 
 | Decision | Choice | Why |
 |---|---|---|
-| Compute | **ECS Fargate, one Node 20 container** | Matches the Ranger norm and `ranger-deploy`. Lambda's 6 MB payload and 29 s timeout limits break uploads, image serving and batch email. A long-running process replaces the in-memory Durable Object directly. |
+| Compute | **ECS Fargate, one Node 24 container** | Matches the Ranger norm and `ranger-deploy`. Lambda's 6 MB payload and 29 s timeout limits break uploads, image serving and batch email. A long-running process replaces the in-memory Durable Object directly. |
 | Real-time | **`ws` on the Node server behind an ALB** | API Gateway WebSockets cap frames at 32 KB and messages at 128 KB, and full-document updates can exceed that. The ALB supports WebSockets natively. |
 | Data | **S3**, keeping the key-prefix model | Smallest change from R2's object model. |
 | Cache | **In-process TTL map** | D1 only cached S3/R2 reads, and with one task an in-process cache stays consistent. |
@@ -97,7 +97,7 @@ DNS ──► CloudFront (ACM cert in us-east-1, HSTS response-headers policy)
          ├─ /api/gallery/* → ALB (cached, honours 1-yr Cache-Control)
          └─ /api/*         → ALB (no cache; WebSocket upgrade for /api/ws/*)
 ALB ──► ECS Fargate service, desiredCount = 1
-        ┌─ one Node 20 container (one process, one port) ─────────────┐
+        ┌─ one Node 24 container (one process, one port) ─────────────┐
         │  HTTP API      itty-router handlers (REST)                  │
         │  WebSocket     `ws` rooms on /api/ws/* (replaces the DO)    │
         │  Cache         in-memory TTL map (replaces D1)              │
@@ -278,7 +278,7 @@ These are estimates from us-east-1 list prices, not a quote. Check them in the A
 - R2.5: **Relative media URLs (recommended).** Store `/api/gallery/...` paths instead of absolute `${PUBLIC_URL}/gallery/...` URLs (`mediaService.ts:77,101,162,408`), so content survives hostname changes and the later database move. Check `frontend/src/components/editor/plugins/ImagePlugin.tsx` handles them.
 - R2.6: Replace `CF-Connecting-IP` (`auth.ts:143,297,380,437`) with a helper that reads `CloudFront-Viewer-Address`, then the first entry of `X-Forwarded-For`, then the socket address.
 - R2.7: Switch `utils/email.ts` to `@aws-sdk/client-sesv2` with the default credential chain, and read `EMAIL_FROM`, `EMAIL_BCC` and `SES_REGION` from config.
-- R2.8: Add a multi-stage `backend/Dockerfile` (node:20-alpine) and a `/healthz` route.
+- R2.8: Add a multi-stage `backend/Dockerfile` (node:24-alpine) and a `/healthz` route.
 - R2.9: **Local development:** `npm run dev` runs `tsx watch src/server.ts`. Add `docker-compose.yml` with MinIO and a bucket-creation step. Update `CLAUDE.md` and the READMEs.
 - R2.10: Remove the Cloudflare pieces from the backend: `wrangler.toml`, the Durable Object class, `wrangler`, `@cloudflare/workers-types`, and the committed `backend/.wrangler/state` and `wrangler.log`. Declare `uuid`, which currently resolves only through `google-auth-library`, and remove the unused `node-fetch` and `google-auth-library`.
 
