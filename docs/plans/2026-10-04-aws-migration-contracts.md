@@ -131,3 +131,23 @@ The frontend client (`frontend/src/services/websocketService.ts`) must work **wi
 - **No deploys or pushes:** no `cdk deploy` or `cdk bootstrap`, no `wrangler deploy`, no AWS commands that change anything, no pushes.
 - **Commit** on your own branch in your worktree, and report the branch name and tip SHA.
 - **Baseline:** `backend` `npx jest` had 2 failing `pageService` tests ("should handle R2 errors gracefully") before this work. Report them as existing rather than chasing them, or fix them if the mock rewrite makes that natural.
+
+## 9. Yjs collaboration socket (Phase 5)
+
+- **Endpoint:** `GET /api/ws/yjs/submissions/:submissionId?sessionId=<id>`, upgraded to a WebSocket.
+  - Authorization is identical to the room sockets (`authorizeRoomConnection({ kind: 'submission', id })`).
+  - It's a separate upgrade path from `/api/ws/submissions/:id`, which keeps carrying presence, cursors and workflow events.
+- **Protocol:** the standard y-websocket wire protocol, so the stock `y-websocket` `WebsocketProvider` works as the client. Frames are binary, encoded with `lib0`:
+  - `messageSync = 0`: `y-protocols/sync` (step 1, step 2, update);
+  - `messageAwareness = 1`: `y-protocols/awareness` updates;
+  - `messageQueryAwareness = 3`.
+  
+  The client connects with `new WebsocketProvider(wsBase + '/api/ws/yjs/submissions', submissionId, doc, { params: { sessionId } })`, where `wsBase` is `API_URL`'s origin with ws/wss.
+- **Server state:** one `Y.Doc` per submission, in memory. It's destroyed 30 s after the last client leaves. A later session seeds again from saved content.
+- **Exactly one bootstrap (seeding rule):**
+  - While the room's doc is empty, the server answers sync step 1 from only **one** client, the seeder (the first to join). It sends that client step 2 (empty state) at once.
+  - Every other client's step-1 reply is held until the doc becomes non-empty (the seed update arrives). Held clients then get step 2 with the full state.
+  - If the seeder disconnects before seeding, the next waiting client becomes the seeder and gets its reply.
+  - A held client therefore never sees an empty synced doc. Lexical's `CollaborationPlugin` only bootstraps (applies `initialEditorState`) when the synced doc is empty, so it can't duplicate content.
+- **Relay:** each update from a client is applied to the server doc and broadcast to the other clients in the room. Awareness is relayed, and cleaned up when a client disconnects.
+- **Limits:** the existing `WS_MAX_PAYLOAD_BYTES` applies, along with the same keepalive and dead-connection handling as the rooms.
