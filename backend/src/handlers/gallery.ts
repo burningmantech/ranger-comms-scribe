@@ -47,16 +47,17 @@ router.post('/upload', withAdminCheck, async (request: Request, env: Env) => {
     }
 });
 
-// Get a thumbnail for a specific media item (must come before /:filename)
-router.get('/:id/thumbnail', async (request: Request, env: Env) => {
-    const { id } = (request as any).params;
-    return handleThumbnailRequest(id, env);
+// Serve the thumbnail image for a gallery file (must come before /:filename).
+// thumbnailUrl values (/api/gallery/<file>/thumbnail) are used directly as <img src>.
+router.get('/:filename/thumbnail', async (request: Request, env: Env) => {
+    const { filename } = (request as any).params;
+    return serveGalleryImage(filename, 'thumbnail', env);
 });
 
-// Get a medium-sized version of a specific media item (must come before /:filename)
-router.get('/:id/medium', async (request: Request, env: Env) => {
-    const { id } = (request as any).params;
-    return handleMediumRequest(id, env);
+// Serve the medium-sized image for a gallery file (must come before /:filename)
+router.get('/:filename/medium', async (request: Request, env: Env) => {
+    const { filename } = (request as any).params;
+    return serveGalleryImage(filename, 'medium', env);
 });
 
 // Get metadata for a specific media item (must come before /:filename)
@@ -66,38 +67,6 @@ router.get('/:id/metadata', async (request: Request, env: Env) => {
 });
 
 // IMAGE SERVING ROUTE MOVED TO END OF FILE AFTER ALL OTHER ROUTES
-
-// Helper function to handle thumbnail requests
-async function handleThumbnailRequest(id: string, env: Env) {
-    try {
-        const media = await getMedia(env);
-        const item = media.find(m => m.id === id);
-        if (!item || !item.thumbnailUrl) {
-            return new Response('Thumbnail not found', { status: 404 });
-        }
-        return new Response(JSON.stringify({ url: item.thumbnailUrl }), {
-            headers: { 'Content-Type': 'application/json' }
-        });
-    } catch (error) {
-        return new Response('Error fetching thumbnail', { status: 500 });
-    }
-}
-
-// Helper function to handle medium requests  
-async function handleMediumRequest(id: string, env: Env) {
-    try {
-        const media = await getMedia(env);
-        const item = media.find(m => m.id === id);
-        if (!item || !item.mediumUrl) {
-            return new Response('Medium version not found', { status: 404 });
-        }
-        return new Response(JSON.stringify({ url: item.mediumUrl }), {
-            headers: { 'Content-Type': 'application/json' }
-        });
-    } catch (error) {
-        return new Response('Error fetching medium version', { status: 500 });
-    }
-}
 
 // Helper function to handle metadata requests
 async function handleMetadataRequest(id: string, env: Env) {
@@ -247,72 +216,62 @@ router.get('/', withAuth, async (request: Request, env: Env) => {
 // Serve actual image files directly from the object store 
 // This route MUST be the last GET route before fallback to avoid conflicts
 router.get('/:filename', async (request: Request, env: Env) => {
+    const { filename } = (request as any).params;
+    return serveGalleryImage(filename, 'original', env);
+});
+
+const IMAGE_CONTENT_TYPES: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+};
+
+const VARIANT_PREFIXES = {
+    original: 'gallery/',
+    thumbnail: 'gallery/thumbnails/',
+    medium: 'gallery/medium/',
+} as const;
+
+/**
+ * Serve a gallery image's bytes. Thumbnail and medium requests fall back to the
+ * original when no resized copy was uploaded.
+ */
+export async function serveGalleryImage(
+    filename: string,
+    variant: keyof typeof VARIANT_PREFIXES,
+    env: Env
+): Promise<Response> {
     try {
-        const { filename } = (request as any).params;
-        
-        console.log('🖼️ Serving image:', filename);
-        
         // Only serve files with image extensions
         const fileExt = filename.split('.').pop()?.toLowerCase();
-        const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-        
-        if (!fileExt || !validExtensions.includes(fileExt)) {
-            console.log('❌ Invalid file extension:', fileExt);
+        if (!fileExt || !IMAGE_CONTENT_TYPES[fileExt]) {
             return new Response('Invalid file extension', { status: 404 });
         }
-        
-        // Try to get the actual image file from the object store
-        const imageKey = `gallery/${filename}`;
-        console.log('🖼️ Looking for object key:', imageKey);
-        
-        const imageObject = await env.STORE.get(imageKey);
+
+        let imageObject = await env.STORE.get(`${VARIANT_PREFIXES[variant]}${filename}`);
+        if (!imageObject && variant !== 'original') {
+            imageObject = await env.STORE.get(`${VARIANT_PREFIXES.original}${filename}`);
+        }
         if (!imageObject) {
-            console.log('❌ Image not found in store:', imageKey);
-            return new Response('Image not found in R2', { status: 404 });
+            return new Response('Image not found', { status: 404 });
         }
-        
-        console.log('✅ Image found, serving:', imageKey);
-        
-        // Get the content type from the file extension, falling back to the stored type
-        const extension = filename.split('.').pop()?.toLowerCase();
-        let contentType = imageObject.contentType || 'application/octet-stream';
-        
-        switch (extension) {
-            case 'jpg':
-            case 'jpeg':
-                contentType = 'image/jpeg';
-                break;
-            case 'png':
-                contentType = 'image/png';
-                break;
-            case 'gif':
-                contentType = 'image/gif';
-                break;
-            case 'webp':
-                contentType = 'image/webp';
-                break;
-            case 'svg':
-                contentType = 'image/svg+xml';
-                break;
-        }
-        
-        // Convert the readable stream to array buffer to avoid type issues
+
         const arrayBuffer = await imageObject.arrayBuffer();
-        
-        // Return the image file with proper headers
         return new Response(arrayBuffer, {
             headers: {
-                'Content-Type': contentType,
+                'Content-Type': IMAGE_CONTENT_TYPES[fileExt],
                 'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
                 'Access-Control-Allow-Origin': '*'
             }
         });
-        
     } catch (error) {
         console.error('❌ Error serving image:', error);
         return new Response('Error serving image', { status: 500 });
     }
-});
+}
 
 // Fallback route for unmatched requests
 router.all('*', (request: Request) => {
