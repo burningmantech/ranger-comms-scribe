@@ -298,7 +298,7 @@ There's no NAT Gateway, which would cost about $33 per AZ per month. The tests a
      - `iam:PassRole` on both environments' task and execution roles;
      - `s3:ListBucket`, `s3:PutObject` and `s3:DeleteObject` on the SPA buckets;
      - `cloudfront:CreateInvalidation`.
-8. **Production deployers.** `.github/workflows/deploy.yml` has a "Check user" allow-list (currently `["alexyoung"]`). The tech
+8. **Production deployers.** `.github/workflows/deploy.yml` has a "Check user" allow-list (currently `["alexanderyoung"]`). The tech
    team edits it. It checks `github.triggering_actor`, so an unlisted user can't pass by re-running a listed user's run.
 9. **ECR retention vs. production.** The lifecycle rule keeps the last 10 tagged images (per the PRD). If staging gets more
    than 10 deploys between promotions, the image production runs can expire, and a production task restart would then fail

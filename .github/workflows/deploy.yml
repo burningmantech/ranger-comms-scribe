@@ -45,7 +45,7 @@ jobs:
 
       # Approved production deployers. The Ranger tech team maintains this list.
       - name: Check user
-        if: ${{ ! contains(fromJSON('["alexyoung"]'), github.triggering_actor) }}
+        if: ${{ ! contains(fromJSON('["alexanderyoung"]'), github.triggering_actor) }}
         run: |
           echo "::error::${GITHUB_TRIGGERING_ACTOR} is not on the list of approved production deployers."
           exit 1
