@@ -1,6 +1,6 @@
 import { Env } from '../utils/sessionManager';
 import { CouncilRole, UserType, CouncilMember, User } from '../types';
-import { getObject, putObject, removeFromCache } from './cacheService';
+import { getObject, getObjectStrict, putObject, removeFromCache } from './cacheService';
 import { getUser, saveUser } from './userService';
 
 interface OrgChartEntry {
@@ -62,7 +62,7 @@ export async function identifyCouncilManagers(env: Env) {
 
     if (user) {
       // Check if they're already a council member
-      const existingMember = await getObject<CouncilMember>(`council_members:${user.id}:${entry.role}`, env);
+      const existingMember = await getObjectStrict<CouncilMember>(`council_members:${user.id}:${entry.role}`, env);
 
       if (!existingMember) {
         // Create new council member entry
@@ -122,7 +122,7 @@ export async function addCouncilMember(email: string, role: CouncilRole, env: En
     console.log('👤 Found user:', { email: user.email, name: user.name, userType: user.userType, roles: user.roles });
 
     // Get existing council members for this role
-    const existingMembers = await getObject<CouncilMember[]>(`council_members:role:${role}`, env) || [];
+    const existingMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${role}`, env) || [];
     console.log('📋 Existing members for role:', role, existingMembers.length);
 
     // Check if user is already a council member for this role
@@ -192,7 +192,7 @@ export async function removeCouncilMember(email: string, role: CouncilRole, env:
     }
 
     // Get existing council members for this role
-    const existingMembers = await getObject<CouncilMember[]>(`council_members:role:${role}`, env) || [];
+    const existingMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${role}`, env) || [];
 
     // Remove from role-specific list
     const updatedMembers = existingMembers.filter(member => member.email !== email);

@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { CouncilMember, CouncilRole, UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
-import { getObject, putObject, listObjects, removeFromCache } from '../services/cacheService';
+import { getObject, getObjectStrict, putObject, listObjects, removeFromCache } from '../services/cacheService';
 import { changeUserType, getUser } from '../services/userService';
 
 export const router = AutoRouter({ base: '/api/council' });
@@ -70,7 +70,7 @@ router.post('/members', withAuth, async (request: Request, env: Env) => {
     });
 
     // Also store in role-based location used by the approval system
-    const existingRoleMembers = await getObject<CouncilMember[]>(`council_members:role:${newMember.role}`, env) || [];
+    const existingRoleMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${newMember.role}`, env) || [];
     const isAlreadyInRole = existingRoleMembers.some(m => m.email === newMember.email);
     if (!isAlreadyInRole) {
       await putObject(`council_members:role:${newMember.role}`, [...existingRoleMembers, newMember], env);
@@ -142,7 +142,7 @@ router.put('/members/:id', withAuth, async (request: Request, env: Env) => {
   });
 
   // Also update in role-based storage
-  const roleMembers = await getObject<CouncilMember[]>(`council_members:role:${updatedMember.role}`, env) || [];
+  const roleMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${updatedMember.role}`, env) || [];
   const updatedRoleMembers = roleMembers.map(m => m.email === updatedMember.email ? updatedMember : m);
   await putObject(`council_members:role:${updatedMember.role}`, updatedRoleMembers, env);
 
@@ -174,7 +174,7 @@ router.delete('/members/:id', withAuth, async (request: Request, env: Env) => {
   });
 
   // Also remove from role-based storage
-  const roleMembers = await getObject<CouncilMember[]>(`council_members:role:${member.role}`, env) || [];
+  const roleMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${member.role}`, env) || [];
   const updatedRoleMembers = roleMembers.filter(m => m.email !== member.email);
   await putObject(`council_members:role:${member.role}`, updatedRoleMembers, env);
 

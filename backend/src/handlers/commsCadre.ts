@@ -3,7 +3,7 @@ import { json } from 'itty-router-extras';
 import { UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
-import { getObject, putObject, deleteObject } from '../services/cacheService';
+import { getObject, getObjectStrict, putObject, deleteObject } from '../services/cacheService';
 
 export const router = AutoRouter({ base: '/api/comms-cadre' });
 
@@ -43,7 +43,7 @@ router.post('/', withAuth, async (request: Request, env: Env) => {
   };
 
   // Get existing members
-  const members = await getObject<CommsCadreMember[]>('comms_cadre:active', env) || [];
+  const members = await getObjectStrict<CommsCadreMember[]>('comms_cadre:active', env) || [];
   
   // Add new member
   members.push(newMember);
@@ -52,7 +52,7 @@ router.post('/', withAuth, async (request: Request, env: Env) => {
   await putObject('comms_cadre:active', members, env);
 
   // Update user type to CommsCadre
-  const users = await getObject<User[]>('users', env) || [];
+  const users = await getObjectStrict<User[]>('users', env) || [];
   const userIndex = users.findIndex(u => u.id === newMember.userId);
   if (userIndex !== -1) {
     users[userIndex].userType = UserType.CommsCadre;
@@ -73,7 +73,7 @@ router.put('/:id', withAuth, async (request: Request, env: Env) => {
   const updates: Partial<CommsCadreMember> = await request.json();
 
   // Get existing members
-  const members = await getObject<CommsCadreMember[]>('comms_cadre:active', env) || [];
+  const members = await getObjectStrict<CommsCadreMember[]>('comms_cadre:active', env) || [];
   const memberIndex = members.findIndex(m => m.id === id);
   
   if (memberIndex === -1) {
@@ -105,7 +105,7 @@ router.delete('/:id', withAuth, async (request: Request, env: Env) => {
   const { id } = (request as any).params;
   
   // Get existing members
-  const members = await getObject<CommsCadreMember[]>('comms_cadre:active', env) || [];
+  const members = await getObjectStrict<CommsCadreMember[]>('comms_cadre:active', env) || [];
   const memberIndex = members.findIndex(m => m.id === id);
   
   if (memberIndex === -1) {
@@ -129,7 +129,7 @@ router.delete('/:id', withAuth, async (request: Request, env: Env) => {
 
   if (activeRoles === 0) {
     // Revert user type if they are no longer a Comms Cadre member
-    const users = await getObject<User[]>('users', env) || [];
+    const users = await getObjectStrict<User[]>('users', env) || [];
     const userIndex = users.findIndex(u => u.id === member.userId);
     if (userIndex !== -1) {
       users[userIndex].userType = UserType.Member;
