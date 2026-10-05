@@ -22,6 +22,12 @@ export interface DeletedTextPayload {
   isBlockLevel?: boolean;
   /** Optional formatted segments preserving bold/italic from the original text */
   formattedSegments?: FormattedSegment[];
+  /**
+   * ID of the user who deleted the text. Set in collaborative (Yjs) mode, where every
+   * user's markers are in the shared document, so pending markers can be matched to
+   * their author. Omitted from the JSON when unset.
+   */
+  authorId?: string;
 }
 
 export type SerializedDeletedTextNode = Spread<
@@ -32,6 +38,7 @@ export type SerializedDeletedTextNode = Spread<
     authorColor?: string;
     isBlockLevel?: boolean;
     formattedSegments?: FormattedSegment[];
+    authorId?: string;
     type: 'deleted-text';
     version: 1;
   },
@@ -45,6 +52,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
   __authorColor?: string;
   __isBlockLevel: boolean;
   __formattedSegments?: FormattedSegment[];
+  __authorId?: string;
 
   static getType(): string {
     return 'deleted-text';
@@ -59,6 +67,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       node.__isBlockLevel,
       node.__formattedSegments,
       node.__key,
+      node.__authorId,
     );
   }
 
@@ -70,6 +79,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     isBlockLevel: boolean = false,
     formattedSegments?: FormattedSegment[],
     key?: NodeKey,
+    authorId?: string,
   ) {
     super(key);
     this.__changeId = changeId;
@@ -78,6 +88,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     this.__authorColor = authorColor;
     this.__isBlockLevel = isBlockLevel;
     this.__formattedSegments = formattedSegments;
+    this.__authorId = authorId;
   }
 
   static importJSON(serializedNode: SerializedDeletedTextNode): DeletedTextNode {
@@ -88,6 +99,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       authorColor: serializedNode.authorColor,
       isBlockLevel: serializedNode.isBlockLevel,
       formattedSegments: serializedNode.formattedSegments,
+      authorId: serializedNode.authorId,
     });
   }
 
@@ -99,6 +111,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       authorColor: this.__authorColor,
       isBlockLevel: this.__isBlockLevel,
       formattedSegments: this.__formattedSegments,
+      ...(this.__authorId !== undefined ? { authorId: this.__authorId } : {}),
       type: 'deleted-text',
       version: 1,
     } as SerializedDeletedTextNode;
@@ -145,6 +158,10 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
 
   getAuthorName(): string | undefined {
     return this.__authorName;
+  }
+
+  getAuthorId(): string | undefined {
+    return this.__authorId;
   }
 
   getFormattedSegments(): FormattedSegment[] | undefined {
@@ -268,6 +285,8 @@ export function $createDeletedTextNode(payload: DeletedTextPayload): DeletedText
     payload.authorColor,
     payload.isBlockLevel || false,
     payload.formattedSegments,
+    undefined,
+    payload.authorId,
   );
 }
 
