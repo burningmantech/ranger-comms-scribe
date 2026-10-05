@@ -1971,16 +1971,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       // reject that couldn't revert the document returns false and stays pending.
       const resolvedIds = changeIds.filter(id => handleChangeDecision(id, decision) !== false);
       // NOTE: cleared before the per-change 500 ms timers fire, so each of them still
-      // runs syncChangeStatusToBackend: an individual PUT with that change's reverted
-      // rich text, which also broadcasts change_status_updated to other users. The
-      // batch PUT below is a second, redundant write. Keeping this guard up would stop
-      // those broadcasts and lose format-revert persistence (batch-status takes no
-      // revertedRichText), so it stays as is.
+      // runs syncChangeStatusToBackend: an individual PUT with the rich text at that
+      // moment (plus a re-PUT after any cascade reverts), which also broadcasts
+      // change_status_updated to other users. Those PUTs run concurrently, so the
+      // batch PUT below is the final, ordered write: it carries the editor state after
+      // all the reverts, and the server stores that as the content.
       batchSyncInProgressRef.current = false;
 
-      // Wait for all per-change resolve timeouts to complete before
-      // making the batch API call (they need to broadcast content and
-      // resume the TransactionManager).
+      // Wait for all per-change resolve timeouts to complete (including their PUTs and
+      // any cascade re-PUTs) before making the batch API call (they need to broadcast
+      // content and resume the TransactionManager).
       await new Promise<void>(resolve => {
         const check = () => {
           if (pendingResolveCountRef.current <= 0) {
@@ -1993,13 +1993,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         setTimeout(check, 600);
       });
 
-      // Single batch API call for backend persistence
+      // Single batch API call for backend persistence, with the editor state after all
+      // the reverts (read now, after the per-change timers, not before the decisions).
       const sessionId = localStorage.getItem('sessionId');
       if (sessionId && resolvedIds.length > 0) {
+        const body: Record<string, unknown> = { changeIds: resolvedIds, status, submissionId: submission.id };
+        const revertedRichText = editedProposedContentRef.current;
+        if (revertedRichText && isLexicalJson(revertedRichText)) body.revertedRichText = revertedRichText;
         const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
-          body: JSON.stringify({ changeIds: resolvedIds, status, submissionId: submission.id })
+          body: JSON.stringify(body)
         });
         if (!response.ok) {
           console.error('Batch status update failed:', response.statusText);

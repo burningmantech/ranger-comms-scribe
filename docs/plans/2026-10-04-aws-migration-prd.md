@@ -558,6 +558,7 @@ The editor syncs by sending the whole document, and the last write wins. When tw
   - A change with its own deletion markers in the document still takes the marker path.
   - Rejecting both halves of a move restores the original in either order. The server can cascade from the cut to the paste (when the pasted range covers the cut point); the client then reverts the cascaded change too, newest first, and stores the document again.
   - If the change can't be located (or has no rich text), nothing changes. The reviewer sees a toast and the change stays pending. A second reject marks it rejected without touching the document.
+  - A batch reject sends only the changes it reverted to `/batch-status`, with the document after all the reverts (`revertedRichText`). The server stores that document, as the single-change PUT does.
 
 **Verified locally:**
 - headless convergence tests against the real server (`frontend/src/__integration__`);
@@ -570,7 +571,6 @@ The editor syncs by sending the whole document, and the last write wins. When tw
 - **Reject by context.**
   - It replaces whole top-level blocks. An edit another user makes inside such a block at that moment is lost, and their caret moves.
   - A change inside a list or table replaces the whole list or table.
-  - A batch reject (`/batch-status`) doesn't send the reverted document, so the server stores its own recompute. A change that can't be located is still rejected by the batch call.
 
 ### 14.6 Results on the dev site (2026-10-05)
 

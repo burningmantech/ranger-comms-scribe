@@ -538,14 +538,16 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
   }
 }
 
-// Batch update status for multiple tracked changes
+// Batch update status for multiple tracked changes. `revertedRichText` (optional) is the
+// editor's Lexical state after all the reverts; like the single-change handler, it is
+// stored instead of the server's recomputed rich text when the batch isn't a plain accept.
 export async function batchUpdateStatusHandler(request: CustomRequest, env: any): Promise<Response> {
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
 
   try {
-    const { changeIds, status, comment, submissionId } = await request.json();
+    const { changeIds, status, comment, submissionId, revertedRichText } = await request.json();
 
     if (!Array.isArray(changeIds) || changeIds.length === 0) {
       return new Response(JSON.stringify({ error: 'changeIds array required' }), {
@@ -614,6 +616,8 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
 
     // After batch resolution, recompute submission content from original + non-rejected changes.
     try {
+      const clientRichText: string | undefined =
+        typeof revertedRichText === 'string' && revertedRichText.includes('"root"') ? revertedRichText : undefined;
       // Determine which fields were affected
       const allChanges = await getTrackedChanges(submissionId, env);
       const affectedFields = [...new Set(
@@ -637,11 +641,13 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
                 submission.richTextContent = cleanLexicalJson(latestApproved.richTextNewValue);
               } else {
                 submission.content = recomputed.content;
-                submission.richTextContent = recomputed.richText;
+                submission.richTextContent = clientRichText ?? recomputed.richText;
               }
             } else {
               submission.content = recomputed.content;
-              submission.richTextContent = recomputed.richText;
+              // The editor's state after the reverts: the recompute can't reproduce
+              // reverts done in the editor (format changes, reject by context).
+              submission.richTextContent = clientRichText ?? recomputed.richText;
             }
             await putObject(`content_submissions/${submissionId}`, submission, env);
             await putObject(`proposed_versions/${submissionId}`, {
