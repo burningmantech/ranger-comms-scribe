@@ -23,7 +23,16 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
 | 1: Storage layer on S3 | Done: `backend/src/storage/` and the in-memory cache. |
 | 2: Node server, rooms, bootstrap | Done: `src/server.ts`, `src/realtime/rooms.ts`, Dockerfile, docker-compose. Cloudflare pieces removed. |
 | 3: Infrastructure and CI | Done: `infra/` (dev and standard profiles), `bin/`, `.github/workflows/`. |
-| 4: Fresh setup in Alex's account | **Deployed 2026-10-04** to account 821327748249 at `https://app.scrivenly.com` (CLI profile `mybestday`). Persistent and compute stacks are up, and the first deploy went through `ranger-deploy`. The bootstrap admin signed in with Google. Remaining: the manual acceptance checks (two-browser collaboration, uploads over 6 MB, reset email). |
+| 4: Fresh setup in Alex's account | **Deployed 2026-10-04** to account 821327748249 at `https://app.scrivenly.com` (CLI profile `mybestday`). Persistent and compute stacks are up, and the first deploy went through `ranger-deploy`. The bootstrap admin signed in with Google. Acceptance checks run in the browser on 2026-10-04:
+  - **Passed:**
+    - submission created and opened;
+    - WebSocket upgrade through CloudFront and the ALB (`room_state`, `connected`, `pong`);
+    - 6.29 MB upload, with the full-size, thumbnail and medium images served as `image/jpeg`;
+    - gallery responses show `x-cache: Hit from cloudfront`;
+    - SPA deep links, HSTS, API 404 stays a 404;
+    - the ALB is unreachable directly;
+    - no errors in the container logs.
+  - **Still manual:** forgot-password (needs a human to pass Turnstile; also proves SES from the task role) and a two-user collaboration session. |
 
 **Changes made during implementation, beyond the requirements above:**
 - `POST /auth/register` returns 409 for any existing email. Registering the email of a Google-only or admin-created user used to return a session for that account, which was an account takeover.
