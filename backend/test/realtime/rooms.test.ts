@@ -290,32 +290,35 @@ describe('real-time rooms (real sessions)', () => {
     expect(state.users.map((u: Msg) => u.userEmail)).toEqual([alice.email]);
   });
 
-  it('exposes room users and broadcasts over the HTTP room routes', async () => {
+  it('has no HTTP routes to broadcast into a room or list its members', async () => {
     const a = connect(`/api/ws/submissions/${submissionId}`, aliceSession);
     await a.opened();
     await a.waitFor((m) => m.type === 'connected');
 
-    const roomRes = await fetch(`${httpBase}/api/ws/submissions/${submissionId}/room`, {
-      headers: { Authorization: `Bearer ${bobSession}` },
-    });
-    expect(roomRes.status).toBe(200);
-    const room = await roomRes.json() as Msg;
-    expect(room.roomId).toBe(`submission:${submissionId}`);
-    expect(room.userCount).toBe(1);
-    expect(room.users[0].userEmail).toBe(alice.email);
+    // Any logged-in user (Mallory has no access to the submission) used to be able to
+    // inject messages and list members through these.
+    for (const kind of ['submissions', 'documents']) {
+      const id = kind === 'submissions' ? submissionId : 'doc-9';
+      const postRes = await fetch(`${httpBase}/api/ws/${kind}/${id}/broadcast`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${mallorySession}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'comment_added', data: { text: 'injected' } }),
+      });
+      expect(postRes.status).toBe(404);
 
-    const postRes = await fetch(`${httpBase}/api/ws/submissions/${submissionId}/broadcast`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${bobSession}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'comment_added', data: { text: 'hi' } }),
-    });
-    expect(postRes.status).toBe(200);
-    const msg = await a.waitFor((m) => m.type === 'comment_added');
-    expect(msg).toMatchObject({ submissionId, userId: bob.id, userEmail: bob.email, data: { text: 'hi' } });
+      const roomRes = await fetch(`${httpBase}/api/ws/${kind}/${id}/room`, {
+        headers: { Authorization: `Bearer ${mallorySession}` },
+      });
+      expect(roomRes.status).toBe(404);
+    }
+    await a.expectNone((m) => m.type === 'comment_added', 200);
+  });
 
-    // A plain GET on the upgrade path still answers 426.
+  it('answers 426 to a plain GET on the upgrade paths', async () => {
     const plain = await fetch(`${httpBase}/api/ws/submissions/${submissionId}`);
     expect(plain.status).toBe(426);
+    const plainDoc = await fetch(`${httpBase}/api/ws/documents/doc-9`);
+    expect(plainDoc.status).toBe(426);
   });
 
   it('uses the same document:<id> key for connections and broadcasts', async () => {
