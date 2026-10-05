@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.wrangler
+.env
+.env.*
+.dev.vars
+*.log
+test
+test-*.js
+Dockerfile
+.dockerignore
+README.md

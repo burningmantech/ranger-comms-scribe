@@ -1,40 +1,27 @@
-import { KVNamespace } from '@cloudflare/workers-types';
 import { ObjectStore } from '../storage/objectStore';
 
-// Define more specific D1 types
-interface D1PreparedStatement {
-    bind(...values: any[]): D1PreparedStatement;
-    first<T = any>(): Promise<T | null>;
-    run<T = any>(): Promise<T>;
-    all<T = any>(): Promise<T[]>;
-    raw<T = any[]>(): Promise<T[]>;
-}
-
-// Define the D1Database interface for the D1 database
-interface D1Database {
-    prepare: (query: string) => D1PreparedStatement;
-    exec: (query: string) => Promise<any>;
-    batch: (statements: any[]) => Promise<any>;
-    name?: string;
-}
-
+/**
+ * Runtime environment passed to every handler as the second argument.
+ * Built once at boot from process.env by `src/config/env.ts` (see the
+ * contracts doc, section 3, for the variable list).
+ */
 export interface Env {
-    TURNSTILESECRET: any;
     STORE: ObjectStore;
     PUBLIC_URL?: string;
     FRONTEND_URL?: string;
     GOOGLE_CLIENT_ID?: string; // OAuth client ID that Google ID tokens must be issued to
-    SESKey?: string;
-    SESSecret?: string;
-    TURSTILESECRET?: string; // Added Turnstile secret binding
-    D1?: D1Database; // Add D1 database property
-    DB: D1Database;
-    EMAIL: any;
-    SESSIONS: KVNamespace;
-    USERS: KVNamespace;
-    GROUPS: KVNamespace;
-    ROLES: KVNamespace;
+    TURNSTILESECRET?: string;
     DEV_BYPASS_AUTH?: string;
+    /** Allowed CORS origins (parsed from the CORS_ORIGINS CSV). */
+    CORS_ORIGINS?: string[];
+    /** SES v2 region (default us-east-1). */
+    SES_REGION?: string;
+    /** From address for outgoing email. */
+    EMAIL_FROM?: string;
+    /** BCC recipients for outgoing email; empty means no BCC. */
+    EMAIL_BCC?: string[];
+    /** Emails (lowercased) that are promoted to Admin on register/login. */
+    BOOTSTRAP_ADMIN_EMAILS?: string[];
 }
 
 export async function CreateSession(

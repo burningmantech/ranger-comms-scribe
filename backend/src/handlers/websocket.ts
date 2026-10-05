@@ -1,413 +1,159 @@
 import { AutoRouter, json } from 'itty-router';
 import { withAuth } from '../authWrappers';
-import { User } from '../types';
-import { WebSocketMessage } from '../services/websocketService';
+import { User, UserType } from '../types';
+import { Env, GetSession } from '../utils/sessionManager';
+import { getUser } from '../services/userService';
+import { getObject } from '../services/cacheService';
+import {
+  RoomIdentity,
+  RoomTarget,
+  WebSocketMessage,
+  broadcastToRoom,
+  documentRoomKey,
+  getRoomUsers,
+  submissionRoomKey,
+} from '../realtime/rooms';
 
+/**
+ * WebSocket upgrades for /api/ws/submissions/:id and /api/ws/documents/:id are
+ * handled by the Node server's `upgrade` event (src/httpServer.ts), which calls
+ * `authorizeRoomConnection` below and then joins the socket to a room in
+ * src/realtime/rooms.ts. This router only sees plain HTTP requests.
+ */
 export const router = AutoRouter({ base: '/api/ws' });
 
-// Test endpoint to verify WebSocket infrastructure
-router.get('/test', async (request: Request, env: any) => {
-  console.log('🧪 WebSocket test endpoint called');
-  
-  try {
-    // Test if Durable Object binding exists
-    if (!env.SUBMISSION_WEBSOCKET) {
-      return json({ 
-        error: 'SUBMISSION_WEBSOCKET binding not found',
-        available_bindings: Object.keys(env)
-      }, { status: 500 });
-    }
-    
-    // Test creating a Durable Object ID
-    const testSubmissionId = 'test-submission-123';
-    const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(testSubmissionId);
-    
-    console.log('✅ Durable Object ID created successfully');
-    
-    return json({ 
-      status: 'ok', 
-      message: 'WebSocket infrastructure test passed',
-      durableObjectId: durableObjectId.toString(),
-      bindings: Object.keys(env)
-    });
-  } catch (error) {
-    console.error('❌ WebSocket test failed:', error);
-    return json({ 
-      error: 'WebSocket infrastructure test failed', 
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
-  }
-});
+export type RoomAuthResult =
+  | { ok: true; identity: RoomIdentity }
+  | { ok: false; status: number; body: Record<string, unknown> };
 
-// WebSocket upgrade endpoint
-router.get('/submissions/:submissionId', async (request: Request, env: any) => {
-  console.log('🔌 WebSocket connection attempt for submission:', (request as any).params.submissionId);
-
-  const { submissionId } = (request as any).params;
-  const url = new URL(request.url);
-
-  // Check if this is a WebSocket upgrade request
-  const upgradeHeader = request.headers.get('Upgrade');
-  console.log('🔍 Upgrade header:', upgradeHeader);
-
-  if (!upgradeHeader || upgradeHeader !== 'websocket') {
-    console.log('❌ Not a WebSocket upgrade request');
-    return json(
-      { error: 'Expected WebSocket upgrade request' },
-      { status: 426, headers: { 'Upgrade': 'websocket' } }
-    );
-  }
-
-  // Get sessionId from query parameters for WebSocket authentication
-  const sessionId = url.searchParams.get('sessionId');
-  console.log('🔑 Session ID provided:', sessionId ? '***' + sessionId.slice(-8) : 'none');
-
+/**
+ * Session and access checks for joining a room. Same semantics as the old Worker
+ * handler:
+ *   - 400 when `sessionId` is missing (even with DEV_BYPASS_AUTH);
+ *   - with DEV_BYPASS_AUTH=true, no further checks (dev user, or user2 when
+ *     `testUser=user2` or the session ID contains "user2");
+ *   - 403 for an unknown/expired session or a user that no longer exists;
+ *   - submissions only: 404 when the submission is missing, 403 without access.
+ *
+ * The room identity uses the email as `userId`, as before.
+ */
+export async function authorizeRoomConnection(
+  target: RoomTarget,
+  params: { sessionId: string | null; testUser?: string | null },
+  env: Env
+): Promise<RoomAuthResult> {
+  const { sessionId, testUser } = params;
   if (!sessionId) {
-    console.log('❌ No session ID provided');
-    return json({ error: 'Session ID is required' }, { status: 400 });
+    return { ok: false, status: 400, body: { error: 'Session ID is required' } };
   }
-
-  let userEmail = 'dev@localhost';
-  let userName = 'Dev Admin';
 
   if (env.DEV_BYPASS_AUTH === 'true') {
-    console.log('🔓 DEV_BYPASS_AUTH: skipping session/access validation for WebSocket');
-    const testUser = url.searchParams.get('testUser');
-    if (testUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
-      userEmail = 'user2@localhost';
-      userName = 'Test Reviewer';
-    }
-  } else {
-    // Validate the session
-    const { GetSession } = await import('../utils/sessionManager');
-    const { getUser } = await import('../services/userService');
+    const isUser2 = testUser === 'user2' || sessionId.includes('user2');
+    const email = isUser2 ? 'user2@localhost' : 'dev@localhost';
+    const name = isUser2 ? 'Test Reviewer' : 'Dev Admin';
+    return { ok: true, identity: { userId: email, userName: name, userEmail: email } };
+  }
 
-    console.log('🔍 Validating session...');
-    const session = await GetSession(sessionId, env);
-    if (!session) {
-      console.log('❌ Session not found or expired');
-      return json({ error: 'Session not found or expired' }, { status: 403 });
-    }
+  const session = await GetSession(sessionId, env);
+  if (!session) {
+    return { ok: false, status: 403, body: { error: 'Session not found or expired' } };
+  }
 
-    const userData = session.data as { email: string; name: string };
-    console.log('👤 Session user:', userData.email);
-    userEmail = userData.email;
-    userName = userData.name;
+  const userData = session.data as { email: string; name: string };
+  const user = await getUser(userData.email, env);
+  if (!user) {
+    return { ok: false, status: 403, body: { error: 'User not found' } };
+  }
 
-    const user = await getUser(userData.email, env);
-    if (!user) {
-      console.log('❌ User not found in database');
-      return json({ error: 'User not found' }, { status: 403 });
-    }
-
-    console.log('✅ User authenticated:', user.email);
-
-    // Check if user has access to this submission
-    const { getObject } = await import('../services/cacheService');
-    const { UserType } = await import('../types');
-
-    const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
+  if (target.kind === 'submission') {
+    const submission = await getObject<any>(`content_submissions/${target.id}`, env);
     if (!submission) {
-      return json({ error: 'Submission not found' }, { status: 404 });
+      return { ok: false, status: 404, body: { error: 'Submission not found' } };
     }
 
-    // Check if user has access to this submission
     const hasAccess = user.userType === UserType.Admin ||
-                     submission.submittedBy === user.id ||
-                     user.userType === UserType.CouncilManager ||
-                     user.userType === UserType.CommsCadre ||
-                     (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+      submission.submittedBy === user.id ||
+      user.userType === UserType.CouncilManager ||
+      user.userType === UserType.CommsCadre ||
+      (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
     if (!hasAccess) {
-      return json({ error: 'Access denied' }, { status: 403 });
+      return { ok: false, status: 403, body: { error: 'Access denied' } };
     }
   }
-  
-  // Get the WebSocket Durable Object
-  console.log('🏗️ Getting Durable Object for submission:', submissionId);
-  
-  try {
-    const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(submissionId);
-    const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-    
-    console.log('📡 Durable Object obtained, forwarding request');
-    
-    // Create the WebSocket URL with user information
-    const wsUrl = new URL(request.url);
-    wsUrl.searchParams.set('submissionId', submissionId);
-    wsUrl.searchParams.set('userId', userEmail);
-    wsUrl.searchParams.set('userName', userName);
-    wsUrl.searchParams.set('userEmail', userEmail);
-    
-    console.log('🔄 Forwarding to Durable Object with URL:', wsUrl.toString());
-    
-    // Create a new request with the updated URL
-    const wsRequest = new Request(wsUrl.toString(), {
-      headers: request.headers,
-      method: request.method,
-    });
-    
-    // Forward the request to the Durable Object
-    const response = await stub.fetch(wsRequest);
-    console.log('📨 Durable Object response status:', response.status);
-    
-    return response;
-  } catch (error) {
-    console.error('❌ Error with Durable Object:', error);
-    return json({ error: 'Failed to connect to WebSocket service' }, { status: 500 });
-  }
-});
 
-// HTTP API for broadcasting messages to WebSocket rooms
-router.post('/submissions/:submissionId/broadcast', withAuth, async (request: Request, env: any) => {
-  const { submissionId } = (request as any).params;
-  const user = (request as any).user as User;
-  const message = await request.json();
-  
-  // Get the WebSocket Durable Object
-  const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(submissionId);
-  const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-  
-  // Create the broadcast message
-  const broadcastMessage: WebSocketMessage = {
-    ...message,
-    submissionId,
+  return {
+    ok: true,
+    identity: { userId: userData.email, userName: userData.name, userEmail: userData.email },
+  };
+}
+
+// Simple liveness check for the real-time endpoint.
+router.get('/test', () => json({ status: 'ok', message: 'WebSocket infrastructure test passed' }));
+
+// A plain GET on the upgrade paths is not a WebSocket handshake.
+const expectUpgrade = () => json(
+  { error: 'Expected WebSocket upgrade request' },
+  { status: 426, headers: { 'Upgrade': 'websocket' } }
+);
+router.get('/submissions/:submissionId', expectUpgrade);
+router.get('/documents/:documentId', expectUpgrade);
+
+function senderFields(user: User) {
+  return {
     userId: user.id || user.email,
     userName: user.name,
     userEmail: user.email,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   };
-  
-  // Send the broadcast request to the Durable Object
-  const broadcastUrl = new URL(`http://localhost/api/rooms/${submissionId}`);
-  const broadcastRequest = new Request(broadcastUrl.toString(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(broadcastMessage)
-  });
-  
-  const response = await stub.fetch(broadcastRequest);
-  
-  if (response.ok) {
-    return json({ success: true });
-  } else {
-    return json({ error: 'Failed to broadcast message' }, { status: 500 });
-  }
+}
+
+// HTTP API for broadcasting messages to WebSocket rooms
+router.post('/submissions/:submissionId/broadcast', withAuth, async (request: Request) => {
+  const { submissionId } = (request as any).params;
+  const user = (request as any).user as User;
+  const message = await request.json() as Record<string, unknown>;
+
+  broadcastToRoom(submissionRoomKey(submissionId), { ...message, submissionId, ...senderFields(user) });
+  return json({ success: true });
 });
 
 // Get room information (connected users)
-router.get('/submissions/:submissionId/room', withAuth, async (request: Request, env: any) => {
+router.get('/submissions/:submissionId/room', withAuth, (request: Request) => {
   const { submissionId } = (request as any).params;
-  
-  // Get the WebSocket Durable Object
-  const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(submissionId);
-  const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-  
-  // Get room information from the Durable Object
-  const roomUrl = new URL(`http://localhost/api/rooms/${submissionId}`);
-  const roomRequest = new Request(roomUrl.toString(), {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' }
-  });
-  
-  const response = await stub.fetch(roomRequest);
-  
-  if (response.ok) {
-    const roomData = await response.json();
-    return json(roomData);
-  } else {
-    return json({ error: 'Failed to get room information' }, { status: 500 });
-  }
+  const roomId = submissionRoomKey(submissionId);
+  const users = getRoomUsers(roomId);
+  return json({ roomId, users, userCount: users.length });
 });
 
-// Document-level collaboration endpoints
-// WebSocket upgrade endpoint for documents
-router.get('/documents/:documentId', async (request: Request, env: any) => {
-  console.log('🔌 WebSocket connection attempt for document:', (request as any).params.documentId);
-  
-  const { documentId } = (request as any).params;
-  const url = new URL(request.url);
-  
-  // Check if this is a WebSocket upgrade request
-  const upgradeHeader = request.headers.get('Upgrade');
-  console.log('🔍 Upgrade header:', upgradeHeader);
-  
-  if (!upgradeHeader || upgradeHeader !== 'websocket') {
-    console.log('❌ Not a WebSocket upgrade request');
-    return json(
-      { error: 'Expected WebSocket upgrade request' },
-      { status: 426, headers: { 'Upgrade': 'websocket' } }
-    );
-  }
-
-  // Get sessionId from query parameters for WebSocket authentication
-  const sessionId = url.searchParams.get('sessionId');
-  console.log('🔑 Session ID provided:', sessionId ? '***' + sessionId.slice(-8) : 'none');
-  
-  if (!sessionId) {
-    console.log('❌ No session ID provided');
-    return json({ error: 'Session ID is required' }, { status: 400 });
-  }
-
-  let docUserEmail = 'dev@localhost';
-  let docUserName = 'Dev Admin';
-
-  if (env.DEV_BYPASS_AUTH === 'true') {
-    console.log('🔓 DEV_BYPASS_AUTH: skipping session/access validation for document WebSocket');
-    const testUser = url.searchParams.get('testUser');
-    if (testUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
-      docUserEmail = 'user2@localhost';
-      docUserName = 'Test Reviewer';
-    }
-  } else {
-    // Validate the session
-    const { GetSession } = await import('../utils/sessionManager');
-    const { getUser } = await import('../services/userService');
-
-    console.log('🔍 Validating session...');
-    const session = await GetSession(sessionId, env);
-    if (!session) {
-      console.log('❌ Session not found or expired');
-      return json({ error: 'Session not found or expired' }, { status: 403 });
-    }
-
-    const userData = session.data as { email: string; name: string };
-    console.log('👤 Session user:', userData.email);
-    docUserEmail = userData.email;
-    docUserName = userData.name;
-
-    const user = await getUser(userData.email, env);
-    if (!user) {
-      console.log('❌ User not found in database');
-      return json({ error: 'User not found' }, { status: 403 });
-    }
-
-    console.log('✅ User authenticated:', user.email);
-  }
-
-  // For document-level collaboration, we'll use the DOCUMENT_WEBSOCKET binding
-  // (we'll need to add this to wrangler.toml)
-  console.log('🏗️ Getting Durable Object for document:', documentId);
-
-  try {
-    // Use the same SUBMISSION_WEBSOCKET binding for now, but with document- prefix
-    const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(`document-${documentId}`);
-    const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-
-    console.log('📡 Durable Object obtained, forwarding request');
-
-    // Create the WebSocket URL with user information
-    const wsUrl = new URL(request.url);
-    wsUrl.searchParams.set('documentId', documentId);
-    wsUrl.searchParams.set('userId', docUserEmail);
-    wsUrl.searchParams.set('userName', docUserName);
-    wsUrl.searchParams.set('userEmail', docUserEmail);
-    
-    console.log('🔄 Forwarding to Durable Object with URL:', wsUrl.toString());
-    
-    // Create a new request with the updated URL
-    const wsRequest = new Request(wsUrl.toString(), {
-      headers: request.headers,
-      method: request.method,
-    });
-    
-    // Forward the request to the Durable Object
-    const response = await stub.fetch(wsRequest);
-    console.log('📨 Durable Object response status:', response.status);
-    
-    return response;
-  } catch (error) {
-    console.error('❌ Error with Durable Object:', error);
-    return json({ error: 'Failed to connect to WebSocket service' }, { status: 500 });
-  }
-});
-
-// HTTP API for broadcasting messages to document rooms
-router.post('/documents/:documentId/broadcast', withAuth, async (request: Request, env: any) => {
+router.post('/documents/:documentId/broadcast', withAuth, async (request: Request) => {
   const { documentId } = (request as any).params;
   const user = (request as any).user as User;
-  const message = await request.json();
-  
-  // Get the WebSocket Durable Object
-  const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(`document-${documentId}`);
-  const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-  
-  // Create the broadcast message
-  const broadcastMessage: WebSocketMessage = {
-    ...message,
-    documentId,
-    userId: user.id || user.email,
-    userName: user.name,
-    userEmail: user.email,
-    timestamp: new Date().toISOString()
-  };
-  
-  // Send the broadcast request to the Durable Object
-  const broadcastUrl = new URL(`http://localhost/api/rooms/document-${documentId}`);
-  const broadcastRequest = new Request(broadcastUrl.toString(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(broadcastMessage)
-  });
-  
-  const response = await stub.fetch(broadcastRequest);
-  
-  if (response.ok) {
-    return json({ success: true });
-  } else {
-    return json({ error: 'Failed to broadcast message' }, { status: 500 });
-  }
+  const message = await request.json() as Record<string, unknown>;
+
+  broadcastToRoom(documentRoomKey(documentId), { ...message, documentId, ...senderFields(user) });
+  return json({ success: true });
 });
 
-// Get document room information (connected users)
-router.get('/documents/:documentId/room', withAuth, async (request: Request, env: any) => {
+router.get('/documents/:documentId/room', withAuth, (request: Request) => {
   const { documentId } = (request as any).params;
-  
-  // Get the WebSocket Durable Object
-  const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(`document-${documentId}`);
-  const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-  
-  // Get room information from the Durable Object
-  const roomUrl = new URL(`http://localhost/api/rooms/document-${documentId}`);
-  const roomRequest = new Request(roomUrl.toString(), {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' }
-  });
-  
-  const response = await stub.fetch(roomRequest);
-  
-  if (response.ok) {
-    const roomData = await response.json();
-    return json(roomData);
-  } else {
-    return json({ error: 'Failed to get room information' }, { status: 500 });
-  }
+  const roomId = documentRoomKey(documentId);
+  const users = getRoomUsers(roomId);
+  return json({ roomId, users, userCount: users.length });
 });
 
 // Utility function to broadcast messages from other parts of the application
 export async function broadcastToSubmissionRoom(
   submissionId: string,
   message: Omit<WebSocketMessage, 'submissionId' | 'timestamp'>,
-  env: any
+  _env: any
 ): Promise<void> {
   try {
-    const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(submissionId);
-    const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-    
-    const broadcastMessage: WebSocketMessage = {
+    broadcastToRoom(submissionRoomKey(submissionId), {
       ...message,
       submissionId,
-      timestamp: new Date().toISOString()
-    };
-    
-    const broadcastUrl = new URL(`http://localhost/api/rooms/${submissionId}`);
-    const broadcastRequest = new Request(broadcastUrl.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(broadcastMessage)
+      timestamp: new Date().toISOString(),
     });
-    
-    await stub.fetch(broadcastRequest);
   } catch (error) {
     console.error('Failed to broadcast message to submission room:', error);
   }
@@ -417,27 +163,15 @@ export async function broadcastToSubmissionRoom(
 export async function broadcastToDocumentRoom(
   documentId: string,
   message: Omit<WebSocketMessage, 'documentId' | 'timestamp'>,
-  env: any
+  _env: any
 ): Promise<void> {
   try {
-    const durableObjectId = env.SUBMISSION_WEBSOCKET.idFromName(`document-${documentId}`);
-    const stub = env.SUBMISSION_WEBSOCKET.get(durableObjectId);
-    
-    const broadcastMessage: WebSocketMessage = {
+    broadcastToRoom(documentRoomKey(documentId), {
       ...message,
       documentId,
-      timestamp: new Date().toISOString()
-    };
-    
-    const broadcastUrl = new URL(`http://localhost/api/rooms/document-${documentId}`);
-    const broadcastRequest = new Request(broadcastUrl.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(broadcastMessage)
+      timestamp: new Date().toISOString(),
     });
-    
-    await stub.fetch(broadcastRequest);
   } catch (error) {
     console.error('Failed to broadcast message to document room:', error);
   }
-} 
+}

@@ -300,22 +300,11 @@ router.post('/groups/:groupId/send-email', withAdminCheck, async (request: Reque
     return json({ error: 'No users in this group' }, { status: 400 });
   }
 
-  // Check if SES credentials are available
-  if (!env.SESKey || !env.SESSecret) {
-    return json({ error: 'Email service credentials not configured' }, { status: 500 });
-  }
-
   // Send email to each user
   const results = [];
   for (const user of groupMembers) {
     try {
-      const status = await sendEmail(
-        user.email, 
-        subject, 
-        message, 
-        env.SESKey, 
-        env.SESSecret
-      );
+      const status = await sendEmail(user.email, subject, message, env);
       results.push({ email: user.email, status });
     } catch (error) {
       results.push({ email: user.email, error: (error as Error).message });
