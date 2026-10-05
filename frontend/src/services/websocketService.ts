@@ -672,8 +672,11 @@ export class SubmissionWebSocketClient {
    * Remote clients use this to update the change status in their sidebar
    * and remove resolved decorations from the editor.
    */
-  sendChangeStatusUpdate(changeId: string, status: 'approved' | 'rejected'): void {
-    this.send({ type: 'change_status_updated', data: { changeId, status } });
+  sendChangeStatusUpdate(changeId: string, status: 'approved' | 'rejected', cascadeRejectedIds?: string[]): void {
+    const data: Record<string, unknown> = { changeId, status };
+    // Changes the server rejected along with this one (reject cascade)
+    if (cascadeRejectedIds && cascadeRejectedIds.length > 0) data.cascadeRejectedIds = cascadeRejectedIds;
+    this.send({ type: 'change_status_updated', data });
   }
 
   get isConnected(): boolean {

@@ -8,6 +8,7 @@ import { API_URL } from '../config';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import { useCollabMode } from '../services/collabConfig';
 import { useUserDirectory } from '../services/userDirectory';
+import { applyChangeStatus, ChangeResolver, ResolvedStatus } from '../utils/changeStatus';
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -131,7 +132,9 @@ export const TrackedChangesView: React.FC = () => {
         timestamp: new Date(change.timestamp),
         status: change.status || 'pending',
         approvedBy: change.approvedBy,
+        approvedByName: change.approvedByName,
         rejectedBy: change.rejectedBy,
+        rejectedByName: change.rejectedByName,
         approvedAt: change.approvedAt,
         rejectedAt: change.rejectedAt,
         isIncremental: change.isIncremental || false,
@@ -427,53 +430,33 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  // Functional updates throughout: these run from timers and long-lived socket handlers
+  // (and several times in one batch), so they must never write back a stale submission.
+  const setChangeStatus = useCallback((changeIds: string[], status: ResolvedStatus, resolver?: ChangeResolver) => {
+    setSubmission(prev => {
+      if (!prev) return prev;
+      const changes = applyChangeStatus(prev.changes, changeIds, status, resolver);
+      return changes === prev.changes ? prev : { ...prev, changes };
+    });
+  }, []);
+
   const handleApprove = (changeId: string) => {
     // Optimistic-only: editor owns backend sync via syncChangeStatusToBackend
-    if (submission) {
-      setSubmission({
-        ...submission,
-        changes: submission.changes.map(change =>
-          change.id === changeId
-            ? { ...change, status: 'approved' as const, approvedBy: currentUser?.email || currentUser?.id || '' }
-            : change
-        ),
-      });
-    }
+    setChangeStatus([changeId], 'approved', { id: currentUser?.email || currentUser?.id || '', name: currentUser?.name });
   };
 
   const handleReject = (changeId: string) => {
     // Optimistic-only: editor owns backend sync via syncChangeStatusToBackend
-    if (submission) {
-      setSubmission({
-        ...submission,
-        changes: submission.changes.map(change =>
-          change.id === changeId
-            ? { ...change, status: 'rejected' as const, rejectedBy: currentUser?.email || currentUser?.id || '' }
-            : change
-        ),
-      });
-    }
+    setChangeStatus([changeId], 'rejected', { id: currentUser?.email || currentUser?.id || '', name: currentUser?.name });
   };
 
-  // Update a single change's status locally when a remote user accepts/rejects.
-  // This avoids a full submission refetch which would trigger editor re-initialization
-  // and create phantom tracked changes.
-  const handleRemoteChangeResolved = useCallback((changeId: string, status: string) => {
-    if (submission) {
-      setSubmission({
-        ...submission,
-        changes: submission.changes.map(change =>
-          change.id === changeId
-            ? {
-                ...change,
-                status: status as 'approved' | 'rejected',
-                ...(status === 'approved' ? { approvedBy: 'remote' } : { rejectedBy: 'remote' }),
-              }
-            : change
-        ),
-      });
-    }
-  }, [submission]);
+  // Update a change's status locally when another user accepts/rejects it (or when the
+  // server cascade-rejects it). In legacy mode this replaces a refetch, which would
+  // re-initialize the editor; in collaborative mode the editor also refetches the list.
+  const handleRemoteChangeResolved = useCallback((changeId: string, status: string, resolver?: ChangeResolver) => {
+    if (status !== 'approved' && status !== 'rejected') return;
+    setChangeStatus([changeId], status, resolver);
+  }, [setChangeStatus]);
 
   const handleSuggestion = async (suggestion: Change): Promise<Change | undefined> => {
     try {
@@ -528,7 +511,9 @@ export const TrackedChangesView: React.FC = () => {
           timestamp: new Date(change.timestamp),
           status: change.status || 'pending',
           approvedBy: change.approvedBy,
+          approvedByName: change.approvedByName,
           rejectedBy: change.rejectedBy,
+          rejectedByName: change.rejectedByName,
           approvedAt: change.approvedAt,
           rejectedAt: change.rejectedAt,
           isIncremental: change.isIncremental || false,

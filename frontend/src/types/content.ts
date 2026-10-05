@@ -124,7 +124,9 @@ export interface Change {
   timestamp: Date;
   status?: 'pending' | 'approved' | 'rejected';
   approvedBy?: string;
+  approvedByName?: string;
   rejectedBy?: string;
+  rejectedByName?: string;
   approvedAt?: Date;
   rejectedAt?: Date;
   isIncremental?: boolean;
