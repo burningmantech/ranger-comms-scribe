@@ -155,6 +155,10 @@ describe('real-time rooms (real sessions)', () => {
     await putObject(`content_submissions/${submissionId}`, {
       id: submissionId, title: 'T', content: 'C', submittedBy: 'someone-else', requiredApprovers: [],
     }, env);
+    await putObject('documents/doc-9', {
+      id: 'doc-9', title: 'D', content: '', isPublic: false,
+      permissions: { owner: 'someone-else', editors: [bob.id], viewers: [], commenters: [], allowComments: true },
+    }, env);
     ({ app, base, http: httpBase } = await startServer(env));
   });
 
@@ -364,6 +368,14 @@ describe('real-time rooms (real sessions)', () => {
 
     const docInvalid = await expectRejected(`${base}/api/ws/documents/doc-1?sessionId=bad`);
     expect(docInvalid.status).toBe(403);
+
+    const noDocument = await expectRejected(`${base}/api/ws/documents/doc-1?sessionId=${aliceSession}`);
+    expect(noDocument.status).toBe(404);
+    expect(JSON.parse(noDocument.body)).toEqual({ error: 'Document not found' });
+
+    const docDenied = await expectRejected(`${base}/api/ws/documents/doc-9?sessionId=${mallorySession}`);
+    expect(docDenied.status).toBe(403);
+    expect(JSON.parse(docDenied.body)).toEqual({ error: 'Access denied' });
 
     const unknownPath = await expectRejected(`${base}/api/ws/other/thing?sessionId=${aliceSession}`);
     expect(unknownPath.status).toBe(404);
