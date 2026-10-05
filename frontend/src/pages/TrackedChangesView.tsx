@@ -6,6 +6,7 @@ import { ContentSubmission, User, Comment, Change, Approval, ApprovalGates } fro
 import { useContent } from '../contexts/ContentContext';
 import { API_URL } from '../config';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
+import { useCollabMode } from '../services/collabConfig';
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -14,6 +15,9 @@ export const TrackedChangesView: React.FC = () => {
   const [submission, setSubmission] = useState<ContentSubmission | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Real-time editing mode from GET /api/config (fetched in parallel with the submission).
+  // The editor waits for it so it never switches modes mid-session.
+  const collabMode = useCollabMode();
 
   // Set body background color for this page
   useEffect(() => {
@@ -662,7 +666,7 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  if (loading) {
+  if (loading || !collabMode) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '24rem' }}>
         <div className="loading-container">Loading...</div>
@@ -777,6 +781,9 @@ export const TrackedChangesView: React.FC = () => {
       onNavigate={(id) => navigate(`/submissions/${id}/review`)}
     >
       <TrackedChangesEditor
+        // Collaborative mode: a fresh editor (Yjs room, TransactionManager, baseline) per
+        // submission when navigating between submissions. Legacy mode keeps today's behavior.
+        key={collabMode === 'yjs' ? submission.id : undefined}
         submission={submission}
         currentUser={currentUser}
         onSave={handleSave}
@@ -792,6 +799,7 @@ export const TrackedChangesView: React.FC = () => {
         onReset={handleReset}
         onDelete={handleDelete}
         onSendEmail={handleSendEmail}
+        collabMode={collabMode}
       />
     </ReviewLayout>
   );

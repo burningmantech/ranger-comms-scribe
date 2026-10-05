@@ -182,8 +182,8 @@ function YjsSession({
       setWebsocketProvider(created.websocketProvider);
       return created.provider;
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    // Both are fixed for this session (a new session is a new YjsSession instance).
+    [editor, isFreshSession],
   );
 
   const initialEditorState = useCallback((ed: LexicalEditor) => {

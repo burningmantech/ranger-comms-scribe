@@ -16,6 +16,7 @@ import ActivityTimeline from './ActivityTimeline';
 import BatchActionBar from './BatchActionBar';
 import ChangeGroup, { groupChanges } from './ChangeGroup';
 import { ApprovalGates } from '../types/content';
+import type { CollabMode } from '../services/collabConfig';
 import './TrackedChangesEditor.css';
 
 const webSocketManager = new WebSocketManager();
@@ -248,6 +249,12 @@ interface TrackedChangesEditorProps {
   onDelete?: () => void;
   onSendEmail?: () => Promise<void>;
   reviewMode?: boolean;
+  /**
+   * 'yjs': merged real-time editing (PRD §14). The editor syncs through Yjs, only the
+   * local user's own edits become tracked changes, and refreshes update the changes
+   * sidebar only. Default 'legacy': whole-document sync, unchanged.
+   */
+  collabMode?: CollabMode;
 }
 
 interface ConnectedUser {
@@ -306,8 +313,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onReset,
   onDelete,
   onSendEmail,
-  reviewMode = false
+  reviewMode = false,
+  collabMode = 'legacy',
 }) => {
+  const isCollab = collabMode === 'yjs';
 
   // WebSocket state is now managed by CollaborativeEditor
 
@@ -409,6 +418,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // it waits until the local edit has been saved (see flushPendingRemoteRefresh).
   const pendingRemoteRefreshRef = useRef(false);
   const refreshWithRemoteGuardRef = useRef<() => void>(() => {});
+
+  // Collaborative mode state.
+  // - lastLocalJsonRef: the editor state after the local user's latest own edit. When
+  //   another user's edit merges in during a local transaction, that transaction is
+  //   settled with this state, so it never contains the other user's text.
+  // - collabEditorReportedRef: the editor has reported its (shared) content; from then on
+  //   it, not the fetched submission, is the source of editedProposedContent.
+  // - savedContentRef: the fetched proposed content, used to seed an empty room when this
+  //   client has nothing newer (never the placeholder text).
+  const lastLocalJsonRef = useRef<string | null>(null);
+  const collabEditorReportedRef = useRef(false);
+  const savedContentRef = useRef('');
+  savedContentRef.current = submission.proposedVersions?.richTextContent ||
+    submission.proposedVersions?.content ||
+    submission.richTextContent ||
+    submission.content || '';
 
   // Callback for SaveIndicator — returns the latest editor state for
   // beforeunload settle.
@@ -608,6 +633,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // fetchSubmission → setSubmission → proposedEditorContent → initialContent
   // chain. Uses the version counter so rapid calls don't leave stale flags.
   const refreshWithRemoteGuard = useCallback(() => {
+    // Collaborative mode: a refetch only updates the changes sidebar (the editor never
+    // re-initializes from it), so there's nothing to defer and change tracking is never
+    // frozen.
+    if (isCollab) {
+      if (onRefreshNeeded) {
+        onRefreshNeeded();
+      }
+      return;
+    }
     if (hasActiveTransactionRef.current) {
       pendingRemoteRefreshRef.current = true;
       return;
@@ -626,7 +660,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         isRemoteRefreshInFlightRef.current = false;
       }
     }, 5000);
-  }, [onRefreshNeeded]);
+  }, [onRefreshNeeded, isCollab]);
   refreshWithRemoteGuardRef.current = refreshWithRemoteGuard;
 
   // Run a deferred remote refresh once the local edit is settled and saved. After a
@@ -695,7 +729,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
         // Map __pending_deletion__ to the real changeId in the Lexical JSON
         const currentJson = editedProposedContentRef.current;
-        if (currentJson && currentJson.includes('__pending_deletion__')) {
+        if (isCollab) {
+          // Collaborative mode: other users' pending markers are in the shared document
+          // too. Rename only this user's, in the editor (it syncs, and the editor reports
+          // the result back as the new baseline), never with a document-wide replace.
+          if (currentJson && currentJson.includes('__pending_deletion__')) {
+            window.dispatchEvent(new CustomEvent('commit-pending-deletion', {
+              detail: { newId: tx.remoteChangeId, authorId: currentUser.id || currentUser.email }
+            }));
+          }
+        } else if (currentJson && currentJson.includes('__pending_deletion__')) {
           const updatedJson = currentJson.replace(/__pending_deletion__/g, tx.remoteChangeId);
           setEditedProposedContent(updatedJson);
           editedProposedContentRef.current = updatedJson;
@@ -737,7 +780,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       tm.off('save-error', flushPendingRemoteRefresh);
       tm.off('transaction-saved', handleSaved);
     };
-  }, [currentUser.email, currentUser.id]);
+  }, [currentUser.email, currentUser.id, isCollab]);
 
   // Update ref when content changes
   useEffect(() => {
@@ -1006,6 +1049,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Clear optimistic local state when submission changes arrive from the server
     setLocalRemovedChangeIds(new Set());
     setLocalAddedChanges([]);
+
+    // Collaborative mode: once the editor has reported the shared document, it alone
+    // defines editedProposedContent. A refetch (other users' saves, reconnects) only
+    // refreshes the changes sidebar; its content may lack edits still being merged.
+    if (isCollab && collabEditorReportedRef.current) {
+      return;
+    }
 
     // Prioritize rich text content from proposed versions, then fall back to other sources
     // Skip if the content looks like a comment (contains @change:)
@@ -1639,6 +1689,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       } catch { /* ignore parse errors */ }
     }
 
+    // Collaborative mode: settle the user's in-progress edit first (with their own last
+    // state) so pausing doesn't discard it, and tell the resolve handler whose pending
+    // deletion markers belong to this change.
+    let pendingAuthorIds: string[] | undefined;
+    if (isCollab) {
+      if (transactionManager.getActiveTransaction() && lastLocalJsonRef.current) {
+        transactionManager.settleTransaction(lastLocalJsonRef.current);
+        hasActiveTransactionRef.current = false;
+      }
+      if (change?.changedBy) {
+        pendingAuthorIds = [change.changedBy];
+        if (change.changedBy === currentUser.id || change.changedBy === currentUser.email) {
+          pendingAuthorIds.push(currentUser.id, currentUser.email);
+        }
+      }
+    }
+
     // 1. Suppress TransactionManager for all editor changes caused by the
     //    resolve (restore text, remove decorations, applyDecorations re-run).
     transactionManager.pauseForChangeResolution();
@@ -1656,7 +1723,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     //      AND removes the corresponding inserted text for replacement pairs
     //    - reject format change: reverts block type (e.g., heading→paragraph)
     window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-      detail: { changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts, formatChanges }
+      detail: { changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds }
     }));
 
     console.log(`[RESOLVE] editedProposedContentRef AFTER dispatch:`, editedProposedContentRef.current?.substring(0, 200));
@@ -1694,8 +1761,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       const currentState = editedProposedContentRef.current;
       console.log(`[RESOLVE] setTimeout(500ms): currentState valid=${!!(currentState && isLexicalJson(currentState))}, pendingResolves=${pendingResolveCountRef.current}, first 200 chars:`, currentState?.substring(0, 200));
 
-      // Broadcast the post-resolution editor state to other users.
-      if (currentState && isLexicalJson(currentState) && webSocketClientRef.current) {
+      // Broadcast the post-resolution editor state to other users (legacy only: in
+      // collaborative mode the resolve already reached everyone through Yjs).
+      if (isCollab && currentState && isLexicalJson(currentState)) {
+        setLastSavedProposedContent(currentState);
+      } else if (currentState && isLexicalJson(currentState) && webSocketClientRef.current) {
         try {
           setLastSavedProposedContent(currentState);
           webSocketClientRef.current.send({
@@ -1730,7 +1800,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         isResolvingChangeRef.current = false;
       }
     }, 500);
-  }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText]);
+  }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText, isCollab, currentUser.id, currentUser.email]);
 
   // Batch action handlers
   const pendingChanges = useMemo(
@@ -2458,14 +2528,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     webSocketClientRef.current = client;
 
     if (client) {
+      // Collaborative mode: content arrives through Yjs only; never apply whole-document
+      // updates from the room socket.
       // Listen for content updates
-      client.on('content_updated', handleWebSocketUpdate);
+      if (!isCollab) client.on('content_updated', handleWebSocketUpdate);
 
       // Listen for real-time content updates (character-by-character)
-      client.on('realtime_content_update', handleWebSocketUpdate);
+      if (!isCollab) client.on('realtime_content_update', handleWebSocketUpdate);
 
       // Listen for cursor position updates to track current user's position
-      client.on('cursor_position', (message: any) => {
+      if (!isCollab) client.on('cursor_position', (message: any) => {
         if (message.userId === (currentUser.id || currentUser.email)) {
           // Store our own cursor position for use in auto-save messages
           lastCursorPositionRef.current = message.data;
@@ -2504,8 +2576,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         if (message.userId === effectiveUserId) return;
         const data = message.data;
         if (!data?.removedChangeIds || !Array.isArray(data.removedChangeIds)) return;
-        // Remove decorations for each undone change
-        for (const id of data.removedChangeIds) {
+        // Remove decorations for each undone change (legacy only: in collaborative mode
+        // the shared document already reflects the undo, and the refreshed sidebar drops
+        // the change's highlights)
+        if (!isCollab) for (const id of data.removedChangeIds) {
           try {
             removeDecorationsForChange(id);
           } catch (err) {
@@ -2532,6 +2606,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const data = message.data;
         if (!data?.changeId || !data?.status) return;
         console.log(`[WS-STATUS] Processing remote change_status_updated — removing decorations and updating status locally`);
+        // Collaborative mode: the resolving client changed the shared document through
+        // Yjs; here only the sidebar updates (its highlights go with the pending change).
+        if (!isCollab) {
         // Guard with __isApplyingDecorations to prevent TransactionManager
         // from treating the decoration removal as a user edit
         (window as any).__isApplyingDecorations = true;
@@ -2544,6 +2621,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         setTimeout(() => {
           (window as any).__isApplyingDecorations = false;
         }, 100);
+        }
         // Update the change status locally instead of calling onRefreshNeeded().
         // A full submission refetch would trigger proposedEditorContent →
         // initialContent change → editor re-initialization → phantom tracked change.
@@ -2552,7 +2630,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
       });
     }
-  }, [handleWebSocketUpdate, currentUser.id, currentUser.email, effectiveUserId, onRemoteChangeResolved, refreshWithRemoteGuard]);
+  }, [handleWebSocketUpdate, currentUser.id, currentUser.email, effectiveUserId, onRemoteChangeResolved, refreshWithRemoteGuard, isCollab]);
 
   // TransactionHistoryPlugin callback: broadcast undo over WebSocket
   const handleTransactionUndone = useCallback((tx: Transaction) => {
@@ -2874,6 +2952,64 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
 
     return trackedChange;
+  }, []);
+
+  // ---- Collaborative mode (Yjs) editor callbacks ----
+
+  /**
+   * The local user's own edit (the editor never reports remote or programmatic changes
+   * here in collaborative mode). Starts a transaction from the current baseline, which
+   * already includes every edit merged from other users.
+   */
+  const handleCollabLocalChange = useCallback((json: string) => {
+    collabEditorReportedRef.current = true;
+    const tm = transactionManagerRef.current;
+    const tracking = !!tm && hasInitializedContentRef.current &&
+      !tm.isPausedForResolution() && !(window as any).__isApplyingDecorations;
+    if (tm && tracking) {
+      if (!tm.getActiveTransaction()) {
+        const beforeState = editedProposedContentRef.current || json;
+        hasActiveTransactionRef.current = !!tm.startTransaction('content', beforeState);
+      }
+      tm.notifyActivity(json);
+      lastLocalJsonRef.current = json;
+    }
+    editedProposedContentRef.current = json;
+    setEditedProposedContent(json);
+  }, []);
+
+  /**
+   * Content the local user didn't just type: 'remote' (another user's edit merged through
+   * Yjs) or 'baseline' (the initial seed or sync, tracked-change bookkeeping). Updates the
+   * baseline without starting a transaction. A remote edit during a local transaction
+   * settles that transaction first, with the local user's last own state.
+   */
+  const handleCollabRemoteChange = useCallback((json: string, kind: 'remote' | 'baseline') => {
+    collabEditorReportedRef.current = true;
+    const tm = transactionManagerRef.current;
+    if (tm && tm.getActiveTransaction()) {
+      if (kind === 'remote') {
+        if (lastLocalJsonRef.current) {
+          tm.settleTransaction(lastLocalJsonRef.current);
+        }
+        hasActiveTransactionRef.current = false;
+        lastLocalJsonRef.current = null;
+      } else {
+        // Local bookkeeping during the user's own transaction: part of their after-state.
+        lastLocalJsonRef.current = json;
+      }
+    }
+    editedProposedContentRef.current = json;
+    setEditedProposedContent(json);
+  }, []);
+
+  /**
+   * Seed for an empty room (read only on the client the server picks as seeder): the
+   * newest content this client knows (its own saves don't refetch the submission), else
+   * the fetched content. Never the placeholder text.
+   */
+  const getCollabSeedContent = useCallback((): string => {
+    return editedProposedContentRef.current || savedContentRef.current || '';
   }, []);
 
   const proposedEditorContent = useMemo(() => {
@@ -3262,11 +3398,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <div className="proposed-content">
                 <div className="rich-text-editor-container">
                   <CollaborativeEditor
-                    key="proposed-collaborative-editor"
+                    key={isCollab ? `proposed-collaborative-editor:${submission.id}` : 'proposed-collaborative-editor'}
                     documentId={submission.id}
                     currentUser={currentUser}
                     initialContent={proposedEditorContent}
-                    onContentChange={(json, cursorPosition) => {
+                    collabMode={collabMode}
+                    onRemoteContentChange={isCollab ? handleCollabRemoteChange : undefined}
+                    getCollabSeedContent={isCollab ? getCollabSeedContent : undefined}
+                    onContentChange={isCollab ? handleCollabLocalChange : (json, cursorPosition) => {
                       // Skip processing if we're still initializing content to prevent auto-save on load
                       if (!hasInitializedContentRef.current) {
                         return;
