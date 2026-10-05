@@ -21,6 +21,7 @@ import type { CollabSession } from './editor/collab/YjsCollaboration';
 import type { LocalEditSession } from './editor/collab/localEditTracker';
 import './TrackedChangesEditor.css';
 import { UserName } from './UserName';
+import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds } from '../utils/changeStatus';
 
 const webSocketManager = new WebSocketManager();
 
@@ -246,7 +247,7 @@ interface TrackedChangesEditorProps {
   onSuggestion: (suggestion: Change) => void;
   onUndo: (changeId: string) => void;
   onRefreshNeeded?: () => void;
-  onRemoteChangeResolved?: (changeId: string, status: string) => void;
+  onRemoteChangeResolved?: (changeId: string, status: string, resolver?: ChangeResolver) => void;
   onBack?: () => void;
   onReset?: () => void;
   onDelete?: () => void;
@@ -271,8 +272,6 @@ interface ConnectedUser {
 
 interface TrackedChange extends Change {
   status: 'pending' | 'approved' | 'rejected';
-  approvedBy?: string;
-  rejectedBy?: string;
   comments: Comment[];
 }
 
@@ -691,6 +690,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }, 5000);
   }, [onRefreshNeeded, isCollab]);
   refreshWithRemoteGuardRef.current = refreshWithRemoteGuard;
+
+  // The WebSocket handlers are registered once per connection (CollaborativeEditor's
+  // connect effect doesn't re-run when callbacks change), so they read callbacks
+  // through refs instead of capturing the first render's.
+  const onRemoteChangeResolvedRef = useRef(onRemoteChangeResolved);
+  onRemoteChangeResolvedRef.current = onRemoteChangeResolved;
+
+  // Collaborative mode: refetch the change list after a remote accept/reject, so the
+  // sidebar gets the server's status (including cascade-rejected changes). A batch
+  // resolve arrives as a burst of messages, so coalesce them into one trailing refetch
+  // (overlapping refetches could otherwise land out of order).
+  const statusRefreshTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const scheduleStatusRefresh = useCallback(() => {
+    if (statusRefreshTimerRef.current) clearTimeout(statusRefreshTimerRef.current);
+    statusRefreshTimerRef.current = setTimeout(() => {
+      statusRefreshTimerRef.current = null;
+      refreshWithRemoteGuardRef.current();
+    }, 300);
+  }, []);
+  useEffect(() => () => {
+    if (statusRefreshTimerRef.current) clearTimeout(statusRefreshTimerRef.current);
+  }, []);
 
   // Run a deferred remote refresh once the local edit is settled and saved. After a
   // save the server's proposed content is this user's latest state, so the refetch
@@ -1192,7 +1213,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Convert changes to tracked changes with status
   const trackedChanges: TrackedChange[] = useMemo(() => {
-    const result = submission.changes.map(change => {
+    const serverChanges: TrackedChange[] = submission.changes.map(change => {
       // Get all comments for this change (including replies)
       const changeComments = submission.comments.filter((c: Comment) => {
         // Direct comments to this change
@@ -1214,38 +1235,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         return false;
       });
 
-      const status = (change as any).status || 'pending';
-
       return {
         ...change,
-        status: status, // Use status from tracked changes data
-        approvedBy: (change as any).approvedBy,
-        rejectedBy: (change as any).rejectedBy,
+        status: change.status || 'pending', // Use status from tracked changes data
         comments: changeComments
       };
-    }).filter(c => !localRemovedChangeIds.has(c.id));
+    });
 
     // Merge optimistically added changes (from handleSaved) that aren't yet
     // in the server data.  Once fetchSubmission() runs, the server data will
-    // include these changes and the local copies are automatically excluded.
-    const serverIds = new Set(result.map(c => c.id));
-    for (const local of localAddedChanges) {
-      if (!serverIds.has(local.id) && !localRemovedChangeIds.has(local.id)) {
-        result.push({
-          ...local,
-          status: local.status || 'pending',
-          approvedBy: undefined,
-          rejectedBy: undefined,
-          comments: [],
-        });
-      }
-    }
+    // include these changes and the local copies are excluded, so the server's
+    // status wins. Until then a local copy keeps any status set on it (e.g. a
+    // remote reject that arrived before the refetch).
+    const result = mergeLocalChanges<TrackedChange>(
+      serverChanges,
+      localAddedChanges.map(local => ({ ...local, status: local.status || 'pending', comments: [] })),
+      localRemovedChangeIds,
+    );
 
     console.log('[TrackedChangesEditor] trackedChanges:', {
       submissionChangesCount: submission.changes.length,
       afterFilterCount: result.length,
       localRemovedCount: localRemovedChangeIds.size,
-      localAddedCount: localAddedChanges.filter(c => !serverIds.has(c.id)).length,
       statuses: result.map(c => c.status),
     });
     return result;
@@ -1538,10 +1549,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         showErrorToast(`Failed to ${label} change (${response.status}): ${errorText || 'Unknown error'}`);
         onRefreshNeeded?.();
       } else {
-        // Broadcast to other connected users via WebSocket
+        // A reject can cascade to dependent changes on the server; the response lists them.
+        let cascadeRejectedIds: string[] = [];
+        if (status === 'rejected') {
+          try {
+            const body = await response.json();
+            cascadeRejectedIds = resolvedChangeIds({ changeId, status, cascadeRejectedIds: body?.cascadeRejectedIds }).slice(1);
+          } catch { /* older server or empty body: no cascade ids */ }
+        }
+        // Broadcast to other connected users via WebSocket (cascade ids included, so
+        // collaborative-mode clients mark those rejected too)
         const client = webSocketClientRef.current;
         if (client?.sendChangeStatusUpdate) {
-          client.sendChangeStatusUpdate(changeId, status);
+          client.sendChangeStatusUpdate(changeId, status, cascadeRejectedIds);
+        }
+        // Collaborative mode: show the cascade-rejected changes as rejected here too.
+        if (isCollab && cascadeRejectedIds.length > 0) {
+          const resolver: ChangeResolver = { id: currentUser.email || currentUser.id, name: currentUser.name };
+          for (const id of cascadeRejectedIds) {
+            onRemoteChangeResolvedRef.current?.(id, 'rejected', resolver);
+          }
+          setLocalAddedChanges(prev => applyChangeStatus(prev, cascadeRejectedIds, 'rejected', resolver));
         }
       }
     } catch (error) {
@@ -1549,7 +1577,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       showErrorToast(`Failed to save change status: network error`);
       onRefreshNeeded?.();
     }
-  }, [onRefreshNeeded, submission.id, showErrorToast]);
+  }, [onRefreshNeeded, submission.id, showErrorToast, isCollab, currentUser.email, currentUser.id, currentUser.name]);
 
   // Handle change decision (approve/reject) — fully local, no network on hot path
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
@@ -1869,6 +1897,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       for (const id of changeIds) {
         handleChangeDecision(id, decision);
       }
+      // NOTE: cleared before the per-change 500 ms timers fire, so each of them still
+      // runs syncChangeStatusToBackend: an individual PUT with that change's reverted
+      // rich text, which also broadcasts change_status_updated to other users. The
+      // batch PUT below is a second, redundant write. Keeping this guard up would stop
+      // those broadcasts and lose format-revert persistence (batch-status takes no
+      // revertedRichText), so it stays as is.
       batchSyncInProgressRef.current = false;
 
       // Wait for all per-change resolve timeouts to complete before
@@ -2588,13 +2622,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // Refresh data after reconnection to pick up missed updates.
         // Use guarded refresh to prevent phantom tracked changes from
         // the async fetchSubmission → editor re-init chain.
-        refreshWithRemoteGuard();
+        refreshWithRemoteGuardRef.current();
       });
 
       // Listen for gap detection — refetch from REST API
       client.on('sync_needed', () => {
         console.log('🔄 Sync needed — refetching from REST API');
-        refreshWithRemoteGuard();
+        refreshWithRemoteGuardRef.current();
       });
 
       // Listen for transaction-settled from remote users
@@ -2603,7 +2637,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const data = message.data;
         if (!data?.changeId) return;
         // Trigger a refresh so the new tracked change appears in the sidebar
-        refreshWithRemoteGuard();
+        refreshWithRemoteGuardRef.current();
       });
 
       // Listen for transaction-undone from remote users
@@ -2622,7 +2656,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           }
         }
         // Trigger a refresh so the sidebar updates
-        refreshWithRemoteGuard();
+        refreshWithRemoteGuardRef.current();
       });
 
       // Listen for transaction-redone from remote users
@@ -2631,7 +2665,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const data = message.data;
         if (!data?.changeId) return;
         // Trigger a refresh so the re-added tracked change appears
-        refreshWithRemoteGuard();
+        refreshWithRemoteGuardRef.current();
       });
 
       // Listen for change status updates (accept/reject) from remote users
@@ -2657,15 +2691,25 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           (window as any).__isApplyingDecorations = false;
         }, 100);
         }
-        // Update the change status locally instead of calling onRefreshNeeded().
-        // A full submission refetch would trigger proposedEditorContent →
-        // initialContent change → editor re-initialization → phantom tracked change.
-        if (onRemoteChangeResolved) {
-          onRemoteChangeResolved(data.changeId, data.status);
+        // Update the change status locally right away. In legacy mode this replaces
+        // onRefreshNeeded(): a full submission refetch would trigger
+        // proposedEditorContent → initialContent change → editor re-initialization →
+        // phantom tracked change. Collaborative mode also applies the changes the server
+        // cascade-rejected, and covers changes this user saved that are only in
+        // localAddedChanges (not yet in submission.changes).
+        if (data.status !== 'approved' && data.status !== 'rejected') return;
+        const ids = isCollab ? resolvedChangeIds(data) : [data.changeId];
+        const resolver: ChangeResolver = { id: message.userEmail || message.userId, name: message.userName };
+        for (const id of ids) {
+          onRemoteChangeResolvedRef.current?.(id, data.status, resolver);
         }
+        setLocalAddedChanges(prev => applyChangeStatus(prev, ids, data.status, resolver));
+        // Collaborative mode: then refetch the change list so the server's status wins
+        // (a refetch only updates the sidebar there; the editor never re-initializes).
+        if (isCollab) scheduleStatusRefresh();
       });
     }
-  }, [handleWebSocketUpdate, currentUser.id, currentUser.email, effectiveUserId, onRemoteChangeResolved, refreshWithRemoteGuard, isCollab]);
+  }, [handleWebSocketUpdate, currentUser.id, currentUser.email, effectiveUserId, isCollab, scheduleStatusRefresh]);
 
   // TransactionHistoryPlugin callback: broadcast undo over WebSocket
   const handleTransactionUndone = useCallback((tx: Transaction) => {
@@ -4323,12 +4367,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                             <div className="change-status">
                               {change.status === 'approved' && (
                                 <span className="status-label approved">
-                                  ✓ Approved by {change.approvedBy}
+                                  ✓ Approved by <UserName value={change.approvedBy} name={change.approvedByName} />
                                 </span>
                               )}
                               {change.status === 'rejected' && (
                                 <span className="status-label rejected">
-                                  ✗ Rejected by {change.rejectedBy}
+                                  ✗ Rejected by <UserName value={change.rejectedBy} name={change.rejectedByName} />
                                 </span>
                               )}
                             </div>
@@ -4619,12 +4663,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                 <div className="change-status">
                                   {change.status === 'approved' && (
                                     <span className="status-label approved">
-                                      ✓ Approved by {change.approvedBy}
+                                      ✓ Approved by <UserName value={change.approvedBy} name={change.approvedByName} />
                                     </span>
                                   )}
                                   {change.status === 'rejected' && (
                                     <span className="status-label rejected">
-                                      ✗ Rejected by {change.rejectedBy}
+                                      ✗ Rejected by <UserName value={change.rejectedBy} name={change.rejectedByName} />
                                     </span>
                                   )}
                                 </div>

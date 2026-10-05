@@ -135,6 +135,26 @@ describe('SubmissionWebSocketClient — transaction messages', () => {
     expect(parsed.userId).toBe('user-1');
   });
 
+  test('sendChangeStatusUpdate sends the change id and status', () => {
+    client.sendChangeStatusUpdate('chg-1', 'approved');
+
+    const parsed: WebSocketMessage = JSON.parse(mockWs.sentMessages[0]);
+    expect(parsed.type).toBe('change_status_updated');
+    expect(parsed.data).toEqual({ changeId: 'chg-1', status: 'approved' });
+  });
+
+  test('sendChangeStatusUpdate includes cascade-rejected ids when there are any', () => {
+    client.sendChangeStatusUpdate('chg-1', 'rejected', ['chg-2', 'chg-3']);
+    client.sendChangeStatusUpdate('chg-4', 'rejected', []);
+
+    expect(JSON.parse(mockWs.sentMessages[0]).data).toEqual({
+      changeId: 'chg-1',
+      status: 'rejected',
+      cascadeRejectedIds: ['chg-2', 'chg-3'],
+    });
+    expect(JSON.parse(mockWs.sentMessages[1]).data).toEqual({ changeId: 'chg-4', status: 'rejected' });
+  });
+
   test('messages are queued when WebSocket is not connected', () => {
     // Close the mock WS
     mockWs.readyState = MockWebSocket.CLOSED;
