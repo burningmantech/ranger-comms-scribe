@@ -105,7 +105,7 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
 - **Moving to a relational database.** Data stays as JSON objects by key prefix, now in S3. RDS/MariaDB is a later project.
 - **Changing login.** Google ID-token login and email/password stay. Clubhouse OIDC is a later project.
 - **Scaling past one ECS task.** Rooms and the cache live in process memory. Scaling out would need Redis pub/sub and is out of scope.
-- **Real merging of simultaneous edits** (OT or CRDT). The current last-write-wins relay stays.
+- ~~Real merging of simultaneous edits~~: **now in scope** (decided 2026-10-05). See §14, Phase 5.
 - **Replacing Turnstile.** It keeps working from AWS. AWS WAF CAPTCHA can be decided later.
 
 ## 5. Decisions
@@ -442,14 +442,78 @@ These are outside the migration's scope except where a phase is noted.
 
 Found in the AWS migration review and not fixed yet:
 
-- **Collaborator identity mismatch.** Sockets stamp `userId` with the email (`handlers/websocket.ts`), REST-triggered broadcasts use `user.id || user.email`, and the frontend compares against `currentUser.id || currentUser.email`, so users can see their own actions as another collaborator's. Pick one identifier (the UUID, with the email kept in `userEmail`) for sockets and broadcasts, and compare on it in the frontend.
-- **`seq` gap for the sender.** `broadcastToRoom` (`realtime/rooms.ts`) consumes a `seq` number for messages relayed to everyone except the sender, so the sender always sees a gap and refetches. Send the sender a lightweight ack carrying that `seq`, or keep the counter per recipient.
+- ~~**Collaborator identity mismatch.**~~ Fixed 2026-10-05: sockets now use `user.id || user.email`, matching REST broadcasts and the frontend.
+- ~~**`seq` gap for the sender.**~~ Fixed 2026-10-05: `seq` is counted per connection. This was the main cause of a lone typist losing keystrokes (see §14).
 - **Presence flicker with two tabs.** When a user with two tabs open closes one, the room broadcasts `user_left` for them although their other socket is still connected. Announce `user_left` only when the user's last socket in the room closes (`room_state` already deduplicates by `userId`).
 - **Long API calls time out at CloudFront.** The API origin's `readTimeout` is 60 s (`infra/lib/shared.ts`), so `/api` requests that run longer return 504. 60 s is CloudFront's default maximum (more needs a quota increase, up to 180 s), so prefer making slow endpoints asynchronous.
 - **Standard stacks each create their own network.** Without `useExisting`, staging and production each create a VPC, cluster and ALB (§7.7's ~$55–60/month case). Share them by creating them once (a small shared stack, or one stack importing the other's), or use the tech team's existing ones.
 - **Account pre-hijack by registration.** Anyone can register a victim's (non-bootstrap) email with their own password, and keeps that password once the victim clicks the verification link. On `/auth/verify-email`, clear the password of an account that was created by email registration and has never logged in, or require the password to be set from the emailed link.
 - **Unpinned MinIO image.** The local `docker-compose.yml` uses the community image `pgsty/minio` because the official images couldn't be pulled. Pin it by digest (`pgsty/minio@sha256:…`).
 - **Production deployer allow-list.** The "Check user" step in `.github/workflows/deploy.yml` allows `alexyoung`, but the maintainer's GitHub login is `alexanderyoung`. Left for the maintainer to change.
+
+## 14. Real-time editing: findings and Phase 5 (Yjs)
+
+### 14.1 Fixed on 2026-10-05, from two-browser editing tests
+
+All of these predate the migration; the live Cloudflare site has them too.
+
+1. **A lone typist lost recent keystrokes.**
+   - Per-room `seq` made each sender see a gap, so the client fired `sync_needed`.
+   - `refreshWithRemoteGuard` then froze change tracking for 5 s and reloaded stale server content.
+   - Fixed by counting `seq` per connection.
+2. **Idle editors echoed content they had just received.** A timer-based "remote" flag expired before Lexical's async onChange ran. Remote applies are now tagged `remote-sync`, and that tag is skipped deterministically.
+3. **Another user's save overwrote in-progress typing.** It caused a refetch plus a full editor re-initialization from `initialContent`. Both now wait until the local edit is saved.
+4. **Typing `[` or `]` jumped to another submission** (`QueueNavigator`).
+5. **With pending changes, typing `j`/`k` was swallowed and `a`/`r` approved or rejected the selected change** (sidebar shortcuts in `TrackedChangesEditor`).
+6. **Users were listed twice in presence** (identity mismatch).
+
+Verified with real keystrokes in two visible windows: text, Enter and bold, one typist at a time, in both directions. Both editors matched, and a reload returned the same content.
+
+### 14.2 Remaining limit, and the decision
+
+The editor syncs by sending the whole document, and the last write wins. When two people type at the same time, one person's edit can be overwritten. That can't be tuned away. **Decision (2026-10-05): implement real merging with Yjs.**
+
+### 14.3 Phase 5 design
+
+- **Client:** `@lexical/react` `CollaborationPlugin` with `@lexical/yjs` (0.30.0, already installed), using a small custom provider.
+- **Transport:** a dedicated socket `/api/ws/yjs/submissions/:id`, authorized by the existing `authorizeRoomConnection`, separate from `rooms.ts`. The existing relay keeps handling presence, cursors and workflow events.
+- **Server:**
+  - one in-memory `Y.Doc` per submission (single task, as already constrained);
+  - each client update is applied to it and relayed to the others;
+  - a joiner receives the current state;
+  - awareness uses `y-protocols`.
+- **Exactly one bootstrap.** The server picks the seeder for an empty document:
+  - the first joiner seeds it from the saved content;
+  - other joiners wait for the seed;
+  - the seeder role passes on if that client disconnects.
+  
+  A server test covers two clients joining an empty room at once.
+- **No whole-document writes after the initial load.** In collaborative mode, initial-content re-initialization, `applyRemote*`, and content refreshes are off. Refreshes update the changes sidebar only.
+- **Tracked changes stay attributed to the right user.** Updates tagged `collaboration` never feed `TransactionManager`. A remote update arriving during a local edit settles that edit first.
+- **Deleted-text markers are not duplicated.** They're created only by the deleting user's local edit. `applyDecorations` is a no-op for change IDs already in the document.
+- **One owner for undo.**
+- **Feature flag.** Collaborative mode is behind a flag served by the backend. The old full-document sync is off when it's on.
+- **Known limit:** if everyone leaves before their last edit settles and saves, the next session starts from the last saved content. That's the same as today.
+
+### 14.4 Order of work and estimate (≈3–5 days)
+
+1. Server Yjs rooms, seeding rule and tests.
+2. Provider plus `CollaborationPlugin` behind the flag; two people typing at once in plain text converge.
+3. Make transactions and decorations Yjs-aware.
+4. Undo.
+5. Test matrix in two visible windows, 5+ runs each, with one browser using scripted input and the other real keys at the same clock time:
+   - different paragraphs;
+   - the same paragraph;
+   - the same position;
+   - Enter in a paragraph while the other user types in it;
+   - bold while the other user types inside the word.
+
+   **Pass:**
+   - both editors are identical;
+   - each insertion appears once, in place;
+   - reloading shows the same content;
+   - each change is credited to the user who made it;
+   - today's one-typist tests still pass.
 
 ## 13. Estimates
 
@@ -461,4 +525,5 @@ Found in the AWS migration review and not fixed yet:
 | 3: Infrastructure and CI, including the dev sleep/wake setup | 3½–6 days |
 | 4: Fresh setup and validation (Alex's development account) | 2–3 days |
 | **Total to a validated development environment** | **≈ 2½–4 weeks** |
+| 5: Real-time merging with Yjs (§14) | ≈3–5 days |
 | Later: Rangers account setup | 1–2 days plus coordination |
