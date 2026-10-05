@@ -18,7 +18,9 @@ cd frontend && npm run start:local-backend
 
 # Terminal 3: tests (uses your installed Google Chrome; see CHROME in lib.js)
 cd tools/collab-e2e && npm install
-RUNS=10 node caret.js     # Enter / bold / same-position / one change per user
+RUNS=10 node caret.js     # Enter (both directions, inside typed text) / bold / same position / different
+                          # paragraphs / single user: placement, plus attribution checked against the
+                          # server-stored changes (LCS diff of oldValue -> newValue)
 RUNS=5 node matrix.js     # full scenario matrix
 node outage.js            # offline, reconnect, fresh doc after 20 s
 node remount.js           # tab switch, moving between submissions

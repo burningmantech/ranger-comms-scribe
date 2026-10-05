@@ -12,6 +12,9 @@ import { HeadingNode, QuoteNode } from '@lexical/rich-text';
 import { createBinding, Provider, syncLexicalUpdateToYjs, syncYjsChangesToLexical } from '@lexical/yjs';
 import { DeletedTextNode, $createDeletedTextNode } from '../../nodes/DeletedTextNode';
 import { createLocalEditTracker, lexicalJsonFromYDoc } from '../localEditTracker';
+import { trackProvenance } from '../provenance';
+import { $createRangeSelection, $getSelection, $isRangeSelection, $setSelection } from 'lexical';
+import { $createHeadingNode } from '@lexical/rich-text';
 import { extractTextFromLexical } from '../../../../utils/lexicalUtils';
 
 const NODES = [HeadingNode, QuoteNode, DeletedTextNode];
@@ -29,6 +32,7 @@ interface Client { editor: LexicalEditor; doc: Y.Doc }
 function client(name: string): Client {
   const editor = createEditor({ namespace: name, nodes: NODES, onError: (e) => { throw e; } });
   const doc = new Y.Doc({ gc: false });
+  trackProvenance(doc);
   const binding = createBinding(editor, provider, 'room', doc, new Map([['room', doc]]));
   binding.root.getSharedType().observeDeep((events, tr) => {
     if (tr.origin !== binding) syncYjsChangesToLexical(binding, provider, events as any, false, () => {});
@@ -130,4 +134,161 @@ describe('localEditTracker', () => {
     });
     expect(inside).toBe('Hello world.\nSecond line.');
   });
+
+  // ---- Attribution across structural edits (paragraph split, bold, type change, merge) ----
+
+  /** Characters `after` has that `before` doesn't (LCS). */
+  function added(before: string, after: string): string {
+    const m = before.length, n = after.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) dp[i][j] = before[i] === after[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    let i = 0, j = 0, out = '';
+    while (j < n) { if (i < m && before[i] === after[j]) { i++; j++; } else if (i < m && dp[i + 1][j] >= dp[i][j + 1]) i++; else out += after[j++]; }
+    return out;
+  }
+  function removed(before: string, after: string): string { return added(after, before); }
+  /** Caret at `offset` in the first text node of block `blockIndex`, or at its end (-1). */
+  function $caret(blockIndex: number, offset = -1): void {
+    const block = $getRoot().getChildAtIndex(blockIndex) as any;
+    const texts = block.getChildren().filter((n: any) => $isTextNode(n));
+    const node = offset < 0 ? texts[texts.length - 1] : texts[0];
+    const at = offset < 0 ? node.getTextContentSize() : offset;
+    const sel = $createRangeSelection();
+    sel.anchor.set(node.getKey(), at, 'text');
+    sel.focus.set(node.getKey(), at, 'text');
+    $setSelection(sel);
+  }
+  function typeAt(c: Client, chars: string, place: () => void): void {
+    edit(c, place);
+    for (const ch of chars) edit(c, () => { const sel = $getSelection(); if ($isRangeSelection(sel)) sel.insertText(ch); });
+  }
+  const splitAt = (c: Client, blockIndex: number, offset: number) => edit(c, () => {
+    $caret(blockIndex, offset);
+    const sel = $getSelection();
+    if ($isRangeSelection(sel)) sel.insertParagraph();
+  });
+  const isLocal = (tr: Y.Transaction) => tr.origin !== 'remote';
+  function attribution(c: Client, session: ReturnType<ReturnType<typeof createLocalEditTracker>['begin']>, tracker: ReturnType<typeof createLocalEditTracker>) {
+    const before = text(tracker.baselineJson(session));
+    const after = text(tracker.currentJson());
+    return { before, after, added: added(before, after), removed: removed(before, after) };
+  }
+
+  it('Enter after a word while the other user types at the end of the line: each change has only its own text', () => {
+    const ta = createLocalEditTracker(a.doc, NODES, isLocal);
+    const tb = createLocalEditTracker(b.doc, NODES, isLocal);
+    const typist = ta.begin();
+    typeAt(a, ' {hh', () => $caret(0));
+    const splitter = tb.begin();
+    splitAt(b, 0, 5); // after "Hello"
+    typeAt(a, 'hhhh}', () => $caret(1)); // the typist keeps typing at the end (now in the new paragraph)
+
+    const ra = attribution(a, typist, ta);
+    expect(ra.after).toBe('Hello\n world. {hhhhhh}\nSecond line.');
+    expect(ra.added).toBe(' {hhhhhh}');
+    expect(ra.removed).toBe('');
+    const rb = attribution(b, splitter, tb);
+    expect(rb.added.trim()).toBe('');
+    expect(rb.removed.trim()).toBe('');
+    expect(rb.before).toBe('Hello world. {hhhhhh}\nSecond line.');
+  });
+
+  it('Enter inside the text the other user is typing: each change has only its own text', () => {
+    const ta = createLocalEditTracker(a.doc, NODES, isLocal);
+    const tb = createLocalEditTracker(b.doc, NODES, isLocal);
+    const typist = ta.begin();
+    typeAt(a, ' {hhhh', () => $caret(0));
+    const splitter = tb.begin();
+    splitAt(b, 0, 'Hello world. {hh'.length); // inside the typed text
+    typeAt(a, 'hh}', () => $caret(1));
+
+    const ra = attribution(a, typist, ta);
+    expect(ra.after).toBe('Hello world. {hh\nhhhh}\nSecond line.');
+    expect(ra.added.replace(/\n/g, '')).toBe(' {hhhhhh}');
+    const rb = attribution(b, splitter, tb);
+    expect(rb.added.trim()).toBe('');
+    expect(rb.removed.trim()).toBe('');
+  });
+
+  it('Enter in the paragraph before the typist starts: the typist still gets all of their text', () => {
+    const ta = createLocalEditTracker(a.doc, NODES, isLocal);
+    const tb = createLocalEditTracker(b.doc, NODES, isLocal);
+    const splitter = tb.begin();
+    splitAt(b, 0, 5);
+    const typist = ta.begin();
+    typeAt(a, ' {hhh}', () => $caret(1));
+    expect(attribution(a, typist, ta).added).toBe(' {hhh}');
+    const rb = attribution(b, splitter, tb);
+    expect(rb.added.trim()).toBe('');
+  });
+
+  it('bold on the word the other user is typing in: the typist keeps all their text, the formatter adds none', () => {
+    const ta = createLocalEditTracker(a.doc, NODES, isLocal);
+    const tb = createLocalEditTracker(b.doc, NODES, isLocal);
+    const typist = ta.begin();
+    typeAt(a, 'QQ', () => $caret(0, 8)); // "Hello wo|rld."
+    const formatter = tb.begin();
+    edit(b, () => {
+      const node = (($getRoot().getChildAtIndex(0) as any).getChildren()[0]) as TextNode;
+      const sel = $createRangeSelection();
+      sel.anchor.set(node.getKey(), 6, 'text');
+      sel.focus.set(node.getKey(), 13, 'text'); // "woQQrld"
+      $setSelection(sel);
+      const s2 = $getSelection();
+      if ($isRangeSelection(s2)) s2.formatText('bold');
+    });
+    typeAt(a, 'Q', () => {
+      const block = $getRoot().getChildAtIndex(0) as any;
+      const bold = block.getChildren().find((n: any) => $isTextNode(n) && n.hasFormat('bold')) as TextNode;
+      const sel = $createRangeSelection();
+      sel.anchor.set(bold.getKey(), 4, 'text');
+      sel.focus.set(bold.getKey(), 4, 'text');
+      sel.format = bold.getFormat(); // a caret placed in bold text types bold, as in the browser
+      $setSelection(sel);
+    });
+    expect(attribution(a, typist, ta).added).toBe('QQQ');
+    const rb = attribution(b, formatter, tb);
+    expect(rb.added).toBe('');
+    expect(rb.removed).toBe('');
+    expect(tb.baselineJson(formatter)).not.toContain('"format":1');
+  });
+
+  it('block type change while the other user types in the block: type reverts, text stays the typist\'s', () => {
+    const ta = createLocalEditTracker(a.doc, NODES, isLocal);
+    const tb = createLocalEditTracker(b.doc, NODES, isLocal);
+    const typist = ta.begin();
+    typeAt(a, ' AAA', () => $caret(1));
+    const changer = tb.begin();
+    edit(b, () => {
+      const para = $getRoot().getChildAtIndex(1)!;
+      const heading = $createHeadingNode('h2');
+      heading.append(...(para as any).getChildren());
+      para.replace(heading);
+    });
+    typeAt(a, 'A', () => $caret(1));
+    expect(attribution(a, typist, ta).added).toBe(' AAAA');
+    const rb = attribution(b, changer, tb);
+    expect(rb.added).toBe('');
+    expect(rb.removed).toBe('');
+    const before = JSON.parse(tb.baselineJson(changer)).root.children.map((n: any) => n.type);
+    const after = JSON.parse(tb.currentJson()).root.children.map((n: any) => n.type);
+    expect(before).toEqual(['paragraph', 'paragraph']);
+    expect(after).toEqual(['paragraph', 'heading']);
+  });
+
+  it('merging two paragraphs (Backspace at the start) adds no text', () => {
+    const tb = createLocalEditTracker(b.doc, NODES, isLocal);
+    const merger = tb.begin();
+    edit(b, () => {
+      const second = $getRoot().getChildAtIndex(1) as any;
+      const first = $getRoot().getChildAtIndex(0) as any;
+      first.append(...second.getChildren());
+      second.remove();
+    });
+    const rb = attribution(b, merger, tb);
+    expect(rb.after).toBe('Hello world.Second line.');
+    expect(rb.added).toBe('');
+    expect(rb.removed.trim()).toBe('');
+  });
 });
+
