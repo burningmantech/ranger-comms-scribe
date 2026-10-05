@@ -1,6 +1,6 @@
 # PRD: Moving Comms Scribe to AWS
 
-**Status:** Draft · **Date:** 2026-10-04 · **Owner:** Alex Young · **Branch:** `feature/aws-migration`
+**Status:** Phases 0–3 implemented on `feature/aws-migration`; Phase 4 (deploy to Alex's account) not started · **Date:** 2026-10-04 · **Owner:** Alex Young · **Branch:** `feature/aws-migration`
 
 ## 1. Summary
 
@@ -14,6 +14,27 @@ The stack is set up **from scratch, with empty data**, in two places, both from 
 No data is copied between environments.
 
 Estimated effort for one developer: **about 2½–4 weeks** of focused work to reach a validated development environment in Alex's account (Phases 0–4).
+
+## 1a. Implementation status (2026-10-04)
+
+| Phase | Status |
+|---|---|
+| 0: Security fixes | Done and deployed to the live Cloudflare site (PR #3). SES key rotated, Turnstile secret set, SES domain verified. |
+| 1: Storage layer on S3 | Done: `backend/src/storage/` and the in-memory cache. |
+| 2: Node server, rooms, bootstrap | Done: `src/server.ts`, `src/realtime/rooms.ts`, Dockerfile, docker-compose. Cloudflare pieces removed. |
+| 3: Infrastructure and CI | Done: `infra/` (dev and standard profiles), `bin/`, `.github/workflows/`. |
+| 4: Fresh setup in Alex's account | **Not started.** Needs the dev AWS account confirmed. The local AWS CLI is logged into 104850854094, but SES lives in 821327748249. |
+
+**Changes made during implementation, beyond the requirements above:**
+- `POST /auth/register` returns 409 for any existing email. Registering the email of a Google-only or admin-created user used to return a session for that account, which was an account takeover.
+- Reset and verification debug tokens are only returned when `DEV_BYPASS_AUTH=true`.
+- The hardcoded admin email in `getUser`/`initializeFirstAdmin` was removed; `BOOTSTRAP_ADMIN_EMAILS` replaces it.
+- The dead reminders feature (`handlers/reminders.ts`, `scheduled()`) was deleted.
+- The announcement recipient is now `ANNOUNCE_EMAIL_TO`. Unset disables sending; only `rangers-production` sets the real list.
+- Gallery thumbnail and medium URLs now serve image bytes. Before, they always returned 404.
+- WebSocket rooms close a connection after about 70 s of silence. The Durable Object runtime used to detect dead connections itself.
+- The 2 long-failing pageService tests were fixed (they tested the wrong call).
+- The local `docker-compose.yml` uses the community MinIO build `pgsty/minio`, because the official `minio/minio` image couldn't be pulled.
 
 ## 2. Background
 
@@ -402,6 +423,7 @@ These are outside the migration's scope except where a phase is noted.
 - **Document-room broadcasts are no-ops** because of the room-key mismatch. Fixed in Phase 2 (R2.2).
 - **Google `aud` not checked.** Fixed in Phase 0 (R0.2).
 - **Listings silently stop at 1,000 keys.** None of the roughly 30 `list()` calls paginate. Fixed in Phase 1 (R1.1).
+- **Document routes aren't mounted.** `handlers/document.ts` isn't mounted in `index.ts`, so its endpoints, and the `broadcastToDocumentRoom` calls inside them, can't be reached. The UI uses only submission rooms today.
 - **Private gallery files are publicly readable by URL.** `GET /api/gallery/:filename` serves any object under `gallery/` with no access check and a one-year public `Cache-Control`, so anyone who learns a private file's name can fetch it.
   - A simple `Authorization` check won't work, because images load through plain `<img>` tags, which can't send the Bearer token.
   - Options: short-lived signed URLs (CloudFront or S3 presigned) for non-public media, or a signed query token checked by the route.
