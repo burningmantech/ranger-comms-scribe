@@ -1,4 +1,4 @@
-import { Env } from '../utils/sessionManager';
+import { DeleteSessionsForUser, Env } from '../utils/sessionManager';
 import { User, UserType, Group } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
@@ -546,6 +546,9 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
   if (alreadyAdmin) return user;
 
   console.log(`👑 Bootstrap admin: promoting ${user.email}`);
+  // Existing sessions resolve to this record, and may belong to whoever registered
+  // the address before its owner proved it. Callers create a fresh session after this.
+  await DeleteSessionsForUser(user.email, env);
   const promoted: User = {
     ...user,
     userType: UserType.Admin,
@@ -565,10 +568,33 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
  */
 export async function markVerifiedByGoogle(user: User, env: Env): Promise<User> {
   if (user.verified === true) return user;
-  const { passwordHash: _unproven, ...rest } = user;
+  const { passwordHash: unproven, ...rest } = user;
   const verifiedUser: User = { ...rest, verified: true };
+  if (unproven) {
+    // Sessions from that password (register/login) go too.
+    await DeleteSessionsForUser(user.email, env);
+  }
   await saveUser(verifiedUser, env);
   return verifiedUser;
+}
+
+/**
+ * After /auth/verify-email. The link proves the mailbox, not who chose the
+ * password: someone else may have registered the address and the owner just
+ * clicked the emailed link. So before promoting a bootstrap admin, drop the
+ * password (the owner sets one with "forgot password" or uses Google sign-in);
+ * applyBootstrapAdmin also ends existing sessions.
+ */
+export async function promoteAfterEmailVerification(user: User, env: Env): Promise<User> {
+  if (!isBootstrapAdminEmail(user.email, env) || user.verified !== true) return user;
+  if (user.userType === UserType.Admin && user.isAdmin === true) return user;
+  let candidate = user;
+  if (user.passwordHash) {
+    const { passwordHash: _unproven, ...rest } = user;
+    candidate = { ...rest };
+    await saveUser(candidate, env);
+  }
+  return applyBootstrapAdmin(candidate, env);
 }
 
 /**

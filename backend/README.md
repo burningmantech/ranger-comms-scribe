@@ -49,7 +49,7 @@ All configuration is read from environment variables once at boot (`src/config/e
 | `SES_REGION` | no | default `us-east-1` |
 | `EMAIL_FROM` | no | default `Comms Scribe <alex@scrivenly.com>` |
 | `EMAIL_BCC` | no | CSV; default empty (no BCC) |
-| `BOOTSTRAP_ADMIN_EMAILS` | no | CSV, case-insensitive; these users become approved Admins once they have proven the address (Google sign-in, or email verification then login) |
+| `BOOTSTRAP_ADMIN_EMAILS` | no | CSV, case-insensitive; these users become approved Admins once they have proven the address (Google sign-in, or email verification, which clears the password: then use forgot-password) |
 | `GOOGLE_CLIENT_ID` | yes | the frontend's OAuth client ID (Google tokens must be issued to it) |
 | `TURNSTILESECRET` | yes | Cloudflare Turnstile secret (bot check on login/register/reset) |
 | `DEV_BYPASS_AUTH` | no | `true` enables fake dev users. Local only |

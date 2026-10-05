@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle } from '../services/userService';
+import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
@@ -211,12 +211,13 @@ router.post('/verify-email', async (request: Request, env) => {
             return json({ error: 'Invalid or expired verification token' }, { status: 400 });
         }
 
-        // Mark user as verified (and promote a bootstrap admin, now that the address is proven)
+        // Mark user as verified. A bootstrap admin is promoted now that the address is
+        // proven, with any password cleared (see promoteAfterEmailVerification).
         const user = await markUserAsVerified(tokenData.userId, env);
         if (!user) {
             return json({ error: 'Failed to verify user' }, { status: 500 });
         }
-        await applyBootstrapAdmin(user, env);
+        await promoteAfterEmailVerification(user, env);
 
         // Delete the used token
         await env.STORE.delete(`verification-token/${token}`);

@@ -136,6 +136,15 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
     const verify = await authRouter.fetch(post('/verify-email', { token }), env);
     expect(verify.status).toBe(200);
     expectAdmin(await getUser('boss@example.com', env));
+
+    // The link proved the mailbox, not who chose the password (the registrant may not
+    // be the owner): the password and the registrant's session are gone.
+    expect((await getUser('boss@example.com', env))!.passwordHash).toBeUndefined();
+    expect(await GetSession(body.sessionId, env)).toBeNull();
+    const after = await authRouter.fetch(post('/login', {
+      email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
+    }), env);
+    expect(after.status).toBe(401);
   });
 
   it('does not promote a mixed-case registration of a listed address', async () => {
@@ -149,16 +158,23 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
 
   it('Google sign-in over a squatted registration drops the unproven password', async () => {
     // Attacker registers the owner's address with their own password (unverified)
-    await authRouter.fetch(post('/register', {
+    const reg = await authRouter.fetch(post('/register', {
       name: 'Attacker', email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
     }), env);
+    const attackerSession = (await reg.json() as any).sessionId;
+    expect(await GetSession(attackerSession, env)).not.toBeNull();
 
     // The real owner signs in with Google: verified and promoted
     (verifyGoogleIdToken as jest.Mock).mockResolvedValue({ email: 'boss@example.com', name: 'Boss', sub: '1' });
     const google = await authRouter.fetch(post('/loginGoogleToken', { token: 'google-token' }), env);
-    expect(await google.json()).toMatchObject({ isAdmin: true });
+    const googleBody = await google.json() as any;
+    expect(googleBody).toMatchObject({ isAdmin: true });
     expectAdmin(await getUser('boss@example.com', env));
     expect((await getUser('boss@example.com', env))!.passwordHash).toBeUndefined();
+    // The attacker's session (which would resolve to the promoted record) is gone
+    expect(await GetSession(attackerSession, env)).toBeNull();
+    // The owner's new Google session works
+    expect(await GetSession(googleBody.sessionId, env)).not.toBeNull();
 
     // The attacker's password no longer works
     const login = await authRouter.fetch(post('/login', {

@@ -64,3 +64,29 @@ export async function GetSession(
 export async function DeleteSession(sessionId: string, env: Env): Promise<void> {
     await env.STORE.delete(`session/${sessionId}`);
 }
+
+/**
+ * Delete every session belonging to `userId` (the email sessions are created with).
+ * Used when an account changes hands in effect: e.g. a bootstrap admin is promoted
+ * on an account someone else may have registered first, whose sessions resolve to
+ * the (now promoted) user record. Rare, so a full scan of session/ is acceptable.
+ */
+export async function DeleteSessionsForUser(userId: string, env: Env): Promise<number> {
+    const target = userId.trim().toLowerCase();
+    const { objects } = await env.STORE.list('session/');
+    let deleted = 0;
+    for (const { key } of objects) {
+        const object = await env.STORE.get(key);
+        if (!object) continue;
+        try {
+            const session = await object.json() as { userId?: string };
+            if (session.userId && session.userId.trim().toLowerCase() === target) {
+                await env.STORE.delete(key);
+                deleted += 1;
+            }
+        } catch {
+            // Unreadable session object; leave it to expire.
+        }
+    }
+    return deleted;
+}
