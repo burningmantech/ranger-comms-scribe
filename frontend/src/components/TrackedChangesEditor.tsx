@@ -1967,9 +1967,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       batchSyncInProgressRef.current = true;
       isResolvingChangeRef.current = true;
       const decision = status === 'approved' ? 'approve' : 'reject';
-      for (const id of changeIds) {
-        handleChangeDecision(id, decision);
-      }
+      // Only the changes that were actually resolved go to the server: a collaborative
+      // reject that couldn't revert the document returns false and stays pending.
+      const resolvedIds = changeIds.filter(id => handleChangeDecision(id, decision) !== false);
       // NOTE: cleared before the per-change 500 ms timers fire, so each of them still
       // runs syncChangeStatusToBackend: an individual PUT with that change's reverted
       // rich text, which also broadcasts change_status_updated to other users. The
@@ -1995,11 +1995,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       // Single batch API call for backend persistence
       const sessionId = localStorage.getItem('sessionId');
-      if (sessionId) {
+      if (sessionId && resolvedIds.length > 0) {
         const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
-          body: JSON.stringify({ changeIds, status, submissionId: submission.id })
+          body: JSON.stringify({ changeIds: resolvedIds, status, submissionId: submission.id })
         });
         if (!response.ok) {
           console.error('Batch status update failed:', response.statusText);
