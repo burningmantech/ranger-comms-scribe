@@ -10,6 +10,8 @@ import { $isImageNode } from './editor/nodes/ImageNode';
 import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '../services/websocketService';
 import { TransactionManager, Transaction } from '../services/transactionManager';
 import SaveIndicator from './SaveIndicator';
+import SaveStatus from './SaveStatus';
+import DocumentViewBar from './DocumentViewBar';
 import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail } from './editor/plugins/TrackedChangesPlugin';
 import ApprovalTracker from './ApprovalTracker';
 import ActivityTimeline from './ActivityTimeline';
@@ -249,7 +251,6 @@ interface TrackedChangesEditorProps {
   onRefreshNeeded?: () => void;
   onRemoteChangeResolved?: (changeId: string, status: string, resolver?: ChangeResolver) => void;
   onBack?: () => void;
-  onReset?: () => void;
   onDelete?: () => void;
   onSendEmail?: () => Promise<void>;
   reviewMode?: boolean;
@@ -312,7 +313,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onRefreshNeeded,
   onRemoteChangeResolved,
   onBack,
-  onReset,
   onDelete,
   onSendEmail,
   reviewMode = false,
@@ -326,7 +326,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [selectedChange, setSelectedChange] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
   const [showCommentDialog, setShowCommentDialog] = useState(false);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [selectedText, setSelectedText] = useState('');
   const [suggestionText, setSuggestionText] = useState('');
@@ -335,7 +334,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [editedProposedContent, setEditedProposedContent] = useState('');
   const editedProposedContentRef = useRef(editedProposedContent);
   const initialEditorContentRef = useRef<string>('');
-  const [lastSavedProposedContent, setLastSavedProposedContent] = useState<string>('');
+  const [, setLastSavedProposedContent] = useState<string>('');
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [replyToComment, setReplyToComment] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
@@ -3279,32 +3278,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               getLatestEditorState={getLatestEditorState}
             />
 
-            {/* Manual save button — settles any active transaction then saves */}
-            <button
-              className="manual-save-button"
-              onClick={() => {
-                // Force-settle the active transaction if one exists
-                const currentState = editedProposedContentRef.current;
-                if (currentState && transactionManager.getActiveTransaction()) {
-                  transactionManager.settleTransaction(currentState);
-                }
-                handleProposedEditSubmit();
-              }}
-              disabled={editedProposedContent === lastSavedProposedContent}
-              title="Save changes now"
-            >
-              Save
-            </button>
-            {onReset && (
-              <button
-                className="manual-save-button"
-                style={{ marginLeft: '8px', backgroundColor: '#fee2e2', color: '#b91c1c', borderColor: '#fca5a5' }}
-                onClick={() => setShowResetConfirm(true)}
-                title="Reset to Original"
-              >
-                Reset
-              </button>
-            )}
+            {/* Save status in words; edits save on pause, hide, unload and unmount (no Save button) */}
+            <SaveStatus transactionManager={transactionManager} />
             {onDelete && (
               <button
                 className="manual-save-button"
@@ -3547,47 +3522,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           </div>
 
           <div className="document-body">
-            {/* Tab bar for switching between sections */}
-            <div className="tce-tab-bar">
-              <button
-                className={`tce-tab ${activeTab === 'proposed' ? 'active' : ''}`}
-                onClick={() => setActiveTab('proposed')}
-              >
-                Proposed Version
-              </button>
-              <button
-                className={`tce-tab ${activeTab === 'comparison' ? 'active' : ''}`}
-                onClick={() => setActiveTab('comparison')}
-              >
-                Content Comparison
-              </button>
-              <button
-                className={`tce-tab ${activeTab === 'original' ? 'active' : ''}`}
-                onClick={() => setActiveTab('original')}
-              >
-                Original Version
-              </button>
-              {['approved', 'comms_approved', 'sent'].includes(submission.status) ? (
-                <button
-                  className={`tce-tab ${activeTab === 'send' ? 'active' : ''}`}
-                  onClick={() => setActiveTab('send')}
-                >
-                  Send
-                </button>
-              ) : (
-                <div className="tce-tab-bar__send-pending">
-                  {(submission as any).approvalGates && (
-                    <div className="tce-tab-bar__status-badge">
-                      <ApprovalTracker
-                        variant="compact"
-                        gates={(submission as any).approvalGates as ApprovalGates}
-                      />
-                    </div>
-                  )}
-                  <span className="tce-tab tce-tab--disabled">Send</span>
-                </div>
-              )}
-            </div>
+            {/* Save status, view switch (Proposed | Compare | Original) and Send */}
+            <DocumentViewBar
+              view={activeTab}
+              onViewChange={setActiveTab}
+              submissionStatus={submission.status}
+              transactionManager={reviewMode ? transactionManager : undefined}
+            />
 
             {/* Proposed Version */}
             {activeTab === 'proposed' && <div className="proposed-version-section">
@@ -4828,32 +4769,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               <button className="btn btn-neutral" onClick={() => setShowSuggestionDialog(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleSuggestionSubmit}>
                 Suggest Edit
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Reset Confirmation Modal */}
-      {showResetConfirm && (
-        <div className="request-changes-overlay" onClick={() => setShowResetConfirm(false)}>
-          <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
-            <h3>Reset Document</h3>
-            <p style={{ margin: '12px 0', color: '#666' }}>
-              Are you sure you want to reset this document to its original state and delete all tracked changes? This cannot be undone.
-            </p>
-            <div className="request-changes-actions">
-              <button className="btn btn-neutral" onClick={() => setShowResetConfirm(false)}>
-                Cancel
-              </button>
-              <button
-                className="btn btn-danger"
-                onClick={() => {
-                  setShowResetConfirm(false);
-                  onReset?.();
-                }}
-              >
-                Reset
               </button>
             </div>
           </div>

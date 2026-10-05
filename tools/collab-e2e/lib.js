@@ -1,9 +1,10 @@
 // Two-browser harness: real app at localhost:3000, real backend at localhost:8080 (dev bypass).
+// Override with E2E_APP_URL / E2E_API_URL (e.g. to run a second stack on other ports) and CHROME.
 const puppeteer = require('puppeteer-core');
 
-const API = 'http://localhost:8080/api';
-const APP = 'http://localhost:3000';
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const API = process.env.E2E_API_URL || 'http://localhost:8080/api';
+const APP = process.env.E2E_APP_URL || 'http://localhost:3000';
+const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -207,4 +208,4 @@ async function converged(a, b) {
 
 const count = (hay, needle) => hay.split(needle).length - 1;
 
-module.exports = { api, createSubmission, launch, openUser, blocks, html, caret, select, waitFor, converged, count, sleep, EDITOR, API };
+module.exports = { api, createSubmission, launch, openUser, blocks, html, caret, select, waitFor, converged, count, sleep, EDITOR, API, APP };

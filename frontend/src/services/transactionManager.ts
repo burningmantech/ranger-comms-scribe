@@ -26,7 +26,9 @@ export type TransactionEvent =
   | 'save-error'
   | 'transaction-undone'
   | 'transaction-redone'
-  | 'save-status-changed';
+  | 'save-status-changed'
+  /** A transaction started, settled or was discarded (see hasActiveTransaction). */
+  | 'active-transaction-changed';
 
 export interface RegionRange {
   start: number;
@@ -271,6 +273,8 @@ export class TransactionManager {
     // Starting a new transaction clears the redo stack
     this.redoStack = [];
 
+    this.emit('active-transaction-changed', true);
+
     return transaction;
   }
 
@@ -351,11 +355,40 @@ export class TransactionManager {
     this.activeTransaction = null;
 
     this.emit('transaction-settled', tx);
+    this.emit('active-transaction-changed', false);
 
     // Trigger autosave (fire-and-forget — errors are handled internally)
     this.autosave(tx);
 
     return tx;
+  }
+
+  /**
+   * Settle the active transaction now, with the latest state reported through
+   * notifyActivity: what the pause timer would do, without waiting for it. Used when
+   * the page is hidden, unloaded or the editor unmounts. Returns the settled
+   * transaction, or null when there was nothing to settle.
+   */
+  flush(): Transaction | null {
+    if (!this.activeTransaction || this.latestAfterLexicalState == null) return null;
+    return this.settleTransaction(this.latestAfterLexicalState);
+  }
+
+  /**
+   * Save again every transaction whose autosave failed (status 'failed'). Clears the
+   * error state first; it comes back if a retry fails too.
+   */
+  async retryFailedSaves(): Promise<void> {
+    const failed = this.undoStack.filter((tx) => tx.status === 'failed');
+    this.hasError = false;
+    if (failed.length === 0) {
+      this.emitSaveStatus();
+      return;
+    }
+    await Promise.all(failed.map((tx) => {
+      tx.status = 'settled';
+      return this.autosave(tx);
+    }));
   }
 
   /**
@@ -573,7 +606,10 @@ export class TransactionManager {
     this.latestAfterLexicalState = null;
     // Discard the active transaction — the editor state is about to be
     // mutated programmatically and shouldn't be captured as a user edit.
-    this.activeTransaction = null;
+    if (this.activeTransaction) {
+      this.activeTransaction = null;
+      this.emit('active-transaction-changed', false);
+    }
   }
 
   /**

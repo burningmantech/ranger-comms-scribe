@@ -13,7 +13,7 @@ import { applyChangeStatus, ChangeResolver, ResolvedStatus } from '../utils/chan
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
-  const { currentUser, deleteSubmission, sendAnnouncementEmail } = useContent();
+  const { currentUser, userPermissions, deleteSubmission, sendAnnouncementEmail } = useContent();
   const [submission, setSubmission] = useState<ContentSubmission | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -566,27 +566,6 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  const handleReset = async () => {
-    if (!submission) return;
-    try {
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      await fetch(`${API_URL}/tracked-changes/submission/${submission.id}/all`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${sessionId}`
-        }
-      });
-
-      // Reload the page entirely to clear collaborative session data securely
-      window.location.reload();
-    } catch (err) {
-      console.error('Failed to reset changes:', err);
-      setError('Failed to reset changes. Please try again.');
-    }
-  };
-
   if (loading || !collabMode) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '24rem' }}>
@@ -636,6 +615,11 @@ export const TrackedChangesView: React.FC = () => {
     userRoles.includes('Admin') ||
     (submission.requiredApprovers || []).includes(currentUser.email) ||
     (submission.assignedCouncilManagers || []).includes(currentUser.email);
+
+  // Works from the review queue: the same check MySubmissions uses to show the
+  // ReviewerDashboard (the queue) instead of the SubmitterDashboard.
+  const isReviewer = !!userPermissions?.canViewFilteredSubmissions ||
+    userRoles.some(r => ['CommsCadre', 'CouncilManager', 'Admin'].includes(r));
 
   // Check urgency from form fields
   const isUrgent = submission.formFields?.some(
@@ -693,18 +677,20 @@ export const TrackedChangesView: React.FC = () => {
       submission={submission}
       currentUser={currentUser}
       canApprove={canApprove}
+      isReviewer={isReviewer}
       isUrgent={isUrgent}
       onBack={() => navigate('/requests')}
       onApprove={handleSubmissionApprove}
       onReject={handleSubmissionReject}
       onRequestChanges={handleRequestChanges}
-      onReset={handleReset}
-      onNavigate={(id) => navigate(`/submissions/${id}/review`)}
+      onNavigate={(id) => navigate(`/tracked-changes/${id}`)}
     >
       <TrackedChangesEditor
-        // Collaborative mode: a fresh editor (Yjs room, TransactionManager, baseline) per
-        // submission when navigating between submissions. Legacy mode keeps today's behavior.
-        key={collabMode === 'yjs' ? submission.id : undefined}
+        // A fresh editor (Yjs room, TransactionManager, baseline) per submission when
+        // paging between submissions, in both modes: the TransactionManager is created
+        // once per mount with the submission id, so reusing the editor would save the
+        // next submission's edits against the previous one.
+        key={submission.id}
         submission={submission}
         currentUser={currentUser}
         onSave={handleSave}
@@ -717,7 +703,6 @@ export const TrackedChangesView: React.FC = () => {
         onRemoteChangeResolved={handleRemoteChangeResolved}
         onBack={() => navigate('/requests')}
         reviewMode={true}
-        onReset={handleReset}
         onDelete={handleDelete}
         onSendEmail={handleSendEmail}
         collabMode={collabMode}
@@ -734,12 +719,12 @@ interface ReviewLayoutProps {
   submission: ContentSubmission;
   currentUser: User;
   canApprove: boolean;
+  isReviewer: boolean;
   isUrgent: boolean;
   onBack: () => void;
   onApprove: () => void;
   onReject: () => void;
   onRequestChanges: (comment: string) => void;
-  onReset?: () => void;
   onNavigate: (submissionId: string) => void;
   children: React.ReactNode;
 }
@@ -748,12 +733,12 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   submission,
   currentUser,
   canApprove,
+  isReviewer,
   isUrgent,
   onBack,
   onApprove,
   onReject,
   onRequestChanges,
-  onReset,
   onNavigate,
   children,
 }) => {
@@ -778,11 +763,11 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
         isUrgent={isUrgent}
         approvalGates={(submission as any).approvalGates}
         canApprove={canApprove}
+        isReviewer={isReviewer}
         onBack={onBack}
         onApprove={onApprove}
         onRequestChanges={() => setShowRequestChanges(true)}
         onReject={onReject}
-        onReset={onReset}
         onNavigate={onNavigate}
       />
       {children}
