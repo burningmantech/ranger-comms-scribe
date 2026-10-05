@@ -403,6 +403,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Track whether we have started a transaction for the current editing sequence
   const hasActiveTransactionRef = useRef(false);
+  // A remote-triggered refresh that arrived while the local user was editing.
+  // Refetching then would freeze change tracking (isApplyingRealTimeUpdateRef) and
+  // re-initialize the editor with server content that lacks the local keystrokes, so
+  // it waits until the local edit has been saved (see flushPendingRemoteRefresh).
+  const pendingRemoteRefreshRef = useRef(false);
+  const refreshWithRemoteGuardRef = useRef<() => void>(() => {});
 
   // Callback for SaveIndicator — returns the latest editor state for
   // beforeunload settle.
@@ -602,6 +608,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // fetchSubmission → setSubmission → proposedEditorContent → initialContent
   // chain. Uses the version counter so rapid calls don't leave stale flags.
   const refreshWithRemoteGuard = useCallback(() => {
+    if (hasActiveTransactionRef.current) {
+      pendingRemoteRefreshRef.current = true;
+      return;
+    }
     const v = ++remoteUpdateVersionRef.current;
     isApplyingRealTimeUpdateRef.current = true;
     isRemoteRefreshInFlightRef.current = true;
@@ -617,6 +627,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
     }, 5000);
   }, [onRefreshNeeded]);
+  refreshWithRemoteGuardRef.current = refreshWithRemoteGuard;
+
+  // Run a deferred remote refresh once the local edit is settled and saved. After a
+  // save the server's proposed content is this user's latest state, so the refetch
+  // can't roll back their keystrokes.
+  const flushPendingRemoteRefresh = useCallback(() => {
+    if (!pendingRemoteRefreshRef.current || hasActiveTransactionRef.current) return;
+    if (transactionManagerRef.current?.getSaveStatus() === 'saving') return;
+    pendingRemoteRefreshRef.current = false;
+    refreshWithRemoteGuardRef.current();
+  }, []);
 
   // WebSocket connection is now handled by CollaborativeEditor
   // Removed WebSocket connection setup
@@ -639,8 +660,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // so the next content change starts a new transaction.
     const handleSettledFlag = () => {
       hasActiveTransactionRef.current = false;
+      // Fallback for settles that don't need a save (no save-status change follows)
+      setTimeout(flushPendingRemoteRefresh, 3000);
     };
     tm.on('transaction-settled', handleSettledFlag);
+
+    const handleSaveStatus = (status: string) => {
+      if (status === 'all-saved') flushPendingRemoteRefresh();
+    };
+    tm.on('save-status-changed', handleSaveStatus);
+    // Don't hold remote state back forever if the local save failed
+    tm.on('save-error', flushPendingRemoteRefresh);
 
     // Broadcast the saved transaction over WebSocket.
     // We listen for transaction-saved (not settled) because we need the
@@ -703,6 +733,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     return () => {
       tm.off('transaction-settled', handleSettledFlag);
+      tm.off('save-status-changed', handleSaveStatus);
+      tm.off('save-error', flushPendingRemoteRefresh);
       tm.off('transaction-saved', handleSaved);
     };
   }, [currentUser.email, currentUser.id]);

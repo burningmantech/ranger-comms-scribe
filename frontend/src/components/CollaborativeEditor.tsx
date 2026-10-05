@@ -2829,6 +2829,14 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   // Initialize editor content when it becomes available
   useEffect(() => {
     if (editorRef.current && initialContent && !isInitializedRef.current) {
+      // Never replace the document under an in-progress local edit: the new
+      // initialContent comes from a refetch that doesn't include those keystrokes.
+      // isInitializedRef stays false, so the next initialContent (fetched after the
+      // local edit is saved) is applied.
+      if (transactionManager?.getActiveTransaction()) {
+        console.log('[EDITOR-INIT] Skipping re-initialization during an active local edit');
+        return;
+      }
 
       console.log(`[EDITOR-INIT] RE-INITIALIZING editor with initialContent. First 150 chars:`, initialContent?.substring(0, 150));
       console.trace('[EDITOR-INIT] Call stack for re-initialization');
@@ -2842,7 +2850,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       if (isLexicalJson(initialContent)) {
         try {
           const editorState = editor.parseEditorState(initialContent);
-          editor.setEditorState(editorState);
+          // Loaded content isn't a local edit: don't broadcast it or track it
+          editor.setEditorState(editorState, { tag: REMOTE_SYNC_TAG });
 
           // Update current content state with JSON representation
           setCurrentContent(initialContent);
