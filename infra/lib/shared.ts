@@ -142,6 +142,8 @@ export function backendEnvironment(config: ScribeConfig): Record<string, string>
   // Optional; the backend defaults (25 MiB, 16 MiB) apply when unset.
   if (config.backendEnv.MAX_BODY_BYTES) env.MAX_BODY_BYTES = config.backendEnv.MAX_BODY_BYTES;
   if (config.backendEnv.WS_MAX_PAYLOAD_BYTES) env.WS_MAX_PAYLOAD_BYTES = config.backendEnv.WS_MAX_PAYLOAD_BYTES;
+  // Optional; the backend default is 'legacy' (whole-document sync).
+  if (config.backendEnv.COLLAB_MODE) env.COLLAB_MODE = config.backendEnv.COLLAB_MODE;
   return env;
 }
 

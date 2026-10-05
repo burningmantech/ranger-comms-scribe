@@ -131,3 +131,32 @@ describe('request body size limit', () => {
     expect(JSON.parse(res.body)).toEqual({ ok: true });
   });
 });
+
+describe('GET /api/config', () => {
+  async function getConfig(extraEnv: Record<string, string>) {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    const env = loadConfig({ ...BASE_ENV, ...extraEnv }, { store: new MemoryObjectStore() }).env;
+    configureCors(env.CORS_ORIGINS);
+    const app = createAppServer(env);
+    await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', () => resolve()));
+    const { port } = app.server.address() as AddressInfo;
+    try {
+      return await rawRequest(port, '/api/config', { method: 'GET' });
+    } finally {
+      await app.close();
+      jest.restoreAllMocks();
+    }
+  }
+
+  it('serves collabMode without a session, defaulting to legacy', async () => {
+    const res = await getConfig({});
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ collabMode: 'legacy' });
+  });
+
+  it('serves collabMode yjs when COLLAB_MODE=yjs', async () => {
+    const res = await getConfig({ COLLAB_MODE: 'yjs' });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ collabMode: 'yjs' });
+  });
+});

@@ -77,6 +77,11 @@ function getDevUser(request: Request) {
     return { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin' as const, isAdmin: true, roles: ['Admin'], groups: [] };
 }
 
+/** Body of GET /api/config. Anything but an explicit 'yjs' is the legacy mode. */
+export function clientConfig(env: Env): { collabMode: 'yjs' | 'legacy' } {
+    return { collabMode: env.COLLAB_MODE === 'yjs' ? 'yjs' : 'legacy' };
+}
+
 const withValidSession = async (request: Request, env: Env) => {
     const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
 
@@ -138,6 +143,8 @@ export const initializeApp = async (env: Env): Promise<void> => {
 router
     .get('/healthz', () => json({ ok: true })) // ALB target-group health check (outside /api)
     .get('/api', () => new Response('API is running'))
+    // Public client configuration (no session needed): which real-time editing mode to use
+    .get('/api/config', (_request: Request, env: Env) => json(clientConfig(env)))
     .all('/api/auth/*', authRouter.fetch) // Handle all auth routes
     .all('/api/blog/*', blogRouter.fetch) // Handle all blog routes
     .all('/api/gallery/*', withOptionalSession) // Allow gallery to identify users with a session

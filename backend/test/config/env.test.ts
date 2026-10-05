@@ -1,4 +1,4 @@
-import { loadConfig, parseCsv, parsePort, DEFAULT_EMAIL_FROM } from '../../src/config/env';
+import { loadConfig, parseCollabMode, parseCsv, parsePort, DEFAULT_EMAIL_FROM } from '../../src/config/env';
 import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
 import { S3ObjectStore } from '../../src/storage/s3ObjectStore';
 
@@ -34,7 +34,27 @@ describe('parsePort', () => {
   });
 });
 
+describe('parseCollabMode', () => {
+  it('defaults to legacy and accepts yjs/legacy case-insensitively', () => {
+    expect(parseCollabMode(undefined)).toBe('legacy');
+    expect(parseCollabMode('  ')).toBe('legacy');
+    expect(parseCollabMode('yjs')).toBe('yjs');
+    expect(parseCollabMode(' YJS ')).toBe('yjs');
+    expect(parseCollabMode('legacy')).toBe('legacy');
+  });
+
+  it('rejects anything else', () => {
+    expect(() => parseCollabMode('crdt')).toThrow('Invalid COLLAB_MODE');
+  });
+});
+
 describe('loadConfig', () => {
+  it('reads COLLAB_MODE (default legacy)', () => {
+    expect(loadConfig({ ...REQUIRED, DATA_BUCKET: 'b' }).env.COLLAB_MODE).toBe('legacy');
+    expect(loadConfig({ ...REQUIRED, DATA_BUCKET: 'b', COLLAB_MODE: 'yjs' }).env.COLLAB_MODE).toBe('yjs');
+    expect(() => loadConfig({ ...REQUIRED, DATA_BUCKET: 'b', COLLAB_MODE: 'other' })).toThrow('Invalid COLLAB_MODE');
+  });
+
   it('reads ANNOUNCE_EMAIL_TO and treats blank as unset', () => {
     expect(loadConfig({ ...REQUIRED, DATA_BUCKET: 'b', ANNOUNCE_EMAIL_TO: 'list@example.org' }).env.ANNOUNCE_EMAIL_TO)
       .toBe('list@example.org');

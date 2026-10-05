@@ -24,7 +24,14 @@ export interface Env {
     ANNOUNCE_EMAIL_TO?: string;
     /** Emails (lowercased) that are promoted to Admin on register/login. */
     BOOTSTRAP_ADMIN_EMAILS?: string[];
+    /**
+     * Real-time editing mode served to the frontend by GET /api/config (COLLAB_MODE):
+     * 'yjs' (merged editing over /api/ws/yjs/submissions/:id) or 'legacy' (whole-document sync).
+     */
+    COLLAB_MODE?: CollabMode;
 }
+
+export type CollabMode = 'yjs' | 'legacy';
 
 export async function CreateSession(
         userId: string, 

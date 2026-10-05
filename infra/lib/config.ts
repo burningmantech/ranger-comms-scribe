@@ -27,6 +27,8 @@ export interface BackendEnv {
   MAX_BODY_BYTES?: string;
   /** Largest WebSocket message in bytes. Omit for the backend default (16 MiB). */
   WS_MAX_PAYLOAD_BYTES?: string;
+  /** Real-time editing mode served by GET /api/config: 'yjs' (merged editing) or 'legacy'. Omit for the backend default ('legacy'). */
+  COLLAB_MODE?: 'yjs' | 'legacy';
 }
 
 export interface UseExisting {

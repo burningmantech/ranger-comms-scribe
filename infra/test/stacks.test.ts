@@ -97,6 +97,13 @@ describe('alex-dev (dev profile)', () => {
     expect(taskDef.Properties.RuntimePlatform).toEqual({ CpuArchitecture: 'X86_64', OperatingSystemFamily: 'LINUX' });
   });
 
+  test('turns on Yjs collaboration (COLLAB_MODE=yjs)', () => {
+    const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'COLLAB_MODE', Value: 'yjs' }]),
+    );
+  });
+
   test('service runs one task on FARGATE_SPOT only, with a public IP, 0%/100% deployments', () => {
     compute.hasResourceProperties('AWS::ECS::Service', {
       DesiredCount: 1,
@@ -238,6 +245,10 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     expect(JSON.stringify(taskDef.Properties.ContainerDefinitions[0].Image)).toContain(':abc1234');
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
       expect.arrayContaining([{ Name: 'EMAIL_BCC', Value: '' }]),
+    );
+    // Collaboration mode stays at the backend default (legacy) until it's turned on deliberately.
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ Name: 'COLLAB_MODE' })]),
     );
   });
 
