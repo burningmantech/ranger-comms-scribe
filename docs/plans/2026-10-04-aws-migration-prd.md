@@ -534,6 +534,10 @@ The editor syncs by sending the whole document, and the last write wins. When tw
   Only local updates start or extend a transaction. Remote updates don't end it.
   - The Y.Doc keeps deleted content (`gc: false`), and the user's own Yjs edits since the transaction began are recorded (`localEditTracker.ts`).
   - At settle time, the before-state is the current document without those edits (rebuilt headlessly) and the after-state is the current document. Both include everything merged from other users, so two people typing at once get one tracked change each, containing only their own text.
+  - **Authorship across moves** (`provenance.ts`). `@lexical/yjs` syncs Enter, format changes, block type changes and paragraph merges as delete-and-copy: the copies are new Yjs items authored by whoever made the edit. Every transaction that deletes text and inserts the same text records each copy's original, so a character's author is the person who typed it, not who last moved it.
+  - The before-state hides the user's own characters wherever they now are, and doesn't restore text they only moved.
+  - Blocks the user created are kept, since others may have typed into them, then undone structurally: a split-off block is merged back into the previous one, and a replacement block gets the old block's type.
+  - So the user who presses Enter gets a change with no added text, and the user typing across the split keeps all of their characters.
 - **Caret** (`caretPreservation.ts`). After every remote update, while the editor has focus:
   - the caret is restored from a Yjs position anchored to the character on its left, so two people typing at the same position produce two contiguous blocks;
   - the text around the caret (32 characters before it, 8 after) is recorded first. `@lexical/yjs` syncs a paragraph or format split as delete plus re-insert, so after one the caret moves to the closest unique match of that text, in place or across the new paragraph break;

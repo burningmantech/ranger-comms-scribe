@@ -36,6 +36,7 @@ import {
 import { createSubmissionYjsProvider } from '../../../services/yjsProvider';
 import { registerCaretPreservation } from './caretPreservation';
 import { createLocalEditTracker, LocalEditTracker } from './localEditTracker';
+import { getProvenance, trackProvenance } from './provenance';
 import { isLexicalJson } from '../../../utils/lexicalUtils';
 
 /**
@@ -206,6 +207,8 @@ function YjsSession({
       yjsDocMapRef.current = yjsDocMap;
       const sessionId = localStorage.getItem('sessionId') || '';
       const created = createSubmissionYjsProvider(id, yjsDocMap, sessionId);
+      // Authorship across moves, from the doc's very first transaction (before it connects).
+      trackProvenance(created.doc);
       providersRef.current.push({ websocketProvider: created.websocketProvider, doc: created.doc });
       setWebsocketProvider(created.websocketProvider);
       setDoc(created.doc);
@@ -359,6 +362,7 @@ function YjsSession({
       destroyTimerRef.current = setTimeout(() => {
         for (const { websocketProvider: p, doc } of providersRef.current) {
           try {
+            getProvenance(doc)?.destroy();
             p.destroy();
             doc.destroy();
           } catch (error) {
