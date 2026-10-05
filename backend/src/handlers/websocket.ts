@@ -36,7 +36,10 @@ export type RoomAuthResult =
  *     handler skipped this for documents; harmless then because document broadcasts
  *     went to a mismatched room key, but with one key scheme they now deliver.)
  *
- * The room identity uses the email as `userId`, as before.
+ * The room identity's `userId` is `user.id || user.email`, the same identity REST broadcasts
+ * and the frontend (`currentUser.id || currentUser.email`) use, so a user isn't listed twice
+ * in presence. (Before the migration it was the email, which made users see themselves as a
+ * second collaborator.)
  */
 export async function authorizeRoomConnection(
   target: RoomTarget,
@@ -52,7 +55,9 @@ export async function authorizeRoomConnection(
     const isUser2 = testUser === 'user2' || sessionId.includes('user2');
     const email = isUser2 ? 'user2@localhost' : 'dev@localhost';
     const name = isUser2 ? 'Test Reviewer' : 'Dev Admin';
-    return { ok: true, identity: { userId: email, userName: name, userEmail: email } };
+    // Same ids as the fake REST users in index.ts / authWrappers.ts
+    const userId = isUser2 ? 'dev-user2' : 'dev-admin';
+    return { ok: true, identity: { userId, userName: name, userEmail: email } };
   }
 
   const session = await GetSession(sessionId, env);
@@ -94,7 +99,7 @@ export async function authorizeRoomConnection(
 
   return {
     ok: true,
-    identity: { userId: userData.email, userName: userData.name, userEmail: userData.email },
+    identity: { userId: user.id || user.email, userName: user.name || userData.name, userEmail: user.email },
   };
 }
 

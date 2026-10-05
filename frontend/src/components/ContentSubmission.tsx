@@ -180,7 +180,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const canViewFilteredSubmissions = effectivePermissions.canViewFilteredSubmissions;
 
   // Use email as fallback for user ID since the id field is undefined
-  const effectiveUserId = currentUser.email;
+  const effectiveUserId = currentUser.id || currentUser.email;
 
   // Determine current user's existing approval decision (if any)
   const myApproval = React.useMemo(() => {

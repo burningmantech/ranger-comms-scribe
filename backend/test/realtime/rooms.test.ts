@@ -176,7 +176,7 @@ describe('real-time rooms (real sessions)', () => {
     await a.opened();
     const aConnected = await a.waitFor((m) => m.type === 'connected');
     expect(aConnected).toMatchObject({
-      type: 'connected', submissionId, userId: alice.email, userName: 'Alice', userEmail: alice.email,
+      type: 'connected', submissionId, userId: alice.id, userName: 'Alice', userEmail: alice.email,
     });
     expect(typeof aConnected.timestamp).toBe('string');
     const aState = await a.waitFor((m) => m.type === 'room_state');
@@ -194,7 +194,7 @@ describe('real-time rooms (real sessions)', () => {
     }));
 
     const joined = await a.waitFor((m) => m.type === 'user_joined');
-    expect(joined).toMatchObject({ userId: bob.email, userName: 'Bob', userEmail: bob.email, submissionId });
+    expect(joined).toMatchObject({ userId: bob.id, userName: 'Bob', userEmail: bob.email, submissionId });
     // Alice also receives the refreshed room_state with both users.
     await a.waitFor((m) => m.type === 'room_state' && m.users.length === 2);
     // The joiner does not get its own user_joined.
@@ -215,7 +215,7 @@ describe('real-time rooms (real sessions)', () => {
     const first = await b.waitFor((m) => m.type === 'cursor_position');
     const second = await b.waitFor((m) => m.type === 'realtime_content_update');
     expect(first).toMatchObject({
-      userId: alice.email, userName: 'Alice', userEmail: alice.email, submissionId, data: { position: 1 },
+      userId: alice.id, userName: 'Alice', userEmail: alice.email, submissionId, data: { position: 1 },
     });
     expect(typeof first.timestamp).toBe('string');
     expect(second.data).toEqual({ content: '{"root":{}}' });
@@ -239,11 +239,11 @@ describe('real-time rooms (real sessions)', () => {
 
     a.send({ type: 'ping', timestamp: new Date().toISOString() });
     const pong = await a.waitFor((m) => m.type === 'pong');
-    expect(pong).toMatchObject({ userId: alice.email, userEmail: alice.email, submissionId });
+    expect(pong).toMatchObject({ userId: alice.id, userEmail: alice.email, submissionId });
 
     a.send({ type: 'heartbeat' });
     const hb = await a.waitFor((m) => m.type === 'heartbeat_response');
-    expect(hb).toMatchObject({ userId: alice.email, submissionId });
+    expect(hb).toMatchObject({ userId: alice.id, submissionId });
 
     // Client pongs (answers to server pings) are swallowed, not relayed.
     a.send({ type: 'pong' });
@@ -285,7 +285,7 @@ describe('real-time rooms (real sessions)', () => {
     const from = a.messages.length;
     await b.close();
     const left = await a.waitFor((m) => m.type === 'user_left', 3000, from);
-    expect(left).toMatchObject({ userId: bob.email, userName: 'Bob', userEmail: bob.email, submissionId });
+    expect(left).toMatchObject({ userId: bob.id, userName: 'Bob', userEmail: bob.email, submissionId });
     const state = await a.waitFor((m) => m.type === 'room_state', 3000, from);
     expect(state.users.map((u: Msg) => u.userEmail)).toEqual([alice.email]);
   });
@@ -333,7 +333,7 @@ describe('real-time rooms (real sessions)', () => {
 
     b.send({ type: 'text_operation', data: { op: 'insert' } });
     const relayed = await a.waitFor((m) => m.type === 'text_operation');
-    expect(relayed).toMatchObject({ documentId, userId: bob.email, data: { op: 'insert' } });
+    expect(relayed).toMatchObject({ documentId, userId: bob.id, data: { op: 'insert' } });
 
     await broadcastToDocumentRoom(documentId, {
       type: 'content_updated', userId: 'srv', userName: 'Server', userEmail: 'srv@x', data: { v: 2 },
@@ -412,8 +412,8 @@ describe('real-time rooms (DEV_BYPASS_AUTH and server ping)', () => {
     const b = new TestClient(`${base}/api/ws/submissions/any?sessionId=x&testUser=user2`);
     clients.push(a, b);
     await Promise.all([a.opened(), b.opened()]);
-    expect(await a.waitFor((m) => m.type === 'connected')).toMatchObject({ userId: 'dev@localhost', userName: 'Dev Admin' });
-    expect(await b.waitFor((m) => m.type === 'connected')).toMatchObject({ userId: 'user2@localhost', userName: 'Test Reviewer' });
+    expect(await a.waitFor((m) => m.type === 'connected')).toMatchObject({ userId: 'dev-admin', userEmail: 'dev@localhost', userName: 'Dev Admin' });
+    expect(await b.waitFor((m) => m.type === 'connected')).toMatchObject({ userId: 'dev-user2', userEmail: 'user2@localhost', userName: 'Test Reviewer' });
   });
 
   it('still requires a sessionId', async () => {
