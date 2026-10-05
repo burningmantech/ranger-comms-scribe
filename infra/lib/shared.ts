@@ -44,6 +44,13 @@ export function createDataBucket(scope: Construct, config: ScribeConfig): s3.Buc
         noncurrentVersionExpiration: Duration.days(30),
         abortIncompleteMultipartUploadAfter: Duration.days(7),
       },
+      // Deletes and the expiry rules above leave delete markers; once their noncurrent
+      // versions expire they're "expired object delete markers" and only slow down listings.
+      // (S3 rejects this flag in a rule that also sets `expiration`, hence its own rule.)
+      {
+        id: 'remove-expired-delete-markers',
+        expiredObjectDeleteMarker: true,
+      },
     ],
   });
 }

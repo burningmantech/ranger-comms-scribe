@@ -175,6 +175,7 @@ describe('alex-dev (dev profile)', () => {
           Match.objectLike({ Prefix: 'verification-token/', ExpirationInDays: 14 }),
           Match.objectLike({ Prefix: 'reset-token/', ExpirationInDays: 14 }),
           Match.objectLike({ NoncurrentVersionExpiration: { NoncurrentDays: 30 } }),
+          Match.objectLike({ ExpiredObjectDeleteMarker: true, Status: 'Enabled' }),
         ]),
       },
     });
@@ -255,6 +256,15 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
       expect(tagged.selection.countNumber).toBeGreaterThanOrEqual(100);
     });
   }
+
+  test('data bucket removes expired delete markers', () => {
+    stack.hasResourceProperties('AWS::S3::Bucket', {
+      VersioningConfiguration: { Status: 'Enabled' },
+      LifecycleConfiguration: {
+        Rules: Match.arrayWith([Match.objectLike({ ExpiredObjectDeleteMarker: true, Status: 'Enabled' })]),
+      },
+    });
+  });
 
   test('Secrets Manager for TURNSTILESECRET and 30-day logs', () => {
     stack.resourceCountIs('AWS::SecretsManager::Secret', 1);

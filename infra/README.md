@@ -62,6 +62,7 @@ Both profiles have the same shape (PRD §6):
   - versioned;
   - `session/`, `verification-token/` and `reset-token/` expire after 14 days;
   - noncurrent versions expire after 30 days;
+  - expired object delete markers are removed;
   - public access blocked, SSL enforced.
 - **ECR repository** `comms-scribe`: untagged images expire after 1 day; the last 10 tagged images are kept.
 - **Task role:** read/write on the data bucket, plus `ses:SendEmail` and `ses:SendRawEmail`. No static keys.
