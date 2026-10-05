@@ -1,0 +1,7 @@
+node_modules/
+cdk.out/
+# Context lookups only happen with `useExisting`; keep results out of git.
+cdk.context.json
+*.js
+!jest.config.js
+*.d.ts
