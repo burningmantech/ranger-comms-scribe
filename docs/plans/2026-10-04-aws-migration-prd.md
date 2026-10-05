@@ -531,7 +531,13 @@ The editor syncs by sending the whole document, and the last write wins. When tw
   - `history-merge` and tracked-change bookkeeping are baseline;
   - everything else is local, including `historic`, which now only comes from Yjs's UndoManager undoing the user's own edits.
 
-  Only local updates start or extend a transaction. A remote update during a local transaction settles it first, with the user's own last state.
+  Only local updates start or extend a transaction. Remote updates don't end it.
+  - The Y.Doc keeps deleted content (`gc: false`), and the user's own Yjs edits since the transaction began are recorded (`localEditTracker.ts`).
+  - At settle time, the before-state is the current document without those edits (rebuilt headlessly) and the after-state is the current document. Both include everything merged from other users, so two people typing at once get one tracked change each, containing only their own text.
+- **Caret** (`caretPreservation.ts`). After every remote update, while the editor has focus:
+  - the caret is restored from a Yjs position anchored to the character on its left, so two people typing at the same position produce two contiguous blocks;
+  - the text around the caret (32 characters before it, 8 after) is recorded first. `@lexical/yjs` syncs a paragraph or format split as delete plus re-insert, so after one the caret moves to the closest unique match of that text, in place or across the new paragraph break;
+  - characters typed while the other user's split was in flight are left at the split point by Yjs. They are moved back with the caret in a normal local update, the only content change this makes; everything else is a selection-only update.
 - **Saves.** Saves send `diffAgainstOldValue: true` so the server diffs each change against the user's own before-state, not another user's interleaved save.
 - **Decorations.** `applyDecorations` never writes the tree: highlights and bookkeeping only.
   - Deletion markers are created only by their author's edit; they now carry `authorId` and a per-author color.
@@ -545,13 +551,8 @@ The editor syncs by sending the whole document, and the last write wins. When tw
 - a two-browser run (two isolated Chrome contexts on the real app, dev server and production build) of the §14.4 matrix, plus reload, attribution, reject/approve, undo, outages, re-seeding and editor remounts.
 
 **Known limits:**
-- **Text split by a concurrent edit.** When one user presses Enter, or applies a format, inside text the other user is typing in, the text typed concurrently into the part that was split off lands at the split point instead of moving with it.
-  - Likewise, a remote Enter before your caret in your paragraph moves your caret to the split point.
-  - Both editors still match and nothing is lost or duplicated.
-  - This is how `@lexical/yjs` 0.30 represents a split (delete plus insert).
-- **Same-position typing.** Two people typing at exactly the same position can interleave characters.
-- **Many small changes.** Two people typing at the same time produce many small tracked changes: one per stretch of typing between the other user's updates, often one per keystroke. The sidebar groups them by author.
-  - A follow-up could rebase the active transaction instead of settling it.
+- **Caret repair needs context.** The caret is repaired only while the editor has focus, and the search needs at least 3 characters of left context in the caret's block. A caret at the very start of a block keeps the Yjs position.
+- **In-flight characters** are moved back only if they were typed in the last 5 s and sit right after the moved (deleted) text.
 - **Saved content.** The persisted proposed content is the last saver's full document, as before (see the §14.3 known limit).
 
 ### 14.6 Results on the dev site (2026-10-05)

@@ -31,7 +31,7 @@ import { WebSocketManager, CursorPosition, WebSocketMessage } from '../services/
 import { TransactionManager, Transaction } from '../services/transactionManager';
 import { isLexicalJson, extractTextFromLexical } from '../utils/lexicalUtils';
 import { getUserColor, CURRENT_USER_COLOR } from '../utils/userColors';
-import { CollabUpdateListener, CollabUpdateKind, YjsCollaboration } from './editor/collab/YjsCollaboration';
+import { CollabSession, CollabUpdateListener, CollabUpdateKind, YjsCollaboration } from './editor/collab/YjsCollaboration';
 import type { CollabMode } from '../services/collabConfig';
 import './CollaborativeEditor.css';
 
@@ -1610,6 +1610,13 @@ export interface CollaborativeEditorProps {
    * HTML or plain text; '' for an empty document (never placeholder text).
    */
   getCollabSeedContent?: () => string;
+  /** Collaborative mode only. The live Yjs session (null between sessions), for tracked changes. */
+  onCollabSessionReady?: (session: CollabSession | null) => void;
+  /**
+   * Collaborative mode only. Plain text of the active tracked change's before-state, for
+   * DeletionInterceptionPlugin (it lets the user really delete text they just typed).
+   */
+  getCollabBeforeText?: () => string | null;
 }
 
 /**
@@ -1657,6 +1664,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   collabMode = 'legacy',
   onRemoteContentChange,
   getCollabSeedContent,
+  onCollabSessionReady,
+  getCollabBeforeText,
 }) => {
   // Collaborative (Yjs) mode: CollaborationPlugin owns content sync, undo and remote
   // cursors. Everything that writes or broadcasts the whole document is off.
@@ -3194,6 +3203,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   cursorColor={getUserColor(currentUser.id || currentUser.email)}
                   cursorsContainerRef={cursorsContainerRef}
                   readOnly={readOnly}
+                  nodes={editorConfig.nodes}
+                  onSessionReady={onCollabSessionReady}
                 />
               )}
               {isCollab && <CollabUpdateListener onUpdate={handleCollabUpdate} />}
@@ -3222,6 +3233,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   currentUserId={currentUser.id || currentUser.email}
                   collabMode={isCollab ? 'yjs' : undefined}
                   getBeforeText={() => {
+                    if (isCollab && getCollabBeforeText) return getCollabBeforeText();
                     const tx = transactionManager?.getActiveTransaction();
                     return tx?.beforeSnapshot?.text ?? null;
                   }}
