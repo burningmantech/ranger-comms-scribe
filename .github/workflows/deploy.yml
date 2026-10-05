@@ -3,8 +3,10 @@
 # Manual promotion of staging to production (PRD §7.3), in this order:
 #   1. the frontend is built from the commit staging's image was built from (its tag is the
 #      short commit ID), so a build failure stops the run before production changes;
-#   2. bin/deploy production copies the staging service's image to the production service;
-#   3. that frontend build is synced to the production SPA bucket.
+#   2. bin/deploy production copies the staging service's image to the production service
+#      (after checking staging still runs that commit);
+#   3. that frontend build is synced to the production SPA bucket (after checking production
+#      runs that commit).
 
 name: Deploy to production
 
@@ -102,6 +104,23 @@ jobs:
         env:
           CI: false  # Create React App fails the build on lint warnings when CI=true.
 
+      # bin/deploy production promotes whatever staging runs when it starts. If master was
+      # deployed to staging during the frontend build, stop rather than pair a newer backend
+      # with this build.
+      - name: Check staging still runs the commit the frontend was built from
+        run: |
+          task_definition="$(aws ecs describe-services \
+            --cluster "${AWS_ECS_CLUSTER_STAGING}" --services "${AWS_ECS_SERVICE_STAGING}" \
+            --query 'services[0].taskDefinition' --output text)"
+          image="$(aws ecs describe-task-definition --task-definition "${task_definition}" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text)"
+          if [ "${image##*:}" != "${BUILT_COMMIT}" ]; then
+            echo "::error::Staging now runs ${image}, not ${BUILT_COMMIT}, which the frontend was built from. Run the promotion again."
+            exit 1
+          fi
+        env:
+          BUILT_COMMIT: ${{ steps.staging.outputs.commit }}
+
       - name: Deploy to production
         run: ./bin/deploy production
         env:
@@ -116,6 +135,20 @@ jobs:
           REPOSITORY_ID: ${{ github.repository }}
           BUILD_NUMBER: ${{ github.run_number }}
           BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Check production runs the commit the frontend was built from
+        run: |
+          task_definition="$(aws ecs describe-services \
+            --cluster "${AWS_ECS_CLUSTER_PRODUCTION}" --services "${AWS_ECS_SERVICE_PRODUCTION}" \
+            --query 'services[0].taskDefinition' --output text)"
+          image="$(aws ecs describe-task-definition --task-definition "${task_definition}" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text)"
+          if [ "${image##*:}" != "${BUILT_COMMIT}" ]; then
+            echo "::error::Production runs ${image}, not ${BUILT_COMMIT}; not publishing a frontend that doesn't match it."
+            exit 1
+          fi
+        env:
+          BUILT_COMMIT: ${{ steps.staging.outputs.commit }}
 
       - name: Publish frontend to production
         run: ./bin/publish-frontend "${SPA_BUCKET}" "${DISTRIBUTION_ID}" "${RUNNER_TEMP}/staging-src/frontend/build"
