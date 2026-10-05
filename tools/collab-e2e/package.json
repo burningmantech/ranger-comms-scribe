@@ -1,0 +1,13 @@
+{
+  "name": "collab-e2e",
+  "private": true,
+  "description": "Two-browser real-time editing tests for Comms Scribe (local dev only)",
+  "type": "commonjs",
+  "scripts": {
+    "matrix": "node matrix.js",
+    "caret": "node caret.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
+}

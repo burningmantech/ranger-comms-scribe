@@ -6,3 +6,6 @@ backend/dist
 # Claude Code local state and agent worktrees
 .claude/settings.local.json
 .claude/worktrees/
+
+# collab-e2e test dependencies
+tools/collab-e2e/node_modules/
