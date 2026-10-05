@@ -54,6 +54,7 @@ All configuration is read from environment variables once at boot (`src/config/e
 | `TURNSTILESECRET` | yes | Cloudflare Turnstile secret (bot check on login/register/reset) |
 | `DEV_BYPASS_AUTH` | no | `true` enables fake dev users. Local only |
 | `MAX_BODY_BYTES` | no | largest request body in bytes; default `26214400` (25 MiB). Larger requests get 413 |
+| `WS_MAX_PAYLOAD_BYTES` | no | largest WebSocket message in bytes; default `16777216` (16 MiB). A larger one closes the socket (1009) |
 | `STORE_DRIVER` | no | `memory` uses an in-process store instead of S3 (tests, quick runs; data lost on restart) |
 
 AWS credentials always come from the default credential chain: the ECS task role in AWS, a profile

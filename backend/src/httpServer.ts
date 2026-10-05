@@ -4,7 +4,7 @@ import { createServerAdapter } from '@whatwg-node/server';
 import { WebSocketServer } from 'ws';
 import { router } from './index';
 import { Env } from './utils/sessionManager';
-import { DEFAULT_MAX_BODY_BYTES } from './config/env';
+import { DEFAULT_MAX_BODY_BYTES, DEFAULT_WS_MAX_PAYLOAD_BYTES } from './config/env';
 import { authorizeRoomConnection } from './handlers/websocket';
 import { RoomTarget, closeAllRooms, joinRoom } from './realtime/rooms';
 
@@ -97,6 +97,11 @@ function readBodyWithin(req: IncomingMessage, limit: number): Promise<Buffer | n
 export interface AppServerOptions {
   /** Largest accepted request body (MAX_BODY_BYTES); larger requests get 413. Default 25 MiB. */
   maxBodyBytes?: number;
+  /**
+   * Largest accepted WebSocket message (WS_MAX_PAYLOAD_BYTES). A larger frame closes
+   * the socket with 1009 (message too big). Default 16 MiB.
+   */
+  wsMaxPayloadBytes?: number;
 }
 
 export interface AppServer {
@@ -160,7 +165,10 @@ export function createAppServer(env: Env, options: AppServerOptions = {}): AppSe
   });
   server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
   server.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 1_000; // must exceed keepAliveTimeout
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: options.wsMaxPayloadBytes ?? DEFAULT_WS_MAX_PAYLOAD_BYTES,
+  });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', (error) => console.error('Upgrade socket error:', error));

@@ -23,6 +23,7 @@ import { MemoryObjectStore } from '../storage/memoryObjectStore';
  *   TURNSTILESECRET         required
  *   DEV_BYPASS_AUTH         "true" enables fake users (local only)
  *   MAX_BODY_BYTES          largest accepted HTTP request body; default 25 MiB (larger: 413)
+ *   WS_MAX_PAYLOAD_BYTES    largest accepted WebSocket message; default 16 MiB (larger: close 1009)
  *
  * Local/test only:
  *   STORE_DRIVER            "memory" uses an in-process MemoryObjectStore instead of S3.
@@ -41,6 +42,11 @@ const MIB = 1024 * 1024;
  * thumbnail and medium), so this is well above the largest single image.
  */
 export const DEFAULT_MAX_BODY_BYTES = 25 * MIB;
+/**
+ * Whole-document `realtime_content_update` messages carry the full Lexical JSON;
+ * images are uploaded separately and referenced by URL. (`ws` defaults to 100 MiB.)
+ */
+export const DEFAULT_WS_MAX_PAYLOAD_BYTES = 16 * MIB;
 
 const REQUIRED = ['PUBLIC_URL', 'FRONTEND_URL', 'GOOGLE_CLIENT_ID', 'TURNSTILESECRET'] as const;
 
@@ -49,6 +55,8 @@ export interface LoadedConfig {
   storeDriver: 'memory' | 's3';
   /** MAX_BODY_BYTES: requests with a larger body get 413. */
   maxBodyBytes: number;
+  /** WS_MAX_PAYLOAD_BYTES: a larger WebSocket message closes the socket (1009). */
+  wsMaxPayloadBytes: number;
   env: Env;
 }
 
@@ -145,6 +153,7 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
     port: parsePort(source.PORT),
     storeDriver: storeDriver as 'memory' | 's3',
     maxBodyBytes: parseByteLimit('MAX_BODY_BYTES', source.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES),
+    wsMaxPayloadBytes: parseByteLimit('WS_MAX_PAYLOAD_BYTES', source.WS_MAX_PAYLOAD_BYTES, DEFAULT_WS_MAX_PAYLOAD_BYTES),
     env,
   };
 }

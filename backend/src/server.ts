@@ -8,7 +8,7 @@ import { configureCors, initializeApp } from './index';
 import { createAppServer } from './httpServer';
 
 async function main(): Promise<void> {
-  const { env, port, storeDriver, maxBodyBytes } = loadConfig();
+  const { env, port, storeDriver, maxBodyBytes, wsMaxPayloadBytes } = loadConfig();
   configureCors(env.CORS_ORIGINS);
 
   if (env.DEV_BYPASS_AUTH === 'true') {
@@ -24,7 +24,7 @@ async function main(): Promise<void> {
     console.error('Error initializing application:', error);
   }
 
-  const app = createAppServer(env, { maxBodyBytes });
+  const app = createAppServer(env, { maxBodyBytes, wsMaxPayloadBytes });
   app.server.listen(port, () => {
     console.log(`Comms Scribe backend listening on port ${port} (store: ${storeDriver})`);
   });

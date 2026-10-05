@@ -25,6 +25,8 @@ export interface BackendEnv {
   GOOGLE_CLIENT_ID: string;
   /** Largest HTTP request body in bytes. Omit for the backend default (25 MiB). */
   MAX_BODY_BYTES?: string;
+  /** Largest WebSocket message in bytes. Omit for the backend default (16 MiB). */
+  WS_MAX_PAYLOAD_BYTES?: string;
 }
 
 export interface UseExisting {

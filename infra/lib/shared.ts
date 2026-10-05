@@ -132,8 +132,9 @@ export function backendEnvironment(config: ScribeConfig): Record<string, string>
     GOOGLE_CLIENT_ID: config.backendEnv.GOOGLE_CLIENT_ID,
   };
   if (config.backendEnv.CORS_ORIGINS) env.CORS_ORIGINS = config.backendEnv.CORS_ORIGINS;
-  // Optional; the backend default (25 MiB) applies when unset.
+  // Optional; the backend defaults (25 MiB, 16 MiB) apply when unset.
   if (config.backendEnv.MAX_BODY_BYTES) env.MAX_BODY_BYTES = config.backendEnv.MAX_BODY_BYTES;
+  if (config.backendEnv.WS_MAX_PAYLOAD_BYTES) env.WS_MAX_PAYLOAD_BYTES = config.backendEnv.WS_MAX_PAYLOAD_BYTES;
   return env;
 }
 
