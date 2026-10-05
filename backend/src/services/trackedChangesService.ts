@@ -244,7 +244,17 @@ export const createTrackedChange = async (
   env: Env,
   richTextOldValue?: string,
   richTextNewValue?: string,
-  regionMap?: RegionMap
+  regionMap?: RegionMap,
+  options: {
+    /**
+     * Diff newValue against the client's oldValue even when the latest saved proposed
+     * version differs. Sent by the collaborative (Yjs) editor: several users save
+     * concurrently, so the latest saved version is often another user's, and diffing
+     * against it would credit their edits to this change. The client's oldValue is the
+     * merged document just before this user's own edit.
+     */
+    diffAgainstOldValue?: boolean;
+  } = {}
 ): Promise<TrackedChange> => {
   try {
     const changeId = uuidv4();
@@ -258,7 +268,7 @@ export const createTrackedChange = async (
     let previousVersionId: string | undefined;
     let isIncremental = false;
     
-    if (latestProposedVersion && latestProposedVersion !== oldValue) {
+    if (!options.diffAgainstOldValue && latestProposedVersion && latestProposedVersion !== oldValue) {
       // Calculate incremental changes from the latest proposed version
       const incrementalChange = calculateIncrementalChange(latestProposedVersion, newValue);
       incrementalOldValue = incrementalChange.oldValue;

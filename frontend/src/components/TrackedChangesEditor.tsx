@@ -406,7 +406,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // TransactionManager instance — one per submission editing session
   const transactionManagerRef = useRef<TransactionManager | null>(null);
   if (!transactionManagerRef.current) {
-    transactionManagerRef.current = new TransactionManager(submission.id);
+    transactionManagerRef.current = isCollab
+      ? new TransactionManager(submission.id, { diffAgainstOldValue: true })
+      : new TransactionManager(submission.id);
   }
   const transactionManager = transactionManagerRef.current;
 
@@ -4387,7 +4389,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       )}
                       {changeGroups.map((group, groupIndex) => (
                         <ChangeGroup
-                          key={`${group.authorEmail}-${group.timestamp}`}
+                          // Collaborative mode: concurrent typing interleaves authors, so two
+                          // groups can share an author and a timestamp; key by the first change.
+                          key={isCollab && group.changes[0] ? group.changes[0].id : `${group.authorEmail}-${group.timestamp}`}
                           authorName={group.authorName}
                           authorEmail={group.authorEmail}
                           timestamp={group.timestamp}

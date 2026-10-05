@@ -879,6 +879,30 @@ describe('trackedChangesService', () => {
       expect(result.status).toBe('pending');
     });
 
+    it('diffs against the latest saved version by default, and against oldValue with diffAgainstOldValue', async () => {
+      // Another user saved "Alpha one two" last; this user's edit went from "one two" to "one two Bravo".
+      const previous: TrackedChange = {
+        id: 'prev', submissionId: 'sub-1', field: 'content', oldValue: 'one two', newValue: 'Alpha one two',
+        changedBy: 'other', changedByName: 'Other', timestamp: new Date(Date.now() - 1000).toISOString(),
+        status: 'pending', isIncremental: true, completeProposedVersion: 'Alpha one two',
+      };
+      mockEnv.STORE.list = jest.fn().mockResolvedValue({ objects: [{ key: 'tracked-changes/submission/sub-1/prev' }] });
+      mockEnv.STORE.get = jest.fn().mockImplementation(async (key: string) =>
+        key.endsWith('/prev') ? { json: jest.fn().mockResolvedValue(previous) } : null);
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
+
+      const rebased = await createTrackedChange('sub-1', 'content', 'one two', 'one two Bravo', 'me', 'Me', mockEnv);
+      // Default (legacy): relative to the other user's saved version, so their "Alpha" shows as removed here.
+      expect(rebased.oldValue).toContain('Alpha');
+
+      const own = await createTrackedChange('sub-1', 'content', 'one two', 'one two Bravo', 'me', 'Me', mockEnv,
+        undefined, undefined, undefined, { diffAgainstOldValue: true });
+      expect(own.oldValue).not.toContain('Alpha');
+      expect(own.newValue).toContain('Bravo');
+      expect(own.newValue).not.toContain('Alpha');
+    });
+
     it('should create change without regionMap when not provided', async () => {
       const submissionId = 'test-submission-id';
 
