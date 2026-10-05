@@ -7,20 +7,17 @@ import { router as pageRouter } from './handlers/page';
 import { router as userRouter } from './handlers/user';
 import { router as contentSubmissionRouter } from './handlers/contentSubmission';
 import { router as councilMemberRouter } from './handlers/councilMembers';
-import reminderRouter from './handlers/reminders';
 import { router as commsCadreRouter } from './handlers/commsCadre';
 import { router as trackedChangesRouter } from './handlers/trackedChanges';
 import { timelineRouter } from './handlers/timeline';
 import { router as templatesRouter } from './handlers/templates';
 import { router as notificationsRouter } from './handlers/notifications';
 import { router as websocketRouter } from './handlers/websocket';
-import { SubmissionWebSocketServer } from './services/websocketService';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
-import { initializeFirstAdmin, getUser } from './services/userService';
+import { getUser, initializeFirstAdmin } from './services/userService';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
-import { sendReminders } from './handlers/reminders';
 import { identifyCouncilManagers } from './services/councilManagerService';
 
 declare global {
@@ -38,22 +35,19 @@ declare global {
     var GLOBAL_ENV: Env | undefined;
 }
 
+// Allowed CORS origins. Set once at boot from CORS_ORIGINS (see config/env.ts).
+// In AWS the SPA and API share one origin, so this only matters for local dev.
+let allowedOrigins: string[] = ['http://localhost:3000'];
+
+export function configureCors(origins: string[] | undefined): void {
+    if (origins && origins.length > 0) {
+        allowedOrigins = [...origins];
+    }
+}
+
 export const { preflight, corsify } = cors({
-    origin: (origin: string) => {
-        const allowedOrigins = [
-            'https://scrivenly.com',
-            'http://localhost:3000',
-            'http://127.0.0.1:3000',
-            'http://localhost:3001'
-        ];
-        
-        if (allowedOrigins.includes(origin)) {
-            return origin;
-        }
-        
-        // Return undefined to reject the origin
-        return undefined;
-    },
+    // Return undefined to reject the origin
+    origin: (origin: string) => (allowedOrigins.includes(origin) ? origin : undefined),
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowHeaders: [
         'Content-Type',
@@ -68,7 +62,7 @@ export const { preflight, corsify } = cors({
     maxAge: 84600,
 });
 
-const router = AutoRouter({
+export const router = AutoRouter({
     before: [preflight],
     finally: [corsify]
 });
@@ -124,54 +118,26 @@ const withOptionalSession = async (request: Request, env: Env) => {
     }
 }
 
-// Initialize the application
-const initializeApp = async (env: Env) => {
-    console.log('initializeApp called');
-    console.log('ENV KEYS in initializeApp:', Object.keys(env));
-    
-    if (!env.D1) {
-        throw new Error('Database binding D1 is missing');
-    }
-    
-    try {
-        // Initialize cache database
-        await initCache(env);
-        
-        // Initialize the first admin user
-        await initializeFirstAdmin(env);
-        
-        // Identify Council managers from org chart
-        await identifyCouncilManagers(env);
+/**
+ * One-time startup work. The Node server calls this once at boot (it used to run
+ * on every GET /api in the Worker).
+ */
+export const initializeApp = async (env: Env): Promise<void> => {
+    await initCache(env);
 
-        // Cache page slugs
-        await cachePageSlugs(env);
-        
-        // Verify tables were created
-        const tables = await env.D1.exec("SELECT name FROM sqlite_master WHERE type='table'");
-        console.log('Final tables after initialization:', JSON.stringify(tables));
-    } catch (e) {
-        console.error('Error in initializeApp:', e);
-        throw e; // Re-throw the error to be handled by the caller
-    }
+    // Promote any BOOTSTRAP_ADMIN_EMAILS users that already exist
+    await initializeFirstAdmin(env);
+
+    // Identify Council managers from org chart
+    await identifyCouncilManagers(env);
+
+    // Cache page slugs
+    await cachePageSlugs(env);
 };
 
-// Add scheduled reminder sending
-export async function scheduled(env: Env) {
-  await sendReminders(env);
-}
-
 router
-    .get('/api', async (request: Request, env: Env) => {
-        // Initialize app on first request
-        try {
-            console.log('Initializing application from root endpoint...');
-            await initializeApp(env);
-            console.log('Application initialized successfully from root endpoint');
-        } catch (error) {
-            console.error('Error initializing application:', error);
-        }
-        return new Response('API is running');
-    })
+    .get('/healthz', () => json({ ok: true })) // ALB target-group health check (outside /api)
+    .get('/api', () => new Response('API is running'))
     .all('/api/auth/*', authRouter.fetch) // Handle all auth routes
     .all('/api/blog/*', blogRouter.fetch) // Handle all blog routes
     .all('/api/gallery/*', withOptionalSession) // Allow gallery to identify users with a session
@@ -186,8 +152,6 @@ router
     .all('/api/content/*', contentSubmissionRouter.fetch) // Handle all content submission routes
     .all('/api/council/*', withValidSession) // Middleware to check session for council routes
     .all('/api/council/*', councilMemberRouter.fetch) // Handle all council member routes
-    .all('/api/reminders/*', withValidSession) // Middleware to check session for reminder routes
-    .all('/api/reminders/*', reminderRouter.fetch) // Handle all reminder routes
     .all('/api/comms-cadre/*', withValidSession) // Middleware to check session for Comms Cadre routes
     .all('/api/comms-cadre/*', commsCadreRouter.fetch) // Handle all Comms Cadre routes
     .all('/api/tracked-changes/*', withValidSession) // Middleware to check session for tracked changes routes
@@ -198,13 +162,8 @@ router
     .all('/api/templates/*', templatesRouter.fetch) // Handle all template routes
     .all('/api/notifications/*', withValidSession) // Middleware to check session for notification routes
     .all('/api/notifications/*', notificationsRouter.fetch) // Handle all notification routes
-    .all('/api/ws/*', websocketRouter.fetch) // Handle all WebSocket routes (auth is handled in the router)
+    .all('/api/ws/*', websocketRouter.fetch) // Room HTTP routes; WebSocket upgrades are handled in httpServer.ts
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);
         return new Response('Not Found', { status: 404 });
     });
-
-export default router
-
-// Export the Durable Object class
-export { SubmissionWebSocketServer }

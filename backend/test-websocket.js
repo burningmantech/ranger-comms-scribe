@@ -1,7 +1,7 @@
 const WebSocket = require('ws');
 
 // Test configuration
-const BACKEND_URL = 'localhost:8787';
+const BACKEND_URL = 'localhost:8080';
 const SUBMISSION_ID = 'test-submission-123';
 const TEST_USERS = [
   {
