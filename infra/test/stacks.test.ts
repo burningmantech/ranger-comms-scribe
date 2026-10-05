@@ -16,7 +16,8 @@ function template(app: App, stackName: string): Template {
   return Template.fromStack(app.node.findChild(stackName) as Stack);
 }
 
-const MANAGED_ALL_VIEWER = '216adef6-5c7f-47e4-b989-5492eafa07d3';
+// AllViewerAndCloudFrontHeaders-2022-06: viewer headers incl. Host, plus CloudFront-Viewer-Address.
+const MANAGED_ALL_VIEWER_AND_CLOUDFRONT = '33f36d7e-f396-46d9-90e0-52428a34d9dc';
 const MANAGED_ALL_VIEWER_EXCEPT_HOST = 'b689b0a8-53d0-40ab-baf2-68738e2966ac';
 const MANAGED_CACHING_DISABLED = '4135ea2d-6df8-44a3-9df3-4b5a84be39ad';
 
@@ -194,7 +195,7 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     const config = dist.Properties.DistributionConfig;
     expect(config.CustomErrorResponses).toBeUndefined();
     for (const behavior of config.CacheBehaviors) {
-      expect(behavior.OriginRequestPolicyId).toBe(MANAGED_ALL_VIEWER);
+      expect(behavior.OriginRequestPolicyId).toBe(MANAGED_ALL_VIEWER_AND_CLOUDFRONT);
     }
     stack.hasResourceProperties('AWS::ElasticLoadBalancingV2::ListenerRule', {
       Conditions: [Match.objectLike({ Field: 'host-header' })],

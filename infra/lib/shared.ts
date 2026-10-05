@@ -183,7 +183,7 @@ export function createDistribution(scope: Construct, props: DistributionProps): 
   });
 
   const originRequestPolicy = forwardViewerHost
-    ? cloudfront.OriginRequestPolicy.ALL_VIEWER
+    ? cloudfront.OriginRequestPolicy.ALL_VIEWER_AND_CLOUDFRONT_2022
     : cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER;
 
   // Gallery: only responses that send Cache-Control are cached (default TTL 0), up to the backend's

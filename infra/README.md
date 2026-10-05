@@ -297,7 +297,10 @@ There's no NAT Gateway, which would cost about $33 per AZ per month. The tests a
      - `s3:ListBucket`, `s3:PutObject` and `s3:DeleteObject` on the SPA buckets;
      - `cloudfront:CreateInvalidation`.
 8. **Production deployers.** `.github/workflows/deploy.yml` has a "Check user" allow-list (currently `["alexyoung"]`). The tech
-   team edits it.
+   team edits it. It checks `github.triggering_actor`, so an unlisted user can't pass by re-running a listed user's run.
+9. **ECR retention vs. production.** The lifecycle rule keeps the last 10 tagged images (per the PRD). If staging gets more
+   than 10 deploys between promotions, the image production runs can expire, and a production task restart would then fail
+   to pull. Promote regularly or raise `maxImageCount` in `lib/shared.ts`.
 
 ## Assumptions and decisions
 
@@ -319,7 +322,7 @@ These are choices made where the PRD is silent:
   allowed (uploads and comments go through `/api/gallery/*`).
   - Only responses with `Cache-Control` are cached, which today means the `/:filename` image route.
   - `Authorization` in the key keeps authenticated JSON routes from being shared between users.
-- **`/api/*`** uses the managed `CachingDisabled` policy with `AllViewerExceptHostHeader` (dev) or `AllViewer` (standard).
+- **`/api/*`** uses the managed `CachingDisabled` policy with `AllViewerExceptHostHeader` (dev) or `AllViewerAndCloudFrontHeaders-2022-06` (standard: it forwards `Host` and adds `CloudFront-Viewer-Address`, which the backend reads for the client IP before falling back to the spoofable first `X-Forwarded-For` entry). `AllViewerExceptHostHeader` already includes the CloudFront viewer-location headers.
   - The origin read timeout is 60 s (the default is 30 s) for slow requests such as batch email.
   - Viewer protocol is HTTPS-only, because redirecting a POST would turn it into a GET.
 - **HSTS:** `max-age=63072000; includeSubDomains; preload`. The old Worker sent a 10-year max-age; 2 years is the usual value.
