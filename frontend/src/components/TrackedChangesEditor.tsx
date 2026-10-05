@@ -1827,8 +1827,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Keyboard shortcuts for batch actions
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't capture when typing in inputs
+      // Don't capture when typing in inputs or in the editor itself (contenteditable):
+      // otherwise typing j/k is swallowed and a/r approve or reject the selected change.
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (sidebarTab !== 'changes') return;
 
       const pendingIds = trackedChanges.filter(c => c.status === 'pending').map(c => c.id);
