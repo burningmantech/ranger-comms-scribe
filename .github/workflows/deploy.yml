@@ -1,0 +1,121 @@
+# Docs: https://docs.github.com/en/actions
+#
+# Manual promotion of staging to production (PRD §7.3):
+#   - bin/deploy production copies the staging service's image to the production service;
+#   - the frontend is rebuilt from the commit that image was built from (its tag is the short
+#     commit ID) and synced to the production SPA bucket.
+
+name: Deploy to production
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+
+  push-to-production:
+    name: Promote staging to production
+
+    environment: rangers
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || vars.AWS_DEFAULT_REGION }}
+      AWS_ECR_IMAGE_NAME: ${{ secrets.AWS_ECR_IMAGE_NAME || vars.AWS_ECR_IMAGE_NAME }}
+      AWS_ECS_CLUSTER_STAGING: ${{ secrets.AWS_ECS_CLUSTER_STAGING || vars.AWS_ECS_CLUSTER_STAGING }}
+      AWS_ECS_SERVICE_STAGING: ${{ secrets.AWS_ECS_SERVICE_STAGING || vars.AWS_ECS_SERVICE_STAGING }}
+      AWS_ECS_CLUSTER_PRODUCTION: ${{ secrets.AWS_ECS_CLUSTER_PRODUCTION || vars.AWS_ECS_CLUSTER_PRODUCTION }}
+      AWS_ECS_SERVICE_PRODUCTION: ${{ secrets.AWS_ECS_SERVICE_PRODUCTION || vars.AWS_ECS_SERVICE_PRODUCTION }}
+
+    steps:
+
+      - name: Harden CI
+        uses: step-security/harden-runner@v2.20.1
+        with:
+          egress-policy: audit
+
+      # Approved production deployers. The Ranger tech team maintains this list.
+      - name: Check user
+        if: ${{ ! contains(fromJSON('["alexyoung"]'), github.actor) }}
+        run: |
+          echo "::error::${GITHUB_ACTOR} is not on the list of approved production deployers."
+          exit 1
+
+      - name: Check that the rangers environment is configured
+        run: |
+          if [ -z "${AWS_ECR_IMAGE_NAME}" ] || [ -z "${AWS_ECS_SERVICE_PRODUCTION}" ]; then
+            echo "::error::The rangers environment is not configured (AWS_ECR_IMAGE_NAME, AWS_ECS_SERVICE_PRODUCTION, ...)."
+            exit 1
+          fi
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the staging image's commit may not be the tip
+
+      - name: Install Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Find the commit staging is running
+        id: staging
+        run: |
+          task_definition="$(aws ecs describe-services \
+            --cluster "${AWS_ECS_CLUSTER_STAGING}" --services "${AWS_ECS_SERVICE_STAGING}" \
+            --query 'services[0].taskDefinition' --output text)"
+          image="$(aws ecs describe-task-definition --task-definition "${task_definition}" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text)"
+          tag="${image##*:}"
+          echo "Staging runs ${image}"
+          git rev-parse --verify --quiet "${tag}^{commit}" > /dev/null || {
+            echo "::error::Staging's image tag ${tag} is not a commit in this repository."
+            exit 1
+          }
+          echo "commit=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy to production
+        run: ./bin/deploy production
+        env:
+          NOTIFY_SMTP_HOST: ${{ secrets.NOTIFY_SMTP_HOST }}
+          NOTIFY_SMTP_PORT: ${{ secrets.NOTIFY_SMTP_PORT }}
+          NOTIFY_SMTP_USER: ${{ secrets.NOTIFY_SMTP_USER }}
+          NOTIFY_SMTP_PASSWORD: ${{ secrets.NOTIFY_SMTP_PASSWORD }}
+          NOTIFY_EMAIL_RECIPIENT: ${{ secrets.NOTIFY_EMAIL_RECIPIENT }}
+          NOTIFY_EMAIL_SENDER: ${{ secrets.NOTIFY_EMAIL_SENDER }}
+          CI: true
+          PROJECT_NAME: Comms Scribe
+          REPOSITORY_ID: ${{ github.repository }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Check out the staging commit
+        run: git worktree add --detach "${RUNNER_TEMP}/staging-src" "${{ steps.staging.outputs.commit }}"
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Build frontend from the staging commit
+        working-directory: ${{ runner.temp }}/staging-src/frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          CI: false  # Create React App fails the build on lint warnings when CI=true.
+
+      - name: Publish frontend to production
+        run: ./bin/publish-frontend "${SPA_BUCKET}" "${DISTRIBUTION_ID}" "${RUNNER_TEMP}/staging-src/frontend/build"
+        env:
+          SPA_BUCKET: ${{ secrets.AWS_S3_SPA_BUCKET_PRODUCTION || vars.AWS_S3_SPA_BUCKET_PRODUCTION }}
+          DISTRIBUTION_ID: ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_PRODUCTION || vars.AWS_CLOUDFRONT_DISTRIBUTION_PRODUCTION }}
