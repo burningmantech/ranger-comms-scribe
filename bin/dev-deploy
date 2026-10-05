@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# Deploy the current checkout to the dev environment from a laptop (PRD §7.3):
+#
+#   1. build the backend image (bin/deploy builds comms-scribe:local)
+#   2. bin/deploy staging with CI=true and AWS_ECR_IMAGE_NAME=<repo>:dev against the dev
+#      cluster and service (ranger-deploy's deploy_aws_ecs), then force a new deployment
+#   3. build the frontend
+#   4. upload it to the SPA bucket and invalidate CloudFront (bin/publish-frontend)
+#
+#   SCRIBE_ALEX_DEV_ACCOUNT=123456789012 AWS_PROFILE=<profile> bin/dev-deploy [--backend-only|--frontend-only]
+#
+# Why the forced deployment: the :dev tag never changes, so ranger-deploy sees an unchanged task
+# definition after the first deploy, logs "Image name is unchanged. Nothing to deploy." and leaves
+# the running task alone. The image is still pushed; update-service --force-new-deployment makes
+# ECS start a task that pulls it.
+
+set -euo pipefail
+
+# shellcheck source=bin/.dev-common.sh
+. "$(dirname "$0")/.dev-common.sh"
+
+do_backend=1
+do_frontend=1
+case "${1:-}" in
+    "") ;;
+    --backend-only) do_frontend=0 ;;
+    --frontend-only) do_backend=0 ;;
+    *) echo "usage: $0 [--backend-only|--frontend-only]" >&2; exit 64 ;;
+esac
+
+cluster="$(get_param cluster-name)"
+service="$(get_param service-name)"
+repo_uri="$(get_param ecr-repository-uri)"
+bucket="$(get_param spa-bucket)"
+distribution_id="$(get_param distribution-id)"
+
+echo "Plan:"
+if [ "${do_backend}" = 1 ]; then
+    echo "  1. Build comms-scribe:local from backend/Dockerfile"
+    echo "  2. ranger-deploy staging: push ${repo_uri}:dev, update ${cluster}/${service}, force a new deployment"
+fi
+if [ "${do_frontend}" = 1 ]; then
+    echo "  3. Build the frontend"
+    echo "  4. Sync frontend/build to s3://${bucket} and invalidate ${distribution_id}"
+fi
+echo
+
+if [ "${do_backend}" = 1 ]; then
+    status="$(aws ecs describe-services --cluster "${cluster}" --services "${service}" \
+        --query 'services[0].status' --output text 2> /dev/null || true)"
+    if [ "${status}" != "ACTIVE" ]; then
+        echo "Service ${cluster}/${service} is not running (dev is asleep?). Run bin/dev-up first." >&2
+        exit 1
+    fi
+
+    CI=true \
+    AWS_ECR_IMAGE_NAME="${repo_uri}:dev" \
+    AWS_ECS_CLUSTER_STAGING="${cluster}" \
+    AWS_ECS_SERVICE_STAGING="${service}" \
+    PROJECT_NAME="Comms Scribe (${config})" \
+        "${repo_root}/bin/deploy" staging
+
+    echo "==> Forcing a new deployment so the task pulls the new :dev image"
+    aws ecs update-service --cluster "${cluster}" --service "${service}" --force-new-deployment \
+        --query 'service.deployments[0].id' --output text
+    echo "==> Waiting for ${service} to become stable (a few minutes)"
+    aws ecs wait services-stable --cluster "${cluster}" --services "${service}"
+fi
+
+if [ "${do_frontend}" = 1 ]; then
+    echo "==> Building the frontend"
+    (
+        cd "${repo_root}/frontend"
+        if [ ! -d node_modules ]; then
+            npm ci
+        fi
+        # CI=false: Create React App treats lint warnings as errors when CI=true.
+        CI=false npm run build
+    )
+    "${repo_root}/bin/publish-frontend" "${bucket}" "${distribution_id}"
+fi
+
+echo
+echo "Deployed to https://$(aws cloudfront get-distribution --id "${distribution_id}" \
+    --query 'Distribution.DistributionConfig.Aliases.Items[0]' --output text)"

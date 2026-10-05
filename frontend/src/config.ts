@@ -1,10 +1,22 @@
 export const GOOGLE_CLIENT_ID = '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com';
 
-// Use environment variable for API_URL if available (for local development)
-export const API_URL = process.env.REACT_APP_API_URL || 'https://scrivenly.com/api';
+// API base URL. One build works in every environment because the SPA and API share an origin
+// (<host>/ and <host>/api). Order:
+//   1. REACT_APP_API_URL, if set (local development against a local backend);
+//   2. on localhost without it, the production API (keeps today's `npm start` behaviour);
+//   3. otherwise the current origin + '/api'.
+// The WebSocket service derives its ws(s):// URL from this value.
+function resolveApiUrl(): string {
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  if (window.location.hostname === 'localhost') {
+    return 'https://scrivenly.com/api';
+  }
+  return `${window.location.origin}/api`;
+}
 
-// WebSocket URL is derived from API_URL by the WebSocket service
-export const WS_URL = API_URL.replace(/^https?:/, 'wss:');
+export const API_URL = resolveApiUrl();
 
 // Environment settings
 export const IS_PRODUCTION = process.env.NODE_ENV === 'production';

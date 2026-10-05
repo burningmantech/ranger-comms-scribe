@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Deploy the backend image with ranger-deploy (deploy_aws_ecs), the same wrapper pattern as
+# ranger-clubhouse-api's bin/deploy.
+#
+#   bin/deploy staging      build comms-scribe:local, push it to ECR, roll the staging service
+#   bin/deploy production   copy the staging service's image to the production service
+#
+# deploy_aws_ecs refuses to run unless CI=true and reads these from the environment:
+#   AWS_DEFAULT_REGION, AWS credentials (keys or AWS_PROFILE), AWS_ECR_IMAGE_NAME,
+#   AWS_ECS_CLUSTER_STAGING, AWS_ECS_SERVICE_STAGING,
+#   AWS_ECS_CLUSTER_PRODUCTION, AWS_ECS_SERVICE_PRODUCTION (production only),
+#   NOTIFY_SMTP_HOST, NOTIFY_SMTP_PORT, NOTIFY_SMTP_USER, NOTIFY_SMTP_PASSWORD,
+#   NOTIFY_EMAIL_SENDER, NOTIFY_EMAIL_RECIPIENT, PROJECT_NAME (all optional)
+#
+# AWS_ECR_IMAGE_NAME without a ":" gets the short commit ID as its tag (standard profile).
+# The dev profile passes "<repo>:dev" (see bin/dev-deploy).
+#
+# Set SKIP_BUILD=1 when comms-scribe:local was already built (CI loads it from an artifact).
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+image_name="comms-scribe:local"
+command="${1:-}"
+
+if [ "${command}" = "staging" ] && [ "${SKIP_BUILD:-}" != "1" ]; then
+    echo "==> Building ${image_name} from backend/Dockerfile (linux/amd64, the Fargate platform)"
+    docker build \
+        --platform linux/amd64 \
+        --file "${repo_root}/backend/Dockerfile" \
+        --tag "${image_name}" \
+        "${repo_root}/backend"
+fi
+
+version="master"
+
+host="raw.githubusercontent.com"
+repo="burningmantech/ranger-deploy"
+path="bin/deploy_aws_ecs"
+
+script_url="https://${host}/${repo}/${version}/${path}"
+
+export DEPLOY_TOOLS_VERSION="${version}"
+export     LOCAL_IMAGE_NAME="${image_name}"
+
+# Download and run the deploy script.
+echo "==> Running: ${script_url} --profile=comms-scribe $*"
+deploy_cmd="$(mktemp)"
+trap 'rm -f "${deploy_cmd}"' EXIT
+curl --fail --silent --show-error --location "${script_url}" --output "${deploy_cmd}"
+sh "${deploy_cmd}" --profile="comms-scribe" "$@"
