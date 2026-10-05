@@ -16,10 +16,10 @@ ENV NODE_ENV=production \
     PORT=8080
 WORKDIR /app
 # dist/server.js is a self-contained esbuild bundle, so no node_modules are
-# copied. The only packages it leaves external are optional and not installed
-# anyway: ws's native add-ons (bufferutil, utf-8-validate) and the AWS SDK's
-# SigV4a signers (@aws-sdk/signature-v4-crt, @aws-sdk/signature-v4a), which
-# are loaded in try/catch and only needed for multi-region access points.
+# copied. The only modules it requires at runtime that aren't Node built-ins
+# are ws's optional native add-ons (bufferutil, utf-8-validate, marked
+# external in the build script), which ws loads in try/catch and which aren't
+# dependencies, so they were never installed in the image anyway.
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/dist ./dist
 USER node
