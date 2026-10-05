@@ -49,7 +49,7 @@ All configuration is read from environment variables once at boot (`src/config/e
 | `SES_REGION` | no | default `us-east-1` |
 | `EMAIL_FROM` | no | default `Comms Scribe <alex@scrivenly.com>` |
 | `EMAIL_BCC` | no | CSV; default empty (no BCC) |
-| `BOOTSTRAP_ADMIN_EMAILS` | no | CSV, case-insensitive; these users become approved, verified Admins on register/login |
+| `BOOTSTRAP_ADMIN_EMAILS` | no | CSV, case-insensitive; these users become approved Admins once they have proven the address (Google sign-in, or email verification, which clears the password: then use forgot-password) |
 | `GOOGLE_CLIENT_ID` | yes | the frontend's OAuth client ID (Google tokens must be issued to it) |
 | `TURNSTILESECRET` | yes | Cloudflare Turnstile secret (bot check on login/register/reset) |
 | `DEV_BYPASS_AUTH` | no | `true` enables fake dev users. Local only |
@@ -83,7 +83,7 @@ npm run dev
 From the repository root, `docker compose up -d --build` starts MinIO, creates the `scribe-local`
 bucket and runs the backend container on port 8080. `DEV_BYPASS_AUTH=true docker compose up -d`
 enables the fake dev users; `BOOTSTRAP_ADMIN_EMAILS=you@example.com docker compose up -d` makes your
-account an admin when you sign in. `docker compose down -v` removes everything, including the data.
+account an admin when you sign in with Google (or after verifying your email). `docker compose down -v` removes everything, including the data.
 
 To run the backend from source against the compose MinIO instead:
 

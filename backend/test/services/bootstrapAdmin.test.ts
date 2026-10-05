@@ -8,6 +8,7 @@ import {
   getUser,
   initializeFirstAdmin,
   isBootstrapAdminEmail,
+  markUserAsVerified,
   saveUser,
 } from '../../src/services/userService';
 import { clearMemoryCache } from '../../src/services/cacheService';
@@ -63,8 +64,8 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
     expect(isBootstrapAdminEmail('boss@example.com', { ...env, BOOTSTRAP_ADMIN_EMAILS: undefined })).toBe(false);
   });
 
-  it('promotes and persists a listed user, leaves others alone', async () => {
-    const boss = await getOrCreateUser({ name: 'Boss', email: 'boss@example.com' }, env);
+  it('promotes and persists a listed, verified user, leaves others alone', async () => {
+    const boss = { ...(await getOrCreateUser({ name: 'Boss', email: 'boss@example.com' }, env)), verified: true };
     expect(boss.userType).toBe(UserType.Public);
 
     const promoted = await applyBootstrapAdmin(boss, env);
@@ -79,37 +80,107 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
     expect((await getUser('other@example.com', env))!.isAdmin).toBe(false);
   });
 
+  it('does not promote a listed user who has not proven the address', async () => {
+    const boss = await getOrCreateUser({ name: 'Boss', email: 'boss@example.com' }, env);
+    expect(await applyBootstrapAdmin(boss, env)).toBe(boss);
+    expect((await getUser('boss@example.com', env))!.isAdmin).toBe(false);
+  });
+
   it('does not rewrite an already-promoted user', async () => {
-    const boss = await applyBootstrapAdmin(await getOrCreateUser({ name: 'Boss', email: 'boss@example.com' }, env), env);
+    const created = await getOrCreateUser({ name: 'Boss', email: 'boss@example.com' }, env);
+    const boss = await applyBootstrapAdmin({ ...created, verified: true }, env);
     const putSpy = jest.spyOn(env.STORE, 'put');
     expect(await applyBootstrapAdmin(boss, env)).toBe(boss);
     expect(putSpy).not.toHaveBeenCalled();
   });
 
-  it('promotes existing listed users at boot without creating missing ones', async () => {
+  it('promotes existing verified listed users at boot without creating missing ones', async () => {
     await saveUser({
       id: 'u1', email: 'boss@example.com', name: 'Boss', userType: UserType.Public,
-      approved: false, isAdmin: false, groups: [], roles: ['Public'],
+      approved: false, isAdmin: false, verified: true, groups: [], roles: ['Public'],
     }, { ...env });
-    env.BOOTSTRAP_ADMIN_EMAILS = ['boss@example.com', 'ghost@example.com'];
+    await saveUser({
+      id: 'u2', email: 'squatter@example.com', name: 'Squatter', userType: UserType.Public,
+      approved: false, isAdmin: false, groups: [], roles: ['Public'], passwordHash: 'x',
+    }, { ...env });
+    env.BOOTSTRAP_ADMIN_EMAILS = ['boss@example.com', 'ghost@example.com', 'squatter@example.com'];
 
     await initializeFirstAdmin(env);
 
     expectAdmin(await getUser('boss@example.com', env));
     expect(await getUser('ghost@example.com', env)).toBeNull();
+    // An unverified record (e.g. someone registered the address first) is not promoted
+    expect((await getUser('squatter@example.com', env))!.isAdmin).toBe(false);
   });
 
-  it('promotes on register, before the session is created', async () => {
+  it('does not promote on register (address unproven); promotes once the email is verified', async () => {
     const res = await authRouter.fetch(post('/register', {
       name: 'Boss', email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
     }), env);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body).toMatchObject({ isAdmin: true, approved: true, verified: true });
-
+    expect(body).toMatchObject({ isAdmin: false, approved: false, verified: false });
     const session = await GetSession(body.sessionId, env);
-    expect(session!.data).toMatchObject({ isAdmin: true, userType: UserType.Admin, approved: true, verified: true });
+    expect(session!.data).toMatchObject({ isAdmin: false, userType: UserType.Public });
+
+    // A password login before verification doesn't promote either
+    const early = await authRouter.fetch(post('/login', {
+      email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
+    }), env);
+    expect((await early.json() as any).isAdmin).toBe(false);
+
+    // Verify with the token that was emailed (read it from the store)
+    const tokens = await env.STORE.list('verification-token/');
+    expect(tokens.objects).toHaveLength(1);
+    const token = tokens.objects[0].key.slice('verification-token/'.length);
+    const verify = await authRouter.fetch(post('/verify-email', { token }), env);
+    expect(verify.status).toBe(200);
     expectAdmin(await getUser('boss@example.com', env));
+
+    // The link proved the mailbox, not who chose the password (the registrant may not
+    // be the owner): the password and the registrant's session are gone.
+    expect((await getUser('boss@example.com', env))!.passwordHash).toBeUndefined();
+    expect(await GetSession(body.sessionId, env)).toBeNull();
+    const after = await authRouter.fetch(post('/login', {
+      email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
+    }), env);
+    expect(after.status).toBe(401);
+  });
+
+  it('does not promote a mixed-case registration of a listed address', async () => {
+    const res = await authRouter.fetch(post('/register', {
+      name: 'Attacker', email: 'BOSS@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
+    }), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ isAdmin: false, verified: false });
+    expect((await getUser('BOSS@example.com', env))!.isAdmin).toBe(false);
+  });
+
+  it('Google sign-in over a squatted registration drops the unproven password', async () => {
+    // Attacker registers the owner's address with their own password (unverified)
+    const reg = await authRouter.fetch(post('/register', {
+      name: 'Attacker', email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
+    }), env);
+    const attackerSession = (await reg.json() as any).sessionId;
+    expect(await GetSession(attackerSession, env)).not.toBeNull();
+
+    // The real owner signs in with Google: verified and promoted
+    (verifyGoogleIdToken as jest.Mock).mockResolvedValue({ email: 'boss@example.com', name: 'Boss', sub: '1' });
+    const google = await authRouter.fetch(post('/loginGoogleToken', { token: 'google-token' }), env);
+    const googleBody = await google.json() as any;
+    expect(googleBody).toMatchObject({ isAdmin: true });
+    expectAdmin(await getUser('boss@example.com', env));
+    expect((await getUser('boss@example.com', env))!.passwordHash).toBeUndefined();
+    // The attacker's session (which would resolve to the promoted record) is gone
+    expect(await GetSession(attackerSession, env)).toBeNull();
+    // The owner's new Google session works
+    expect(await GetSession(googleBody.sessionId, env)).not.toBeNull();
+
+    // The attacker's password no longer works
+    const login = await authRouter.fetch(post('/login', {
+      email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
+    }), env);
+    expect(login.status).toBe(401);
   });
 
   it('does not promote an unlisted user on register', async () => {
@@ -129,12 +200,13 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
     expect((await res.json() as any).sessionId).toBeUndefined();
   });
 
-  it('promotes on password login (user added to the list after registering)', async () => {
+  it('promotes a verified user on password login (user added to the list after registering)', async () => {
     env.BOOTSTRAP_ADMIN_EMAILS = [];
     await authRouter.fetch(post('/register', {
       name: 'Boss', email: 'boss@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
     }), env);
     expect((await getUser('boss@example.com', env))!.isAdmin).toBe(false);
+    await markUserAsVerified('boss@example.com', env);
 
     env.BOOTSTRAP_ADMIN_EMAILS = ['BOSS@example.com'.toLowerCase()];
     const res = await authRouter.fetch(post('/login', {

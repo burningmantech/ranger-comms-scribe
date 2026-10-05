@@ -4,6 +4,7 @@ import { User, UserType } from '../types';
 import { Env, GetSession } from '../utils/sessionManager';
 import { getUser } from '../services/userService';
 import { getObject } from '../services/cacheService';
+import { canViewDocument, getDocument } from '../services/documentService';
 import {
   RoomIdentity,
   RoomTarget,
@@ -33,7 +34,9 @@ export type RoomAuthResult =
  *   - with DEV_BYPASS_AUTH=true, no further checks (dev user, or user2 when
  *     `testUser=user2` or the session ID contains "user2");
  *   - 403 for an unknown/expired session or a user that no longer exists;
- *   - submissions only: 404 when the submission is missing, 403 without access.
+ *   - 404 when the submission/document is missing, 403 without access. (The old
+ *     handler skipped this for documents; harmless then because document broadcasts
+ *     went to a mismatched room key, but with one key scheme they now deliver.)
  *
  * The room identity uses the email as `userId`, as before.
  */
@@ -78,6 +81,15 @@ export async function authorizeRoomConnection(
       (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
     if (!hasAccess) {
+      return { ok: false, status: 403, body: { error: 'Access denied' } };
+    }
+  } else {
+    // Same rule as GET /api/documents/:id
+    const document = await getDocument(target.id, env);
+    if (!document) {
+      return { ok: false, status: 404, body: { error: 'Document not found' } };
+    }
+    if (!canViewDocument(document, user)) {
       return { ok: false, status: 403, body: { error: 'Access denied' } };
     }
   }

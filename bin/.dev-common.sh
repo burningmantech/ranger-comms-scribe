@@ -4,13 +4,14 @@
 #   SCRIBE_CONFIG            dev config name (default alex-dev)
 #   SCRIBE_ALEX_DEV_ACCOUNT  required: the 12-digit account the dev stacks live in
 #   AWS_PROFILE              optional: the AWS CLI profile for that account
-#   AWS_REGION               optional: default us-east-1
+#   SCRIBE_ALEX_DEV_REGION   optional: default us-east-1 (the same variable the CDK config
+#                            reads, so the scripts and the stacks agree on the region)
 
 # shellcheck shell=bash
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 config="${SCRIBE_CONFIG:-alex-dev}"
-region="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+region="${SCRIBE_ALEX_DEV_REGION:-us-east-1}"
 export AWS_REGION="${region}" AWS_DEFAULT_REGION="${region}"
 ssm_prefix="/scribe/${config}"
 # shellcheck disable=SC2034  # used by the scripts that source this file

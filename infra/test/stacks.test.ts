@@ -202,6 +202,16 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     });
   });
 
+  if (configName === 'rangers-staging') {
+    // Production runs older staging commit tags from this shared repository.
+    test('ECR lifecycle keeps enough tagged images for production and rollback', () => {
+      const [repo] = Object.values(stack.findResources('AWS::ECR::Repository'));
+      const policy = JSON.parse(repo.Properties.LifecyclePolicy.LifecyclePolicyText);
+      const tagged = policy.rules.find((r: any) => r.selection.tagStatus === 'tagged');
+      expect(tagged.selection.countNumber).toBeGreaterThanOrEqual(100);
+    });
+  }
+
   test('Secrets Manager for TURNSTILESECRET and 30-day logs', () => {
     stack.resourceCountIs('AWS::SecretsManager::Secret', 1);
     stack.hasResourceProperties('AWS::Logs::LogGroup', { RetentionInDays: 30 });

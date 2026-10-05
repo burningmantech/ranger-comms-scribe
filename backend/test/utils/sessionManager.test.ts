@@ -1,4 +1,5 @@
-import { CreateSession, GetSession, DeleteSession } from '../../src/utils/sessionManager';
+import { CreateSession, GetSession, DeleteSession, DeleteSessionsForUser } from '../../src/utils/sessionManager';
+import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
 import { mockEnv, setupMockStorage } from '../utils/test-helpers';
 
 describe('Session Manager', () => {
@@ -143,6 +144,22 @@ describe('Session Manager', () => {
       await expect(DeleteSession('nonexistent-session-id', env)).resolves.not.toThrow();
       
       expect(env.STORE.delete).toHaveBeenCalledWith('session/nonexistent-session-id');
+    });
+  });
+
+  describe('DeleteSessionsForUser', () => {
+    it('deletes only that user\'s sessions (email matched case-insensitively)', async () => {
+      (global.crypto.randomUUID as jest.Mock)
+        .mockReturnValueOnce('s1').mockReturnValueOnce('s2').mockReturnValueOnce('s3');
+      const storeEnv: any = { STORE: new MemoryObjectStore() };
+      await CreateSession('boss@example.com', {}, storeEnv);
+      await CreateSession('Boss@Example.com', {}, storeEnv);
+      await CreateSession('other@example.com', {}, storeEnv);
+
+      expect(await DeleteSessionsForUser('boss@example.com', storeEnv)).toBe(2);
+      expect(await GetSession('s1', storeEnv)).toBeNull();
+      expect(await GetSession('s2', storeEnv)).toBeNull();
+      expect(await GetSession('s3', storeEnv)).not.toBeNull();
     });
   });
 });

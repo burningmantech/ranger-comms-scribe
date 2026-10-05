@@ -9,6 +9,11 @@ import { RoomTarget, closeAllRooms, joinRoom } from './realtime/rooms';
 
 const WS_PATH = /^\/api\/ws\/(submissions|documents)\/([^/]+)\/?$/;
 
+// Keep idle connections open longer than the ALB idle timeout (120 s,
+// infra/lib/scribe-service.ts). With Node's 5 s default the server closes
+// connections the ALB still considers reusable, giving sporadic 502s.
+export const KEEP_ALIVE_TIMEOUT_MS = 125_000;
+
 /** Execution context handed to handlers as the third argument (Worker-style). */
 const executionContext = {
   waitUntil(promise: Promise<unknown>) {
@@ -47,6 +52,8 @@ export function createAppServer(env: Env): AppServer {
   // handlers keep their (request, env, ctx) signature.
   const adapter = createServerAdapter((request: Request) => router.fetch(request, env, executionContext));
   const server = http.createServer(adapter);
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+  server.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 1_000; // must exceed keepAliveTimeout
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
