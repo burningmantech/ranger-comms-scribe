@@ -101,6 +101,8 @@ export function createCacheServiceMock() {
     
     // Primary function names based on actual cacheService.ts
     getObject: getObjectMock,
+    // The mock storage never fails, so strict and lenient reads behave the same.
+    getObjectStrict: getObjectMock,
     putObject: putObjectMock,
     deleteObject: deleteObjectMock,
     listObjects: listObjectsMock,

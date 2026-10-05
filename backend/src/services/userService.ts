@@ -1,7 +1,7 @@
 import { DeleteSessionsForUser, Env } from '../utils/sessionManager';
 import { User, UserType, Group } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
-import { getObject, putObject, deleteObject, listObjects } from './cacheService';
+import { getObject, getObjectStrict, putObject, deleteObject, listObjects } from './cacheService';
 import { DEFAULT_ROLES, Role } from './roleService';
 
 // Persist a user to R2 + cache (keyed by email, with UUID index)
@@ -24,10 +24,14 @@ async function saveGroup(group: Group, env: Env): Promise<void> {
   });
 }
 
-// Store users in R2 with prefix 'user:'
+// Users are stored at user/<email>, with a user-by-id/<uuid> index (see saveUser).
+//
+// The existence check is strict: a store error is thrown (callers answer 5xx), never
+// taken to mean "no such user". Otherwise a transient S3 error would overwrite an
+// existing account (admin, groups, password) with a fresh Public user.
 export async function getOrCreateUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
   // Check if user already exists
-  const existingUser = await getUser(email, env);
+  const existingUser = await getUserStrict(email, env);
   if (existingUser) {
     return existingUser;
   }
@@ -71,32 +75,44 @@ export async function getUser(id: string, env: Env): Promise<User | null> {
   return null;
 }
 
+// Lenient lookup: store errors are logged and reported as "not found". Fine for
+// reads and read-modify-write paths (they stop on null); never use it to decide
+// whether to create a user. See getUserStrict.
 export async function getUserInternal(id: string, env: Env): Promise<User | null> {
   try {
-    if (!id) {
-      return null;
-    }
-
-    // Try direct lookup (works when id is an email, since users are keyed by email)
-    const user = await getObject<User>(`user/${id}`, env);
-    if (user) {
-      return ensureUserDefaults(user);
-    }
-
-    // If not found, id may be a UUID — check the secondary index
-    const index = await getObject<{ email: string }>(`user-by-id/${id}`, env);
-    if (index?.email) {
-      const user = await getObject<User>(`user/${index.email}`, env);
-      if (user) {
-        return ensureUserDefaults(user);
-      }
-    }
-
-    return null;
+    return await getUserStrict(id, env);
   } catch (error) {
     console.error(`Error fetching user ${id}:`, error);
     return null;
   }
+}
+
+/**
+ * Look up a user by email or UUID. Returns null only when no such user exists;
+ * store errors (and corrupt records) are rethrown. Use this, not getUser, before
+ * creating or overwriting a user record because none was found.
+ */
+export async function getUserStrict(id: string, env: Env): Promise<User | null> {
+  if (!id) {
+    return null;
+  }
+
+  // Try direct lookup (works when id is an email, since users are keyed by email)
+  const user = await getObjectStrict<User>(`user/${id}`, env);
+  if (user) {
+    return ensureUserDefaults(user);
+  }
+
+  // If not found, id may be a UUID — check the secondary index
+  const index = await getObjectStrict<{ email: string }>(`user-by-id/${id}`, env);
+  if (index?.email) {
+    const indexedUser = await getObjectStrict<User>(`user/${index.email}`, env);
+    if (indexedUser) {
+      return ensureUserDefaults(indexedUser);
+    }
+  }
+
+  return null;
 }
 
 function ensureUserDefaults(user: User): User {
@@ -341,14 +357,17 @@ export async function getGroup(id: string, env: Env): Promise<Group | null> {
   }
 }
 
-// Get all groups
+// Get all groups.
+// Strict: a group that fails to load throws instead of being skipped. Callers
+// (changeUserType, getAllRoles, createGroupsForExistingRoles) create a role group
+// when they don't find one by name, so a silently skipped group would be duplicated.
 export async function getAllGroups(env: Env): Promise<Group[]> {
   const objects = await listObjects('group/', env);
   const groups: Group[] = [];
-  
+
   for (const object of objects.objects) {
-    // Use getObject for cached retrieval
-    const group = await getObject<Group>(object.key, env);
+    // Cached retrieval; null only if the group was deleted since the listing
+    const group = await getObjectStrict<Group>(object.key, env);
     if (!group) continue;
     
     groups.push(group);

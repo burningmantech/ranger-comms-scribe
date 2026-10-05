@@ -185,38 +185,60 @@ const invalidateListCachesFor = async (key: string, env: Env): Promise<void> => 
 };
 
 /**
+ * Strict read-through get: like `getObject`, but returns `null` only when the object
+ * is genuinely missing (`STORE.get` returned `null`). Store errors (throttling,
+ * network, permissions) and unparseable JSON are rethrown.
+ *
+ * Use it wherever a `null` result leads to creating or overwriting data
+ * ("create if missing"). With `getObject` a transient store error looks exactly like
+ * a missing object, so such code would replace a real record with a fresh one.
+ *
+ * @param key The object key
+ * @param env The environment with the object store
+ * @param ttl Cache TTL in seconds (default: 1 hour)
+ * @returns The object, or null if it does not exist
+ */
+export const getObjectStrict = async <T>(key: string, env: Env, ttl: number = 3600): Promise<T | null> => {
+    // Try to get the object from cache first
+    const cachedObject = await getFromCache<T>(key, env);
+    if (cachedObject !== null) {
+        return cachedObject;
+    }
+
+    // If not in cache, get it from the store (throws on store errors)
+    const object = await env.STORE.get(key);
+    if (!object) {
+        return null;
+    }
+
+    // Parse the JSON content (throws on corrupt content)
+    const content = await object.json<T>();
+
+    // Store in cache for future requests
+    await setInCache(key, content, env, ttl);
+
+    return content;
+};
+
+/**
  * Get an object from the store with caching
  *
  * This is the main function for implementing the read-through cache pattern.
  * It first tries the in-memory cache, and if not found or expired,
  * it falls back to the store and updates the cache.
  *
+ * Lenient: any error is logged and reported as `null`, so callers can't tell a
+ * store failure from a missing object. Code that creates or overwrites data when
+ * the result is `null` must use `getObjectStrict` instead.
+ *
  * @param key The object key
  * @param env The environment with the object store
  * @param ttl Cache TTL in seconds (default: 1 hour)
- * @returns The object or null if not found
+ * @returns The object or null if not found (or on any error)
  */
 export const getObject = async <T>(key: string, env: Env, ttl: number = 3600): Promise<T | null> => {
     try {
-        // Try to get the object from cache first
-        const cachedObject = await getFromCache<T>(key, env);
-        if (cachedObject !== null) {
-            return cachedObject;
-        }
-
-        // If not in cache, get it from the store
-        const object = await env.STORE.get(key);
-        if (!object) {
-            return null;
-        }
-
-        // Parse the JSON content
-        const content = await object.json<T>();
-
-        // Store in cache for future requests
-        await setInCache(key, content, env, ttl);
-
-        return content;
+        return await getObjectStrict<T>(key, env, ttl);
     } catch (error) {
         console.error(`Error getting object ${key}:`, error);
         return null;

@@ -1,5 +1,5 @@
 import { Env } from '../utils/sessionManager';
-import { getObject, putObject, deleteObject } from './cacheService';
+import { getObjectStrict, putObject } from './cacheService';
 import { createGroup, deleteGroup, getAllGroups } from './userService';
 import { Group } from '../types';
 
@@ -69,9 +69,17 @@ export const DEFAULT_ROLES: Role[] = [
 
 const ROLES_CACHE_KEY = 'roles';
 
+/**
+ * The stored roles, initializing them (and their groups) when none exist.
+ *
+ * The read is strict: a store error is thrown rather than treated as "no roles",
+ * which would overwrite the stored list with DEFAULT_ROLES. For the same reason the
+ * defaults are never returned after a failed read: updateRole, createRole and
+ * deleteRole write back whatever this returns.
+ */
 export const getAllRoles = async (env: Env): Promise<Role[]> => {
+  const roles = await getObjectStrict<Role[]>(ROLES_CACHE_KEY, env);
   try {
-    const roles = await getObject<Role[]>(ROLES_CACHE_KEY, env);
     if (!roles || roles.length === 0) {
       console.log('Initializing default roles...');
       // Initialize with default roles if none exist
@@ -102,7 +110,8 @@ export const getAllRoles = async (env: Env): Promise<Role[]> => {
     return roles;
   } catch (error) {
     console.error('Error in getAllRoles:', error);
-    // If there's an error, return default roles
+    // Initializing failed. No roles were stored (the read above found none), so
+    // the defaults are still the right answer.
     return DEFAULT_ROLES;
   }
 };
