@@ -2,6 +2,7 @@ import { $generateHtmlFromNodes, $generateNodesFromDOM } from '@lexical/html';
 import { $getRoot, LexicalEditor } from 'lexical';
 import { convertFromRaw, convertToRaw, EditorState } from 'draft-js';
 import { stateToHTML } from 'draft-js-export-html';
+import { $settlePendingImages } from '../nodes/ImageNode';
 
 /**
  * Convert Lexical editor content to HTML
@@ -46,6 +47,8 @@ export function htmlToLexical(editor: LexicalEditor, html: string): void {
     const root = $getRoot();
     root.clear();
     root.append(...nodes);
+    // Saved HTML, not a paste: keep images at their original address rather than uploading.
+    $settlePendingImages(root);
   });
 }
 

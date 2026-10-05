@@ -1,14 +1,40 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
-import { $getSelection, $isRangeSelection, COMMAND_PRIORITY_EDITOR, COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getRoot, $createParagraphNode, $createTextNode, $createLineBreakNode, $setSelection, LexicalNode, RangeSelection } from 'lexical';
-import { createCommand } from 'lexical';
-import { $createHeadingNode } from '@lexical/rich-text';
-import { $createListNode, $createListItemNode } from '@lexical/list';
-import { $createQuoteNode } from '@lexical/rich-text';
-import { $createTableNodeWithDimensions, $isTableRowNode, $isTableCellNode } from '@lexical/table';
-import { $createImageNode, ImageNode } from '../nodes/ImageNode';
+import { DRAG_DROP_PASTE } from '@lexical/rich-text';
+import {
+  $createParagraphNode,
+  $getNodeByKey,
+  $getRoot,
+  $getSelection,
+  $isParagraphNode,
+  $isRangeSelection,
+  $setSelection,
+  COMMAND_PRIORITY_EDITOR,
+  COMMAND_PRIORITY_LOW,
+  LexicalNode,
+  PASTE_COMMAND,
+  RangeSelection,
+  createCommand,
+} from 'lexical';
+import {
+  $createImageNode,
+  $createPendingImageNode,
+  $getPendingImageNodes,
+  $hoistImageFromTextBlock,
+  $isImageNode,
+  ImageNode,
+} from '../nodes/ImageNode';
 import { MediaItem } from '../../../types/index';
 import { API_URL } from '../../../config';
+import {
+  IMAGE_IMPORT_TIMEOUT_MS,
+  PENDING_IMAGE_STALE_MS,
+  PendingImageSource,
+  registerPendingImageSource,
+  resolveImageSource,
+  takePendingImageSource,
+  uploadImageToGallery,
+} from '../utils/imageImport';
 
 export const INSERT_IMAGE_COMMAND = createCommand('insertImage');
 
@@ -17,1123 +43,287 @@ export interface ImagePluginProps {
   currentUser?: any;
 }
 
-interface ImageUploadResponse {
-  id: string;
-  fileName: string;
-  fileType: string;
-  url: string;
-  thumbnailUrl: string;
-  mediumUrl: string;
-  uploadedBy: string;
-  uploaderName: string;
-  uploadedAt: string;
-  size: number;
+/**
+ * Insert an image as its own block after the caret's top-level block (or in place of an
+ * empty paragraph), with the caret in a paragraph after it.
+ */
+export function $insertImageBlock(imageNode: ImageNode): void {
+  const root = $getRoot();
+  const selection = $getSelection();
+  let top: LexicalNode | null = $isRangeSelection(selection) ? selection.anchor.getNode() : null;
+  while (top && top.getParent() && top.getParent() !== root) {
+    top = top.getParent();
+  }
+
+  if (!top || top === root) {
+    root.append(imageNode);
+  } else if ($isParagraphNode(top) && top.isEmpty()) {
+    top.insertBefore(imageNode);
+    top.selectStart();
+    return;
+  } else {
+    top.insertAfter(imageNode);
+  }
+  const paragraph = $createParagraphNode();
+  imageNode.insertAfter(paragraph);
+  paragraph.select();
 }
 
-export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
+/** Clipboard HTML that is nothing but images ("Copy image" in a browser). */
+function isImageOnlyHtml(html: string): boolean {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return doc.body.querySelector('img') !== null && (doc.body.textContent || '').trim() === '';
+}
+
+/**
+ * Images in the editor:
+ * - the toolbar's upload / gallery dialog (INSERT_IMAGE_COMMAND);
+ * - pasted HTML: Lexical's own paste imports `<img>` through ImageNode.importDOM, which
+ *   makes a placeholder for every non-gallery image; this plugin uploads a copy of each
+ *   (data: URLs directly, https images through the backend import) and swaps it in;
+ * - a pasted screenshot or dropped image files (DRAG_DROP_PASTE): same placeholder flow.
+ * Only the client that created a placeholder uploads it. Placeholders that fail are removed
+ * with one notice; orphans (their uploader left) are removed once stale.
+ */
+export function ImagePlugin({ currentUser }: ImagePluginProps) {
   const [editor] = useLexicalComposerContext();
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [showGalleryDialog, setShowGalleryDialog] = useState(false);
   const [galleryImages, setGalleryImages] = useState<MediaItem[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  
-  // Ref to store the downloadAndReplaceImage function to avoid circular dependencies
-  const downloadAndReplaceImageRef = useRef<((src: string, width?: string, height?: string, placeholderId?: string) => Promise<void>) | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Ref to save cursor selection when opening the image dialog (editor loses focus)
   const savedSelectionRef = useRef<RangeSelection | null>(null);
 
-  // Helper function to create a skeleton placeholder while image loads
-  const createSkeletonImageData = useCallback((width?: string, height?: string, placeholderId?: string) => {
-    const w = parseInt(width || '300');
-    const h = parseInt(height || '200');
-    
-    // Create a clean SVG skeleton with CSS animation
-    const svgSkeleton = `
-      <svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="shimmer" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" style="stop-color:#f6f7f8;stop-opacity:1" />
-            <stop offset="20%" style="stop-color:#edeef1;stop-opacity:1" />
-            <stop offset="40%" style="stop-color:#f6f7f8;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#f6f7f8;stop-opacity:1" />
-          </linearGradient>
-          <animateTransform 
-            attributeName="gradientTransform" 
-            attributeType="XML" 
-            type="translate" 
-            values="-100 0; 100 0; -100 0"
-            dur="2s" 
-            repeatCount="indefinite"/>
-        </defs>
-        <rect width="100%" height="100%" fill="#f6f7f8" stroke="#e1e4e8" stroke-width="1" rx="4"/>
-        <rect width="100%" height="100%" fill="url(#shimmer)" opacity="0.7" rx="4"/>
-        <text x="50%" y="45%" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#6a737d" font-weight="500">⏳ Loading image...</text>
-        <text x="50%" y="60%" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#959da5">${w} × ${h}px</text>
-      </svg>
-    `;
-    
-    // Convert SVG to data URL using encodeURIComponent to handle Unicode characters
-    const skeletonDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgSkeleton)}`;
-    
-    // Return the data needed to create the node (not the node itself)
-    return {
-      src: skeletonDataUrl,
-      altText: 'Loading...',
-      width: width,
-      height: height,
-      imageId: placeholderId || `skeleton-${Date.now()}`
-    };
-  }, []);
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
 
-  // Helper function to recursively search for image nodes in the tree
-  const findImageNodesRecursively = useCallback((node: any): any[] => {
-    const imageNodes: any[] = [];
-    
-    if (node.getType() === 'image') {
-      imageNodes.push(node);
-    }
-    
-    // Recursively search children if they exist
-    if (typeof node.getChildren === 'function') {
-      const children = node.getChildren();
-      for (const child of children) {
-        imageNodes.push(...findImageNodesRecursively(child));
-      }
-    }
-    
-    return imageNodes;
-  }, []);
+  // Non-blocking notice; hides itself.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
-  // Helper function to replace skeleton with real image
-  const replaceSkeletonWithImage = useCallback((placeholderId: string, imagePayload: any) => {
-    
-    editor.update(() => {
-      const root = $getRoot();
-      
-      // Recursively find all image nodes in the entire tree
-      const allImageNodes = findImageNodesRecursively(root);
-      
-      let foundSkeleton = false;
-      
-      // Search through all image nodes
-      allImageNodes.forEach((imageNode, index) => {
-        
-        if (imageNode.__imageId === placeholderId) {
-          foundSkeleton = true;
-          
-          // Create new real image node
-          const realImageNode = $createImageNode({
-            src: imagePayload.src,
-            altText: imagePayload.altText,
-            width: imagePayload.width,
-            height: imagePayload.height,
-            fullSizeSrc: imagePayload.fullSizeSrc,
-            thumbnailSrc: imagePayload.thumbnailSrc,
-            mediumSrc: imagePayload.mediumSrc,
-            imageId: imagePayload.imageId,
-            uploadedBy: imagePayload.uploadedBy,
-            uploadedAt: imagePayload.uploadedAt
-          });
-          
-          // Replace the skeleton node
-          imageNode.replace(realImageNode);
-        }
-      });
-      
-      if (!foundSkeleton) {
-        console.warn('⚠️ No matching skeleton found for placeholderId:', placeholderId);
-      }
-    });
-  }, [editor, findImageNodesRecursively]);
-
-  // Helper function to recursively find all images in an element
-  const findAllImages = useCallback((element: Element): Element[] => {
-    const images: Element[] = [];
-    
-    // Check if this element is an image
-    if (element.tagName === 'IMG') {
-      images.push(element);
-    }
-    
-    // Recursively search children
-    for (const child of element.children) {
-      images.push(...findAllImages(child));
-    }
-    
-    return images;
-  }, []);
-
-  // Helper function to parse HTML and maintain text/image order
-  const parseAndInsertHTML = useCallback((htmlData: string) => {    
-    // Create a temporary DOM element to parse HTML
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = htmlData;
-    
-    // Find all images recursively
-    const allImages = findAllImages(tempDiv);
-    
-    // Get all child nodes in order (including text nodes)
-    const childNodes = Array.from(tempDiv.childNodes);
-    
-    editor.update(() => {
-      const selection = $getSelection();
-      
-      
-      const nodesToInsert = [];
-      let imageIndex = 0;
-      
-      // Process each child node and convert to appropriate Lexical nodes
-      for (let i = 0; i < childNodes.length; i++) {
-        const node = childNodes[i];
-        const lexicalNodes = convertHTMLNodeToLexical(node, { imageIndex, allImages });
-        nodesToInsert.push(...lexicalNodes);
-        imageIndex = lexicalNodes.filter(n => n.getType && n.getType() === 'image').length + imageIndex;
-      }
-      
-      // Insert all nodes at once
-      if (nodesToInsert.length > 0 && $isRangeSelection(selection)) {
-        selection.insertNodes(nodesToInsert);
-      }
-      
-      // Add a final paragraph for continued typing
-      const finalParagraph = $createParagraphNode();
-      if ($isRangeSelection(selection)) {
-        selection.insertNodes([finalParagraph]);
-        finalParagraph.select();
-      }
-    });
-  }, [editor, createSkeletonImageData, findAllImages]);
-
-  // Helper function to convert HTML node to Lexical nodes
-  const convertHTMLNodeToLexical = useCallback((node: Node, context: { imageIndex: number, allImages: Element[] }): any[] => {
-    const results = [];
-    
-    if (node.nodeType === Node.TEXT_NODE) {
-      // Handle text nodes
-      const textContent = node.textContent?.trim();
-      if (textContent) {
-        const textNode = $createTextNode(textContent);
-        return [textNode];
-      }
-      return [];
-    } 
-    
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const element = node as Element;
-      const tagName = element.tagName.toLowerCase();
-      
-      // Handle different HTML elements
-      switch (tagName) {
-        case 'h1':
-        case 'h2':
-        case 'h3':
-        case 'h4':
-        case 'h5':
-        case 'h6':
-          const headingNode = $createHeadingNode(tagName as any);
-          const headingText = extractTextWithFormatting(element);
-          if (headingText.length > 0) {
-            headingNode.append(...headingText);
-          }
-          results.push(headingNode);
-          break;
-          
-        case 'p':
-        case 'div':
-          // Handle paragraphs and divs
-          const hasImages = findAllImages(element).length > 0;
-          
-          if (hasImages) {
-            // If paragraph contains images, process mixed content
-            const mixedContent = processMixedContent(element, context);
-            results.push(...mixedContent);
-          } else {
-            // Regular paragraph
-            const paragraphNode = $createParagraphNode();
-            const paragraphText = extractTextWithFormatting(element);
-            if (paragraphText.length > 0) {
-              paragraphNode.append(...paragraphText);
-              results.push(paragraphNode);
-            }
-          }
-          break;
-          
-        case 'ul':
-          // Unordered list - handle nested lists properly
-          const ulNode = $createListNode('bullet');
-          const directListItems = Array.from(element.children).filter(child => child.tagName.toLowerCase() === 'li');
-          directListItems.forEach(li => {
-            const listItemNode = $createListItemNode();
-
-            // Process child nodes, handling nested lists
-            for (const child of Array.from(li.childNodes)) {
-              if (child.nodeType === Node.ELEMENT_NODE) {
-                const childElement = child as Element;
-                const childTag = childElement.tagName.toLowerCase();
-
-                if (childTag === 'ul' || childTag === 'ol') {
-                  // Nested list - recursively process it
-                  const nestedResults = convertHTMLNodeToLexical(child, context);
-                  nestedResults.forEach(nested => listItemNode.append(nested));
-                } else {
-                  // Other elements, extract with formatting
-                  const itemText = extractTextWithFormatting(li);
-                  if (itemText.length > 0) {
-                    itemText.forEach(text => listItemNode.append(text));
-                  }
-                  break; // Only process text once
-                }
-              } else if (child.nodeType === Node.TEXT_NODE && !listItemNode.getChildrenSize()) {
-                // Text node - only if we haven't added content yet
-                const itemText = extractTextWithFormatting(li);
-                if (itemText.length > 0) {
-                  itemText.forEach(text => listItemNode.append(text));
-                }
-                break;
-              }
-            }
-
-            ulNode.append(listItemNode);
-          });
-          if (directListItems.length > 0) {
-            results.push(ulNode);
-          }
-          break;
-
-        case 'ol':
-          // Ordered list - handle nested lists properly
-          const olNode = $createListNode('number');
-          const directOrderedItems = Array.from(element.children).filter(child => child.tagName.toLowerCase() === 'li');
-          directOrderedItems.forEach(li => {
-            const listItemNode = $createListItemNode();
-
-            // Process child nodes, handling nested lists
-            for (const child of Array.from(li.childNodes)) {
-              if (child.nodeType === Node.ELEMENT_NODE) {
-                const childElement = child as Element;
-                const childTag = childElement.tagName.toLowerCase();
-
-                if (childTag === 'ul' || childTag === 'ol') {
-                  // Nested list - recursively process it
-                  const nestedResults = convertHTMLNodeToLexical(child, context);
-                  nestedResults.forEach(nested => listItemNode.append(nested));
-                } else {
-                  // Other elements, extract with formatting
-                  const itemText = extractTextWithFormatting(li);
-                  if (itemText.length > 0) {
-                    itemText.forEach(text => listItemNode.append(text));
-                  }
-                  break; // Only process text once
-                }
-              } else if (child.nodeType === Node.TEXT_NODE && !listItemNode.getChildrenSize()) {
-                // Text node - only if we haven't added content yet
-                const itemText = extractTextWithFormatting(li);
-                if (itemText.length > 0) {
-                  itemText.forEach(text => listItemNode.append(text));
-                }
-                break;
-              }
-            }
-
-            olNode.append(listItemNode);
-          });
-          if (directOrderedItems.length > 0) {
-            results.push(olNode);
-          }
-          break;
-          
-        case 'blockquote':
-          // Quote
-          const quoteNode = $createQuoteNode();
-          const quoteText = extractTextWithFormatting(element);
-          if (quoteText.length > 0) {
-            quoteNode.append(...quoteText);
-          }
-          results.push(quoteNode);
-          break;
-          
-        case 'table':
-          // Tables - convert to Lexical table
-          const tableNode = createTableFromHTML(element, context);
-          if (tableNode) {
-            results.push(tableNode);
-          } else {
-          }
-          break;
-          
-        case 'img':
-          // Handle images
-          const src = element.getAttribute('src');
-          const width = element.getAttribute('width');
-          const height = element.getAttribute('height');
-          
-          if (src && src.includes('googleusercontent.com')) {
-            const placeholderId = `ordered-skeleton-${Date.now()}-${context.imageIndex}`;
-            
-            
-            const skeletonData = createSkeletonImageData(width || undefined, height || undefined, placeholderId);
-            const skeletonNode = $createImageNode(skeletonData);
-            
-            
-            results.push(skeletonNode);
-            
-            // Start async download and replacement
-            setTimeout(() => {
-              if (downloadAndReplaceImageRef.current) {
-                downloadAndReplaceImageRef.current(src, width || undefined, height || undefined, placeholderId);
-              } else {
-                console.error('❌ downloadAndReplaceImageRef.current is null!');
-              }
-            }, 0);
-            
-            context.imageIndex++;
-          }
-          break;
-          
-        case 'br':
-          // Line breaks - create empty paragraph
-          results.push($createParagraphNode());
-          break;
-          
-        default:
-          // For other elements, process their children
-          const childNodes = Array.from(element.childNodes);
-          for (const child of childNodes) {
-            const childResults = convertHTMLNodeToLexical(child, context);
-            results.push(...childResults);
-          }
-          break;
-      }
-    }
-    
-    return results;
-  }, [createSkeletonImageData, findAllImages]);
-
-  // Helper function to extract text with inline formatting
-  const extractTextWithFormatting = useCallback((element: Element): any[] => {
-    const textNodes = [];
-    
-    // Process all child nodes to preserve formatting
-    const processNode = (node: Node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent;
-        if (text && text.trim()) {
-          const textNode = $createTextNode(text);
-          
-          // Apply formatting based on parent elements
-          let currentElement = node.parentElement;
-          while (currentElement && currentElement !== element.parentElement) {
-            const tagName = currentElement.tagName?.toLowerCase();
-            const style = currentElement.getAttribute('style') || '';
-            
-            // Apply formatting based on tags
-            if (tagName === 'b' || tagName === 'strong' || style.includes('font-weight:700') || style.includes('font-weight:bold')) {
-              textNode.toggleFormat('bold');
-            }
-            if (tagName === 'i' || tagName === 'em' || style.includes('font-style:italic')) {
-              textNode.toggleFormat('italic');
-            }
-            if (tagName === 'u' || style.includes('text-decoration:underline')) {
-              textNode.toggleFormat('underline');
-            }
-            if (tagName === 'strike' || tagName === 's' || style.includes('text-decoration:line-through')) {
-              textNode.toggleFormat('strikethrough');
-            }
-            
-            // Apply font size
-            const fontSizeMatch = style.match(/font-size:\s*([^;]+)/);
-            if (fontSizeMatch) {
-              const fontSize = fontSizeMatch[1].trim();
-              textNode.setStyle(textNode.getStyle() + `font-size: ${fontSize};`);
-            }
-            
-            // Apply font family
-            const fontFamilyMatch = style.match(/font-family:\s*([^;]+)/);
-            if (fontFamilyMatch) {
-              const fontFamily = fontFamilyMatch[1].trim();
-              textNode.setStyle(textNode.getStyle() + `font-family: ${fontFamily};`);
-            }
-            
-            // Apply text color
-            const colorMatch = style.match(/color:\s*([^;]+)/);
-            if (colorMatch) {
-              const color = colorMatch[1].trim();
-              textNode.setStyle(textNode.getStyle() + `color: ${color};`);
-            }
-            
-            currentElement = currentElement.parentElement;
-          }
-          
-          textNodes.push(textNode);
-        }
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const element = node as Element;
-        const tagName = element.tagName?.toLowerCase();
-
-        // Handle BR tags as line breaks
-        if (tagName === 'br') {
-          textNodes.push($createLineBreakNode());
-        } else {
-          // Recursively process child elements
-          for (const child of node.childNodes) {
-            processNode(child);
-          }
-        }
-      }
-    };
-    
-    // Process all children of the element
-    for (const child of element.childNodes) {
-      processNode(child);
-    }
-    
-    // If no formatted text was found, fall back to plain text
-    if (textNodes.length === 0) {
-      const plainText = element.textContent?.trim();
-      if (plainText) {
-        textNodes.push($createTextNode(plainText));
-      }
-    }
-    
-    return textNodes;
-  }, []);
-
-  // Helper function to process mixed content (text + images)
-  const processMixedContent = useCallback((element: Element, context: { imageIndex: number, allImages: Element[] }): any[] => {
-    const results = [];
-    
-    // Process all child nodes in order
-    for (const child of element.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE) {
-        const text = child.textContent?.trim();
-        if (text) {
-          const paragraphNode = $createParagraphNode();
-          paragraphNode.append($createTextNode(text));
-          results.push(paragraphNode);
-        }
-      } else if (child.nodeType === Node.ELEMENT_NODE) {
-        const childElement = child as Element;
-        
-        if (childElement.tagName.toLowerCase() === 'img') {
-          // Handle image
-          const src = childElement.getAttribute('src');
-          const width = childElement.getAttribute('width');
-          const height = childElement.getAttribute('height');
-          
-          if (src && src.includes('googleusercontent.com')) {
-            const placeholderId = `ordered-skeleton-${Date.now()}-${context.imageIndex}`;
-            const skeletonData = createSkeletonImageData(width || undefined, height || undefined, placeholderId);
-            const skeletonNode = $createImageNode(skeletonData);
-            results.push(skeletonNode);
-            
-            setTimeout(() => {
-              if (downloadAndReplaceImageRef.current) {
-                downloadAndReplaceImageRef.current(src, width || undefined, height || undefined, placeholderId);
-              }
-            }, 0);
-            
-            context.imageIndex++;
-          }
-        } else {
-          // Handle other elements
-          const childResults = convertHTMLNodeToLexical(child, context);
-          results.push(...childResults);
-        }
-      }
-    }
-    
-    return results;
-  }, [createSkeletonImageData]);
-
-  // Helper function to process mixed content in table cells (text + images)
-  const processMixedTableCellContent = useCallback((cellElement: Element, context: { imageIndex: number, allImages: Element[] }): any[] => {
-    const results = [];
-    
-    
-    // Process all child nodes in the cell
-    const processChildNodes = (element: Element): any[] => {
-      const nodes = [];
-      
-      for (const child of element.childNodes) {
-        if (child.nodeType === Node.TEXT_NODE) {
-          const text = child.textContent;
-          if (text) {
-            // Split on newlines and create line breaks between them
-            const lines = text.split(/\r?\n/);
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i].trim();
-              if (line) {
-                nodes.push($createTextNode(line));
-              }
-              // Add line break between lines (but not after the last line)
-              if (i < lines.length - 1) {
-                nodes.push($createLineBreakNode());
-              }
-            }
-          }
-        } else if (child.nodeType === Node.ELEMENT_NODE) {
-          const childElement = child as Element;
-          const tagName = childElement.tagName.toLowerCase();
-          
-          if (tagName === 'img') {
-            // Handle image in table cell
-            const src = childElement.getAttribute('src');
-            const width = childElement.getAttribute('width');
-            const height = childElement.getAttribute('height');
-            
-            
-            if (src && src.includes('googleusercontent.com')) {
-              const placeholderId = `table-cell-skeleton-${Date.now()}-${context.imageIndex}`;
-              
-              const skeletonData = createSkeletonImageData(width || undefined, height || undefined, placeholderId);
-              const skeletonNode = $createImageNode(skeletonData);
-              
-              // Verify the skeleton's imageId matches our placeholderId
-              if ((skeletonNode as any).__imageId !== placeholderId) {
-                console.warn('⚠️ Skeleton imageId mismatch!', {
-                  expected: placeholderId,
-                  actual: (skeletonNode as any).__imageId
-                });
-              }
-              
-              nodes.push(skeletonNode);
-              
-              // Start async download and replacement
-              setTimeout(() => {
-                if (downloadAndReplaceImageRef.current) {
-                  downloadAndReplaceImageRef.current(src, width || undefined, height || undefined, placeholderId);
-                } else {
-                  console.error('❌ downloadAndReplaceImageRef.current is null!');
-                }
-              }, 0);
-              
-              context.imageIndex++;
-            }
-          } else {
-            // Recursively process other elements
-            const childNodes = processChildNodes(childElement);
-            nodes.push(...childNodes);
-          }
-        }
-      }
-      
-      return nodes;
-    };
-    
-    const cellNodes = processChildNodes(cellElement);
-    
-    // If we have content, wrap it in a paragraph
-    if (cellNodes.length > 0) {
-      const paragraph = $createParagraphNode();
-      paragraph.append(...cellNodes);
-      results.push(paragraph);
-    } else {
-      // Empty cell gets an empty paragraph
-      results.push($createParagraphNode());
-    }
-    
-    return results;
-  }, [createSkeletonImageData]);
-
-  // Helper function to create table from HTML
-  const createTableFromHTML = useCallback((tableElement: Element, context: { imageIndex: number, allImages: Element[] }) => {
-    try {
-      const rows = tableElement.querySelectorAll('tr');
-      if (rows.length === 0) return null;
-      
-      // Determine table dimensions
-      let maxCols = 0;
-      rows.forEach(row => {
-        const cells = row.querySelectorAll('td, th');
-        maxCols = Math.max(maxCols, cells.length);
-      });
-      
-      // Create table node
-      const tableNode = $createTableNodeWithDimensions(rows.length, maxCols, true);
-      
-      // Populate table cells
-      const tableRows = (tableNode as any).getChildren();
-      for (let i = 0; i < rows.length && i < tableRows.length; i++) {
-        const htmlRow = rows[i];
-        const lexicalRow = tableRows[i];
-        const htmlCells = htmlRow.querySelectorAll('td, th');
-        const lexicalCells = $isTableRowNode(lexicalRow) ? lexicalRow.getChildren() : [];
-        
-        for (let j = 0; j < htmlCells.length && j < lexicalCells.length; j++) {
-          const htmlCell = htmlCells[j];
-          const lexicalCell = lexicalCells[j];
-          
-          if ($isTableCellNode(lexicalCell)) {
-            // Check if cell contains images
-            const imagesInCell = findAllImages(htmlCell);
-            
-            if (imagesInCell.length > 0) {
-              // Process mixed content (text + images) in table cell
-              const cellContent = processMixedTableCellContent(htmlCell, context);
-              cellContent.forEach(node => {
-                lexicalCell.append(node);
-              });
-            } else {
-              // Extract cell content with formatting (text only)
-              const cellText = extractTextWithFormatting(htmlCell);
-              if (cellText.length > 0) {
-                const cellParagraph = $createParagraphNode();
-                cellParagraph.append(...cellText);
-                lexicalCell.append(cellParagraph);
-              } else {
-                // Ensure cell has at least an empty paragraph
-                lexicalCell.append($createParagraphNode());
-              }
-            }
-          }
-        }
-      }
-      
-      return tableNode;
-    } catch (error) {
-      console.error('Error creating table from HTML:', error);
-      return null;
-    }
-  }, [processMixedTableCellContent]);
-
-  // Helper function to parse HTML and maintain text/image order
-  const handleHTMLImageContent = useCallback((htmlData: string) => {
-    
-    try {
-      // Create a temporary DOM element to parse HTML
-      const tempDiv = document.createElement('div');
-      tempDiv.innerHTML = htmlData;
-      
-      // Find all img tags
-      const images = tempDiv.querySelectorAll('img');
-      
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i];
-        const src = img.getAttribute('src');
-        const width = img.getAttribute('width');
-        const height = img.getAttribute('height');
-        const style = img.getAttribute('style');
-        
-        
-        
-        if (src) {
-          if (src.startsWith('data:image/')) {
-            convertBase64ToFile(src);
-            return; // Handle first base64 image found
-          } else if (src.startsWith('http')) {
-            
-            // For Google Docs URLs, try to create a cross-origin proxy or use a different approach
-            if (src.includes('googleusercontent.com') || src.includes('docs.google.com')) {
-              
-              // Pass the original dimensions to the handler
-              handleGoogleDocsImageFromHTML(src, img, width || undefined, height || undefined);
-            } else {
-              downloadImageFromURL(src);
-            }
-            return; // Handle first external image found
-          }
-        }
-      }
-      
-    } catch (error) {
-      console.error('❌ Error processing HTML image content:', error);
-    }
-  }, []);
-
-  // Helper function to handle Google Docs images from HTML with alternative approaches
-  const handleGoogleDocsImageFromHTML = useCallback(async (src: string, imgElement: HTMLImageElement, width?: string, height?: string) => {
-    
-    // Create skeleton placeholder immediately
-    const placeholderId = `skeleton-${Date.now()}`;
-    const skeletonData = createSkeletonImageData(width, height, placeholderId);
-    
-    // Insert skeleton immediately to show loading state
-    editor.update(() => {
-      const selection = $getSelection();
-      
-      // Create the skeleton node inside the editor context
-      const skeletonNode = $createImageNode(skeletonData);
-      
-      // Create a paragraph for text after the skeleton
-      const paragraphNode = $createParagraphNode();
-      
-      if ($isRangeSelection(selection)) {
-        // Insert skeleton and paragraph together
-        selection.insertNodes([skeletonNode, paragraphNode]);
-        // Move cursor to the paragraph
-        paragraphNode.select();
-      } else {
-        const root = $getRoot();
-        root.append(skeletonNode);
-        root.append(paragraphNode);
-        // Move cursor to the paragraph
-        paragraphNode.select();
-      }
-    });
-    
-    
-    try {
-      // Use the backend proxy to download the image
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) {
-        console.error('❌ No session ID found - user not authenticated');
-        alert('You must be logged in to paste images.');
-        return;
-      }
-
-      
-      const response = await fetch(`${API_URL}/content/editor-images/proxy-google-docs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionId}`
-        },
-        body: JSON.stringify({ imageUrl: src })
-      });
-
-      if (!response.ok) {
-        console.error('❌ Backend proxy failed:', response.status, response.statusText);
-        alert('Failed to download image from Google Docs. Please try saving the image locally first.');
-        return;
-      }
-
-      // Convert response to blob and then to file
-      const blob = await response.blob();
-      const file = new File([blob], `google-docs-image-${Date.now()}.jpg`, {
-        type: blob.type || 'image/jpeg'
-      });
-
-
-
-      // Store original dimensions for use in upload
-      (file as any).originalWidth = width;
-      (file as any).originalHeight = height;
-      (file as any).placeholderId = placeholderId; // Store placeholder ID
-
-      // Upload the file (this will replace the skeleton)
-      await handleImageUpload(file);
-
-    } catch (error) {
-      console.error('❌ Error using backend proxy for Google Docs image:', error);
-      alert('Failed to download image from Google Docs. Please try saving the image locally first.');
-    }
-  }, [createSkeletonImageData, editor]);
-
-  // Helper function to extract image data from Google Docs data structure
-  const extractImageFromGoogleDocsData = (data: any): string | null => {
-    try {
-      
-      // Google Docs data has a nested structure
-      if (data && data.data && typeof data.data === 'string') {
-        const nestedData = JSON.parse(data.data);
-        
-        // Look for image_urls in the nested data
-        if (nestedData.image_urls && typeof nestedData.image_urls === 'object') {
-          
-          // Get the first image URL
-          const imageKeys = Object.keys(nestedData.image_urls);
-          if (imageKeys.length > 0) {
-            const firstImageUrl = nestedData.image_urls[imageKeys[0]];
-            return firstImageUrl;
-          }
-        }
-      }
-      
-      // Fallback: look for any URLs in the entire data structure
-      const dataStr = JSON.stringify(data);
-      
-      // Look for Google userusercontent URLs
-      const urlMatch = dataStr.match(/https:\/\/lh\d+-rt\.googleusercontent\.com\/[^"]+/);
-      if (urlMatch) {
-        return urlMatch[0];
-      }
-      
-      // Look for any other image URLs
-      const imageUrlMatch = dataStr.match(/https?:\/\/[^"]+\.(?:jpg|jpeg|png|gif|webp)/i);
-      if (imageUrlMatch) {
-        return imageUrlMatch[0];
-      }
-      
-      // Original base64 check as final fallback
-      const base64Match = dataStr.match(/data:image\/[^;]+;base64,[^"]+/);
-      if (base64Match) {
-        return base64Match[0];
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('❌ Error extracting image from Google Docs data:', error);
-      return null;
-    }
-  };
-
-  // Helper function to convert base64 to file and upload
-  const convertBase64ToFile = useCallback((base64Data: string) => {
-    try {
-      
-      // Extract mime type and base64 data
-      const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
-      if (!matches) {
-        console.error('❌ Invalid base64 data format');
-        return;
-      }
-      
-      const mimeType = matches[1];
-      const base64 = matches[2];
-      
-      // Convert base64 to blob
-      const byteCharacters = atob(base64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: mimeType });
-      
-      // Create file object
-      const file = new File([blob], `pasted-image-${Date.now()}.${mimeType.split('/')[1]}`, {
-        type: mimeType
-      });
-      
-      // We'll call handleImageUpload directly since it's defined later
-      // This avoids the circular dependency issue
-      setTimeout(() => {
-        handleImageUpload(file);
-      }, 0);
-    } catch (error) {
-      console.error('❌ Error converting base64 to file:', error);
-    }
-  }, []);
-
-  // Helper function to download image from URL
-  const downloadImageFromURL = useCallback(async (url: string, retryCount = 0) => {
-    const maxRetries = 3;
-    const baseDelay = 1000; // 1 second
-    
-    try {
-      // For Google Docs URLs, use the backend proxy
-      if (url.includes('googleusercontent.com') || url.includes('docs.google.com')) { 
-        
-        const sessionId = localStorage.getItem('sessionId');
-        if (!sessionId) {
-          console.error('❌ No session ID found - user not authenticated');
-          alert('You must be logged in to paste images.');
-          return;
-        }
-
-        
-        const response = await fetch(`${API_URL}/content/editor-images/proxy-google-docs`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${sessionId}`
-          },
-          body: JSON.stringify({ imageUrl: url })
-        });
-
-        if (!response.ok) {
-          console.error('❌ Backend proxy failed:', response.status, response.statusText);
-          alert('Failed to download image from Google Docs. Please try saving the image locally first.');
-          return;
-        }
-
-        // Convert response to blob and then to file
-        const blob = await response.blob();
-        const file = new File([blob], `google-docs-image-${Date.now()}.jpg`, {
-          type: blob.type || 'image/jpeg'
-        });
-
-        // Upload the file
-        setTimeout(() => {
-          handleImageUpload(file);
-        }, 0);
-        
-        return;
-      }
-      
-      // For non-Google Docs URLs, use direct download with retry logic
-      
-      const response = await fetch(url);
-      
-      // Handle rate limiting with retry
-      if (response.status === 429) {
-        if (retryCount < maxRetries) {
-          const delay = baseDelay * Math.pow(2, retryCount); // Exponential backoff
-          setTimeout(() => {
-            downloadImageFromURL(url, retryCount + 1);
-          }, delay);
-          return;
-        } else {
-          throw new Error(`Rate limited after ${maxRetries} retries`);
-        }
-      }
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const blob = await response.blob();
-      const file = new File([blob], `downloaded-image-${Date.now()}.jpg`, {
-        type: blob.type || 'image/jpeg'
-      });
-      
-      // Upload the file
-      setTimeout(() => {
-        handleImageUpload(file);
-      }, 0);
-    } catch (error) {
-      console.error('❌ Error downloading image from URL:', error);
-      
-      // If all retries failed, show user-friendly message
-      if (retryCount >= maxRetries) {
-        alert('Failed to download image after multiple attempts. The image may be access-restricted or the server may be rate limiting requests.');
-      }
-    }
-  }, []);
-
-  // Image upload handler
+  // Image upload from the dialog
   const handleImageUpload = useCallback(async (file: File) => {
-    
     if (!currentUser) {
-      console.error('❌ No current user for image upload');
-      alert('You must be logged in to upload images.');
+      setNotice('Sign in to upload images.');
       return;
     }
-
-
-    // Check session ID before proceeding
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) {
-      console.error('❌ No session ID found - user not authenticated');
-      alert('You must be logged in to upload images.');
-      return;
-    }
-    
-
     setIsUploading(true);
-    setUploadProgress(0);
-
     try {
-      // Create thumbnail and medium versions on the client side
-      const { thumbnail, medium } = await createImageVersions(file);
-      
-      // Upload to backend
-      const formData = new FormData();
-      formData.append('media', file);
-      formData.append('thumbnail', thumbnail);
-      formData.append('medium', medium);
-      formData.append('isPublic', 'true');
-      formData.append('takenBy', currentUser.name || currentUser.email);
-    
-      
-      const response = await fetch(`${API_URL}/content/editor-images/upload`, {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
-        headers: {
-          'Authorization': `Bearer ${sessionId}`
-        }
-      });
-
-
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ Upload failed:', response.status, errorText);
-        throw new Error(`Upload failed: ${response.status} ${errorText}`);
-      }
-
-      const result: ImageUploadResponse = await response.json();
-
-      
-      // Dispatch the INSERT_IMAGE_COMMAND with the image data
-      const imagePayload = {
+      const uploader = currentUser.name || currentUser.email;
+      const result = await uploadImageToGallery(file, uploader);
+      editor.dispatchCommand(INSERT_IMAGE_COMMAND, {
         src: result.url,
         altText: result.fileName,
-        width: (file as any).originalWidth,
-        height: (file as any).originalHeight,
         fullSizeSrc: result.url,
         thumbnailSrc: result.thumbnailUrl,
         mediumSrc: result.mediumUrl,
         imageId: result.id,
-        uploadedBy: currentUser.name || currentUser.email,
+        uploadedBy: uploader,
         uploadedAt: new Date().toISOString()
-      };
-      
-      // Check if this upload should replace a skeleton placeholder
-      const placeholderId = (file as any).placeholderId;
-      if (placeholderId) {
-        replaceSkeletonWithImage(placeholderId, imagePayload);
-      } else {
-        
-        editor.dispatchCommand(INSERT_IMAGE_COMMAND, imagePayload);
-      }
-
+      });
       setShowImageDialog(false);
     } catch (error) {
-      console.error('❌ Error uploading image:', error);
-      alert(`Failed to upload image: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error uploading image:', error);
+      setNotice("The image couldn't be uploaded.");
     } finally {
       setIsUploading(false);
-      setUploadProgress(0);
     }
-  }, [currentUser, editor, replaceSkeletonWithImage]);
+  }, [currentUser, editor]);
 
-  // Helper function to download and replace image (separated from the main handler)
-  const downloadAndReplaceImage = useCallback(async (src: string, width?: string, height?: string, placeholderId?: string) => {
-    try {
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) {
-        console.error('❌ No session ID found - user not authenticated');
-        return;
-      }
-
-      const response = await fetch(`${API_URL}/content/editor-images/proxy-google-docs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionId}`
-        },
-        body: JSON.stringify({ imageUrl: src })
-      });
-
-      if (!response.ok) {
-        console.error('❌ Backend proxy failed:', response.status, response.statusText);
-        return;
-      }
-
-      const blob = await response.blob();
-      const file = new File([blob], `google-docs-image-${Date.now()}.jpg`, {
-        type: blob.type || 'image/jpeg'
-      });
-
-      // Store metadata for replacement
-      (file as any).originalWidth = width;
-      (file as any).originalHeight = height;
-      (file as any).placeholderId = placeholderId;
-
-      await handleImageUpload(file);
-    } catch (error) {
-      console.error('❌ Error downloading ordered image:', error);
-    }
-  }, [handleImageUpload]);
-
-  // Store the function in the ref for use by other functions
-  downloadAndReplaceImageRef.current = downloadAndReplaceImage;
-
-  // Debug function to check image processing status
-  const debugImageProcessing = useCallback(() => {
-
-  }, [currentUser, handleImageUpload, createSkeletonImageData, replaceSkeletonWithImage]);
-
-  // Make debug function available globally
+  // Pasted / dropped images: placeholders, uploads, swaps and cleanup.
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      (window as any).debugImageProcessing = debugImageProcessing;
-    }
-  }, [debugImageProcessing]);
+    const inFlight = new Set<string>();
+    let sweepTimer: ReturnType<typeof setTimeout> | null = null;
+    let sweepAt = Infinity;
+
+    const $findPlaceholder = (id: string): ImageNode | undefined =>
+      $getPendingImageNodes().find((node) => node.getImageId() === id);
+
+    const importImage = async (id: string, source: PendingImageSource): Promise<boolean> => {
+      inFlight.add(id);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), IMAGE_IMPORT_TIMEOUT_MS);
+      try {
+        const user = currentUserRef.current;
+        if (!user) throw new Error('Not signed in');
+        const uploader = user.name || user.email;
+        const file = await resolveImageSource(source, controller.signal);
+        const uploaded = await uploadImageToGallery(file, uploader, controller.signal);
+        // An ordinary local edit, so it syncs (Yjs) and saves like any other.
+        editor.update(() => {
+          $findPlaceholder(id)?.completeImport({
+            src: uploaded.url,
+            fullSizeSrc: uploaded.url,
+            thumbnailSrc: uploaded.thumbnailUrl,
+            mediumSrc: uploaded.mediumUrl,
+            imageId: uploaded.id,
+            uploadedBy: uploader,
+            uploadedAt: new Date().toISOString(),
+          });
+        });
+        return true;
+      } catch (error) {
+        console.warn('[images] Could not import an image', error);
+        editor.update(() => {
+          $findPlaceholder(id)?.remove();
+        });
+        return false;
+      } finally {
+        clearTimeout(timer);
+        inFlight.delete(id);
+      }
+    };
+
+    // Remove placeholders nobody is finishing (another client's that went stale, or one
+    // loaded from saved content). Bookkeeping, not a user edit: 'history-merge' keeps it
+    // out of undo and change tracking. Read-only editors leave it (the node renders hidden).
+    const sweepStale = () => {
+      sweepTimer = null;
+      sweepAt = Infinity;
+      const now = Date.now();
+      const stale: string[] = [];
+      let nextDue = Infinity;
+      editor.getEditorState().read(() => {
+        for (const node of $getPendingImageNodes()) {
+          if (inFlight.has(node.getImageId() || '')) continue;
+          if (node.isStalePending(now)) stale.push(node.getKey());
+          else nextDue = Math.min(nextDue, (node.getPendingSince() || 0) + PENDING_IMAGE_STALE_MS);
+        }
+      });
+      if (stale.length > 0 && editor.isEditable()) {
+        editor.update(() => {
+          for (const key of stale) $getNodeByKey(key)?.remove();
+        }, { tag: 'history-merge' });
+      }
+      if (nextDue !== Infinity) scheduleSweep(nextDue);
+    };
+    const scheduleSweep = (at: number) => {
+      if (at >= sweepAt) return;
+      if (sweepTimer) clearTimeout(sweepTimer);
+      sweepAt = at;
+      sweepTimer = setTimeout(sweepStale, Math.max(0, at - Date.now()) + 1000);
+    };
+
+    const removeMutationListener = editor.registerMutationListener(ImageNode, (mutations) => {
+      const claimed: Array<[string, PendingImageSource]> = [];
+      editor.getEditorState().read(() => {
+        mutations.forEach((mutation, key) => {
+          if (mutation !== 'created') return;
+          const node = $getNodeByKey(key);
+          if (!$isImageNode(node) || !node.isPending()) return;
+          const id = node.getImageId() || '';
+          const source = takePendingImageSource(id);
+          if (source) {
+            claimed.push([id, source]);
+          } else if (!inFlight.has(id)) {
+            scheduleSweep((node.getPendingSince() || 0) + PENDING_IMAGE_STALE_MS);
+          }
+        });
+      });
+      if (claimed.length > 0) {
+        Promise.all(claimed.map(([id, source]) => importImage(id, source))).then((results) => {
+          const failed = results.filter((ok) => !ok).length;
+          if (failed > 0) setNotice(`${failed} image${failed === 1 ? '' : 's'} couldn't be imported.`);
+        });
+      }
+    });
+
+    return () => {
+      removeMutationListener();
+      if (sweepTimer) clearTimeout(sweepTimer);
+    };
+  }, [editor]);
+
+  // Register command listeners
+  useEffect(() => {
+    const removeInsertImageCommand = editor.registerCommand(
+      INSERT_IMAGE_COMMAND,
+      (payload: any) => {
+        // Handle toolbar request to show the upload dialog
+        if (payload && payload.showDialog) {
+          // Save current selection so we can restore it after the dialog closes
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            savedSelectionRef.current = selection.clone() as RangeSelection;
+          }
+          setShowImageDialog(true);
+          return true;
+        }
+
+        const imageNode = $createImageNode({
+          src: payload.src || payload.url,
+          altText: payload.altText || payload.alt || '',
+          width: payload.width,
+          height: payload.height,
+          fullSizeSrc: payload.fullSizeSrc,
+          thumbnailSrc: payload.thumbnailSrc,
+          mediumSrc: payload.mediumSrc,
+          imageId: payload.imageId,
+          uploadedBy: payload.uploadedBy,
+          uploadedAt: payload.uploadedAt
+        });
+
+        // Restore saved selection if current selection is lost (e.g. after dialog interaction)
+        if (!$isRangeSelection($getSelection()) && savedSelectionRef.current) {
+          $setSelection(savedSelectionRef.current);
+        }
+        savedSelectionRef.current = null;
+        $insertImageBlock(imageNode);
+        return true;
+      },
+      COMMAND_PRIORITY_EDITOR
+    );
+
+    // Pasted screenshots and dropped image files (RichTextPlugin dispatches DRAG_DROP_PASTE
+    // for clipboard files without text, and for file drops after moving the caret there).
+    const removeDragDropPaste = editor.registerCommand(
+      DRAG_DROP_PASTE,
+      (files: File[]) => {
+        const images = files.filter((file) => file.type.startsWith('image/'));
+        if (images.length === 0) return false;
+        for (const file of images) {
+          const placeholder = $createPendingImageNode({ altText: file.name });
+          registerPendingImageSource(placeholder.getImageId()!, { kind: 'file', file });
+          $insertImageBlock(placeholder);
+        }
+        return true;
+      },
+      COMMAND_PRIORITY_EDITOR
+    );
+
+    // "Copy image" in a browser puts the image file and `<img src>` HTML on the clipboard;
+    // RichTextPlugin would paste the HTML, whose URL may not be fetchable. Use the file.
+    // Everything else falls through to RichTextPlugin's paste.
+    const removePaste = editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        const data = 'clipboardData' in event ? event.clipboardData : null;
+        if (!data || data.types.includes('application/x-lexical-editor')) return false;
+        const files = Array.from(data.files).filter((file) => file.type.startsWith('image/'));
+        const html = data.getData('text/html');
+        if (files.length === 0 || !html || !isImageOnlyHtml(html)) return false;
+        event.preventDefault();
+        editor.dispatchCommand(DRAG_DROP_PASTE, files);
+        return true;
+      },
+      COMMAND_PRIORITY_LOW
+    );
+
+    // Pasted HTML puts images inside paragraphs; make them blocks.
+    const removeHoist = editor.registerNodeTransform(ImageNode, $hoistImageFromTextBlock);
+
+    return () => {
+      removeInsertImageCommand();
+      removeDragDropPaste();
+      removePaste();
+      removeHoist();
+    };
+  }, [editor]);
 
   // Load gallery images
   const loadGalleryImages = useCallback(async () => {
@@ -1166,15 +356,15 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
         
         // If it's a 403 error (admin required), show a more helpful message
         if (response.status === 403) {
-          alert('Gallery access requires admin privileges. Only uploaded images will be shown.');
+          setNotice('Gallery access requires admin privileges. Only uploaded images will be shown.');
           setGalleryImages([]);
         } else {
-          alert(`Failed to load gallery: ${response.status} ${errorText}`);
+          setNotice(`Failed to load gallery: ${response.status}`);
         }
       }
     } catch (error) {
       console.error('❌ Error loading gallery images:', error);
-      alert('Failed to load gallery images. Only new uploads will be available.');
+      setNotice('Failed to load gallery images. Only new uploads will be available.');
       setGalleryImages([]);
     }
   }, []);
@@ -1195,336 +385,7 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
     });
 
     setShowGalleryDialog(false);
-  }, []);
-
-  // Insert image into editor
-  const insertImage = useCallback(
-    (payload: { 
-      src: string; 
-      altText?: string; 
-      width?: number; 
-      height?: number; 
-      fullSizeSrc?: string;
-      thumbnailSrc?: string;
-      mediumSrc?: string;
-      imageId?: string;
-      uploadedBy?: string;
-      uploadedAt?: string;
-    }) => {
-      
-      editor.update(() => {
-        const selection = $getSelection();
-        
-        // Create an image node using the custom ImageNode
-        const imageNode = $createImageNode({
-          src: payload.src,
-          altText: payload.altText || '',
-          width: payload.width,
-          height: payload.height,
-          fullSizeSrc: payload.fullSizeSrc || payload.src,
-          thumbnailSrc: payload.thumbnailSrc,
-          mediumSrc: payload.mediumSrc,
-          imageId: payload.imageId,
-          uploadedBy: payload.uploadedBy,
-          uploadedAt: payload.uploadedAt
-        });
-
-        if ($isRangeSelection(selection)) {
-          // Insert the image node at current selection
-          selection.insertNodes([imageNode]);
-        } else {
-          // If no selection, append to the end of the document
-          const root = $getRoot();
-          root.append(imageNode);
-        }
-      });
-    },
-    [editor]
-  );
-
-  // Register command listener
-  useEffect(() => {
-    
-    // Register the INSERT_IMAGE_COMMAND listener
-    const removeInsertImageCommand = editor.registerCommand(
-      INSERT_IMAGE_COMMAND,
-      (payload: any) => {
-        // Handle toolbar request to show the upload dialog
-        if (payload && payload.showDialog) {
-          // Save current selection so we can restore it after the dialog closes
-          const selection = $getSelection();
-          if ($isRangeSelection(selection)) {
-            savedSelectionRef.current = selection.clone() as RangeSelection;
-          }
-          setShowImageDialog(true);
-          return true;
-        }
-
-        // Handle different payload structures
-        const src = payload.src || payload.url;
-        const altText = payload.altText || payload.alt || '';
-        
-        
-        const imageNode = $createImageNode({
-          src: src,
-          altText: altText,
-          width: payload.width,
-          height: payload.height,
-          fullSizeSrc: payload.fullSizeSrc,
-          thumbnailSrc: payload.thumbnailSrc,
-          mediumSrc: payload.mediumSrc,
-          imageId: payload.imageId,
-          uploadedBy: payload.uploadedBy,
-          uploadedAt: payload.uploadedAt
-        });
-        
-        // Test if image URL is accessible
-        const testImg = new Image();
-        testImg.onerror = () => {
-          console.error('❌ Image URL failed to load - accessibility issue');
-        };
-        testImg.src = src;
-        
-        editor.update(() => {
-          // Restore saved selection if current selection is lost (e.g. after dialog interaction)
-          let selection = $getSelection();
-          if (!$isRangeSelection(selection) && savedSelectionRef.current) {
-            $setSelection(savedSelectionRef.current);
-            selection = $getSelection();
-            savedSelectionRef.current = null;
-          }
-          const root = $getRoot();
-
-          if ($isRangeSelection(selection)) {
-            // Find the top-level block containing the cursor
-            const anchorNode = selection.anchor.getNode();
-            let topBlock: LexicalNode = anchorNode;
-            while (topBlock.getParent() && topBlock.getParent() !== root) {
-              topBlock = topBlock.getParent()!;
-            }
-
-            // Insert the image as a block after the current block,
-            // followed by a paragraph for continued typing
-            const paragraphNode = $createParagraphNode();
-            topBlock.insertAfter(imageNode);
-            imageNode.insertAfter(paragraphNode);
-            paragraphNode.select();
-          } else {
-            root.append(imageNode);
-
-            // Add a paragraph after the image for text input
-            const paragraphNode = $createParagraphNode();
-            root.append(paragraphNode);
-            paragraphNode.select();
-          }
-        });
-        
-        return true;
-      },
-      COMMAND_PRIORITY_EDITOR
-    );
-    
-    
-    // DOM paste listener removed to prevent conflicts with PASTE_COMMAND
-
-    
-    // Register the PASTE_COMMAND listener
-    const removePasteCommand = editor.registerCommand(
-      PASTE_COMMAND,
-      (event: ClipboardEvent) => {
-
-        if (!event.clipboardData) {
-          return false;
-        }
-
-        const items = Array.from(event.clipboardData.items);
-
-        // Also check clipboard.types for additional info
-
-        for (const item of items) {
-          
-          // Handle regular file-based images
-          if (item.kind === 'file' && item.type.startsWith('image/')) {
-            
-            try {
-              const file = item.getAsFile();
-              
-              if (file) {
-                
-                // Prevent default paste behavior for images
-                event.preventDefault();
-                
-                // Upload the image
-                handleImageUpload(file);
-                return true;
-              }
-            } catch (error) {
-              console.error('❌ Error calling getAsFile():', error);
-            }
-          }
-          
-          // Handle HTML content (which includes Google Docs images)
-          if (item.kind === 'string' && item.type === 'text/html') {
-            // Prevent default paste behavior immediately for HTML content
-            event.preventDefault();
-
-            try {
-              item.getAsString((htmlData) => {
-                // Always parse HTML to preserve paragraph structure and newlines
-                parseAndInsertHTML(htmlData);
-              });
-            } catch (error) {
-              console.error('❌ Error processing HTML content:', error);
-            }
-
-            return true; // Return true immediately to prevent further paste processing
-          }
-
-          // Handle plain text paste with newlines
-          if (item.kind === 'string' && item.type === 'text/plain') {
-            event.preventDefault();
-
-            try {
-              item.getAsString((textData) => {
-                if (textData) {
-                  editor.update(() => {
-                    const selection = $getSelection();
-                    if ($isRangeSelection(selection)) {
-                      // Split text on newlines and create paragraph nodes
-                      const lines = textData.split(/\r?\n/);
-                      const paragraphs: LexicalNode[] = [];
-
-                      for (const line of lines) {
-                        const trimmedLine = line.trim();
-                        if (trimmedLine) {
-                          const paragraphNode = $createParagraphNode();
-                          paragraphNode.append($createTextNode(trimmedLine));
-                          paragraphs.push(paragraphNode);
-                        } else if (paragraphs.length > 0) {
-                          // Empty line becomes a paragraph break
-                          paragraphs.push($createParagraphNode());
-                        }
-                      }
-
-                      if (paragraphs.length > 0) {
-                        selection.insertNodes(paragraphs);
-                      }
-                    }
-                  });
-                }
-              });
-            } catch (error) {
-              console.error('❌ Error processing plain text:', error);
-            }
-
-            return true; // Return true immediately to prevent further paste processing
-          }
-        }
-
-        return false;
-      },
-      COMMAND_PRIORITY_EDITOR
-    );
-
-    // Cleanup function
-    return () => {
-      removeInsertImageCommand();
-      removePasteCommand();
-    };
   }, [editor]);
-
-  // Handle paste events for images
-  useEffect(() => {
-    
-    // Add global debug function
-    if (typeof window !== 'undefined') {
-      (window as any).debugImagePlugin = () => {
-        return {
-          currentUser,
-          hasEditor: !!editor,
-          isUploading,
-          showImageDialog,
-          sessionId: !!localStorage.getItem('sessionId')
-        };
-      };
-    }
-  }, [handleImageUpload, currentUser]);
-
-  // Create image versions (thumbnail and medium)
-  const createImageVersions = async (file: File): Promise<{ thumbnail: File; medium: File }> => {
-    return new Promise((resolve, reject) => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const img = new Image();
-      
-      img.onload = () => {
-        try {
-          // Create thumbnail (150x150)
-          canvas.width = 150;
-          canvas.height = 150;
-          
-          const scale = Math.min(150 / img.width, 150 / img.height);
-          const scaledWidth = img.width * scale;
-          const scaledHeight = img.height * scale;
-          const offsetX = (150 - scaledWidth) / 2;
-          const offsetY = (150 - scaledHeight) / 2;
-          
-          ctx!.fillStyle = '#f0f0f0';
-          ctx!.fillRect(0, 0, 150, 150);
-          ctx!.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
-          
-          canvas.toBlob((thumbnailBlob) => {
-            if (!thumbnailBlob) {
-              reject(new Error('Failed to create thumbnail'));
-              return;
-            }
-            
-            const thumbnailFile = new File([thumbnailBlob], `thumbnail_${file.name}`, {
-              type: file.type,
-              lastModified: Date.now()
-            });
-            
-            // Create medium version (800px max)
-            const maxDimension = 800;
-            let mediumWidth = img.width;
-            let mediumHeight = img.height;
-            
-            if (img.width > maxDimension || img.height > maxDimension) {
-              const scale = Math.min(maxDimension / img.width, maxDimension / img.height);
-              mediumWidth = img.width * scale;
-              mediumHeight = img.height * scale;
-            }
-            
-            canvas.width = mediumWidth;
-            canvas.height = mediumHeight;
-            ctx!.drawImage(img, 0, 0, mediumWidth, mediumHeight);
-            
-            canvas.toBlob((mediumBlob) => {
-              if (!mediumBlob) {
-                reject(new Error('Failed to create medium image'));
-                return;
-              }
-              
-              const mediumFile = new File([mediumBlob], `medium_${file.name}`, {
-                type: file.type,
-                lastModified: Date.now()
-              });
-              
-              resolve({ thumbnail: thumbnailFile, medium: mediumFile });
-            }, file.type, 0.9);
-          }, file.type, 0.9);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = URL.createObjectURL(file);
-    });
-  };
-
-  // Image button is rendered by ToolbarPlugin, which dispatches INSERT_IMAGE_COMMAND
-  // with { showDialog: true } - handled by the command listener above
 
   return (
     <>
@@ -1559,12 +420,6 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
                   />
                   {isUploading && (
                     <div className="upload-progress">
-                      <div className="progress-bar">
-                        <div 
-                          className="progress-fill" 
-                          style={{ width: `${uploadProgress}%` }}
-                        />
-                      </div>
                       <span>Uploading...</span>
                     </div>
                   )}
@@ -1623,6 +478,13 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {notice && (
+        <div className="image-import-notice" role="status" aria-live="polite">
+          <span>{notice}</span>
+          <button type="button" aria-label="Dismiss" onClick={() => setNotice(null)}>×</button>
         </div>
       )}
 
@@ -1687,19 +549,30 @@ export function ImagePlugin({ onImageSelect, currentUser }: ImagePluginProps) {
             margin-top: 10px;
           }
 
-          .progress-bar {
-            width: 100%;
-            height: 20px;
-            background: #f0f0f0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin-bottom: 5px;
+          .image-import-notice {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            max-width: calc(100vw - 32px);
+            z-index: 1100;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 6px;
+            background: #323232;
+            color: #fff;
+            font-size: 14px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
           }
 
-          .progress-fill {
-            height: 100%;
-            background: #4CAF50;
-            transition: width 0.3s ease;
+          .image-import-notice button {
+            background: none;
+            border: none;
+            color: inherit;
+            font-size: 18px;
+            line-height: 1;
+            cursor: pointer;
           }
 
           .gallery-button {

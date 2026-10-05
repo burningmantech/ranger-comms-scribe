@@ -1,13 +1,34 @@
-import React from 'react';
-import { 
-  EditorConfig, 
-  NodeKey, 
-  SerializedLexicalNode, 
-  Spread, 
-  ElementNode, 
+import {
+  $copyNode,
+  $createParagraphNode,
+  $getSelection,
+  $isLineBreakNode,
+  $isParagraphNode,
+  $isRangeSelection,
+  DOMConversionMap,
+  DOMConversionOutput,
+  DOMExportOutput,
+  EditorConfig,
+  LexicalEditor,
+  LexicalNode,
+  NodeKey,
+  SerializedLexicalNode,
+  Spread,
+  ElementNode,
   SerializedElementNode,
   ElementFormatType
 } from 'lexical';
+import { $isHeadingNode, $isQuoteNode } from '@lexical/rich-text';
+import { $dfs } from '@lexical/utils';
+import {
+  classifyImageSrc,
+  newPendingImageId,
+  parseImageDimension,
+  PENDING_IMAGE_STALE_MS,
+  registerPendingImageSource,
+  skeletonImageDataUrl,
+  takePendingImageSource,
+} from '../utils/imageImport';
 
 export type ImageAlignment = 'none' | 'left' | 'center' | 'right';
 
@@ -38,6 +59,10 @@ export type SerializedImageNode = Spread<
     imageId?: string;
     uploadedBy?: string;
     uploadedAt?: string;
+    /** Set while the image is still being imported (a skeleton); never permanent content. */
+    pending?: true;
+    /** When the placeholder was created (ms since epoch), so orphans can be cleaned up. */
+    pendingSince?: number;
     type: 'image';
     version: 1;
     children: SerializedLexicalNode[];
@@ -61,6 +86,8 @@ export class ImageNode extends ElementNode {
   __imageId: string | undefined;
   __uploadedBy: string | undefined;
   __uploadedAt: string | undefined;
+  /** Non-null while this is an import placeholder: when it was created (ms since epoch). */
+  __pendingSince: number | null;
 
   static getType(): string {
     return 'image';
@@ -103,6 +130,7 @@ export class ImageNode extends ElementNode {
       node.__imageId,
       node.__uploadedBy,
       node.__uploadedAt,
+      node.__pendingSince,
       node.__key
     );
   }
@@ -119,6 +147,7 @@ export class ImageNode extends ElementNode {
     imageId?: string,
     uploadedBy?: string,
     uploadedAt?: string,
+    pendingSince: number | null = null,
     key?: NodeKey,
   ) {
     super(key);
@@ -133,6 +162,34 @@ export class ImageNode extends ElementNode {
     this.__imageId = imageId;
     this.__uploadedBy = uploadedBy;
     this.__uploadedAt = uploadedAt;
+    this.__pendingSince = pendingSince;
+  }
+
+  /** True while this is a placeholder for an image that is still being imported. */
+  isPending(): boolean {
+    return this.__pendingSince !== null;
+  }
+
+  getPendingSince(): number | null {
+    return this.__pendingSince;
+  }
+
+  /** A placeholder nobody finished in time (its uploader left mid-import). */
+  isStalePending(now: number = Date.now()): boolean {
+    return this.__pendingSince !== null && now - this.__pendingSince > PENDING_IMAGE_STALE_MS;
+  }
+
+  /** Swap an import placeholder for the uploaded gallery image (keeps size, alignment and alt text). */
+  completeImport(uploaded: Pick<ImagePayload, 'src' | 'fullSizeSrc' | 'thumbnailSrc' | 'mediumSrc' | 'imageId' | 'uploadedBy' | 'uploadedAt'>): void {
+    const writable = this.getWritable();
+    writable.__src = uploaded.src;
+    writable.__fullSizeSrc = uploaded.fullSizeSrc;
+    writable.__thumbnailSrc = uploaded.thumbnailSrc;
+    writable.__mediumSrc = uploaded.mediumSrc;
+    writable.__imageId = uploaded.imageId;
+    writable.__uploadedBy = uploaded.uploadedBy;
+    writable.__uploadedAt = uploaded.uploadedAt;
+    writable.__pendingSince = null;
   }
 
   getSrc(): string {
@@ -207,7 +264,9 @@ export class ImageNode extends ElementNode {
       mediumSrc,
       imageId,
       uploadedBy,
-      uploadedAt
+      uploadedAt,
+      pending,
+      pendingSince
     } = serializedNode;
     return new ImageNode(
       src,
@@ -220,8 +279,21 @@ export class ImageNode extends ElementNode {
       mediumSrc,
       imageId,
       uploadedBy,
-      uploadedAt
+      uploadedAt,
+      pending ? (typeof pendingSince === 'number' ? pendingSince : 0) : null
     );
+  }
+
+  /** `<img>` from pasted or loaded HTML. Gallery images are kept; anything else becomes a placeholder. */
+  static importDOM(): DOMConversionMap | null {
+    return {
+      img: () => ({ conversion: $convertImageElement, priority: 0 }),
+    };
+  }
+
+  exportDOM(editor: LexicalEditor): DOMExportOutput {
+    if (this.isPending()) return { element: null };
+    return super.exportDOM(editor);
   }
 
   exportJSON(): SerializedImageNode {
@@ -239,6 +311,7 @@ export class ImageNode extends ElementNode {
       imageId: this.__imageId,
       uploadedBy: this.__uploadedBy,
       uploadedAt: this.__uploadedAt,
+      ...(this.__pendingSince !== null ? { pending: true as const, pendingSince: this.__pendingSince } : {}),
       version: 1,
     };
   }
@@ -275,9 +348,20 @@ export class ImageNode extends ElementNode {
 
   createDOM(config: EditorConfig): HTMLElement {
     const img = document.createElement('img');
-    img.src = this.__src;
     img.alt = this.__altText;
     img.className = 'editor-image';
+    if (this.isPending()) {
+      const w = typeof this.__width === 'number' ? this.__width : parseImageDimension(this.__width);
+      const h = typeof this.__height === 'number' ? this.__height : parseImageDimension(this.__height);
+      img.src = skeletonImageDataUrl(w, h);
+      img.classList.add('editor-image-pending');
+      img.dataset.pending = 'true';
+      img.title = 'Importing image…';
+      // An orphaned placeholder (its uploader left) shows nothing until it is cleaned up.
+      if (this.isStalePending()) img.style.visibility = 'hidden';
+    } else {
+      img.src = this.__src;
+    }
 
     // Handle dimensions with priority over defaults
     if (this.__width || this.__height) {
@@ -330,7 +414,11 @@ export class ImageNode extends ElementNode {
     return img;
   }
 
-  updateDOM(prevNode: ImageNode, dom: HTMLElement): false {
+  updateDOM(prevNode: ImageNode, dom: HTMLElement): boolean {
+    // A finished import (or any new source) gets a fresh <img>.
+    if (prevNode.__src !== this.__src || prevNode.__pendingSince !== this.__pendingSince) {
+      return true;
+    }
     const img = dom as HTMLImageElement;
     if (prevNode.__width !== this.__width || prevNode.__height !== this.__height) {
       if (this.__width) {
@@ -392,7 +480,126 @@ export function $createImageNode(payload: ImagePayload): ImageNode {
   );
 }
 
+/**
+ * A placeholder for an image that is still being imported. Its imageId identifies it; the
+ * source (URL or File) is kept by the creating client (see utils/imageImport), never in the doc.
+ */
+export function $createPendingImageNode(payload: Pick<ImagePayload, 'altText' | 'width' | 'height'> = {}): ImageNode {
+  return new ImageNode(
+    '',
+    payload.altText || '',
+    payload.width,
+    payload.height,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    newPendingImageId(),
+    undefined,
+    undefined,
+    Date.now()
+  );
+}
+
+function $convertImageElement(domNode: HTMLElement): DOMConversionOutput {
+  const img = domNode as HTMLImageElement;
+  const src = (img.getAttribute('src') || '').trim();
+  if (!src) return { node: null };
+
+  const altText = img.getAttribute('alt') || '';
+  const width = parseImageDimension(img.getAttribute('width')) ?? parseImageDimension(img.style?.width);
+  const height = parseImageDimension(img.getAttribute('height')) ?? parseImageDimension(img.style?.height);
+
+  if (classifyImageSrc(src) === 'gallery') {
+    const data = img.dataset || {};
+    return {
+      node: $createImageNode({
+        src,
+        altText,
+        width,
+        height,
+        fullSizeSrc: data.fullSrc,
+        thumbnailSrc: data.thumbnailSrc,
+        mediumSrc: data.mediumSrc,
+        imageId: data.imageId,
+        uploadedBy: data.uploadedBy,
+        uploadedAt: data.uploadedAt,
+      }),
+    };
+  }
+
+  const node = $createPendingImageNode({ altText, width, height });
+  registerPendingImageSource(node.getImageId()!, { kind: 'url', src });
+  return { node };
+}
+
+/**
+ * Pasted HTML puts images inside paragraphs (`<p><span><img></span></p>`); an image is a
+ * block, so split the paragraph (or heading/quote) around it. Registered as a node transform
+ * by ImagePlugin. Transforms don't run on Yjs updates, so only the editing client does this.
+ */
+export function $hoistImageFromTextBlock(image: ImageNode): void {
+  const parent = image.getParent();
+  if (!parent || !($isParagraphNode(parent) || $isHeadingNode(parent) || $isQuoteNode(parent))) {
+    return;
+  }
+
+  const after = image.getNextSiblings();
+  if (after.length > 0) {
+    const tail = $copyNode(parent);
+    tail.append(...after);
+    const first = tail.getFirstChild();
+    if ($isLineBreakNode(first)) first.remove();
+    parent.insertAfter(tail);
+  }
+  parent.insertAfter(image);
+  const last = parent.getLastChild();
+  if ($isLineBreakNode(last)) last.remove();
+  if (parent.getChildrenSize() === 0) parent.remove();
+
+  $moveCaretOutOfImage(image);
+}
+
+/** An image has no text: a caret left inside it (e.g. after a paste) moves to the next block. */
+export function $moveCaretOutOfImage(image: ImageNode): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return;
+  const key = image.getKey();
+  if (selection.anchor.key !== key && selection.focus.key !== key) return;
+
+  let next: LexicalNode | null = image.getNextSibling();
+  if (!next || $isImageNode(next)) {
+    next = $createParagraphNode();
+    image.insertAfter(next);
+  }
+  next.selectStart();
+}
+
 // Helper function to check if a node is an ImageNode
 export function $isImageNode(node: any): node is ImageNode {
   return node instanceof ImageNode;
+}
+
+/** Every import placeholder in the document (or under `start`). */
+export function $getPendingImageNodes(start?: LexicalNode): ImageNode[] {
+  return $dfs(start)
+    .map(({ node }) => node)
+    .filter((node): node is ImageNode => $isImageNode(node) && node.isPending());
+}
+
+/**
+ * For HTML or JSON loaded as saved content (not pasted): nobody will upload these, so an image
+ * from pasted-in-the-past HTML keeps its original https/data address, anything else is dropped,
+ * and so is any leftover placeholder from saved JSON (its uploader is gone).
+ */
+export function $settlePendingImages(start?: LexicalNode): void {
+  for (const node of $getPendingImageNodes(start)) {
+    const source = takePendingImageSource(node.getImageId() || '');
+    const kind = source?.kind === 'url' ? classifyImageSrc(source.src) : 'unsupported';
+    if (source?.kind === 'url' && (kind === 'remote' || kind === 'data')) {
+      node.completeImport({ src: source.src, fullSizeSrc: source.src });
+    } else {
+      node.remove();
+    }
+  }
 }
