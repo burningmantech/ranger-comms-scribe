@@ -402,6 +402,10 @@ These are outside the migration's scope except where a phase is noted.
 - **Document-room broadcasts are no-ops** because of the room-key mismatch. Fixed in Phase 2 (R2.2).
 - **Google `aud` not checked.** Fixed in Phase 0 (R0.2).
 - **Listings silently stop at 1,000 keys.** None of the roughly 30 `list()` calls paginate. Fixed in Phase 1 (R1.1).
+- **Private gallery files are publicly readable by URL.** `GET /api/gallery/:filename` serves any object under `gallery/` with no access check and a one-year public `Cache-Control`, so anyone who learns a private file's name can fetch it.
+  - A simple `Authorization` check won't work, because images load through plain `<img>` tags, which can't send the Bearer token.
+  - Options: short-lived signed URLs (CloudFront or S3 presigned) for non-public media, or a signed query token checked by the route.
+  - Not in migration scope. CloudFront caching doesn't widen the exposure, because private responses would also need `private`/`no-store` once fixed.
 
 ## 13. Estimates
 
