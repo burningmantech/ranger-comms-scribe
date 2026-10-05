@@ -246,69 +246,143 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
         setMessage(null);
     };
 
+    // Turnstile tokens are single-use, so get a fresh one after every attempt
+    const resetTurnstile = () => {
+        if (turnstileWidgetId.current && window.turnstile) {
+            window.turnstile.reset(turnstileWidgetId.current);
+        }
+        setTurnstileToken(null);
+    };
+
+    // Shared by login and register: fetch roles for the new session and sign the user in
+    const completeSignIn = async (data: any) => {
+        const rolesResponse = await fetch(`${API_URL}/admin/user-roles`, {
+            headers: {
+                'Authorization': `Bearer ${data.sessionId}`,
+            },
+        });
+
+        if (!rolesResponse.ok) {
+            throw new Error('Failed to fetch user roles');
+        }
+
+        const rolesData = await rolesResponse.json();
+
+        // Construct user data with roles from the roles endpoint
+        const userData = {
+            id: data.id,
+            email: data.email,
+            name: data.name,
+            isAdmin: data.isAdmin || false,
+            approved: data.approved || false,
+            roles: rolesData.roles || [],
+            userType: data.isAdmin ? UserType.Admin : 
+                     rolesData.roles.includes('CouncilManager') ? UserType.CouncilManager :
+                     rolesData.roles.includes('CommsCadre') ? UserType.CommsCadre :
+                     rolesData.roles.includes('Lead') ? UserType.Lead :
+                     rolesData.roles.includes('Member') ? UserType.Member :
+                     UserType.Public
+        };
+
+        await handleUserLogin(userData, data.sessionId);
+        setUser(userData);
+        setParentUser(userData);
+
+        if (data.isAdmin) {
+            navigate('/admin');
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
+        setMessage(null);
         setLoading(true);
 
         try {
-            const response = await fetch(`${API_URL}/auth/login`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    email: formData.email,
-                    password: formData.password,
-                    turnstileToken,
-                }),
-            });
-            
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Login failed');
-            }
+            if (authMode === 'register') {
+                if (!formData.name) {
+                    throw new Error('Name is required');
+                }
+                if (formData.password !== formData.confirmPassword) {
+                    throw new Error('Passwords do not match');
+                }
+                if (!passwordRequirements.every(r => r.met)) {
+                    throw new Error('Password does not meet all requirements');
+                }
 
-            // First, fetch the user roles
-            const rolesResponse = await fetch(`${API_URL}/admin/user-roles`, {
-                headers: {
-                    'Authorization': `Bearer ${data.sessionId}`,
-                },
-            });
+                const response = await fetch(`${API_URL}/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: formData.name,
+                        email: formData.email,
+                        password: formData.password,
+                        turnstileToken,
+                    }),
+                });
 
-            if (!rolesResponse.ok) {
-                throw new Error('Failed to fetch user roles');
-            }
+                const data = await response.json();
 
-            const rolesData = await rolesResponse.json();
-            
-            // Construct user data with roles from the roles endpoint
-            const userData = {
-                id: data.id,
-                email: data.email,
-                name: data.name,
-                isAdmin: data.isAdmin || false,
-                approved: data.approved || false,
-                roles: rolesData.roles || [],
-                userType: data.isAdmin ? UserType.Admin : 
-                         rolesData.roles.includes('CouncilManager') ? UserType.CouncilManager :
-                         rolesData.roles.includes('CommsCadre') ? UserType.CommsCadre :
-                         rolesData.roles.includes('Lead') ? UserType.Lead :
-                         rolesData.roles.includes('Member') ? UserType.Member :
-                         UserType.Public
-            };
-            
-            await handleUserLogin(userData, data.sessionId);
-            setUser(userData);
-            setParentUser(userData);
-            
-            if (data.isAdmin) {
-                navigate('/admin');
+                if (!response.ok) {
+                    throw new Error(data.error || 'Registration failed');
+                }
+
+                await completeSignIn(data);
+            } else if (authMode === 'forgotPassword') {
+                if (!formData.email) {
+                    throw new Error('Email address is required');
+                }
+                if (!turnstileToken) {
+                    throw new Error('Please complete the security check');
+                }
+
+                const response = await fetch(`${API_URL}/auth/forgot-password`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: formData.email,
+                        turnstileToken,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to process request');
+                }
+
+                setMessage(data.message || 'Password reset link has been sent to your email');
+                setFormData({ ...formData, email: '' });
+            } else {
+                const response = await fetch(`${API_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: formData.email,
+                        password: formData.password,
+                        turnstileToken,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Login failed');
+                }
+
+                await completeSignIn(data);
             }
         } catch (err) {
             setError((err as Error).message);
         } finally {
+            resetTurnstile();
             setLoading(false);
         }
     };

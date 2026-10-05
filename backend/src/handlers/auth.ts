@@ -6,6 +6,7 @@ import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPasswor
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
+import { verifyGoogleIdToken } from '../utils/googleToken';
 
 export const router = AutoRouter({ base : '/api/auth' });
 
@@ -78,15 +79,6 @@ async function sendEmailIfConfigured(
     console.error('Error sending email:', error);
     return false;
   }
-}
-
-async function verify(token: string) {
-    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${token}`);
-    if (!response.ok) {
-        throw new Error('Invalid token');
-    }
-    const payload = await response.json() as { email: string; name: string; sub: string };
-    return payload
 }
 
 // Helper function to validate password strength
@@ -501,7 +493,7 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
     }
 
     try {
-        const payload = await verify(token);
+        const payload = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
         const { email, name, sub } = payload; // Extract email, name, and user ID (sub)
 
         // Create or get the user

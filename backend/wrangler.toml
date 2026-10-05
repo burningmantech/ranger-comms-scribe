@@ -9,7 +9,8 @@ route = "scrivenly.com/api/*"
 [vars]
 PUBLIC_URL = "https://scrivenly.com/api"
 FRONTEND_URL = "https://scrivenly.com"
-SESKey = "AKIA36OXS3SM4YRL76M4"
+# SESKey and SESSecret are Worker secrets: `wrangler secret put SESKey` / `wrangler secret put SESSecret`
+GOOGLE_CLIENT_ID = "402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com"
 DEV_BYPASS_AUTH = "false"
 
 [[r2_buckets]]
