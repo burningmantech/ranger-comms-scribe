@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# Upload an existing frontend build to an SPA bucket and invalidate its CloudFront distribution.
+# Used by bin/dev-deploy and the GitHub workflows.
+#
+#   bin/publish-frontend <spa-bucket> <cloudfront-distribution-id> [build-dir]
+#
+# Hashed assets under static/ are cached for a year and never deleted (clients holding an older
+# index.html can still load their chunks). Everything else, index.html included, is served with
+# Cache-Control: no-cache and stale files are removed.
+
+set -euo pipefail
+
+if [ $# -lt 2 ]; then
+    echo "usage: $0 <spa-bucket> <cloudfront-distribution-id> [build-dir]" >&2
+    exit 64
+fi
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+bucket="$1"
+distribution_id="$2"
+build_dir="${3:-${repo_root}/frontend/build}"
+
+if [ ! -f "${build_dir}/index.html" ]; then
+    echo "No build found at ${build_dir} (run: cd frontend && npm run build)" >&2
+    exit 66
+fi
+
+echo "==> Uploading ${build_dir}/static to s3://${bucket}/static (immutable, 1 year)"
+if [ -d "${build_dir}/static" ]; then
+    aws s3 sync "${build_dir}/static" "s3://${bucket}/static" \
+        --cache-control "public,max-age=31536000,immutable" \
+        --only-show-errors
+fi
+
+echo "==> Uploading the rest of ${build_dir} to s3://${bucket} (no-cache, deleting stale files)"
+aws s3 sync "${build_dir}" "s3://${bucket}" \
+    --exclude "static/*" \
+    --cache-control "no-cache" \
+    --delete \
+    --only-show-errors
+
+echo "==> Invalidating CloudFront distribution ${distribution_id}"
+aws cloudfront create-invalidation \
+    --distribution-id "${distribution_id}" \
+    --paths "/*" \
+    --query "Invalidation.Id" \
+    --output text

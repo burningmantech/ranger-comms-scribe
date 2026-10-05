@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# Wake the dev environment: deploy scribe-dev-compute (ALB, listeners, target group, Fargate Spot
+# service, origin.<host> alias). Takes about 5 minutes. CloudFront is not touched.
+#
+#   SCRIBE_ALEX_DEV_ACCOUNT=123456789012 AWS_PROFILE=<profile> bin/dev-up
+#
+# Before the first wake: scribe-dev-persistent must be deployed and the TURNSTILESECRET
+# SecureString must exist (infra/README.md, first-time setup). If the ECR repository has no
+# :dev image yet, this script builds and pushes one first, because the service cannot start
+# without it and ranger-deploy (bin/dev-deploy) needs the service to exist.
+
+set -euo pipefail
+
+# shellcheck source=bin/.dev-common.sh
+. "$(dirname "$0")/.dev-common.sh"
+
+turnstile_param="${ssm_prefix}/TURNSTILESECRET"
+
+echo "Plan:"
+echo "  1. Check that ${turnstile_param} exists"
+echo "  2. Push a first comms-scribe:dev image if the repository has none"
+echo "  3. cdk deploy ${compute_stack} --exclusively -c config=${config}"
+echo
+
+echo "==> Checking ${turnstile_param}"
+if ! aws ssm get-parameter --name "${turnstile_param}" --query Parameter.Type --output text > /dev/null; then
+    echo "Missing ${turnstile_param}. Create it first:" >&2
+    echo "  aws ssm put-parameter --type SecureString --name ${turnstile_param} --value '<turnstile secret key>'" >&2
+    exit 1
+fi
+
+repo_uri="$(get_param ecr-repository-uri)"
+repo_name="${repo_uri#*/}"
+registry="${repo_uri%%/*}"
+
+echo "==> Checking for ${repo_uri}:dev"
+if aws ecr describe-images --repository-name "${repo_name}" --image-ids imageTag=dev > /dev/null 2>&1; then
+    echo "    found"
+else
+    echo "==> No :dev image yet; building and pushing the first one"
+    docker build \
+        --platform linux/amd64 \
+        --file "${repo_root}/backend/Dockerfile" \
+        --tag comms-scribe:local \
+        "${repo_root}/backend"
+    aws ecr get-login-password | docker login --username AWS --password-stdin "${registry}"
+    docker tag comms-scribe:local "${repo_uri}:dev"
+    docker push "${repo_uri}:dev"
+fi
+
+echo "==> Deploying ${compute_stack}"
+run_cdk deploy "${compute_stack}" --exclusively --require-approval never
+
+echo
+echo "Dev is awake. Deploy new code with bin/dev-deploy; put it to sleep with bin/dev-down."

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# Put the dev environment to sleep: destroy scribe-dev-compute (ALB, ECS service, origin alias).
+# Data, images, CloudFront and the SPA stay in scribe-dev-persistent. While asleep the SPA still
+# loads and /api/* fails until bin/dev-up.
+#
+#   SCRIBE_ALEX_DEV_ACCOUNT=123456789012 AWS_PROFILE=<profile> bin/dev-down
+
+set -euo pipefail
+
+# shellcheck source=bin/.dev-common.sh
+. "$(dirname "$0")/.dev-common.sh"
+
+echo "Plan:"
+echo "  1. cdk destroy ${compute_stack} --exclusively -c config=${config}"
+echo "     (removes the ALB, ECS service and task, and their public IPv4 addresses)"
+echo
+
+run_cdk destroy "${compute_stack}" --exclusively --force
+
+echo
+echo "Dev is asleep. Wake it with bin/dev-up."
