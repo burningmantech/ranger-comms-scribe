@@ -218,8 +218,8 @@ describe('Media Service', () => {
       expect(mediaItem.isPublic).toBe(true);
       
       // Verify URLs
-      expect(mediaItem.url).toBe(`https://example.com/gallery/${mockTimestamp}_test-image.jpg`);
-      expect(mediaItem.thumbnailUrl).toBe(`https://example.com/gallery/${mockTimestamp}_test-image.jpg/thumbnail`);
+      expect(mediaItem.url).toBe(`/api/gallery/${mockTimestamp}_test-image.jpg`);
+      expect(mediaItem.thumbnailUrl).toBe(`/api/gallery/${mockTimestamp}_test-image.jpg/thumbnail`);
       
       // Verify binary data went to the store with content type and metadata
       expect(env.STORE.put).toHaveBeenCalledWith(
@@ -235,7 +235,7 @@ describe('Media Service', () => {
         `gallery/thumbnails/${mockTimestamp}_test-image.jpg`,
         `gallery/medium/${mockTimestamp}_test-image.jpg`,
       ]));
-      expect(mediaItem.mediumUrl).toBe(`https://example.com/gallery/${mockTimestamp}_test-image.jpg/medium`);
+      expect(mediaItem.mediumUrl).toBe(`/api/gallery/${mockTimestamp}_test-image.jpg/medium`);
       const stored = await env.STORE.backing.head(`gallery/${mockTimestamp}_test-image.jpg`);
       expect(stored.contentType).toBe('image/jpeg');
     });

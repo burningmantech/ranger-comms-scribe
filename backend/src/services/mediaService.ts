@@ -4,6 +4,11 @@ import { getUser, canAccessGroup } from '../services/userService';
 import { getObject, putObject, deleteObject, listObjects, removeFromCache } from './cacheService';
 import { ObjectInfo } from '../storage/objectStore';
 
+// Media URLs are stored and returned relative to the site origin
+// (/api/gallery/<file>[/thumbnail|/medium]) so saved content survives hostname
+// changes. The SPA and API share one origin in AWS; local dev proxies /api.
+export const GALLERY_URL_PREFIX = '/api/gallery';
+
 // Define types for metadata objects
 interface MediaMetadata {
     customMetadata?: {
@@ -61,13 +66,13 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 // Check cache first for thumbnail existence
                 const thumbnailExists = await getObject(`__exists__:${thumbnailKey}`, env);
                 if (thumbnailExists) {
-                    thumbnailUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/thumbnail`;
+                    thumbnailUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/thumbnail`;
                 } else {
                     // Fall back to STORE.head
                     const thumbnailCheck = await env.STORE.head(thumbnailKey);
                     if (thumbnailCheck) {
                         // Create a URL for the thumbnail
-                        thumbnailUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/thumbnail`;
+                        thumbnailUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/thumbnail`;
                         // Cache the existence for future queries
                         await putObject(`__exists__:${thumbnailKey}`, true, env, null, 3600);
                     }
@@ -85,13 +90,13 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 // Check cache first for medium version existence
                 const mediumExists = await getObject(`__exists__:${mediumKey}`, env);
                 if (mediumExists) {
-                    mediumUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/medium`;
+                    mediumUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/medium`;
                 } else {
                     // Fall back to STORE.head
                     const mediumCheck = await env.STORE.head(mediumKey);
                     if (mediumCheck) {
                         // Create a URL for the medium version
-                        mediumUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/medium`;
+                        mediumUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/medium`;
                         // Cache the existence for future queries
                         await putObject(`__exists__:${mediumKey}`, true, env, null, 3600);
                     }
@@ -146,7 +151,7 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 id: object.key,
                 fileName: fileName,
                 fileType: fileType,
-                url: `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}`,
+                url: `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}`,
                 thumbnailUrl: thumbnailUrl,
                 mediumUrl: mediumUrl,
                 uploadedBy: metadata?.userId || 'unknown',
@@ -343,7 +348,7 @@ export const uploadMedia = async (
             };
             
             await env.STORE.put(mediumKey, mediumBuffer, mediumOptions);
-            mediumUrl = `${env.PUBLIC_URL}/gallery/${fileName}/medium`;
+            mediumUrl = `${GALLERY_URL_PREFIX}/${fileName}/medium`;
             // Cache the existence for future queries
             await putObject(`__exists__:${mediumKey}`, true, env);
         } else {
@@ -362,7 +367,7 @@ export const uploadMedia = async (
             };
             
             await env.STORE.put(mediumKey, mediaBuffer, mediumOptions);
-            mediumUrl = `${env.PUBLIC_URL}/gallery/${fileName}/medium`;
+            mediumUrl = `${GALLERY_URL_PREFIX}/${fileName}/medium`;
             // Cache the existence for future queries
             await putObject(`__exists__:${mediumKey}`, true, env);
         }
@@ -376,8 +381,8 @@ export const uploadMedia = async (
             id: mediaKey,
             fileName: fileName,
             fileType: mediaFile.type,
-            url: `${env.PUBLIC_URL}/gallery/${fileName}`,
-            thumbnailUrl: `${env.PUBLIC_URL}/gallery/${fileName}/thumbnail`,
+            url: `${GALLERY_URL_PREFIX}/${fileName}`,
+            thumbnailUrl: `${GALLERY_URL_PREFIX}/${fileName}/thumbnail`,
             mediumUrl: mediumUrl,
             uploadedBy: userId,
             uploaderName: userName,
