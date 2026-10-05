@@ -1,11 +1,13 @@
 import {
   Duration,
+  RemovalPolicy,
   aws_certificatemanager as acm,
   aws_ec2 as ec2,
   aws_ecs as ecs,
   aws_elasticloadbalancingv2 as elbv2,
   aws_iam as iam,
   aws_logs as logs,
+  custom_resources as cr,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { ScribeConfig } from './config';
@@ -126,6 +128,8 @@ export class ScribeService extends Construct {
     const hostCondition = elbv2.ListenerCondition.hostHeaders([config.hostname]);
 
     if (props.existingListener) {
+      // The shared ALB and its security group belong to the tech team: its ingress is left
+      // alone here (see infra/README.md, "ALB ingress").
       const listener = elbv2.ApplicationListener.fromApplicationListenerAttributes(this, 'SharedListener', {
         listenerArn: props.existingListener.listenerArn,
         securityGroup: ec2.SecurityGroup.fromSecurityGroupId(this, 'SharedAlbSg', props.existingListener.securityGroupId),
@@ -149,12 +153,24 @@ export class ScribeService extends Construct {
     });
     this.loadBalancer = alb;
 
+    // Only CloudFront may reach the ALB, so clients can't bypass its headers (HSTS) and
+    // routing. The one ingress rule allows CloudFront's origin-facing managed prefix list on
+    // 443. That prefix list counts as ~55 rules toward the 60-rules-per-security-group quota,
+    // so there is deliberately no second (port 80) rule, and no port 80 listener: CloudFront
+    // connects HTTPS_ONLY (shared.ts), so plain HTTP never reaches the ALB.
+    alb.connections.allowFrom(
+      ec2.Peer.prefixList(cloudFrontOriginFacingPrefixListId(this)),
+      ec2.Port.tcp(443),
+      'HTTPS from CloudFront (origin-facing managed prefix list)',
+    );
+
     const https = alb.addListener('Https', {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
       certificates: [elbv2.ListenerCertificate.fromCertificateManager(props.albCertificate)],
       sslPolicy: elbv2.SslPolicy.RECOMMENDED_TLS,
-      open: true,
+      // No 0.0.0.0/0 rule: ingress is the CloudFront rule above.
+      open: false,
       defaultAction: props.hostRouting
         ? elbv2.ListenerAction.fixedResponse(404, { contentType: 'application/json', messageBody: '{"error":"Unknown host"}' })
         : elbv2.ListenerAction.forward([this.targetGroup]),
@@ -162,8 +178,38 @@ export class ScribeService extends Construct {
     if (props.hostRouting) {
       https.addTargetGroups('HostRule', { priority: 10, conditions: [hostCondition], targetGroups: [this.targetGroup] });
     }
-
-    alb.addRedirect({ sourcePort: 80, targetPort: 443 });
   }
+}
+
+/** Name of the AWS-managed prefix list of CloudFront's origin-facing addresses. */
+export const CLOUDFRONT_ORIGIN_FACING_PREFIX_LIST = 'com.amazonaws.global.cloudfront.origin-facing';
+
+/**
+ * ID of the CloudFront origin-facing managed prefix list, resolved at deploy time by a custom
+ * resource (EC2 DescribeManagedPrefixLists). The ID differs per region; a context lookup would
+ * make `cdk synth` call AWS, which must work offline (contracts §6).
+ */
+function cloudFrontOriginFacingPrefixListId(scope: Construct): string {
+  const call: cr.AwsSdkCall = {
+    service: 'EC2',
+    action: 'describeManagedPrefixLists',
+    parameters: {
+      Filters: [{ Name: 'prefix-list-name', Values: [CLOUDFRONT_ORIGIN_FACING_PREFIX_LIST] }],
+    },
+    physicalResourceId: cr.PhysicalResourceId.of(CLOUDFRONT_ORIGIN_FACING_PREFIX_LIST),
+    outputPaths: ['PrefixLists.0.PrefixListId'],
+  };
+  const lookup = new cr.AwsCustomResource(scope, 'CloudFrontPrefixListLookup', {
+    onCreate: call,
+    onUpdate: call,
+    policy: cr.AwsCustomResourcePolicy.fromSdkCalls({ resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE }),
+    installLatestAwsSdk: false,
+    // Owned by the stack, so dev's wake/sleep cycles don't leave a log group behind each time.
+    logGroup: new logs.LogGroup(scope, 'CloudFrontPrefixListLookupLogs', {
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: RemovalPolicy.DESTROY,
+    }),
+  });
+  return lookup.getResponseField('PrefixLists.0.PrefixListId');
 }
 

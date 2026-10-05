@@ -46,7 +46,8 @@ Both profiles have the same shape (PRD §6):
     headers) and every query string is forwarded.
   - There's an HSTS response-headers policy and **no custom error responses**, so API 403s and 404s reach the browser
     unchanged.
-- **ALB** with a 120 s idle timeout, HTTPS listener and HTTP→HTTPS redirect. The target group health-checks `GET /healthz` on port 8080.
+- **ALB** with a 120 s idle timeout and an HTTPS listener, reachable only from CloudFront (see "ALB ingress" below). The
+  target group health-checks `GET /healthz` on port 8080.
 - **Fargate service:**
   - `desiredCount` 1;
   - minimum healthy 0% / maximum 100%, so two tasks never run with split rooms;
@@ -349,8 +350,19 @@ These are choices made where the PRD is silent:
     full teardown.
   - If zone deletion fails because ACM validation CNAMEs were left in it, delete them and retry.
   - In standard, buckets, the repository, logs and the secret are retained.
-- **ALB security group** accepts 80 and 443 from anywhere. Restricting it to CloudFront's origin-facing prefix list is a
-  possible later hardening step; the prefix-list ID is region-specific and needs a lookup.
+- **ALB ingress.** A stack-created ALB (dev, and standard without `useExisting.albListenerArn`) accepts only 443 from
+  CloudFront's origin-facing managed prefix list (`com.amazonaws.global.cloudfront.origin-facing`). Clients can't reach
+  the ALB directly and bypass CloudFront's headers (HSTS). (The prefix list covers all of CloudFront, so another
+  CloudFront distribution could still point at the ALB; a secret origin header checked by a listener rule would close
+  that, if it ever matters.)
+  - The prefix-list ID is region-specific. An `AwsCustomResource` (EC2 `DescribeManagedPrefixLists`) resolves it at
+    deploy time, so synth stays offline. The custom resource adds a small Lambda function and role to the stack.
+  - **Security group rule quota:** a rule that references this prefix list counts as about 55 rules toward the default
+    quota of 60 inbound rules per security group. So there is exactly one such rule (443). There is no port-80 rule and
+    no HTTP→HTTPS redirect listener: CloudFront connects to the origin `HTTPS_ONLY`, so port 80 is never used. Don't add
+    more rules to this security group without raising the quota first.
+  - With `useExisting.albListenerArn`, the shared ALB and its security group belong to the tech team and are left
+    alone. Restricting that ALB to CloudFront (or not) is their call; the stack only adds a host rule and certificate.
 - **`bin/dev-up` pushes the first `:dev` image itself.** It uses plain `docker push`, because ranger-deploy can't push until the
   service exists, and the service can't start until the image exists. Every later deploy goes through ranger-deploy.
 - **Builds use `--platform linux/amd64`,** and the task definition pins X86_64, because Apple-silicon laptops otherwise build
