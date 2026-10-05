@@ -537,11 +537,12 @@ The editor syncs by sending the whole document, and the last write wins. When tw
   - Deletion markers are created only by their author's edit; they now carry `authorId` and a per-author color.
   - Approve/reject changes the tree only on the resolving client, and that syncs.
   - Remote status and undo events update the sidebar only.
-- **Undo.** Yjs's UndoManager undoes only the local user's edits. A saved change stays in the sidebar and is undone by rejecting it.
+- **Undo.** A Yjs UndoManager that captures only the local user's own edits takes Ctrl+Z/Ctrl+Y. CollaborationPlugin's own manager would also undo the seed, approve/reject and marker renames.
+  - Undoing a saved change's text leaves its sidebar entry, which can be rejected.
 
 **Verified locally:**
 - headless convergence tests against the real server (`frontend/src/__integration__`);
-- a two-browser run (two isolated Chrome contexts on the real app) of the §14.4 matrix, plus reload, attribution, reject/approve, undo, outages and re-seeding.
+- a two-browser run (two isolated Chrome contexts on the real app, dev server and production build) of the §14.4 matrix, plus reload, attribution, reject/approve, undo, outages, re-seeding and editor remounts.
 
 **Known limits:**
 - **Text split by a concurrent edit.** When one user presses Enter, or applies a format, inside text the other user is typing in, the text typed concurrently into the part that was split off lands at the split point instead of moving with it.

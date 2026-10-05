@@ -14,22 +14,44 @@ export type CollabMode = 'yjs' | 'legacy';
 
 let collabModePromise: Promise<CollabMode> | null = null;
 
-async function loadCollabMode(): Promise<CollabMode> {
+/** The served mode, or null when the request failed (network error, 5xx). */
+async function requestCollabMode(): Promise<CollabMode | null> {
   try {
-    if (typeof fetch !== 'function') return 'legacy';
     const response = await fetch(`${API_URL}/config`);
-    if (!response || !response.ok) return 'legacy';
+    if (!response) return null;
+    // An older backend without the route answers 404: that's a definite 'legacy'.
+    if (response.status === 404) return 'legacy';
+    if (!response.ok) return null;
     const body = await response.json();
     return body && body.collabMode === 'yjs' ? 'yjs' : 'legacy';
   } catch {
-    return 'legacy';
+    return null;
   }
 }
 
-/** The collaboration mode for this page load (one request, shared by every caller). */
+async function loadCollabMode(): Promise<{ mode: CollabMode; definite: boolean }> {
+  if (typeof fetch !== 'function') return { mode: 'legacy', definite: true };
+  // One retry: a client that fell back to legacy while everyone else is in a Yjs room
+  // would do whole-document saves next to them.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const mode = await requestCollabMode();
+    if (mode) return { mode, definite: true };
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return { mode: 'legacy', definite: false };
+}
+
+/**
+ * The collaboration mode for this page load (shared by every caller). A failed lookup
+ * falls back to 'legacy' but isn't cached, so the next editor mount asks again.
+ */
 export function fetchCollabMode(): Promise<CollabMode> {
   if (!collabModePromise) {
-    collabModePromise = loadCollabMode();
+    const pending = loadCollabMode().then(({ mode, definite }) => {
+      if (!definite && collabModePromise === pending) collabModePromise = null;
+      return mode;
+    });
+    collabModePromise = pending;
   }
   return collabModePromise;
 }

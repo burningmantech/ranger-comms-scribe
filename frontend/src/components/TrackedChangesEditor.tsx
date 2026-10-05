@@ -683,7 +683,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Cleanup TransactionManager on unmount
   useEffect(() => {
     return () => {
-      transactionManagerRef.current?.destroy();
+      // Collaborative mode: the editor is unmounted on navigation (it's keyed by
+      // submission); save the in-progress edit instead of dropping it with the manager.
+      const tm = transactionManagerRef.current;
+      if (isCollab && tm?.getActiveTransaction() && lastLocalJsonRef.current) {
+        tm.settleTransaction(lastLocalJsonRef.current);
+      }
+      tm?.destroy();
     };
   }, []);
 

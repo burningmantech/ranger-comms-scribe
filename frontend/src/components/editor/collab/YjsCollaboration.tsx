@@ -10,12 +10,17 @@
  * Nothing here runs in legacy mode.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { Doc } from 'yjs';
+import { Doc, Transaction, UndoManager, XmlText } from 'yjs';
 import type { WebsocketProvider } from 'y-websocket';
 import { CollaborationPlugin } from '@lexical/react/LexicalCollaborationPlugin';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { $generateNodesFromDOM } from '@lexical/html';
 import {
+  CAN_REDO_COMMAND,
+  CAN_UNDO_COMMAND,
+  COMMAND_PRIORITY_HIGH,
+  REDO_COMMAND,
+  UNDO_COMMAND,
   $createParagraphNode,
   $createTextNode,
   $getRoot,
@@ -159,7 +164,9 @@ function YjsSession({
   const [editor] = useLexicalComposerContext();
   const providersRef = useRef<Array<{ websocketProvider: WebsocketProvider; doc: Doc }>>([]);
   const [websocketProvider, setWebsocketProvider] = useState<WebsocketProvider | null>(null);
+  const [doc, setDoc] = useState<Doc | null>(null);
   const destroyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const yjsDocMapRef = useRef<Map<string, Doc> | null>(null);
 
   const getSeedContentRef = useRef(getSeedContent);
   getSeedContentRef.current = getSeedContent;
@@ -177,10 +184,12 @@ function YjsSession({
           $getRoot().clear();
         }, { tag: SKIP_COLLAB_TAG });
       }
+      yjsDocMapRef.current = yjsDocMap;
       const sessionId = localStorage.getItem('sessionId') || '';
       const created = createSubmissionYjsProvider(id, yjsDocMap, sessionId);
       providersRef.current.push({ websocketProvider: created.websocketProvider, doc: created.doc });
       setWebsocketProvider(created.websocketProvider);
+      setDoc(created.doc);
       return created.provider;
     },
     // Both are fixed for this session (a new session is a new YjsSession instance).
@@ -226,6 +235,10 @@ function YjsSession({
         if (everSynced && !outageTimer) {
           outageTimer = setTimeout(() => {
             outageTimer = null;
+            // The next session's CollaborationPlugin reads yjsDocMap during its first render
+            // (before its factory runs) and would bind to this session's old doc if the
+            // entry were still there; this session's cleanup only removes it later.
+            yjsDocMapRef.current?.delete(submissionId);
             onLongOutageRef.current();
           }, FRESH_DOC_AFTER_OFFLINE_MS);
         }
@@ -240,7 +253,53 @@ function YjsSession({
       websocketProvider.off('status', onStatus);
       if (outageTimer) clearTimeout(outageTimer);
     };
-  }, [editor, websocketProvider, readOnly]);
+  }, [editor, websocketProvider, readOnly, submissionId]);
+
+  // Undo. CollaborationPlugin's own UndoManager tracks every update the binding writes,
+  // including the seed ('history-merge'), approve/reject ('tracked-changes-resolve') and
+  // marker renames ('tracked-changes-decoration'): Ctrl+Z would undo a reject (the server
+  // keeps it rejected) or even the whole seed. This UndoManager captures only the local
+  // user's own edits and takes Ctrl+Z / Ctrl+Y first (HIGH priority); Lexical's is never
+  // invoked. Its undo is applied as a 'historic' update, which the editor treats as local.
+  //
+  // This listener is registered before CollaborationPlugin's (which needs the binding,
+  // created on a later render), so for every update the flag is set before the binding
+  // writes the update's Yjs transaction.
+  const captureNextRef = useRef(false);
+  useEffect(() => {
+    return editor.registerUpdateListener(({ tags }) => {
+      captureNextRef.current = classifyCollabUpdate(tags) === 'local';
+    });
+  }, [editor]);
+  useEffect(() => {
+    if (!doc) return;
+    const undoManager = new UndoManager(doc.get('root', XmlText), {
+      // The binding is a plain object; the provider's remote updates have origin WebsocketProvider.
+      trackedOrigins: new Set([Object]),
+      captureTransaction: (tr: Transaction) =>
+        captureNextRef.current && !!tr.origin && typeof tr.origin === 'object' && 'collabNodeMap' in tr.origin,
+    });
+    const updateCanUndo = () => {
+      editor.dispatchCommand(CAN_UNDO_COMMAND, undoManager.undoStack.length > 0);
+      editor.dispatchCommand(CAN_REDO_COMMAND, undoManager.redoStack.length > 0);
+    };
+    undoManager.on('stack-item-added', updateCanUndo);
+    undoManager.on('stack-item-popped', updateCanUndo);
+    undoManager.on('stack-cleared', updateCanUndo);
+    const removeUndo = editor.registerCommand(UNDO_COMMAND, () => {
+      undoManager.undo();
+      return true;
+    }, COMMAND_PRIORITY_HIGH);
+    const removeRedo = editor.registerCommand(REDO_COMMAND, () => {
+      undoManager.redo();
+      return true;
+    }, COMMAND_PRIORITY_HIGH);
+    return () => {
+      removeUndo();
+      removeRedo();
+      undoManager.destroy();
+    };
+  }, [editor, doc]);
 
   // CollaborationPlugin only disconnects its provider on unmount; also destroy it (timers,
   // awareness) and its doc. Deferred so React StrictMode's simulated unmount/remount, which
