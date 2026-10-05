@@ -1,9 +1,10 @@
 # Docs: https://docs.github.com/en/actions
 #
-# Manual promotion of staging to production (PRD §7.3):
-#   - bin/deploy production copies the staging service's image to the production service;
-#   - the frontend is rebuilt from the commit that image was built from (its tag is the short
-#     commit ID) and synced to the production SPA bucket.
+# Manual promotion of staging to production (PRD §7.3), in this order:
+#   1. the frontend is built from the commit staging's image was built from (its tag is the
+#      short commit ID), so a build failure stops the run before production changes;
+#   2. bin/deploy production copies the staging service's image to the production service;
+#   3. that frontend build is synced to the production SPA bucket.
 
 name: Deploy to production
 
@@ -83,21 +84,8 @@ jobs:
           }
           echo "commit=${tag}" >> "${GITHUB_OUTPUT}"
 
-      - name: Deploy to production
-        run: ./bin/deploy production
-        env:
-          NOTIFY_SMTP_HOST: ${{ secrets.NOTIFY_SMTP_HOST }}
-          NOTIFY_SMTP_PORT: ${{ secrets.NOTIFY_SMTP_PORT }}
-          NOTIFY_SMTP_USER: ${{ secrets.NOTIFY_SMTP_USER }}
-          NOTIFY_SMTP_PASSWORD: ${{ secrets.NOTIFY_SMTP_PASSWORD }}
-          NOTIFY_EMAIL_RECIPIENT: ${{ secrets.NOTIFY_EMAIL_RECIPIENT }}
-          NOTIFY_EMAIL_SENDER: ${{ secrets.NOTIFY_EMAIL_SENDER }}
-          CI: true
-          PROJECT_NAME: Comms Scribe
-          REPOSITORY_ID: ${{ github.repository }}
-          BUILD_NUMBER: ${{ github.run_number }}
-          BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
+      # Build the frontend before touching production: if the build fails, the backend
+      # stays as it is instead of running the new version against the old SPA.
       - name: Check out the staging commit
         run: git worktree add --detach "${RUNNER_TEMP}/staging-src" "${{ steps.staging.outputs.commit }}"
 
@@ -113,6 +101,21 @@ jobs:
           npm run build
         env:
           CI: false  # Create React App fails the build on lint warnings when CI=true.
+
+      - name: Deploy to production
+        run: ./bin/deploy production
+        env:
+          NOTIFY_SMTP_HOST: ${{ secrets.NOTIFY_SMTP_HOST }}
+          NOTIFY_SMTP_PORT: ${{ secrets.NOTIFY_SMTP_PORT }}
+          NOTIFY_SMTP_USER: ${{ secrets.NOTIFY_SMTP_USER }}
+          NOTIFY_SMTP_PASSWORD: ${{ secrets.NOTIFY_SMTP_PASSWORD }}
+          NOTIFY_EMAIL_RECIPIENT: ${{ secrets.NOTIFY_EMAIL_RECIPIENT }}
+          NOTIFY_EMAIL_SENDER: ${{ secrets.NOTIFY_EMAIL_SENDER }}
+          CI: true
+          PROJECT_NAME: Comms Scribe
+          REPOSITORY_ID: ${{ github.repository }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Publish frontend to production
         run: ./bin/publish-frontend "${SPA_BUCKET}" "${DISTRIBUTION_ID}" "${RUNNER_TEMP}/staging-src/frontend/build"
