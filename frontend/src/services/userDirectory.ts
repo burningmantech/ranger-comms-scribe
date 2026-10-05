@@ -91,7 +91,6 @@ export function useUserDirectory(): typeof resolveUserName {
       listeners.delete(listener);
     };
   }, []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => (value?: string | null) => resolveUserName(value), [version]);
 }
 
