@@ -10,7 +10,7 @@ import { $isImageNode } from './editor/nodes/ImageNode';
 import { SubmissionWebSocketClient, WebSocketMessage, WebSocketManager } from '../services/websocketService';
 import { TransactionManager, Transaction } from '../services/transactionManager';
 import SaveIndicator from './SaveIndicator';
-import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange } from './editor/plugins/TrackedChangesPlugin';
+import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail } from './editor/plugins/TrackedChangesPlugin';
 import ApprovalTracker from './ApprovalTracker';
 import ActivityTimeline from './ActivityTimeline';
 import BatchActionBar from './BatchActionBar';
@@ -1523,14 +1523,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [editedProposedContent, submission, getDisplayableText, getRichTextContent, saveRevertedContent]);
 
-  // Background sync: fire-and-forget PUT to backend
-  const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string) => {
-    // Skip individual backend syncs during batch operations — the batch
-    // handler will make a single API call with all changes.
-    if (batchSyncInProgressRef.current) return;
+  // PUT one change's status to the backend. Resolves to the response body (null when it
+  // has none), or undefined when the request failed (already reported to the user).
+  const putChangeStatus = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string): Promise<any | undefined> => {
     try {
       const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) return;
+      if (!sessionId) return undefined;
       const body: Record<string, string> = { status, submissionId: submission.id };
       // Include the reverted editor content so the backend uses it instead of
       // recomputing rich text (which loses format reverts).
@@ -1548,39 +1546,66 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         const label = status === 'approved' ? 'accept' : 'reject';
         showErrorToast(`Failed to ${label} change (${response.status}): ${errorText || 'Unknown error'}`);
         onRefreshNeeded?.();
-      } else {
-        // A reject can cascade to dependent changes on the server; the response lists them.
-        let cascadeRejectedIds: string[] = [];
-        if (status === 'rejected') {
-          try {
-            const body = await response.json();
-            cascadeRejectedIds = resolvedChangeIds({ changeId, status, cascadeRejectedIds: body?.cascadeRejectedIds }).slice(1);
-          } catch { /* older server or empty body: no cascade ids */ }
-        }
-        // Broadcast to other connected users via WebSocket (cascade ids included, so
-        // collaborative-mode clients mark those rejected too)
-        const client = webSocketClientRef.current;
-        if (client?.sendChangeStatusUpdate) {
-          client.sendChangeStatusUpdate(changeId, status, cascadeRejectedIds);
-        }
-        // Collaborative mode: show the cascade-rejected changes as rejected here too.
-        if (isCollab && cascadeRejectedIds.length > 0) {
-          const resolver: ChangeResolver = { id: currentUser.email || currentUser.id, name: currentUser.name };
-          for (const id of cascadeRejectedIds) {
-            onRemoteChangeResolvedRef.current?.(id, 'rejected', resolver);
-          }
-          setLocalAddedChanges(prev => applyChangeStatus(prev, cascadeRejectedIds, 'rejected', resolver));
-        }
+        return undefined;
       }
+      // An older server or an empty body gives null (no cascade ids)
+      return await response.json().catch(() => null);
     } catch (error) {
       console.error(`Background sync failed for change ${changeId}:`, error);
       showErrorToast(`Failed to save change status: network error`);
       onRefreshNeeded?.();
+      return undefined;
     }
-  }, [onRefreshNeeded, submission.id, showErrorToast, isCollab, currentUser.email, currentUser.id, currentUser.name]);
+  }, [onRefreshNeeded, submission.id, showErrorToast]);
 
-  // Handle change decision (approve/reject) — fully local, no network on hot path
-  const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject') => {
+  // Background sync: fire-and-forget PUT to backend
+  const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string) => {
+    // Skip individual backend syncs during batch operations — the batch
+    // handler will make a single API call with all changes.
+    if (batchSyncInProgressRef.current) return;
+    const result = await putChangeStatus(changeId, status, revertedRichText);
+    if (result === undefined) return;
+
+    // A reject can cascade to dependent changes on the server; the response lists them.
+    const cascadeRejectedIds = status === 'rejected'
+      ? resolvedChangeIds({ changeId, status, cascadeRejectedIds: result?.cascadeRejectedIds }).slice(1)
+      : [];
+
+    if (isCollab && cascadeRejectedIds.length > 0) {
+      // Collaborative mode: revert the cascaded changes in the shared document too
+      // (newest first), and show them as rejected in this sidebar.
+      const reverted = revertCascadedChangesRef.current(cascadeRejectedIds);
+      const resolver: ChangeResolver = { id: currentUser.email || currentUser.id, name: currentUser.name };
+      for (const id of cascadeRejectedIds) {
+        onRemoteChangeResolvedRef.current?.(id, 'rejected', resolver);
+      }
+      setLocalAddedChanges(prev => applyChangeStatus(prev, cascadeRejectedIds, 'rejected', resolver));
+      // The first PUT carried the document before these reverts, so store it again. The
+      // cascaded changes are rejected on the server already, so this PUT cascades no
+      // further; it isn't broadcast (the single broadcast below covers it).
+      if (reverted && editedProposedContentRef.current) {
+        await putChangeStatus(changeId, 'rejected', editedProposedContentRef.current);
+      }
+    }
+
+    // Broadcast to other connected users via WebSocket, once, with the cascade ids
+    // included so collaborative-mode clients mark those rejected too.
+    const client = webSocketClientRef.current;
+    if (client?.sendChangeStatusUpdate) {
+      client.sendChangeStatusUpdate(changeId, status, cascadeRejectedIds);
+    }
+  }, [putChangeStatus, isCollab, currentUser.email, currentUser.id, currentUser.name]);
+
+  // Collaborative mode: changes whose reject by context failed once. A second reject marks
+  // them rejected without changing the document.
+  const restoreFailedIdsRef = useRef<Set<string>>(new Set());
+  // Set below (after handleChangeDecision); returns true when it changed the document.
+  const revertCascadedChangesRef = useRef<(cascadedIds: string[]) => boolean>(() => false);
+
+  // Handle change decision (approve/reject) — fully local, no network on hot path.
+  // Returns false when a collaborative reject couldn't revert the document (the change
+  // stays pending).
+  const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject'): boolean => {
     // Compute deleted text segments so the handler can match __pending_deletion__ nodes.
     // Also compute replacement pairs (adjacent delete→insert) so the reject handler
     // can remove inserted text that corresponds to each deletion.
@@ -1785,11 +1810,31 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     //    - reject deletion: replaces DeletedTextNode with TextNode (text restored)
     //      AND removes the corresponding inserted text for replacement pairs
     //    - reject format change: reverts block type (e.g., heading→paragraph)
-    window.dispatchEvent(new CustomEvent('resolve-tracked-change', {
-      detail: { changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds }
-    }));
+    //    - collaborative reject: reverts by context from the change's own before/after
+    //      documents, and reports the outcome in detail.result (synchronously)
+    const resolveDetail: ResolveTrackedChangeDetail = {
+      changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds,
+      richTextOldValue: change?.richTextOldValue, richTextNewValue: change?.richTextNewValue,
+    };
+    window.dispatchEvent(new CustomEvent('resolve-tracked-change', { detail: resolveDetail }));
 
     console.log(`[RESOLVE] editedProposedContentRef AFTER dispatch:`, editedProposedContentRef.current?.substring(0, 200));
+
+    // 2b. Collaborative reject that didn't revert the document (change not found, no rich
+    //     text, or no editor listening): nothing was changed. Leave the change pending and
+    //     say so; a second reject marks it rejected without touching the document.
+    if (isCollab && decision === 'reject' && resolveDetail.result?.restored !== true) {
+      if (!restoreFailedIdsRef.current.has(changeId)) {
+        restoreFailedIdsRef.current.add(changeId);
+        if (pendingResolveCountRef.current <= 0) {
+          transactionManager.resumeAfterChangeResolution();
+          if (!batchSyncInProgressRef.current) isResolvingChangeRef.current = false;
+        }
+        showErrorToast("Couldn't revert this change automatically: its text has been edited since. It is still pending. Edit the text by hand, or reject it again to mark it rejected without changing the document.");
+        return false;
+      }
+    }
+    restoreFailedIdsRef.current.delete(changeId);
 
     // 3. Remove CSS highlight decorations for additions
     removeDecorationsForChange(changeId);
@@ -1863,7 +1908,35 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         isResolvingChangeRef.current = false;
       }
     }, 500);
-  }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText, isCollab, currentUser.id, currentUser.email]);
+    return true;
+  }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText, isCollab, currentUser.id, currentUser.email, showErrorToast]);
+
+  // Changes the server rejected along with one the reviewer rejected (cascadeRejectedIds):
+  // revert them in the shared document too, newest first. Returns true when the document
+  // changed; syncChangeStatusToBackend then marks them rejected in the sidebar and stores
+  // the document again. Collaborative mode only: the resolve updates are bookkeeping there
+  // and never start or join a transaction, so the user's own edit in progress is left
+  // alone (no pause).
+  revertCascadedChangesRef.current = (cascadedIds: string[]) => {
+    const cascaded = cascadedIds
+      .map(id => trackedChanges.find(c => c.id === id))
+      .filter((c): c is TrackedChange => !!c && !!c.richTextOldValue && !!c.richTextNewValue)
+      .sort((x, y) => new Date(y.timestamp).getTime() - new Date(x.timestamp).getTime());
+    let reverted = false;
+    for (const c of cascaded) {
+      const detail: ResolveTrackedChangeDetail = {
+        changeId: c.id, action: 'reject', deletedTexts: [], pendingAuthorIds: c.changedBy ? [c.changedBy] : undefined,
+        richTextOldValue: c.richTextOldValue, richTextNewValue: c.richTextNewValue,
+      };
+      window.dispatchEvent(new CustomEvent('resolve-tracked-change', { detail }));
+      // A cascaded change that can't be located is left as it is (the server has rejected
+      // it already); often the first reject removed its text along with its own.
+      if (detail.result?.restored) reverted = true;
+      else console.warn(`[RESOLVE] cascaded change ${c.id} not reverted: ${detail.result?.reason ?? 'no editor'}`);
+    }
+    cascadedIds.forEach(id => removeDecorationsForChange(id));
+    return reverted;
+  };
 
   // Batch action handlers
   const pendingChanges = useMemo(
