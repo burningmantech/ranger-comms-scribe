@@ -554,6 +554,21 @@ The editor syncs by sending the whole document, and the last write wins. When tw
   - A follow-up could rebase the active transaction instead of settling it.
 - **Saved content.** The persisted proposed content is the last saver's full document, as before (see the §14.3 known limit).
 
+### 14.6 Results on the dev site (2026-10-05)
+
+Deployed with `COLLAB_MODE=yjs` and tested with two real Chrome profiles on app.scrivenly.com:
+
+| Scenario | Result |
+|---|---|
+| Second user joins: content seeded once, no duplicate | ✅ |
+| Simultaneous typing, different paragraphs | ✅ Both strings intact and in place |
+| Simultaneous typing, same paragraph | ✅ Both strings intact and in place |
+| Enter in a paragraph while the other user types in it | ❌ Converges with nothing lost, but the typist's remaining characters land at the split point |
+
+**In progress:**
+- restore each user's cursor after remote updates (Yjs relative positions, with a fallback that finds the cursor's surrounding text), which covers Enter, bold and typing at the same position;
+- one tracked change per user per edit instead of one per keystroke during concurrent typing.
+
 ## 13. Estimates
 
 | Phase | Effort |
