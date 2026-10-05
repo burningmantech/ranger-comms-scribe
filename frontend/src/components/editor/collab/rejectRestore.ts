@@ -32,7 +32,6 @@ import {
   SerializedLexicalNode,
 } from 'lexical';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
 
 /** Top-level blocks whose children are inline content (text, links, line breaks, images). */
