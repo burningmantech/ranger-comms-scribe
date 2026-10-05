@@ -22,7 +22,7 @@ async function createUserSession(user: User, env: Env): Promise<string> {
   }, env);
 }
 
-// Helper: create a token, store it in R2, and return the token string
+// Helper: create a token, store it in the object store, and return the token string
 async function createAndStoreToken(
   userId: string,
   tokenType: 'verification-token' | 'reset-token',
@@ -32,26 +32,26 @@ async function createAndStoreToken(
   const token = crypto.randomUUID();
   const expiresAt = Date.now() + expirationMs;
 
-  await env.R2.put(`${tokenType}/${token}`, JSON.stringify({ userId, expiresAt }), {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId }
+  await env.STORE.put(`${tokenType}/${token}`, JSON.stringify({ userId, expiresAt }), {
+    contentType: 'application/json',
+    metadata: { userId }
   });
 
   return token;
 }
 
-// Helper: validate a token from R2, return data or null
+// Helper: validate a token from the object store, return data or null
 async function validateToken(
   token: string,
   tokenType: 'verification-token' | 'reset-token',
   env: Env
 ): Promise<{ userId: string; expiresAt: number } | null> {
-  const tokenObj = await env.R2.get(`${tokenType}/${token}`);
+  const tokenObj = await env.STORE.get(`${tokenType}/${token}`);
   if (!tokenObj) return null;
 
   const tokenData = await tokenObj.json() as { userId: string; expiresAt: number };
   if (tokenData.expiresAt < Date.now()) {
-    await env.R2.delete(`${tokenType}/${token}`);
+    await env.STORE.delete(`${tokenType}/${token}`);
     return null;
   }
 
@@ -208,7 +208,7 @@ router.post('/verify-email', async (request: Request, env) => {
         }
 
         // Delete the used token
-        await env.R2.delete(`verification-token/${token}`);
+        await env.STORE.delete(`verification-token/${token}`);
 
         return json({ message: 'Email verification successful', verified: true });
     } catch (error) {
@@ -451,7 +451,7 @@ router.post('/reset-password', async (request: Request, env) => {
         }
 
         // Delete the used token
-        await env.R2.delete(`reset-token/${token}`);
+        await env.STORE.delete(`reset-token/${token}`);
 
         return json({ message: 'Password has been reset successfully' });
     } catch (error) {

@@ -1,6 +1,5 @@
-// Import the R2Bucket type from Cloudflare Workers types
-import { R2Bucket } from '@cloudflare/workers-types';
 import { KVNamespace } from '@cloudflare/workers-types';
+import { ObjectStore } from '../storage/objectStore';
 
 // Define more specific D1 types
 interface D1PreparedStatement {
@@ -21,7 +20,7 @@ interface D1Database {
 
 export interface Env {
     TURNSTILESECRET: any;
-    R2: R2Bucket;
+    STORE: ObjectStore;
     PUBLIC_URL?: string;
     FRONTEND_URL?: string;
     GOOGLE_CLIENT_ID?: string; // OAuth client ID that Google ID tokens must be issued to
@@ -51,17 +50,17 @@ export async function CreateSession(
         expiresAt: Date.now() + ttl * 1000, // Expiration time in milliseconds
     };
 
-    await env.R2.put(`session/${sessionId}`, JSON.stringify(sessionData), {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { userId },
-});
+    await env.STORE.put(`session/${sessionId}`, JSON.stringify(sessionData), {
+        contentType: 'application/json',
+        metadata: { userId },
+    });
 
 return sessionId;
 }
 
 export async function GetSession(
     sessionId: string, env: Env): Promise<Record<string, any> | null> {
-    const object = await env.R2.get(`session/${sessionId}`);
+    const object = await env.STORE.get(`session/${sessionId}`);
     if (!object) return null;
 
     const sessionData = await object.json() as { userId: string; data: Record<string, any>; expiresAt: number };
@@ -74,5 +73,5 @@ export async function GetSession(
 }
 
 export async function DeleteSession(sessionId: string, env: Env): Promise<void> {
-    await env.R2.delete(`session/${sessionId}`);
+    await env.STORE.delete(`session/${sessionId}`);
 }

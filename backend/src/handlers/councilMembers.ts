@@ -65,8 +65,8 @@ router.post('/members', withAuth, async (request: Request, env: Env) => {
 
     // Store council member in legacy location
     await putObject(`council_member/${newMember.id}`, newMember, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { memberId: newMember.id }
+      contentType: 'application/json',
+      metadata: { memberId: newMember.id }
     });
 
     // Also store in role-based location used by the approval system
@@ -97,8 +97,8 @@ router.post('/members', withAuth, async (request: Request, env: Env) => {
     targetUser.userType = UserType.CouncilManager;
 
     await putObject(`user/${newMember.email}`, targetUser, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: targetUser.id }
+      contentType: 'application/json',
+      metadata: { userId: targetUser.id }
     });
     console.log('✅ User type updated successfully');
 
@@ -137,8 +137,8 @@ router.put('/members/:id', withAuth, async (request: Request, env: Env) => {
 
   // Update in legacy location
   await putObject(`council_member/${id}`, updatedMember, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { memberId: id }
+    contentType: 'application/json',
+    metadata: { memberId: id }
   });
 
   // Also update in role-based storage
@@ -169,8 +169,8 @@ router.delete('/members/:id', withAuth, async (request: Request, env: Env) => {
   member.active = false;
   member.updatedAt = new Date().toISOString();
   await putObject(`council_member/${id}`, member, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { memberId: id }
+    contentType: 'application/json',
+    metadata: { memberId: id }
   });
 
   // Also remove from role-based storage

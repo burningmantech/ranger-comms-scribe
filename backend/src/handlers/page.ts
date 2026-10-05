@@ -141,7 +141,7 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
     
     // Get user name from session
     const userKey = `user/${request.user}`;
-    const userObject = await env.R2.get(userKey);
+    const userObject = await env.STORE.get(userKey);
     let userName = 'Admin';
     
     if (userObject) {

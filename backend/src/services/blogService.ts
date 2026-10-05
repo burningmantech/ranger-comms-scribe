@@ -28,7 +28,7 @@ export const getBlogPosts = async (env: Env, userId?: string): Promise<BlogPost[
                 }
                 
                 // If not in cache, get from R2
-                const postObject = await env.R2.get(object.key);
+                const postObject = await env.STORE.get(object.key);
                 if (!postObject) return null;
                 
                 const post = await postObject.json() as BlogPost;
@@ -99,7 +99,7 @@ export const getBlogPost = async (postId: string, env: Env): Promise<BlogPost | 
         }
         
         // If not in cache, get from R2
-        const postObject = await env.R2.get(postKey);
+        const postObject = await env.STORE.get(postKey);
         
         if (!postObject) {
             return null;
@@ -209,8 +209,8 @@ export const updateBlogPost = async (
             // Store the updated post in R2 and cache
             const postKey = `blog/posts/${postId}`;
             await putObject(postKey, updatedPost, env, {
-                httpMetadata: { contentType: 'application/json' },
-                customMetadata: { 
+                contentType: 'application/json',
+                metadata: { 
                     userId: existingPost.authorId,
                     updatedAt: updatedPost.updatedAt,
                     type: 'blog-post',
@@ -258,7 +258,7 @@ export const deleteBlogPost = async (
         
         // If not in cache, check R2
         if (!cachedPost) {
-            const postExists = await env.R2.head(postKey);
+            const postExists = await env.STORE.head(postKey);
             if (!postExists) {
                 return { 
                     success: false, 
@@ -328,7 +328,7 @@ export const getComments = async (postId: string, env: Env): Promise<BlogComment
             }
             
             // If not in cache, get from R2
-            const commentObject = await env.R2.get(object.key);
+            const commentObject = await env.STORE.get(object.key);
             if (!commentObject) return null;
             
             const comment = await commentObject.json() as BlogComment;
@@ -436,7 +436,7 @@ export const addComment = async (
             
             if (!parentComment) {
                 // If not in cache, get from R2
-                const parentCommentObj = await env.R2.get(commentKey);
+                const parentCommentObj = await env.STORE.get(commentKey);
                 
                 if (!parentCommentObj) {
                     return {
@@ -478,8 +478,8 @@ export const addComment = async (
             // Store the comment in R2 and cache
             const commentKey = `blog/comments/${postId}/${commentId}`;
             await putObject(commentKey, newComment, env, {
-                httpMetadata: { contentType: 'application/json' },
-                customMetadata: { 
+                contentType: 'application/json',
+                metadata: { 
                     userId: userId,
                     createdAt: isoTimestamp,
                     type: 'blog-comment',
@@ -536,7 +536,7 @@ export const deleteComment = async (
         
         // If not in cache, check R2
         if (!commentExists) {
-            commentExists = !!(await env.R2.head(commentKey));
+            commentExists = !!(await env.STORE.head(commentKey));
             if (!commentExists) {
                 return { 
                     success: false, 
@@ -559,7 +559,7 @@ export const deleteComment = async (
             }
             
             // If not in cache, get from R2
-            const commentObject = await env.R2.get(object.key);
+            const commentObject = await env.STORE.get(object.key);
             if (!commentObject) return null;
             
             const comment = await commentObject.json() as BlogComment;
@@ -637,8 +637,8 @@ export const blockUser = async (
         // Store the blocked user in R2 and cache
         const blockedUserKey = `blog/blocked-users/${userId}`;
         await putObject(blockedUserKey, blockedUser, env, {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: { 
+            contentType: 'application/json',
+            metadata: { 
                 blockedBy: blockedBy,
                 blockedAt: timestamp,
                 type: 'blocked-user',
@@ -678,7 +678,7 @@ export const unblockUser = async (
         
         // If not in cache, check R2
         if (!cachedBlockedUser) {
-            const blockedUserExists = await env.R2.head(blockedUserKey);
+            const blockedUserExists = await env.STORE.head(blockedUserKey);
             
             if (!blockedUserExists) {
                 return { 
@@ -719,11 +719,11 @@ export const isUserBlocked = async (userId: string, env: Env): Promise<boolean> 
         
         // If not in cache, check R2
         const blockedUserKey = `blog/blocked-users/${userId}`;
-        const blockedUserExists = await env.R2.head(blockedUserKey);
+        const blockedUserExists = await env.STORE.head(blockedUserKey);
         
-        // If found in R2 but not in cache, add to cache for future checks
+        // If found in the store but not in cache, add to cache for future checks
         if (blockedUserExists) {
-            const blockedUserObj = await env.R2.get(blockedUserKey);
+            const blockedUserObj = await env.STORE.get(blockedUserKey);
             if (blockedUserObj) {
                 const blockedUser = await blockedUserObj.json() as BlockedUser;
                 await putObject(`blocked:${userId}`, blockedUser, env, undefined, 3600); // Cache for 1 hour
@@ -765,7 +765,7 @@ export const getBlockedUsers = async (env: Env): Promise<BlockedUser[]> => {
             }
             
             // If not in cache, get from R2
-            const blockedUserObject = await env.R2.get(object.key);
+            const blockedUserObject = await env.STORE.get(object.key);
             if (!blockedUserObject) return null;
             
             const blockedUser = await blockedUserObject.json() as BlockedUser;

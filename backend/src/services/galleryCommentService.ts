@@ -30,7 +30,7 @@ export const getGalleryComments = async (mediaId: string, env: Env): Promise<Gal
             }
             
             // If not in cache, get from R2
-            const commentObject = await env.R2.get(object.key);
+            const commentObject = await env.STORE.get(object.key);
             if (!commentObject) return null;
             
             const comment = await commentObject.json() as GalleryComment;
@@ -161,7 +161,7 @@ export const deleteGalleryComment = async (
         
         if (!comment) {
             // If not in cache, try to get from R2
-            const commentObject = await env.R2.get(commentKey);
+            const commentObject = await env.STORE.get(commentKey);
             
             if (!commentObject) {
                 return { 
@@ -190,7 +190,7 @@ export const deleteGalleryComment = async (
                     let reply = await getObject<GalleryComment>(replyCacheKey, env);
                     
                     if (!reply) {
-                        const replyObject = await env.R2.get(object.key);
+                        const replyObject = await env.STORE.get(object.key);
                         if (!replyObject) return;
                         reply = await replyObject.json() as GalleryComment;
                     }
