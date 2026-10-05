@@ -145,12 +145,12 @@ export function logRetentionDays(config: ScribeConfig): number {
 /** Placeholder used when no account override is set; deploys to it fail safely (credential mismatch). */
 export const PLACEHOLDER_ACCOUNT = '000000000000';
 
-export function accountFromEnv(varName: string): string {
-  const value = process.env[varName];
-  if (value && !/^\d{12}$/.test(value)) {
+export function accountFromEnv(varName: string, fallback: string = PLACEHOLDER_ACCOUNT): string {
+  const value = process.env[varName] || fallback;
+  if (!/^\d{12}$/.test(value)) {
     throw new Error(`${varName} must be a 12-digit AWS account ID, got "${value}"`);
   }
-  return value || PLACEHOLDER_ACCOUNT;
+  return value;
 }
 
 export function regionFromEnv(varName: string, fallback = 'us-east-1'): string {

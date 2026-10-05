@@ -1,8 +1,8 @@
 import { ScribeConfig, accountFromEnv, azsFor, regionFromEnv } from '../lib/config';
 
 // Alex's personal AWS account: the low-cost `dev` profile (PRD §7.6).
-// Set SCRIBE_ALEX_DEV_ACCOUNT to the 12-digit account ID before deploying.
-const account = accountFromEnv('SCRIBE_ALEX_DEV_ACCOUNT');
+// Account 821327748249 (local CLI profile `mybestday`); SCRIBE_ALEX_DEV_ACCOUNT overrides it.
+const account = accountFromEnv('SCRIBE_ALEX_DEV_ACCOUNT', '821327748249');
 const region = regionFromEnv('SCRIBE_ALEX_DEV_REGION');
 const hostname = 'aws-dev.scrivenly.com';
 
@@ -35,8 +35,10 @@ const config: ScribeConfig = {
 
   ses: {
     domain: 'scrivenly.com',
-    // Set SCRIBE_ALEX_DEV_CREATE_SES_IDENTITY=false if scrivenly.com is already verified in the account.
-    createIdentity: process.env.SCRIBE_ALEX_DEV_CREATE_SES_IDENTITY !== 'false',
+    // scrivenly.com is already a verified SES identity in 821327748249 (set up 2026-10-04 for the
+    // live site), so the stack must not create it again. Set SCRIBE_ALEX_DEV_CREATE_SES_IDENTITY=true
+    // only for an account where it doesn't exist yet.
+    createIdentity: process.env.SCRIBE_ALEX_DEV_CREATE_SES_IDENTITY === 'true',
   },
 
   budget: {

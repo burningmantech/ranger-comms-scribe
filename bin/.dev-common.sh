@@ -2,7 +2,7 @@
 #
 # Environment:
 #   SCRIBE_CONFIG            dev config name (default alex-dev)
-#   SCRIBE_ALEX_DEV_ACCOUNT  required: the 12-digit account the dev stacks live in
+#   SCRIBE_ALEX_DEV_ACCOUNT  the 12-digit account the dev stacks live in (default 821327748249)
 #   AWS_PROFILE              optional: the AWS CLI profile for that account
 #   SCRIBE_ALEX_DEV_REGION   optional: default us-east-1 (the same variable the CDK config
 #                            reads, so the scripts and the stacks agree on the region)
@@ -17,6 +17,7 @@ ssm_prefix="/scribe/${config}"
 # shellcheck disable=SC2034  # used by the scripts that source this file
 compute_stack="scribe-dev-compute"
 
+export SCRIBE_ALEX_DEV_ACCOUNT="${SCRIBE_ALEX_DEV_ACCOUNT:-821327748249}"
 if [ -z "${SCRIBE_ALEX_DEV_ACCOUNT:-}" ]; then
     echo "Set SCRIBE_ALEX_DEV_ACCOUNT to the dev account ID (and AWS_PROFILE if needed)." >&2
     exit 64
