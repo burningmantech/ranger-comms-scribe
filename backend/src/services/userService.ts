@@ -7,20 +7,20 @@ import { DEFAULT_ROLES, Role } from './roleService';
 // Persist a user to R2 + cache (keyed by email, with UUID index)
 export async function saveUser(user: User, env: Env): Promise<void> {
   await putObject(`user/${user.email}`, user, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: user.id }
+    contentType: 'application/json',
+    metadata: { userId: user.id }
   });
   // Secondary index: UUID → email for fast lookup by either key
   await putObject(`user-by-id/${user.id}`, { email: user.email }, env, {
-    httpMetadata: { contentType: 'application/json' }
+    contentType: 'application/json'
   });
 }
 
 // Persist a group to R2 + cache
 async function saveGroup(group: Group, env: Env): Promise<void> {
   await putObject(`group/${group.id}`, group, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { updatedAt: group.updatedAt }
+    contentType: 'application/json',
+    metadata: { updatedAt: group.updatedAt }
   });
 }
 

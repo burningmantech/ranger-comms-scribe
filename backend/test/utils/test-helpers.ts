@@ -1,15 +1,9 @@
-// Define the R2Bucket interface for testing
-interface R2Bucket {
-  get: jest.Mock;
-  put: jest.Mock;
-  delete: jest.Mock;
-  list: jest.Mock;
-  head?: jest.Mock;
-}
+import { createMockObjectStore, MockObjectStore } from '../helpers/mockObjectStore';
+import { clearMemoryCache } from '../../src/services/cacheService';
 
 // Define the Env interface for testing purposes
 interface Env {
-  R2: R2Bucket;
+  STORE: MockObjectStore;
   ENV: {
     SESSION_SECRET: string;
     ADMIN_EMAIL: string;
@@ -27,15 +21,10 @@ interface Env {
 
 export const mockEnv = (): Env => {
   const mockStorage = new Map<string, string>();
+  clearMemoryCache();
   
   return {
-    R2: {
-      get: jest.fn(),
-      put: jest.fn(),
-      delete: jest.fn(),
-      list: jest.fn(),
-      head: jest.fn(),
-    },
+    STORE: createMockObjectStore(),
     ENV: {
       SESSION_SECRET: 'test-secret',
       ADMIN_EMAIL: 'admin@example.com',

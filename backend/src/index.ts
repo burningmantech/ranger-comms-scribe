@@ -18,9 +18,6 @@ import { SubmissionWebSocketServer } from './services/websocketService';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { initializeFirstAdmin, getUser } from './services/userService';
-import { setExistingContentPublic } from './migrations/setExistingContentPublic';
-import { ensureUserGroups } from './migrations/ensureUserGroups';
-import { backfillUserIdIndex } from './migrations/backfillUserIdIndex';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
 import { sendReminders } from './handlers/reminders';
@@ -143,11 +140,6 @@ const initializeApp = async (env: Env) => {
         // Initialize the first admin user
         await initializeFirstAdmin(env);
         
-        // Run migrations
-        await setExistingContentPublic(env);
-        await ensureUserGroups(env);
-        await backfillUserIdIndex(env);
-
         // Identify Council managers from org chart
         await identifyCouncilManagers(env);
 

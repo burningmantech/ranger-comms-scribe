@@ -244,7 +244,7 @@ router.get('/', withAuth, async (request: Request, env: Env) => {
     }
 });
 
-// Serve actual image files directly from R2 storage 
+// Serve actual image files directly from the object store 
 // This route MUST be the last GET route before fallback to avoid conflicts
 router.get('/:filename', async (request: Request, env: Env) => {
     try {
@@ -261,21 +261,21 @@ router.get('/:filename', async (request: Request, env: Env) => {
             return new Response('Invalid file extension', { status: 404 });
         }
         
-        // Try to get the actual image file from R2
+        // Try to get the actual image file from the object store
         const imageKey = `gallery/${filename}`;
-        console.log('🖼️ Looking for R2 key:', imageKey);
+        console.log('🖼️ Looking for object key:', imageKey);
         
-        const imageObject = await env.R2.get(imageKey);
+        const imageObject = await env.STORE.get(imageKey);
         if (!imageObject) {
-            console.log('❌ Image not found in R2:', imageKey);
+            console.log('❌ Image not found in store:', imageKey);
             return new Response('Image not found in R2', { status: 404 });
         }
         
         console.log('✅ Image found, serving:', imageKey);
         
-        // Get the content type from the file extension
+        // Get the content type from the file extension, falling back to the stored type
         const extension = filename.split('.').pop()?.toLowerCase();
-        let contentType = 'application/octet-stream';
+        let contentType = imageObject.contentType || 'application/octet-stream';
         
         switch (extension) {
             case 'jpg':

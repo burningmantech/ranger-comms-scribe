@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { deleteChangeHandler, batchCreateHandler } from '../../src/handlers/trackedChanges';
 import { CustomRequest } from '../../src/types';
+import { clearMemoryCache } from '../../src/services/cacheService';
 
 // Helper to create a mock CustomRequest
 function createMockRequest(overrides: {
@@ -15,22 +16,16 @@ function createMockRequest(overrides: {
   } as unknown as CustomRequest;
 }
 
-// Helper to create mock env with R2
+// Helper to create mock env with a mocked object store
 function createMockEnv() {
+  clearMemoryCache();
   return {
-    R2: {
+    STORE: {
       get: jest.fn(),
+      head: jest.fn().mockResolvedValue(null),
       put: jest.fn().mockResolvedValue(undefined),
       delete: jest.fn().mockResolvedValue(undefined),
       list: jest.fn().mockResolvedValue({ objects: [] }),
-    },
-    D1: {
-      prepare: jest.fn().mockReturnValue({
-        bind: jest.fn().mockReturnValue({
-          first: jest.fn().mockResolvedValue(null),
-          run: jest.fn().mockResolvedValue(undefined),
-        }),
-      }),
     },
   };
 }
@@ -60,7 +55,7 @@ describe('trackedChanges handlers', () => {
     };
 
     it('should allow the change author to delete their own change', async () => {
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange),
       });
 
@@ -81,7 +76,7 @@ describe('trackedChanges handlers', () => {
     });
 
     it('should allow Admin to delete any change', async () => {
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange),
       });
 
@@ -102,7 +97,7 @@ describe('trackedChanges handlers', () => {
     });
 
     it('should allow CommsCadre to delete any change', async () => {
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange),
       });
 
@@ -123,7 +118,7 @@ describe('trackedChanges handlers', () => {
     });
 
     it('should reject deletion by a non-author Member', async () => {
-      mockEnv.R2.get = jest.fn().mockResolvedValue({
+      mockEnv.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue(mockChange),
       });
 
@@ -142,7 +137,7 @@ describe('trackedChanges handlers', () => {
     });
 
     it('should return 404 for non-existent change', async () => {
-      mockEnv.R2.get = jest.fn().mockResolvedValue(null);
+      mockEnv.STORE.get = jest.fn().mockResolvedValue(null);
 
       const request = createMockRequest({
         params: { submissionId: 'sub-1', changeId: 'non-existent' },
@@ -196,8 +191,8 @@ describe('trackedChanges handlers', () => {
     });
 
     it('should accept batch with exactly 50 changes', async () => {
-      mockEnv.R2.put = jest.fn().mockResolvedValue(undefined);
-      mockEnv.R2.delete = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.put = jest.fn().mockResolvedValue(undefined);
+      mockEnv.STORE.delete = jest.fn().mockResolvedValue(undefined);
 
       const changes = Array.from({ length: 50 }, (_, i) => ({
         field: 'content',

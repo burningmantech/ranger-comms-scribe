@@ -100,7 +100,7 @@ describe('Blog Service', () => {
     jest.spyOn(global, 'Date').mockImplementation(() => mockDate as any);
     mockDate.toISOString = jest.fn(() => '2021-01-01T00:00:00Z');
     
-    // Setup mock blog posts in cache instead of R2
+    // Setup mock blog posts in cache instead of the store
     if (mockPosts && mockPosts.length > 0) {
       mockPosts.forEach((post) => {
         putObject(`blog/posts/${post.id}`, post, env);
@@ -108,7 +108,7 @@ describe('Blog Service', () => {
       });
     }
     
-    // Setup mock comments in cache instead of R2
+    // Setup mock comments in cache instead of the store
     if (mockComments && mockComments.length > 0) {
       mockComments.forEach((comment) => {
         putObject(`blog/comments/${comment.postId}/${comment.id}`, comment, env);
@@ -116,7 +116,7 @@ describe('Blog Service', () => {
       });
     }
     
-    // Setup mock blocked users in cache instead of R2
+    // Setup mock blocked users in cache instead of the store
     if (mockBlockedUsers && mockBlockedUsers.length > 0) {
       mockBlockedUsers.forEach((blockedUser) => {
         putObject(`blog/blocked-users/${blockedUser.userId}`, blockedUser, env);
@@ -230,7 +230,7 @@ describe('Blog Service', () => {
       expect(result.post?.authorId).toBe('admin@example.com');
       expect(result.post?.isPublic).toBe(true);
       
-      // Verify the post was stored in R2
+      // Verify the post was stored
       const storedPost = await getBlogPost(result.post!.id, env);
       expect(storedPost).toBeDefined();
       expect(storedPost?.title).toBe('Test Post');
@@ -301,7 +301,7 @@ describe('Blog Service', () => {
       expect(result.post?.published).toBe(false);
       expect(result.post?.updatedAt).toBe('2021-01-01T00:00:00Z');
       
-      // Verify the post was updated in R2
+      // Verify the post was updated
       const updatedPost = await getBlogPost('post1', env);
       expect(updatedPost?.title).toBe('Updated Post Title');
     });

@@ -76,7 +76,7 @@ export const getAllRoles = async (env: Env): Promise<Role[]> => {
       console.log('Initializing default roles...');
       // Initialize with default roles if none exist
       await putObject(ROLES_CACHE_KEY, DEFAULT_ROLES, env, {
-        httpMetadata: { contentType: 'application/json' }
+        contentType: 'application/json'
       });
 
       // Create corresponding groups for default roles
