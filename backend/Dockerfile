@@ -13,6 +13,7 @@ RUN npm run build \
 
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production \
+    NODE_OPTIONS=--enable-source-maps \
     PORT=8080
 WORKDIR /app
 # dist/server.js is a self-contained esbuild bundle; the pruned production
@@ -22,4 +23,4 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 USER node
 EXPOSE 8080
-CMD ["node", "--enable-source-maps", "dist/server.js"]
+CMD ["node", "dist/server.js"]

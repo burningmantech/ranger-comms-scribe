@@ -5,7 +5,7 @@ import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
-import { uploadMedia } from '../services/mediaService';
+import { uploadMedia, absolutizeMediaUrls } from '../services/mediaService';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
 import { getTrackedChanges } from '../services/trackedChangesService';
@@ -769,7 +769,8 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
   const toAddress = 'rangers-announce@burningman.org';
   try {
     const { sendEmail } = await import('../utils/email');
-    await sendEmail(toAddress, submission.title, submission.content, env);
+    // Media URLs are stored relative to the site; email clients need absolute ones.
+    await sendEmail(toAddress, submission.title, absolutizeMediaUrls(submission.content, env.PUBLIC_URL), env);
 
     submission.status = 'sent';
     submission.sentBy = user.id || user.email;

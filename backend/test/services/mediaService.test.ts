@@ -7,7 +7,8 @@ jest.mock('../../src/services/cacheService', () => createCacheServiceMock());
 import {
   getMedia,
   uploadMedia,
-  deleteMedia
+  deleteMedia,
+  absolutizeMediaUrls
 } from '../../src/services/mediaService';
 import { mockEnv, setupMockStorage } from './test-helpers';
 
@@ -382,5 +383,24 @@ describe('Media Service', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Mock cache error');
     });
+  });
+});
+
+describe('absolutizeMediaUrls', () => {
+  const PUBLIC_URL = 'https://aws-dev.example.com/api';
+
+  it('rewrites relative gallery URLs in HTML and Lexical JSON', () => {
+    const html = '<p><img src="/api/gallery/1_a.png/medium"><a href=\'/api/gallery/1_a.png\'>x</a></p>';
+    expect(absolutizeMediaUrls(html, PUBLIC_URL)).toBe(
+      '<p><img src="https://aws-dev.example.com/api/gallery/1_a.png/medium"><a href=\'https://aws-dev.example.com/api/gallery/1_a.png\'>x</a></p>'
+    );
+    const json = JSON.stringify({ type: 'image', src: '/api/gallery/2_b.jpg' });
+    expect(absolutizeMediaUrls(json, PUBLIC_URL)).toBe('{"type":"image","src":"https://aws-dev.example.com/api/gallery/2_b.jpg"}');
+  });
+
+  it('leaves absolute URLs, other paths and missing config alone', () => {
+    const content = '<img src="https://old.example.com/api/gallery/x.png"> see /api/gallery/ docs <img src="/api/page/x">';
+    expect(absolutizeMediaUrls(content, PUBLIC_URL)).toBe(content);
+    expect(absolutizeMediaUrls('<img src="/api/gallery/x.png">', undefined)).toBe('<img src="/api/gallery/x.png">');
   });
 });

@@ -82,6 +82,9 @@ export interface ObjectStore {
 | `GOOGLE_CLIENT_ID` | yes | the frontend's OAuth client ID |
 | `TURNSTILESECRET` | yes | secret, injected through the ECS task definition's `secrets` |
 | `DEV_BYPASS_AUTH` | no | `"true"` enables fake users (local only) |
+| `STORE_DRIVER` | no | local/test only: `s3` (default) or `memory` (in-process store, data lost on restart; `DATA_BUCKET` not required). Never set it in AWS. |
+
+The loader is `backend/src/config/env.ts`. It fails at startup, listing every missing required variable.
 
 AWS credentials come from the default credential chain: the task role on ECS, and a profile or MinIO keys locally. No static keys appear in code or config.
 

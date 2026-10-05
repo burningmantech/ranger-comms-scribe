@@ -9,6 +9,22 @@ import { ObjectInfo } from '../storage/objectStore';
 // changes. The SPA and API share one origin in AWS; local dev proxies /api.
 export const GALLERY_URL_PREFIX = '/api/gallery';
 
+/**
+ * Make relative gallery URLs absolute for content that leaves the site (email).
+ * Works on HTML attributes and on Lexical JSON ("src":"/api/gallery/...").
+ * Stored content stays relative.
+ */
+export function absolutizeMediaUrls(content: string, publicUrl: string | undefined): string {
+    if (!content || !publicUrl) return content;
+    let origin: string;
+    try {
+        origin = new URL(publicUrl).origin;
+    } catch {
+        return content;
+    }
+    return content.replace(/(["'(=]\s*)\/api\/gallery\//g, `$1${origin}/api/gallery/`);
+}
+
 // Define types for metadata objects
 interface MediaMetadata {
     customMetadata?: {
