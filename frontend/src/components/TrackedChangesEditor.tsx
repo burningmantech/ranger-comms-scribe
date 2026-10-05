@@ -18,6 +18,7 @@ import ChangeGroup, { groupChanges } from './ChangeGroup';
 import { ApprovalGates } from '../types/content';
 import type { CollabMode } from '../services/collabConfig';
 import './TrackedChangesEditor.css';
+import { UserName } from './UserName';
 
 const webSocketManager = new WebSocketManager();
 
@@ -2882,7 +2883,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     return (
       <div key={comment.id} className={`comment-item ${isReply ? 'comment-reply' : ''}`} style={{ marginLeft: `${depth * 20}px` }}>
         <div className="comment-header">
-          <span className="comment-author">{comment.authorId}</span>
+          <UserName className="comment-author" value={comment.authorId} />
           <span className="comment-time">
             {new Date(comment.createdAt).toLocaleString()}
           </span>
@@ -3352,7 +3353,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           </div>
 
           <div className="document-meta">
-            <span>Submitted by {submission.submittedBy}</span>
+            <span>Submitted by <UserName value={submission.submittedBy} /></span>
             <span className="separator">•</span>
             <span>{new Date(submission.submittedAt).toLocaleDateString()}</span>
           </div>
@@ -4060,7 +4061,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       {alreadySent && (
                         <span className="send-mode-sent-info">
                           <i className="fas fa-check-circle" style={{ marginRight: '4px', color: 'var(--accent-teal)' }} />
-                          Sent{submission.sentBy ? ` by ${submission.sentBy}` : ''}
+                          Sent{submission.sentBy ? <> by <UserName value={submission.sentBy} /></> : ''}
                           {submission.sentAt ? ` on ${new Date(submission.sentAt).toLocaleDateString()}` : ''}
                         </span>
                       )}
@@ -4126,7 +4127,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           data-change-id={change.id}
                         >
                           <div className="change-header">
-                            <span className="change-author" title={change.changedBy}>{change.changedBy}</span>
+                            <UserName className="change-author" value={change.changedBy} />
                             <span className="change-time" title={new Date(change.timestamp).toLocaleString()}>
                               {formatRelativeTime(new Date(change.timestamp))}
                             </span>
@@ -4359,7 +4360,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                         {submission.comments.map(comment => (
                           <div key={comment.id} className="submission-comment-item">
                             <div className="submission-comment-header">
-                              <span className="submission-comment-author">{comment.authorId}</span>
+                              <UserName className="submission-comment-author" value={comment.authorId} />
                               <span className="submission-comment-time">
                                 {formatRelativeTime(new Date(comment.createdAt))}
                               </span>
@@ -4422,7 +4423,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               data-change-id={change.id}
                             >
                               <div className="change-header">
-                                <span className="change-author" title={change.changedBy}>{change.changedBy}</span>
+                                <UserName className="change-author" value={change.changedBy} />
                                 <span className="change-time" title={new Date(change.timestamp).toLocaleString()}>
                                   {formatRelativeTime(new Date(change.timestamp))}
                                 </span>

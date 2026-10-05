@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ContentSubmission, Change, SubmissionStatus } from '../types/content';
+import { UserName } from './UserName';
 
 interface SubmissionHistoryProps {
   submissions: ContentSubmission[];
@@ -63,7 +64,7 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
 
     return (
       <div key={change.id} className="text-sm text-gray-600">
-        <span className="font-medium">{change.field}</span> changed by {change.changedBy} on {formatDate(change.timestamp)}
+        <span className="font-medium">{change.field}</span> changed by <UserName value={change.changedBy} /> on {formatDate(change.timestamp)}
       </div>
     );
   };
@@ -137,7 +138,7 @@ export const SubmissionHistory: React.FC<SubmissionHistoryProps> = ({
                     {submission.title}
                   </h3>
                   <p className="text-sm text-gray-600 mt-2">
-                    Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
+                    Submitted by <UserName value={submission.submittedBy} /> on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
                   </p>
                   <p className="text-sm text-gray-600">Status: {submission.status}</p>
                   {(() => {

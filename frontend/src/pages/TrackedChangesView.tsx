@@ -7,6 +7,7 @@ import { useContent } from '../contexts/ContentContext';
 import { API_URL } from '../config';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import { useCollabMode } from '../services/collabConfig';
+import { useUserDirectory } from '../services/userDirectory';
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -836,6 +837,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   onNavigate,
   children,
 }) => {
+  const userName = useUserDirectory();
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
 
@@ -851,7 +853,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
       <ReviewTopBar
         submissionId={submission.id}
         title={submission.title}
-        submitterName={submission.submittedBy}
+        submitterName={userName(submission.submittedBy)}
         submittedAt={submission.submittedAt instanceof Date ? submission.submittedAt : new Date(submission.submittedAt)}
         isUrgent={isUrgent}
         approvalGates={(submission as any).approvalGates}
