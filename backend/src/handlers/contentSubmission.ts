@@ -6,6 +6,7 @@ import { getObject, putObject, deleteObject, listObjects } from '../services/cac
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
 import { uploadMedia, absolutizeMediaUrls } from '../services/mediaService';
+import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
 import { getTrackedChanges } from '../services/trackedChangesService';
@@ -911,85 +912,38 @@ router.post('/editor-images/upload', withAuth, async (request: Request, env: any
   }
 });
 
-// Add the new proxy route for Google Docs images
-router.post('/editor-images/proxy-google-docs', withAuth, async (request: Request, env: any) => {
-  console.log('🔧 Proxy route handler called');
-  const user = (request as any).user;
-  console.log('👤 User from withAuth:', user);
-  
-  return await proxyGoogleDocsImage(request, env);
-});
-
-// Proxy endpoint for downloading Google Docs images
-export async function proxyGoogleDocsImage(request: Request, env: Env): Promise<Response> {
-  console.log('🔧 proxyGoogleDocsImage called');
-  
-  if (request.method !== 'POST') {
-    console.log('❌ Method not allowed:', request.method);
-    return new Response('Method not allowed', { status: 405 });
+// Import a public https image (pasted into the editor) so the browser can upload a copy to
+// the gallery. SSRF guards live in utils/imageImport. The old Google-Docs-only route is kept
+// as an alias for clients loaded before the rename.
+export async function importEditorImage(request: Request, options?: FetchPublicImageOptions): Promise<Response> {
+  let imageUrl: unknown;
+  try {
+    ({ imageUrl } = (await request.json()) as { imageUrl?: unknown });
+  } catch {
+    return json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (typeof imageUrl !== 'string' || !imageUrl || imageUrl.length > 8192) {
+    return json({ error: 'Invalid image URL' }, { status: 400 });
   }
 
   try {
-    console.log('📥 Parsing request JSON...');
-    const { imageUrl } = await request.json();
-    
-    if (!imageUrl || typeof imageUrl !== 'string') {
-      console.log('❌ Invalid image URL:', imageUrl);
-      return new Response('Invalid image URL', { status: 400 });
-    }
-
-    // Validate that it's a Google Docs/userusercontent URL for security
-    if (!imageUrl.includes('googleusercontent.com') && !imageUrl.includes('docs.google.com')) {
-      console.log('❌ Non-Google URL rejected:', imageUrl);
-      return new Response('Only Google Docs images are supported', { status: 400 });
-    }
-
-    console.log('🔄 Proxying Google Docs image:', imageUrl);
-
-    // Download the image from Google's servers
-    const imageResponse = await fetch(imageUrl, {
+    const { data, contentType } = await fetchPublicImage(imageUrl, options);
+    return new Response(new Uint8Array(data), {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
     });
-
-    console.log('📥 Google response status:', imageResponse.status);
-    console.log('📥 Google response content-type:', imageResponse.headers.get('content-type'));
-    console.log('📥 Google response content-length:', imageResponse.headers.get('content-length'));
-
-    if (!imageResponse.ok) {
-      console.error('❌ Failed to fetch image from Google:', imageResponse.status, imageResponse.statusText);
-      
-      // Try to get the response body for more details
-      try {
-        const errorText = await imageResponse.text();
-        console.error('❌ Google error response body:', errorText);
-      } catch (e) {
-        console.error('❌ Could not read Google error response');
-      }
-      
-      return new Response(`Failed to fetch image: ${imageResponse.status} ${imageResponse.statusText}`, { status: 400 });
-    }
-
-    // Get the image data
-    const imageData = await imageResponse.arrayBuffer();
-    const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
-
-    console.log('✅ Successfully proxied Google Docs image:', {
-      size: imageData.byteLength,
-      contentType
-    });
-
-    // Return the image data to the frontend
-    // Let the main router handle CORS via corsify
-    return new Response(imageData, {
-      headers: {
-        'Content-Type': contentType
-      }
-    });
-
   } catch (error) {
-    console.error('❌ Error proxying Google Docs image:', error);
-    return new Response('Internal server error', { status: 500 });
+    if (error instanceof ImageImportError) {
+      console.warn(`Editor image import refused (${error.status}): ${error.message}`);
+      return json({ error: error.message }, { status: error.status });
+    }
+    console.error('Editor image import failed:', error);
+    return json({ error: 'Could not import the image' }, { status: 502 });
   }
-} 
+}
+
+router.post('/editor-images/import', withAuth, (request: Request) => importEditorImage(request));
+router.post('/editor-images/proxy-google-docs', withAuth, (request: Request) => importEditorImage(request));
