@@ -23,6 +23,8 @@ export interface BackendEnv {
   /** Comma-separated, case-insensitive. */
   BOOTSTRAP_ADMIN_EMAILS: string;
   GOOGLE_CLIENT_ID: string;
+  /** Largest HTTP request body in bytes. Omit for the backend default (25 MiB). */
+  MAX_BODY_BYTES?: string;
 }
 
 export interface UseExisting {

@@ -53,6 +53,7 @@ All configuration is read from environment variables once at boot (`src/config/e
 | `GOOGLE_CLIENT_ID` | yes | the frontend's OAuth client ID (Google tokens must be issued to it) |
 | `TURNSTILESECRET` | yes | Cloudflare Turnstile secret (bot check on login/register/reset) |
 | `DEV_BYPASS_AUTH` | no | `true` enables fake dev users. Local only |
+| `MAX_BODY_BYTES` | no | largest request body in bytes; default `26214400` (25 MiB). Larger requests get 413 |
 | `STORE_DRIVER` | no | `memory` uses an in-process store instead of S3 (tests, quick runs; data lost on restart) |
 
 AWS credentials always come from the default credential chain: the ECS task role in AWS, a profile
