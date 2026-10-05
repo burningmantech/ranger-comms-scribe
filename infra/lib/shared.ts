@@ -67,6 +67,11 @@ export function repositoryFor(scope: Construct, config: ScribeConfig): ecr.IRepo
     return ecr.Repository.fromRepositoryName(scope, 'Repository', config.ecr.repositoryName);
   }
   const removalPolicy = removalPolicyFor(config);
+  // Dev only runs `:dev`. In the standard profile ranger-deploy tags every master
+  // push with its commit ID and production reuses an older staging tag from this
+  // same repository, so a small count would expire the image production runs
+  // (breaking task replacement and rollback).
+  const keepTagged = config.profile === 'dev' ? 10 : 200;
   return new ecr.Repository(scope, 'Repository', {
     repositoryName: config.ecr.repositoryName,
     imageScanOnPush: true,
@@ -77,10 +82,10 @@ export function repositoryFor(scope: Construct, config: ScribeConfig): ecr.IRepo
       { rulePriority: 1, description: 'Expire untagged images', tagStatus: ecr.TagStatus.UNTAGGED, maxImageAge: Duration.days(1) },
       {
         rulePriority: 2,
-        description: 'Keep the last 10 tagged images',
+        description: `Keep the last ${keepTagged} tagged images`,
         tagStatus: ecr.TagStatus.TAGGED,
         tagPatternList: ['*'],
-        maxImageCount: 10,
+        maxImageCount: keepTagged,
       },
     ],
   });
