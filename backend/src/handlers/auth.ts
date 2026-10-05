@@ -2,11 +2,12 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified } from '../services/userService';
+import { getUser, getUserStrict, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
 import { verifyGoogleIdToken } from '../utils/googleToken';
+import { getClientIp } from '../utils/clientIp';
 
 export const router = AutoRouter({ base : '/api/auth' });
 
@@ -22,7 +23,7 @@ async function createUserSession(user: User, env: Env): Promise<string> {
   }, env);
 }
 
-// Helper: create a token, store it in R2, and return the token string
+// Helper: create a token, store it in the object store, and return the token string
 async function createAndStoreToken(
   userId: string,
   tokenType: 'verification-token' | 'reset-token',
@@ -32,26 +33,26 @@ async function createAndStoreToken(
   const token = crypto.randomUUID();
   const expiresAt = Date.now() + expirationMs;
 
-  await env.R2.put(`${tokenType}/${token}`, JSON.stringify({ userId, expiresAt }), {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId }
+  await env.STORE.put(`${tokenType}/${token}`, JSON.stringify({ userId, expiresAt }), {
+    contentType: 'application/json',
+    metadata: { userId }
   });
 
   return token;
 }
 
-// Helper: validate a token from R2, return data or null
+// Helper: validate a token from the object store, return data or null
 async function validateToken(
   token: string,
   tokenType: 'verification-token' | 'reset-token',
   env: Env
 ): Promise<{ userId: string; expiresAt: number } | null> {
-  const tokenObj = await env.R2.get(`${tokenType}/${token}`);
+  const tokenObj = await env.STORE.get(`${tokenType}/${token}`);
   if (!tokenObj) return null;
 
   const tokenData = await tokenObj.json() as { userId: string; expiresAt: number };
   if (tokenData.expiresAt < Date.now()) {
-    await env.R2.delete(`${tokenType}/${token}`);
+    await env.STORE.delete(`${tokenType}/${token}`);
     return null;
   }
 
@@ -64,21 +65,24 @@ function buildTokenUrl(token: string, route: string, env: Env): string {
   return `${frontendUrl}/${route}?token=${token}`;
 }
 
-// Helper: send an email if SES is configured, return success boolean
+// Helper: send an email through SES, return success boolean
 async function sendEmailIfConfigured(
   to: string, subject: string, message: string, env: Env
 ): Promise<boolean> {
-  if (!env.SESKey || !env.SESSecret) {
-    console.warn('Email service not configured');
-    return false;
-  }
   try {
-    await sendEmail(to, subject, message, env.SESKey, env.SESSecret);
+    await sendEmail(to, subject, message, env);
     return true;
   } catch (error) {
     console.error('Error sending email:', error);
     return false;
   }
+}
+
+// Helper: when an email could not be sent, local development (DEV_BYPASS_AUTH)
+// gets the token back for convenience. Deployed environments never do: a failed
+// send (e.g. SES still in sandbox) must not hand out reset/verification tokens.
+function debugToken(token: string, env: Env): { debug?: string } {
+  return env.DEV_BYPASS_AUTH === 'true' ? { debug: 'Email not sent - token: ' + token } : {};
 }
 
 // Helper function to validate password strength
@@ -132,7 +136,7 @@ router.post('/register', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -145,27 +149,34 @@ router.post('/register', async (request: Request, env) => {
     }
 
     try {
-        // Check if user with this email already exists
-        const existingUser = await getUser(email, env);
-        if (existingUser && existingUser.passwordHash) {
+        // Check if user with this email already exists. This must include users
+        // without a password (Google sign-in or admin-created): getOrCreateUser
+        // returns an existing user unchanged, so registering their email would
+        // otherwise hand out a session for their account without any credential.
+        // Strict: a store error answers 500 below instead of looking like "no user".
+        const existingUser = await getUserStrict(email, env);
+        if (existingUser) {
             return json({ error: 'User with this email already exists' }, { status: 409 });
         }
 
-        // Create the user with password
+        // Create the user with password. Not promoted to bootstrap admin here: the
+        // address is unproven until /verify-email (see applyBootstrapAdmin).
         const user = await getOrCreateUser({ name, email, password }, env);
 
-        // Generate and store verification token
-        const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
-        const verificationUrl = buildTokenUrl(verificationToken, 'verify-email', env);
+        if (!user.verified) {
+            // Generate and store verification token
+            const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
+            const verificationUrl = buildTokenUrl(verificationToken, 'verify-email', env);
 
-        // Send verification email
-        await sendEmailIfConfigured(user.email, 'Verify Your Email', `
+            // Send verification email
+            await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Welcome to our platform!</h1>
             <p>Hello ${user.name},</p>
             <p>Thank you for registering. Please click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
         `, env);
+        }
 
         const sessionId = await createUserSession(user, env);
 
@@ -176,7 +187,7 @@ router.post('/register', async (request: Request, env) => {
             userId: user.email,
             approved: user.approved,
             isAdmin: user.isAdmin,
-            verified: false,
+            verified: !!user.verified,
             sessionId,
         });
     } catch (error) {
@@ -201,14 +212,16 @@ router.post('/verify-email', async (request: Request, env) => {
             return json({ error: 'Invalid or expired verification token' }, { status: 400 });
         }
 
-        // Mark user as verified
+        // Mark user as verified. A bootstrap admin is promoted now that the address is
+        // proven, with any password cleared (see promoteAfterEmailVerification).
         const user = await markUserAsVerified(tokenData.userId, env);
         if (!user) {
             return json({ error: 'Failed to verify user' }, { status: 500 });
         }
+        await promoteAfterEmailVerification(user, env);
 
         // Delete the used token
-        await env.R2.delete(`verification-token/${token}`);
+        await env.STORE.delete(`verification-token/${token}`);
 
         return json({ message: 'Email verification successful', verified: true });
     } catch (error) {
@@ -260,7 +273,7 @@ router.post('/resend-verification', async (request: Request, env) => {
         if (!sent) {
             return json({
                 message: 'Verification email would have been sent.',
-                debug: 'Email service not configured - token: ' + verificationToken
+                ...debugToken(verificationToken, env)
             });
         }
 
@@ -286,7 +299,7 @@ router.post('/login', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -294,10 +307,11 @@ router.post('/login', async (request: Request, env) => {
 
     try {
         // Authenticate the user
-        const user = await authenticateUser(email, password, env);
-        if (!user) {
+        const authenticated = await authenticateUser(email, password, env);
+        if (!authenticated) {
             return json({ error: 'Invalid email or password' }, { status: 401 });
         }
+        const user = await applyBootstrapAdmin(authenticated, env);
 
         const sessionId = await createUserSession(user, env);
 
@@ -369,7 +383,7 @@ router.post('/forgot-password', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -400,7 +414,7 @@ router.post('/forgot-password', async (request: Request, env) => {
         if (!sent) {
             return json({
                 message: 'If an account with that email exists, a password reset link has been sent.',
-                debug: 'Email service not configured - token: ' + resetToken
+                ...debugToken(resetToken, env)
             });
         }
 
@@ -426,7 +440,7 @@ router.post('/reset-password', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -451,7 +465,7 @@ router.post('/reset-password', async (request: Request, env) => {
         }
 
         // Delete the used token
-        await env.R2.delete(`reset-token/${token}`);
+        await env.STORE.delete(`reset-token/${token}`);
 
         return json({ message: 'Password has been reset successfully' });
     } catch (error) {
@@ -492,12 +506,23 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         return json({ error: 'Token is required' }, { status: 400 });
     }
 
+    let payload: Awaited<ReturnType<typeof verifyGoogleIdToken>>;
     try {
-        const payload = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
-        const { email, name, sub } = payload; // Extract email, name, and user ID (sub)
+        payload = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
+    } catch (error) {
+        console.error('Error verifying token:', error);
+        return json({ error: 'Invalid token' }, { status: 401 });
+    }
 
-        // Create or get the user
-        const user = await getOrCreateUser({ name, email }, env);
+    // Past this point a failure is ours (e.g. the store), not a bad token: answer
+    // 500 so the client retries rather than reporting an invalid login.
+    try {
+        const { email, name } = payload;
+
+        // Create or get the user. Google has verified the address, so mark it
+        // verified (dropping any unproven password) and promote bootstrap admins.
+        const existingOrNew = await getOrCreateUser({ name, email }, env);
+        const user = await applyBootstrapAdmin(await markVerifiedByGoogle(existingOrNew, env), env);
 
         const sessionId = await createUserSession(user, env);
 
@@ -511,8 +536,8 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
             sessionId,
         });
     } catch (error) {
-        console.error('Error verifying token:', error);
-        return json({ error: 'Invalid token' }, { status: 401 });
+        console.error('Error signing in with Google:', error);
+        return json({ error: 'Failed to sign in' }, { status: 500 });
     }
 });
 

@@ -36,8 +36,8 @@ router.put('/:email/type', withAuth, async (request: Request, env: Env) => {
 
   // Update user
   await putObject(`user/${email}`, userObj, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: userObj.id }
+    contentType: 'application/json',
+    metadata: { userId: userObj.id }
   });
 
   return json(userObj);

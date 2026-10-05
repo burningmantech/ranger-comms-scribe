@@ -7,7 +7,8 @@ jest.mock('../../src/services/cacheService', () => createCacheServiceMock());
 import {
   getMedia,
   uploadMedia,
-  deleteMedia
+  deleteMedia,
+  absolutizeMediaUrls
 } from '../../src/services/mediaService';
 import { mockEnv, setupMockStorage } from './test-helpers';
 
@@ -18,12 +19,6 @@ import {
   deleteObject,
   listObjects
 } from '../../src/services/cacheService';
-
-// Define the enhanced ReadableStream type that R2 expects
-interface EnhancedReadableStream extends ReadableStream<Uint8Array> {
-  values(): AsyncIterable<Uint8Array>;
-  [Symbol.asyncIterator](): AsyncIterator<Uint8Array>;
-}
 
 describe('Media Service', () => {
   let env: any;
@@ -89,20 +84,20 @@ describe('Media Service', () => {
           { 
             key: 'gallery/test-image.jpg', 
             size: 12345,
-            httpMetadata: { contentType: 'image/jpeg' },
-            customMetadata: { userId: 'user1', createdAt: '2023-01-01T00:00:00Z', isPublic: 'true' }
+            contentType: 'image/jpeg',
+            metadata: { userId: 'user1', createdAt: '2023-01-01T00:00:00Z', isPublic: 'true' }
           },
           { 
             key: 'gallery/another-image.png', 
             size: 54321,
-            httpMetadata: { contentType: 'image/png' },
-            customMetadata: { userId: 'user2', createdAt: '2023-01-02T00:00:00Z', isPublic: 'true' }
+            contentType: 'image/png',
+            metadata: { userId: 'user2', createdAt: '2023-01-02T00:00:00Z', isPublic: 'true' }
           },
           { 
             key: 'gallery/thumbnails/test-image.jpg', 
             size: 5000,
-            httpMetadata: { contentType: 'image/jpeg' },
-            customMetadata: { isThumbail: 'true' }
+            contentType: 'image/jpeg',
+            metadata: { isThumbail: 'true' }
           }
         ]
       });
@@ -121,23 +116,23 @@ describe('Media Service', () => {
           { 
             key: 'gallery/public-image.jpg', 
             size: 12345,
-            httpMetadata: { contentType: 'image/jpeg' },
-            customMetadata: { userId: 'user1', createdAt: '2023-01-01T00:00:00Z', isPublic: 'true' }
+            contentType: 'image/jpeg',
+            metadata: { userId: 'user1', createdAt: '2023-01-01T00:00:00Z', isPublic: 'true' }
           },
           { 
             key: 'gallery/private-image.png', 
             size: 54321,
-            httpMetadata: { contentType: 'image/png' },
-            customMetadata: { userId: 'user2', createdAt: '2023-01-02T00:00:00Z', isPublic: 'false' }
+            contentType: 'image/png',
+            metadata: { userId: 'user2', createdAt: '2023-01-02T00:00:00Z', isPublic: 'false' }
           }
         ]
       });
       
-      // Add R2.head method for backward compatibility in the mediaService
-      env.R2.head = jest.fn().mockImplementation(async (key: string) => {
+      // Mock STORE.head, which mediaService uses when metadata isn't cached
+      env.STORE.head = jest.fn().mockImplementation(async (key: string) => {
         if (key === 'gallery/public-image.jpg') {
           return {
-            customMetadata: { 
+            metadata: { 
               userId: 'user1', 
               createdAt: '2023-01-01T00:00:00Z', 
               isPublic: 'true' 
@@ -145,7 +140,7 @@ describe('Media Service', () => {
           };
         } else if (key === 'gallery/private-image.png') {
           return {
-            customMetadata: { 
+            metadata: { 
               userId: 'user2', 
               createdAt: '2023-01-02T00:00:00Z', 
               isPublic: 'false' 
@@ -169,8 +164,8 @@ describe('Media Service', () => {
           { 
             key: 'gallery/test-image.jpg', 
             size: 12345,
-            httpMetadata: {}, // No content type
-            customMetadata: { userId: 'user1', createdAt: '2023-01-01T00:00:00Z', isPublic: 'true' }
+            contentType: undefined, // No content type
+            metadata: { userId: 'user1', createdAt: '2023-01-01T00:00:00Z', isPublic: 'true' }
           }
         ]
       });
@@ -202,8 +197,7 @@ describe('Media Service', () => {
       const mockTimestamp = 1609459200000; // 2021-01-01
       jest.spyOn(Date, 'now').mockImplementation(() => mockTimestamp);
       
-      // Media service still uses R2.put for binary data
-      env.R2.put = jest.fn().mockResolvedValue({ etag: 'mock-etag-123456' });
+      // Media service writes binary data straight to the store
       
       const result = await uploadMedia(
         mediaFile,
@@ -225,21 +219,32 @@ describe('Media Service', () => {
       expect(mediaItem.isPublic).toBe(true);
       
       // Verify URLs
-      expect(mediaItem.url).toBe(`https://example.com/gallery/${mockTimestamp}_test-image.jpg`);
-      expect(mediaItem.thumbnailUrl).toBe(`https://example.com/gallery/${mockTimestamp}_test-image.jpg/thumbnail`);
+      expect(mediaItem.url).toBe(`/api/gallery/${mockTimestamp}_test-image.jpg`);
+      expect(mediaItem.thumbnailUrl).toBe(`/api/gallery/${mockTimestamp}_test-image.jpg/thumbnail`);
       
-      // Verify R2.put was called
-      expect(env.R2.put).toHaveBeenCalled();
+      // Verify binary data went to the store with content type and metadata
+      expect(env.STORE.put).toHaveBeenCalledWith(
+        `gallery/${mockTimestamp}_test-image.jpg`,
+        expect.any(ArrayBuffer),
+        expect.objectContaining({
+          contentType: 'image/jpeg',
+          metadata: expect.objectContaining({ userId: 'user1', isPublic: 'true' }),
+        })
+      );
+      const putKeys = env.STORE.put.mock.calls.map((call: any[]) => call[0]);
+      expect(putKeys).toEqual(expect.arrayContaining([
+        `gallery/thumbnails/${mockTimestamp}_test-image.jpg`,
+        `gallery/medium/${mockTimestamp}_test-image.jpg`,
+      ]));
+      expect(mediaItem.mediumUrl).toBe(`/api/gallery/${mockTimestamp}_test-image.jpg/medium`);
+      const stored = await env.STORE.backing.head(`gallery/${mockTimestamp}_test-image.jpg`);
+      expect(stored.contentType).toBe('image/jpeg');
     });
     
     it('should support private media files with group access', async () => {
       const mediaFile = createMockFile('private.jpg', 'image/jpeg', 12345);
       const thumbnailFile = createMockFile('thumbnail.jpg', 'image/jpeg', 5000);
       
-      // Mock R2.put for binary data
-      env.R2.put = jest.fn().mockImplementation((key, value, options) => {
-        return Promise.resolve({ etag: 'mock-etag-123456' });
-      });
       
       const result = await uploadMedia(
         mediaFile,
@@ -254,10 +259,10 @@ describe('Media Service', () => {
       expect(result.mediaItem?.isPublic).toBe(false);
       expect(result.mediaItem?.groupId).toBe('group1');
       
-      // Verify custom metadata in R2.put call
-      const putCall = env.R2.put.mock.calls[0];
-      expect(putCall[2].customMetadata.isPublic).toBe('false');
-      expect(putCall[2].customMetadata.groupId).toBe('group1');
+      // Verify metadata in the STORE.put call
+      const putCall = env.STORE.put.mock.calls[0];
+      expect(putCall[2].metadata.isPublic).toBe('false');
+      expect(putCall[2].metadata.groupId).toBe('group1');
     });
     
     it('should handle R2 errors gracefully', async () => {
@@ -284,8 +289,8 @@ describe('Media Service', () => {
 
   describe('deleteMedia', () => {
     it('should delete a media item and its thumbnail', async () => {
-      // The mediaService uses both cache and R2 directly
-      // We need to mock both getObject and env.R2.head/delete
+      // The mediaService uses both cache and the store directly
+      // We need to mock both getObject and env.STORE.head/delete
       
       // Mock getObject to return metadata
       (getObject as jest.Mock).mockImplementation((key) => {
@@ -295,13 +300,13 @@ describe('Media Service', () => {
         return Promise.resolve(null);
       });
       
-      // Mock R2.head to indicate both media and thumbnail exist
-      env.R2.head = jest.fn().mockImplementation(async (key) => {
+      // Mock STORE.head to indicate both media and thumbnail exist
+      env.STORE.head = jest.fn().mockImplementation(async (key) => {
         return {}; // Object exists for any key
       });
       
-      // Mock R2.delete for tracking
-      env.R2.delete = jest.fn().mockResolvedValue({});
+      // Mock STORE.delete for tracking
+      env.STORE.delete = jest.fn().mockResolvedValue(undefined);
       
       // Mock deleteObject
       (deleteObject as jest.Mock).mockResolvedValue(undefined);
@@ -312,11 +317,11 @@ describe('Media Service', () => {
       expect(result.message).toBe('Media deleted successfully');
       
       // In the real implementation, it's using deleteObject first
-      // and then performing additional R2.delete calls
+      // rather than calling STORE.delete itself
       expect(deleteObject).toHaveBeenCalled();
       
-      // Check if R2.delete was called
-      expect(env.R2.delete).toHaveBeenCalledTimes(0); // R2.delete is not directly called
+      // Check STORE.delete was not called directly
+      expect(env.STORE.delete).toHaveBeenCalledTimes(0); // STORE.delete is not directly called
     });
     
     it('should return error for non-existent media items', async () => {
@@ -378,5 +383,24 @@ describe('Media Service', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Mock cache error');
     });
+  });
+});
+
+describe('absolutizeMediaUrls', () => {
+  const PUBLIC_URL = 'https://aws-dev.example.com/api';
+
+  it('rewrites relative gallery URLs in HTML and Lexical JSON', () => {
+    const html = '<p><img src="/api/gallery/1_a.png/medium"><a href=\'/api/gallery/1_a.png\'>x</a></p>';
+    expect(absolutizeMediaUrls(html, PUBLIC_URL)).toBe(
+      '<p><img src="https://aws-dev.example.com/api/gallery/1_a.png/medium"><a href=\'https://aws-dev.example.com/api/gallery/1_a.png\'>x</a></p>'
+    );
+    const json = JSON.stringify({ type: 'image', src: '/api/gallery/2_b.jpg' });
+    expect(absolutizeMediaUrls(json, PUBLIC_URL)).toBe('{"type":"image","src":"https://aws-dev.example.com/api/gallery/2_b.jpg"}');
+  });
+
+  it('leaves absolute URLs, other paths and missing config alone', () => {
+    const content = '<img src="https://old.example.com/api/gallery/x.png"> see /api/gallery/ docs <img src="/api/page/x">';
+    expect(absolutizeMediaUrls(content, PUBLIC_URL)).toBe(content);
+    expect(absolutizeMediaUrls('<img src="/api/gallery/x.png">', undefined)).toBe('<img src="/api/gallery/x.png">');
   });
 });

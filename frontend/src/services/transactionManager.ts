@@ -104,6 +104,7 @@ export class TransactionManager {
       regionMap?: RegionMap;
       richTextOldValue?: string;
       richTextNewValue?: string;
+      diffAgainstOldValue?: boolean;
     },
   ) => Promise<TrackedChangeResponse>;
 
@@ -113,6 +114,17 @@ export class TransactionManager {
   ) => Promise<void>;
 
   private retryDelayMs: number;
+
+  // Collaborative mode: ask the server to diff each change against its own before-state
+  private diffAgainstOldValue: boolean;
+
+  // Transactions whose resolved before/after states are identical (nothing to save)
+  private unchangedTransactions = new WeakSet<Transaction>();
+
+  // Collaborative mode: recompute a transaction's before/after states when it settles
+  private resolveSnapshots:
+    | ((tx: Transaction, afterLexicalState: string | object) => { before: string | object; after: string | object } | null)
+    | null;
 
   // Pause detection state
   private pauseDelayMs: number;
@@ -131,6 +143,7 @@ export class TransactionManager {
           regionMap?: RegionMap;
           richTextOldValue?: string;
           richTextNewValue?: string;
+          diffAgainstOldValue?: boolean;
         },
       ) => Promise<TrackedChangeResponse>;
       deleteFunction?: (submissionId: string, changeId: string) => Promise<void>;
@@ -138,9 +151,26 @@ export class TransactionManager {
       retryDelayMs?: number;
       /** Override the pause/inactivity delay (default 2500ms). */
       pauseDelayMs?: number;
+      /**
+       * Collaborative (Yjs) mode: other users' saves interleave with this user's, so the
+       * server must diff each change against the before-state sent with it (the merged
+       * document just before this user's edit), not against the latest saved version,
+       * which may be another user's. Adds `diffAgainstOldValue: true` to every save.
+       */
+      diffAgainstOldValue?: boolean;
+      /**
+       * Collaborative (Yjs) mode: called when a transaction settles to supply its final
+       * before/after states. A transaction stays open while other users' edits merge in;
+       * its before-state is then the current document minus this user's edits, so the
+       * change contains only their own text. Return null to keep the recorded states.
+       */
+      resolveSnapshots?: (tx: Transaction, afterLexicalState: string | object) =>
+        { before: string | object; after: string | object } | null;
     },
   ) {
     this.submissionId = submissionId;
+    this.diffAgainstOldValue = options?.diffAgainstOldValue ?? false;
+    this.resolveSnapshots = options?.resolveSnapshots ?? null;
     this.retryDelayMs = options?.retryDelayMs ?? AUTOSAVE_RETRY_DELAY_MS;
     this.pauseDelayMs = options?.pauseDelayMs ?? DEFAULT_PAUSE_DELAY_MS;
 
@@ -286,6 +316,17 @@ export class TransactionManager {
     }
 
     const tx = this.activeTransaction;
+    if (this.resolveSnapshots) {
+      const resolved = this.resolveSnapshots(tx, afterLexicalState);
+      if (resolved) {
+        tx.beforeSnapshot = { lexicalState: resolved.before, text: extractTextFromLexical(resolved.before) };
+        afterLexicalState = resolved.after;
+        // Rebuilt from the same document: identical states mean the user's edits cancelled out.
+        if (typeof resolved.before === 'string' && resolved.before === resolved.after) {
+          this.unchangedTransactions.add(tx);
+        }
+      }
+    }
     const afterText = extractTextFromLexical(afterLexicalState);
 
     tx.afterSnapshot = {
@@ -421,6 +462,7 @@ export class TransactionManager {
 
   private async autosave(tx: Transaction): Promise<void> {
     if (!tx.afterSnapshot) return;
+    if (this.unchangedTransactions.has(tx)) return;
 
     // Skip saving if before and after are truly identical (both text AND structure).
     // We must still save when:
@@ -448,6 +490,7 @@ export class TransactionManager {
         richTextNewValue: typeof tx.afterSnapshot.lexicalState === 'string'
           ? tx.afterSnapshot.lexicalState
           : JSON.stringify(tx.afterSnapshot.lexicalState),
+        ...(this.diffAgainstOldValue ? { diffAgainstOldValue: true } : {}),
       });
 
       tx.status = 'saved';
@@ -478,6 +521,7 @@ export class TransactionManager {
           richTextNewValue: typeof tx.afterSnapshot!.lexicalState === 'string'
             ? tx.afterSnapshot!.lexicalState
             : JSON.stringify(tx.afterSnapshot!.lexicalState),
+          ...(this.diffAgainstOldValue ? { diffAgainstOldValue: true } : {}),
         });
 
         tx.status = 'saved';

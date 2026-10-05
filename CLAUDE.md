@@ -10,14 +10,19 @@ Comms Scribe is a collaborative content management platform hosted at scrivenly.
 
 This is a monorepo with two main components:
 
-### Backend (Cloudflare Worker)
-- **Runtime**: Cloudflare Workers with TypeScript
-- **Router**: itty-router for HTTP routing
-- **Database**: Cloudflare D1 (SQLite)
-- **Storage**: Cloudflare R2 for media files
-- **Real-time**: Durable Objects for WebSocket connections
-- **Authentication**: Google OAuth with session management
+### Backend (Node server)
+- **Runtime**: Node 24, TypeScript, one process (`src/server.ts`) on `PORT` (default 8080)
+- **Router**: itty-router v5, served through `@whatwg-node/server` (`src/httpServer.ts`)
+- **Storage**: S3 through the `ObjectStore` interface (`env.STORE`, `src/storage/`); MinIO locally, or an in-memory store
+- **Cache**: in-memory TTL map in front of the store (`src/services/cacheService.ts`)
+- **Real-time**: `ws` WebSocket rooms in the same process (`src/realtime/rooms.ts`)
+- **Email**: SES v2 with the default AWS credential chain (`src/utils/email.ts`)
+- **Authentication**: Google sign-in and email/password, sessions stored in the object store
+- **Container**: `backend/Dockerfile` (node:24-alpine), runs `node dist/server.js`
 - **Location**: `backend/` directory
+
+The service is being moved from Cloudflare to AWS (ECS Fargate behind CloudFront and an ALB).
+See `docs/plans/2026-10-04-aws-migration-prd.md` and `docs/plans/2026-10-04-aws-migration-contracts.md`.
 
 ### Frontend (React SPA)
 - **Framework**: React 18 with TypeScript
@@ -34,10 +39,18 @@ This is a monorepo with two main components:
 ```bash
 cd backend
 npm install           # Install dependencies
-npm run dev           # Start local dev server on port 8787
-npm run build         # Compile TypeScript
+npm run dev           # tsx watch src/server.ts (needs env vars, see below)
+npm run build         # esbuild bundle -> dist/server.js
+npm start             # node dist/server.js
+npm run typecheck     # tsc --noEmit
 npm test              # Run Jest tests
-npm run deploy        # Deploy to Cloudflare Workers
+```
+
+Quick local run without S3 (data is lost on restart):
+```bash
+cd backend
+STORE_DRIVER=memory DEV_BYPASS_AUTH=true PUBLIC_URL=http://localhost:8080/api \
+  FRONTEND_URL=http://localhost:3000 GOOGLE_CLIENT_ID=x TURNSTILESECRET=x npm run dev
 ```
 
 ### Frontend
@@ -45,22 +58,24 @@ npm run deploy        # Deploy to Cloudflare Workers
 cd frontend
 npm install                    # Install dependencies
 npm run start                  # Start dev server (uses production API)
-npm run start:local-backend    # Start dev server with local backend
+npm run start:local-backend    # Start dev server against http://localhost:8080/api
 npm run build                  # Build for production
 npm test                       # Run tests
-npm run deploy                 # Deploy to Cloudflare Pages
+# Deploys: ../bin/dev-deploy (Alex's dev account) or GitHub Actions (Rangers); see infra/README.md
 ```
 
 ### Running Full Stack Locally
 ```bash
-# Terminal 1 - Backend
-cd backend && npm run dev
+# Terminal 1 - MinIO + backend in Docker (API on http://localhost:8080/api)
+docker compose up -d --build          # add DEV_BYPASS_AUTH=true for fake dev users
+# or: run MinIO from compose and the backend with `npm run dev` (S3_ENDPOINT=http://localhost:9000,
+#     DATA_BUCKET=scribe-local, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY=minioadmin)
 
 # Terminal 2 - Frontend
 cd frontend && npm run start:local-backend
 ```
 
-Frontend will be available at http://localhost:3000
+Frontend will be available at http://localhost:3000. `docker compose down -v` stops everything and deletes the MinIO data.
 
 ## Key Architecture Patterns
 
@@ -87,9 +102,11 @@ The system uses a multi-tier role-based access control:
 
 3. **Authentication Flow**:
    - Google OAuth handled in `backend/src/handlers/auth.ts`
-   - Sessions stored in Cloudflare KV
+   - Sessions stored in the object store (`session/<id>`)
    - Session ID passed via `Authorization: Bearer <token>` header
    - Auth wrappers in `backend/src/authWrappers.ts` provide middleware
+   - **First admin**: users whose email is in `BOOTSTRAP_ADMIN_EMAILS` become approved, verified Admins on
+     register/login (`applyBootstrapAdmin()` in `userService.ts`). There is no hardcoded admin.
 
 4. **Route Protection**:
    - Backend: Use `withAuth` or `withAdminAuth` wrappers
@@ -113,42 +130,53 @@ Content submissions go through a multi-stage approval process:
 
 3. **Change Tracking** (`backend/src/handlers/trackedChanges.ts`):
    - All content changes are tracked as revisions
-   - Stored in R2 for versioning
+   - Stored in the object store for versioning
    - Changes can be accepted/rejected
    - Tracked changes service in `backend/src/services/trackedChangesService.ts`
 
 ### Real-time Collaboration
 
-WebSocket-based collaboration is implemented using Cloudflare Durable Objects:
+WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST API:
 
-1. **WebSocket Server** (`backend/src/services/websocketService.ts`):
-   - `SubmissionWebSocketServer` is a Durable Object
-   - Manages rooms for each submission
-   - Tracks connected users and their cursors
-   - Broadcasts updates to all room participants
+1. **Rooms** (`backend/src/realtime/rooms.ts`, replaces the old Durable Object):
+   - Upgrades on `/api/ws/submissions/:id` and `/api/ws/documents/:id` (`?sessionId=`) are handled in
+     `src/httpServer.ts`; `authorizeRoomConnection()` in `handlers/websocket.ts` checks the session and access
+   - A plain relay: stamps the sender identity (`userId` = email, `userName`, `userEmail`) and a per-room `seq`
+     on every relayed message; answers ping/heartbeat itself; sends a server `ping` every 30 s
+   - Room keys are `submission:<id>` and `document:<id>`
+   - REST handlers call `broadcastToSubmissionRoom()` / `broadcastToDocumentRoom()` directly
+   - All state is in memory, so the service runs as a single task
 
-2. **WebSocket Client** (`frontend/src/services/websocketService.ts`):
+2. **Yjs collaboration rooms** (`backend/src/realtime/yjsRooms.ts`, contracts §9):
+   - Upgrades on `/api/ws/yjs/submissions/:id` (`?sessionId=`), routed in `src/httpServer.ts` and authorized
+     with the same `authorizeRoomConnection()`; a separate path from the JSON rooms above
+   - Standard y-websocket binary protocol (sync 0, awareness 1, query awareness 3) via `y-protocols`, so the
+     stock `y-websocket` `WebsocketProvider` (verified with 3.1.0) is the client
+   - One in-memory `Y.Doc` per submission; updates are applied and relayed, awareness is relayed (echoed to
+     the sender too) and removed on disconnect; the room is destroyed 30 s after the last client leaves
+   - **Seeding rule:** while the doc is empty only the first client (seeder) gets its sync step 1 answered;
+     others are held (no doc state in or out) until the seed lands, then get step 2 with the full state.
+     If the seeder leaves before seeding, the next held client is promoted. This keeps Lexical's
+     `CollaborationPlugin` from bootstrapping saved content twice
+   - Keepalive uses WebSocket protocol pings (never JSON frames on this socket)
+
+3. **WebSocket Client** (`frontend/src/services/websocketService.ts`):
    - Connects to submission rooms
    - Sends/receives real-time updates
    - Handles cursor positions and user presence
 
-3. **Message Types**:
-   - `user_joined`, `user_left`: User presence
+4. **Message Types** (JSON rooms):
+   - `connected`, `room_state`, `user_joined`, `user_left`: User presence
    - `cursor_position`: Real-time cursor tracking
-   - `text_operation`: Collaborative text operations
-   - `content_updated`: Content changes
-   - `comment_added`, `approval_added`: Workflow updates
-   - `heartbeat`/`heartbeat_response`: Connection health
+   - `realtime_content_update`: full Lexical state while typing (last write wins)
+   - `content_updated`, `comment_added`, `approval_added`, `status_changed`: Workflow updates
+   - `ping`/`pong`, `heartbeat`/`heartbeat_response`: Connection health
 
 ### Data Caching
 
-The system uses a multi-layer caching strategy (`backend/src/services/cacheService.ts`):
-
-1. **Memory Cache**: In-worker memory with TTL
-2. **KV Cache**: Cloudflare KV for distributed caching
-3. **R2 Storage**: Long-term storage for large objects
-
-Cache keys follow pattern: `{entity}:{id}` (e.g., `submission:abc123`)
+`backend/src/services/cacheService.ts` keeps a module-level in-memory TTL map in front of `env.STORE`.
+Listings (`__list__:<prefix>`) are cached in memory only; everything written with `putObject` also goes
+to the store. Always invalidate when updating entities.
 
 ### Service Layer Pattern
 
@@ -207,33 +235,31 @@ When working with the editor:
 ## Environment & Configuration
 
 ### Backend Environment Variables
-Defined in `backend/wrangler.toml`:
-- `PUBLIC_URL`: API base URL
-- `FRONTEND_URL`: Frontend base URL
-- `SESKey`: AWS SES key for emails
+Read once at boot by `backend/src/config/env.ts` (full list in the contracts doc, section 3):
+- `PORT` (default 8080), `PUBLIC_URL`, `FRONTEND_URL`, `CORS_ORIGINS` (CSV)
+- `DATA_BUCKET`, `S3_ENDPOINT` (MinIO), `AWS_REGION`
+- `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` (CSV)
+- `BOOTSTRAP_ADMIN_EMAILS` (CSV), `GOOGLE_CLIENT_ID`, `TURNSTILESECRET`
+- `DEV_BYPASS_AUTH=true` for fake dev users (local only)
+- `STORE_DRIVER=memory` to skip S3 (tests, quick local runs)
 
-### Backend Bindings (Cloudflare)
-- `D1`: Database binding
-- `R2`: Storage binding
-- `SUBMISSION_WEBSOCKET`: Durable Object binding
+AWS credentials come from the default credential chain (task role on ECS; a profile or the MinIO keys locally).
 
 ### Frontend Configuration
 - `REACT_APP_API_URL`: Backend API URL (default: production, override for local dev)
 
-## Database
+## Data Storage
 
-Cloudflare D1 (SQLite) database stores:
-- Users, groups, roles
-- Content submissions, comments, approvals
-- Blog posts, pages
-- Council managers, comms cadre members
-
-Migrations are TypeScript functions in `backend/src/migrations/` that run on application startup.
+There is no database. Everything (users, groups, sessions, submissions, comments, approvals, tracked
+changes, blog posts, pages, media) is JSON or binary objects in the object store, keyed by prefix
+(e.g. `user/<email>`, `content_submissions/<id>`, `gallery/<file>`).
 
 ## Media Handling
 
 Media files (`backend/src/services/mediaService.ts`):
-- Uploaded to Cloudflare R2
+- Uploaded to the object store (`gallery/`, `gallery/thumbnails/`, `gallery/medium/`)
+- URLs are stored relative to the site origin (`/api/gallery/<file>`); in local dev `frontend/src/setupProxy.js`
+  forwards them from the CRA dev server to the backend
 - Automatic image resizing (thumbnail, medium, full)
 - Supports images, videos, documents
 - Access control via `isPublic` flag and `groupId`
@@ -241,25 +267,29 @@ Media files (`backend/src/services/mediaService.ts`):
 ## Notifications
 
 Email notifications (`backend/src/services/notificationService.ts`):
-- Sends via AWS SES
+- Sends via AWS SES v2 (`EMAIL_FROM`, `EMAIL_BCC`, `SES_REGION`)
 - User notification preferences stored per user
 - Notification types: replies, group content, approvals
 
 ## Common Gotchas
 
 1. **Sessions**: Session IDs must be passed in `Authorization` header, not cookies
-2. **CORS**: Frontend and backend have explicit CORS configuration - both must allow the origin
-3. **WebSocket Rooms**: Each submission has its own room identified by submission ID
+2. **CORS**: In AWS the SPA and API share one origin; locally the backend allows `CORS_ORIGINS`
+   (default `FRONTEND_URL` plus `http://localhost:3000`)
+3. **WebSocket Rooms**: Each submission has its own room, keyed `submission:<id>`
 4. **Approval Logic**: Complex logic deduplicates approvals by email - see `recomputeApprovalStatus()`
-5. **Cloudflare Workers**: No file system access - use R2 for storage
-6. **Durable Objects**: Stateful objects for WebSockets - have their own isolated state
+5. **Storage**: Code never imports a concrete store; use `env.STORE` (or the cacheService helpers)
+6. **In-memory state**: Rooms and the cache live in process memory. One task only; a restart drops
+   connections (clients reconnect) and empties the cache (data is in S3)
 7. **Cache Invalidation**: Always invalidate cache when updating entities
+8. **Startup work** (`initializeApp`) runs once at boot in `server.ts`, never per request
+9. **Client IP**: use `getClientIp()` (CloudFront-Viewer-Address, then X-Forwarded-For)
 
 ## Deployment
 
-- **Backend**: Deployed to Cloudflare Workers via `wrangler deploy`
-- **Frontend**: Static assets deployed to Cloudflare Pages
+- **Backend**: container image from `backend/Dockerfile`, run on ECS Fargate behind CloudFront and an ALB
+  (infrastructure and CI are added in Phase 3 of the migration)
+- **Health check**: `GET /healthz` returns `{"ok":true}`
+- **Frontend**: static build, served from the same origin as the API
 - **Production URL**: https://scrivenly.com
 - **API URL**: https://scrivenly.com/api
-
-Both deployments are managed via Wrangler CLI.

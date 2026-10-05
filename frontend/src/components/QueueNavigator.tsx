@@ -49,6 +49,10 @@ const QueueNavigator: React.FC<QueueNavigatorProps> = ({ currentSubmissionId, on
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // The rich-text editor is a contenteditable element; typing [ or ] there must
+      // not jump to another submission.
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === '[') handlePrevious();
       if (e.key === ']') handleNext();
     };

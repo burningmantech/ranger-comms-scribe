@@ -2,6 +2,28 @@ import { GetSession, Env } from '../utils/sessionManager';
 import { MediaItem, UserType, User } from '../types';
 import { getUser, canAccessGroup } from '../services/userService';
 import { getObject, putObject, deleteObject, listObjects, removeFromCache } from './cacheService';
+import { ObjectInfo } from '../storage/objectStore';
+
+// Media URLs are stored and returned relative to the site origin
+// (/api/gallery/<file>[/thumbnail|/medium]) so saved content survives hostname
+// changes. The SPA and API share one origin in AWS; local dev proxies /api.
+export const GALLERY_URL_PREFIX = '/api/gallery';
+
+/**
+ * Make relative gallery URLs absolute for content that leaves the site (email).
+ * Works on HTML attributes and on Lexical JSON ("src":"/api/gallery/...").
+ * Stored content stays relative.
+ */
+export function absolutizeMediaUrls(content: string, publicUrl: string | undefined): string {
+    if (!content || !publicUrl) return content;
+    let origin: string;
+    try {
+        origin = new URL(publicUrl).origin;
+    } catch {
+        return content;
+    }
+    return content.replace(/(["'(=]\s*)\/api\/gallery\//g, `$1${origin}/api/gallery/`);
+}
 
 // Define types for metadata objects
 interface MediaMetadata {
@@ -16,48 +38,34 @@ interface MediaMetadata {
     [key: string]: any;
 }
 
-// Define interface for R2 object listing
-interface R2ObjectListItem {
-    key: string;
-    size: number;
-    httpMetadata?: {
-        contentType?: string;
-        [key: string]: any;
-    };
-    customMetadata?: {
-        [key: string]: any;
-    };
-    [key: string]: any;
-}
-
-// Get all media from the gallery folder in R2
+// Get all media from the gallery folder in the object store
 export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> => {
     try {
         // List all objects with the gallery/ prefix using cacheService
         const objects = await listObjects('gallery/', env);
         
         // Create a list of promises to get each object's metadata
-        const mediaPromises = objects.objects.map(async (object: R2ObjectListItem) => {
+        const mediaPromises = objects.objects.map(async (object: ObjectInfo) => {
             // Skip thumbnail, medium, and comment files when listing
             if (object.key.includes('thumbnails') || object.key.includes('medium') || object.key.includes('comments')) {
                 return null;
             }
             
             // Get the object's metadata
-            // R2 list operation doesn't return full metadata, we need to get it separately
-            let metadata = object.customMetadata || {};
+            // List operations don't return user metadata, we need to get it separately
+            let metadata: Record<string, any> = object.metadata || {};
             
-            // Try to get the object from cache first, then fallback to R2.head
+            // Try to get the object from cache first, then fallback to STORE.head
             try {
                 // Check cache first for the full object metadata
                 const fullObjectMeta = await getObject<MediaMetadata>(`__meta__:${object.key}`, env);
                 if (fullObjectMeta && fullObjectMeta.customMetadata) {
                     metadata = fullObjectMeta.customMetadata;
                 } else {
-                    // If not in cache, use R2.head
-                    const fullObject = await env.R2.head(object.key);
-                    if (fullObject && fullObject.customMetadata) {
-                        metadata = fullObject.customMetadata;
+                    // If not in cache, use STORE.head
+                    const fullObject = await env.STORE.head(object.key);
+                    if (fullObject && fullObject.metadata) {
+                        metadata = fullObject.metadata;
                         // Cache the metadata for future use
                         await putObject(`__meta__:${object.key}`, { customMetadata: metadata }, env, null, 3600);
                     }
@@ -74,13 +82,13 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 // Check cache first for thumbnail existence
                 const thumbnailExists = await getObject(`__exists__:${thumbnailKey}`, env);
                 if (thumbnailExists) {
-                    thumbnailUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/thumbnail`;
+                    thumbnailUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/thumbnail`;
                 } else {
-                    // Fall back to R2.head
-                    const thumbnailCheck = await env.R2.head(thumbnailKey);
+                    // Fall back to STORE.head
+                    const thumbnailCheck = await env.STORE.head(thumbnailKey);
                     if (thumbnailCheck) {
                         // Create a URL for the thumbnail
-                        thumbnailUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/thumbnail`;
+                        thumbnailUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/thumbnail`;
                         // Cache the existence for future queries
                         await putObject(`__exists__:${thumbnailKey}`, true, env, null, 3600);
                     }
@@ -98,13 +106,13 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 // Check cache first for medium version existence
                 const mediumExists = await getObject(`__exists__:${mediumKey}`, env);
                 if (mediumExists) {
-                    mediumUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/medium`;
+                    mediumUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/medium`;
                 } else {
-                    // Fall back to R2.head
-                    const mediumCheck = await env.R2.head(mediumKey);
+                    // Fall back to STORE.head
+                    const mediumCheck = await env.STORE.head(mediumKey);
                     if (mediumCheck) {
                         // Create a URL for the medium version
-                        mediumUrl = `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}/medium`;
+                        mediumUrl = `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}/medium`;
                         // Cache the existence for future queries
                         await putObject(`__exists__:${mediumKey}`, true, env, null, 3600);
                     }
@@ -119,8 +127,8 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             const fileName = object.key.split('/').pop() || '';
             const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
             
-            // Infer file type from extension if httpMetadata is not available
-            let fileType = object.httpMetadata?.contentType || '';
+            // Infer file type from extension if the content type is not available
+            let fileType = object.contentType || '';
             
             if (!fileType || fileType === 'application/octet-stream') {
                 // Map common extensions to MIME types
@@ -159,7 +167,7 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 id: object.key,
                 fileName: fileName,
                 fileType: fileType,
-                url: `${env.PUBLIC_URL}/gallery/${object.key.split('/').pop()}`,
+                url: `${GALLERY_URL_PREFIX}/${object.key.split('/').pop()}`,
                 thumbnailUrl: thumbnailUrl,
                 mediumUrl: mediumUrl,
                 uploadedBy: metadata?.userId || 'unknown',
@@ -182,12 +190,12 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
                 let objectMetadata = await getObject<MediaMetadata>(metadataKey, env);
                 
                 if (!objectMetadata) {
-                    // If not in cache, get directly from R2
-                    const headResponse = await env.R2.head(item.id);
+                    // If not in cache, get directly from the store
+                    const headResponse = await env.STORE.head(item.id);
                     if (headResponse) {
-                        // Convert R2 head response to MediaMetadata
+                        // Convert head response to MediaMetadata
                         objectMetadata = {
-                            customMetadata: headResponse.customMetadata || {}
+                            customMetadata: headResponse.metadata || {}
                         };
                         // Cache for future queries
                         await putObject(metadataKey, objectMetadata, env, null, 3600);
@@ -257,12 +265,12 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
         
         return mediaItems;
     } catch (error) {
-        console.error('Error fetching media from R2:', error);
+        console.error('Error fetching media from store:', error);
         return [];
     }
 };
 
-// Upload media file, its thumbnail, and medium-sized version to R2
+// Upload media file, its thumbnail, and medium-sized version to the object store
 export const uploadMedia = async (
     mediaFile: File, 
     thumbnailFile: File, 
@@ -305,24 +313,20 @@ export const uploadMedia = async (
             ...(groupId ? { groupId } : {})
         };
         
-        // Get the file data as ArrayBuffer which is compatible with R2
+        // Get the file data as ArrayBuffer
         const mediaBuffer = await mediaFile.arrayBuffer();
         const mediaOptions = {
-            httpMetadata: { contentType: mediaFile.type },
-            customMetadata: mediaMetadata
+            contentType: mediaFile.type,
+            metadata: mediaMetadata
         };
         
-        // Use R2 directly for binary data, but cache metadata
-        const mediaObject = await env.R2.put(mediaKey, mediaBuffer, mediaOptions);
-        
-        if (!mediaObject) {
-            throw new Error('Failed to upload media file');
-        }
+        // Use the store directly for binary data (put throws on failure), but cache metadata
+        await env.STORE.put(mediaKey, mediaBuffer, mediaOptions);
         
         // Cache the metadata for future use
         await putObject(`__meta__:${mediaKey}`, { customMetadata: mediaMetadata }, env);
         
-        // Get the thumbnail data as ArrayBuffer which is compatible with R2
+        // Get the thumbnail data as ArrayBuffer
         const thumbnailBuffer = await thumbnailFile.arrayBuffer();
         const thumbnailMetadata = { 
             userId: userId, 
@@ -331,17 +335,11 @@ export const uploadMedia = async (
             originalMediaKey: mediaKey,
         };
         const thumbnailOptions = {
-            httpMetadata: { contentType: thumbnailFile.type },
-            customMetadata: thumbnailMetadata
+            contentType: thumbnailFile.type,
+            metadata: thumbnailMetadata
         };
         
-        const thumbnailObject = await env.R2.put(thumbnailKey, thumbnailBuffer, thumbnailOptions);
-        
-        if (!thumbnailObject) {
-            // If thumbnail upload fails, delete the media
-            await deleteObject(mediaKey, env);
-            throw new Error('Failed to upload thumbnail');
-        }
+        await env.STORE.put(thumbnailKey, thumbnailBuffer, thumbnailOptions);
         
         // Cache the existence for future queries
         await putObject(`__exists__:${thumbnailKey}`, true, env);
@@ -361,17 +359,14 @@ export const uploadMedia = async (
                 isResized: 'true' // Mark that this is a properly resized medium image
             };
             const mediumOptions = {
-                httpMetadata: { contentType: mediumFile.type },
-                customMetadata: mediumMetadata
+                contentType: mediumFile.type,
+                metadata: mediumMetadata
             };
             
-            const mediumObject = await env.R2.put(mediumKey, mediumBuffer, mediumOptions);
-            
-            if (mediumObject) {
-                mediumUrl = `${env.PUBLIC_URL}/gallery/${fileName}/medium`;
-                // Cache the existence for future queries
-                await putObject(`__exists__:${mediumKey}`, true, env);
-            }
+            await env.STORE.put(mediumKey, mediumBuffer, mediumOptions);
+            mediumUrl = `${GALLERY_URL_PREFIX}/${fileName}/medium`;
+            // Cache the existence for future queries
+            await putObject(`__exists__:${mediumKey}`, true, env);
         } else {
             console.log(`No medium file provided for ${fileName}, using original`);
             // If no medium file is provided, use the original file
@@ -383,17 +378,14 @@ export const uploadMedia = async (
                 isResized: 'false' // Mark that this is not a resized medium image
             };
             const mediumOptions = {
-                httpMetadata: { contentType: mediaFile.type },
-                customMetadata: mediumMetadata
+                contentType: mediaFile.type,
+                metadata: mediumMetadata
             };
             
-            const mediumObject = await env.R2.put(mediumKey, mediaBuffer, mediumOptions);
-            
-            if (mediumObject) {
-                mediumUrl = `${env.PUBLIC_URL}/gallery/${fileName}/medium`;
-                // Cache the existence for future queries
-                await putObject(`__exists__:${mediumKey}`, true, env);
-            }
+            await env.STORE.put(mediumKey, mediaBuffer, mediumOptions);
+            mediumUrl = `${GALLERY_URL_PREFIX}/${fileName}/medium`;
+            // Cache the existence for future queries
+            await putObject(`__exists__:${mediumKey}`, true, env);
         }
         
         // Invalidate gallery listing caches so new uploads appear immediately
@@ -405,8 +397,8 @@ export const uploadMedia = async (
             id: mediaKey,
             fileName: fileName,
             fileType: mediaFile.type,
-            url: `${env.PUBLIC_URL}/gallery/${fileName}`,
-            thumbnailUrl: `${env.PUBLIC_URL}/gallery/${fileName}/thumbnail`,
+            url: `${GALLERY_URL_PREFIX}/${fileName}`,
+            thumbnailUrl: `${GALLERY_URL_PREFIX}/${fileName}/thumbnail`,
             mediumUrl: mediumUrl,
             uploadedBy: userId,
             uploaderName: userName,
@@ -423,7 +415,7 @@ export const uploadMedia = async (
             mediaItem 
         };
     } catch (error) {
-        console.error('Error uploading media to R2:', error);
+        console.error('Error uploading media to store:', error);
         return { 
             success: false, 
             message: error instanceof Error ? error.message : 'Unknown error occurred during upload' 
@@ -431,7 +423,7 @@ export const uploadMedia = async (
     }
 };
 
-// Delete a media item from R2
+// Delete a media item from the object store
 export const deleteMedia = async (
     mediaId: string,
     env: Env
@@ -442,8 +434,8 @@ export const deleteMedia = async (
         // Try cache first
         let mediaExists = await getObject(`__meta__:${mediaKey}`, env);
         if (!mediaExists) {
-            // If not in cache, check R2 directly
-            mediaExists = await env.R2.head(mediaKey);
+            // If not in cache, check the store directly
+            mediaExists = await env.STORE.head(mediaKey);
         }
         
         if (!mediaExists) {
@@ -463,8 +455,8 @@ export const deleteMedia = async (
             // Check cache first
             let thumbnailExists = await getObject(`__exists__:${thumbnailKey}`, env);
             if (!thumbnailExists) {
-                // If not in cache, check R2 directly
-                thumbnailExists = await env.R2.head(thumbnailKey);
+                // If not in cache, check the store directly
+                thumbnailExists = await env.STORE.head(thumbnailKey);
             }
             
             if (thumbnailExists) {
@@ -482,8 +474,8 @@ export const deleteMedia = async (
             // Check cache first
             let mediumExists = await getObject(`__exists__:${mediumKey}`, env);
             if (!mediumExists) {
-                // If not in cache, check R2 directly
-                mediumExists = await env.R2.head(mediumKey);
+                // If not in cache, check the store directly
+                mediumExists = await env.STORE.head(mediumKey);
             }
             
             if (mediumExists) {
@@ -500,7 +492,7 @@ export const deleteMedia = async (
             message: 'Media deleted successfully' 
         };
     } catch (error) {
-        console.error('Error deleting media from R2:', error);
+        console.error('Error deleting media from store:', error);
         return { 
             success: false, 
             message: error instanceof Error ? error.message : 'Unknown error occurred during deletion' 

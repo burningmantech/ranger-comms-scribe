@@ -66,7 +66,7 @@ export const getTrackedChanges = async (submissionId: string, env: Env): Promise
         }
         
         // If not in cache, get from R2
-        const changeObject = await env.R2.get(object.key);
+        const changeObject = await env.STORE.get(object.key);
         if (!changeObject) return null;
         
         const change = await changeObject.json() as TrackedChange;
@@ -244,7 +244,17 @@ export const createTrackedChange = async (
   env: Env,
   richTextOldValue?: string,
   richTextNewValue?: string,
-  regionMap?: RegionMap
+  regionMap?: RegionMap,
+  options: {
+    /**
+     * Diff newValue against the client's oldValue even when the latest saved proposed
+     * version differs. Sent by the collaborative (Yjs) editor: several users save
+     * concurrently, so the latest saved version is often another user's, and diffing
+     * against it would credit their edits to this change. The client's oldValue is the
+     * merged document just before this user's own edit.
+     */
+    diffAgainstOldValue?: boolean;
+  } = {}
 ): Promise<TrackedChange> => {
   try {
     const changeId = uuidv4();
@@ -258,7 +268,7 @@ export const createTrackedChange = async (
     let previousVersionId: string | undefined;
     let isIncremental = false;
     
-    if (latestProposedVersion && latestProposedVersion !== oldValue) {
+    if (!options.diffAgainstOldValue && latestProposedVersion && latestProposedVersion !== oldValue) {
       // Calculate incremental changes from the latest proposed version
       const incrementalChange = calculateIncrementalChange(latestProposedVersion, newValue);
       incrementalOldValue = incrementalChange.oldValue;
@@ -401,7 +411,7 @@ export const getChangeComments = async (changeId: string, env: Env): Promise<Cha
         }
         
         // If not in cache, get from R2
-        const commentObject = await env.R2.get(object.key);
+        const commentObject = await env.STORE.get(object.key);
         if (!commentObject) return null;
         
         const comment = await commentObject.json() as ChangeComment;
@@ -811,7 +821,7 @@ export const getChangeHistory = async (
       
       // Create a list of promises to get each change's content
       const changePromises = objects.objects.map(async (object: { key: string }) => {
-        const changeObject = await env.R2.get(object.key);
+        const changeObject = await env.STORE.get(object.key);
         if (!changeObject) return null;
         
         return await changeObject.json() as TrackedChange;

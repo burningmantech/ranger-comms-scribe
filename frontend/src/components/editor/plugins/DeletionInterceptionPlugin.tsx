@@ -45,7 +45,7 @@ import {
     $isDeletedTextNode,
     FormattedSegment,
 } from '../nodes/DeletedTextNode';
-import { getUserColor } from '../../../utils/userColors';
+import { CURRENT_USER_COLOR, getUserColor } from '../../../utils/userColors';
 
 interface DeletionInterceptionPluginProps {
     enabled: boolean;
@@ -53,6 +53,12 @@ interface DeletionInterceptionPluginProps {
     currentUserId?: string;
     onDeletionIntercepted?: (deletedText: string) => void;
     getBeforeText?: () => string | null;
+    /**
+     * 'yjs' (collaborative mode): markers are shared with every user through Yjs, so they
+     * carry the author's ID and a stable per-author color instead of the viewer-relative
+     * current-user khaki. Default: legacy behavior.
+     */
+    collabMode?: 'yjs';
 }
 
 export default function DeletionInterceptionPlugin({
@@ -61,13 +67,19 @@ export default function DeletionInterceptionPlugin({
     currentUserId,
     onDeletionIntercepted,
     getBeforeText,
+    collabMode,
 }: DeletionInterceptionPluginProps): null {
     const [editor] = useLexicalComposerContext();
 
     useEffect(() => {
         if (!enabled) return;
 
-        const authorColor = currentUserId ? getUserColor(currentUserId) : undefined;
+        const isCollab = collabMode === 'yjs';
+        const authorColor = currentUserId
+            ? (isCollab ? getUserColor(currentUserId) : CURRENT_USER_COLOR)
+            : undefined;
+        // Spread into every marker; empty in legacy mode, so its JSON is unchanged.
+        const authorIdField = isCollab && currentUserId ? { authorId: currentUserId } : {};
 
         // When KEY_BACKSPACE/DELETE allows a deletion through (returns false),
         // the subsequent DELETE_CHARACTER_COMMAND must also allow it through.
@@ -359,6 +371,7 @@ export default function DeletionInterceptionPlugin({
                                     deletedText: deletedSlice,
                                     authorName: currentUserName,
                                     authorColor,
+                                    ...authorIdField,
                                     formattedSegments: segments,
                                 });
                                 liveNode.insertBefore(deletedNode);
@@ -373,6 +386,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
+                                        ...authorIdField,
                                         formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
@@ -388,6 +402,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
+                                        ...authorIdField,
                                         formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
@@ -403,6 +418,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
+                                        ...authorIdField,
                                         formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
@@ -469,6 +485,7 @@ export default function DeletionInterceptionPlugin({
                                     deletedText: nextChar,
                                     authorName: currentUserName,
                                     authorColor,
+                                    ...authorIdField,
                                 });
                                 liveNode.insertBefore(deletedNode);
                                 liveNode.remove();
@@ -481,6 +498,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: nextChar,
                                         authorName: currentUserName,
                                         authorColor,
+                                        ...authorIdField,
                                     });
                                     charNode.insertBefore(deletedNode);
                                     charNode.remove();
@@ -537,6 +555,7 @@ export default function DeletionInterceptionPlugin({
                                     deletedText: prevChar,
                                     authorName: currentUserName,
                                     authorColor,
+                                    ...authorIdField,
                                 });
                                 liveNode.insertBefore(deletedNode);
                                 liveNode.remove();
@@ -549,6 +568,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: prevChar,
                                         authorName: currentUserName,
                                         authorColor,
+                                        ...authorIdField,
                                     });
                                     charNode.insertBefore(deletedNode);
                                     charNode.remove();
@@ -588,6 +608,7 @@ export default function DeletionInterceptionPlugin({
                             deletedText: charToDelete,
                             authorName: currentUserName,
                             authorColor,
+                            ...authorIdField,
                             formattedSegments: fmtSegs,
                         });
                         liveNode.insertBefore(deletedNode);
@@ -601,6 +622,7 @@ export default function DeletionInterceptionPlugin({
                                 deletedText: charToDelete,
                                 authorName: currentUserName,
                                 authorColor,
+                                ...authorIdField,
                                 formattedSegments: fmtSegs,
                             });
                             charNode.insertBefore(deletedNode);
@@ -701,7 +723,7 @@ export default function DeletionInterceptionPlugin({
             unregisterDeleteWord();
             unregisterDeleteLine();
         };
-    }, [editor, enabled, currentUserName, currentUserId, onDeletionIntercepted, getBeforeText]);
+    }, [editor, enabled, currentUserName, currentUserId, onDeletionIntercepted, getBeforeText, collabMode]);
 
     return null;
 }

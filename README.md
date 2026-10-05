@@ -54,58 +54,36 @@ frontend/
 
 ### Backend
 
-The backend is implemented as a Cloudflare Worker using TypeScript, providing a robust API for the collaborative content management system. It handles user authentication, content management, real-time collaboration, and administrative functions.
+The backend is a single Node 24 server written in TypeScript. One process serves the REST API under `/api/*` and the real-time WebSocket rooms under `/api/ws/*`. Data is stored as JSON objects in S3 (MinIO locally), with an in-memory cache in front. It handles user authentication, content management, real-time collaboration and administrative functions.
 
-The backend files are located in the `backend` directory:
+The backend files are in the `backend` directory:
 
 ```
 backend/
 ├── src/
-│   ├── handlers/
-│   │   ├── admin.ts                  # Administrative functions
-│   │   ├── auth.ts                   # Authentication and session management
-│   │   ├── blog.ts                   # Blog post management
-│   │   ├── commsCadre.ts             # Communications cadre management
-│   │   ├── contentSubmission.ts      # Content submission processing
-│   │   ├── councilMembers.ts         # Council member management
-│   │   ├── document.ts               # Document management
-│   │   ├── gallery.ts                # Media gallery management
-│   │   ├── page.ts                   # Page management
-│   │   ├── reminders.ts              # Approval reminder system
-│   │   ├── trackedChanges.ts         # Change tracking API
-│   │   ├── user.ts                   # User management
-│   │   ├── userManagement.ts         # Bulk user operations
-│   │   └── websocket.ts              # Real-time WebSocket handling
-│   ├── services/
-│   │   ├── blogService.ts            # Blog service layer
-│   │   ├── cacheService.ts           # Caching service
-│   │   ├── councilManagerService.ts  # Council manager service
-│   │   ├── documentService.ts        # Document service
-│   │   ├── galleryCommentService.ts  # Gallery comment service
-│   │   ├── mediaService.ts           # Media handling service
-│   │   ├── notificationService.ts    # Notification service
-│   │   ├── pageService.ts            # Page service
-│   │   ├── roleService.ts            # Role management service
-│   │   ├── trackedChangesService.ts  # Change tracking service
-│   │   ├── userService.ts            # User service
-│   │   └── websocketService.ts       # WebSocket service
-│   ├── migrations/                   # Database migrations
-│   ├── utils/                        # Utility functions
+│   ├── server.ts                     # Entry point: config, startup, HTTP server, shutdown
+│   ├── httpServer.ts                 # itty-router app + WebSocket upgrades
+│   ├── index.ts                      # Router and route mounting
+│   ├── config/env.ts                 # Environment variables (see the contracts doc)
+│   ├── handlers/                     # HTTP route handlers (auth, content, gallery, admin, ...)
+│   ├── services/                     # Business logic (cacheService, mediaService, userService, ...)
+│   ├── realtime/rooms.ts             # WebSocket rooms (presence, cursors, live updates)
+│   ├── storage/                      # ObjectStore interface + S3 and in-memory implementations
+│   ├── utils/                        # Email (SES), sessions, Google token check, Turnstile, ...
 │   ├── authWrappers.ts               # Authentication middleware
-│   ├── config.ts                     # Configuration
-│   ├── types.ts                      # TypeScript definitions
-│   └── index.ts                      # Worker entry point
-├── test/                             # Test files
-├── wrangler.toml                     # Cloudflare Worker configuration
+│   └── types.ts                      # TypeScript definitions
+├── test/                             # Jest tests
+├── Dockerfile                        # Production image (node:24-alpine)
 ├── package.json
-├── tsconfig.json
-└── README.md
+└── tsconfig.json
 ```
+
+Infrastructure lives in `infra/` (AWS CDK), deploy scripts in `bin/`, and CI in `.github/workflows/`.
 
 ## Features
 
 ### Core Functionality
-- **Collaborative Content Editing**: Real-time collaborative rich text editing with operational transforms
+- **Collaborative Content Editing**: Real-time collaborative rich text editing with live updates, presence and cursors
 - **Content Workflow Management**: Comprehensive submission, review, and approval system
 - **Tracked Changes**: Advanced change tracking with diff visualization and acceptance/rejection workflows
 - **Role-Based Access Control**: Multi-level user roles (Admin, Council Manager, Comms Cadre, User, Public)
@@ -114,7 +92,7 @@ backend/
 ### Administrative Features
 - **User Management**: Bulk user operations, role assignments, and group management
 - **Council Management**: Specialized interfaces for managing council managers and communications cadre
-- **Approval Workflows**: Automated approval processes with reminder systems
+- **Approval Workflows**: Multi-stage approval processes
 - **Email Integration**: Built-in email functionality for notifications and communications
 
 ### Technical Features
@@ -136,16 +114,24 @@ backend/
 - **React Hook Form** for form management
 
 ### Backend
-- **Cloudflare Workers** with TypeScript
-- **itty-router** for routing
-- **Google Auth Library** for authentication
-- **WebSocket** for real-time communication
+- **Node 24** with TypeScript, **itty-router** served through `@whatwg-node/server`
+- **Amazon S3** for storage (MinIO locally), in-memory cache
+- **ws** for real-time WebSocket rooms
+- **Amazon SES** for email
 - **Jest** for testing
-- **Wrangler** for deployment
+
+### Infrastructure
+- **AWS CDK**: CloudFront, S3, an Application Load Balancer and ECS Fargate
+- **ranger-deploy** and GitHub Actions for deploys, matching other Ranger services
 
 ## Deployment
 
-The website is hosted at [scrivenly.com](https://scrivenly.com) and utilizes Cloudflare Workers for the backend functionality. The frontend is deployed as a static site, while the backend runs as a Cloudflare Worker.
+Production runs at [scrivenly.com](https://scrivenly.com), currently still on Cloudflare (from the `master` branch). The `feature/aws-migration` branch moves it to AWS:
+
+- **Container:** one Node container on ECS Fargate behind an Application Load Balancer.
+- **Routing:** CloudFront serves the SPA from S3 and sends `/api/*` to the load balancer.
+- **Plan and contracts:** `docs/plans/2026-10-04-aws-migration-prd.md` and `docs/plans/2026-10-04-aws-migration-contracts.md`.
+- **Setup and deploy steps:** `infra/README.md`. There are two environment profiles: a low-cost dev environment that can sleep, and the standard Ranger setup with staging and production.
 
 ## Getting Started
 
@@ -171,14 +157,14 @@ To get started with the project, clone the repository and install the necessary 
 
 4. **Run the applications locally**:
    ```
-   # Terminal 1 - Backend
-   cd backend
-   npm run dev
-   
+   # Terminal 1 - MinIO + backend in Docker (API on http://localhost:8080/api)
+   docker compose up -d --build
+
    # Terminal 2 - Frontend
    cd frontend
    npm run start:local-backend
    ```
+   For a quick backend without Docker, see "Quick local run" in `CLAUDE.md` or `backend/README.md`.
 
 5. **Open your browser** and navigate to `http://localhost:3000` to see the application in action.
 

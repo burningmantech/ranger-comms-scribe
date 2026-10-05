@@ -2,6 +2,8 @@ import React from 'react';
 import { ContentSubmission, ApprovalGates } from '../types/content';
 import ApprovalTracker from './ApprovalTracker';
 import './SubmissionCard.css';
+import { UserName } from './UserName';
+import { useUserDirectory } from '../services/userDirectory';
 
 interface SubmissionCardProps {
   submission: ContentSubmission & { approvalGates?: ApprovalGates };
@@ -41,26 +43,28 @@ const SubmissionCard: React.FC<SubmissionCardProps> = ({
 
   const pendingChanges = submission.approvalGates?.trackedChanges?.pending || 0;
 
+  const userName = useUserDirectory();
+
   // Get latest activity from comments or approvals
   const latestActivity = React.useMemo(() => {
     const events: Array<{ text: string; date: Date }> = [];
 
     for (const comment of submission.comments || []) {
       events.push({
-        text: `Comment by ${comment.authorId}`,
+        text: `Comment by ${userName(comment.authorId)}`,
         date: new Date(comment.createdAt),
       });
     }
     for (const approval of submission.approvals || []) {
       events.push({
-        text: `${approval.status === 'APPROVED' ? 'Approved' : 'Rejected'} by ${approval.approverEmail}`,
+        text: `${approval.status === 'APPROVED' ? 'Approved' : 'Rejected'} by ${userName(approval.approverId || approval.approverEmail)}`,
         date: new Date(approval.timestamp),
       });
     }
 
     events.sort((a, b) => b.date.getTime() - a.date.getTime());
     return events[0] || null;
-  }, [submission.comments, submission.approvals]);
+  }, [submission.comments, submission.approvals, userName]);
 
   return (
     <div className="submission-card" onClick={onClick} role="button" tabIndex={0}
@@ -83,7 +87,7 @@ const SubmissionCard: React.FC<SubmissionCardProps> = ({
       </div>
 
       <div className="submission-card__meta">
-        <span className="submission-card__submitter">{submission.submittedBy}</span>
+        <UserName className="submission-card__submitter" value={submission.submittedBy} />
         <span className="submission-card__time">
           {formatRelativeTime(new Date(submission.submittedAt))}
         </span>

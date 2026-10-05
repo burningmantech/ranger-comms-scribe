@@ -1,0 +1,287 @@
+# Docs: https://docs.github.com/en/actions
+#
+# Tests, infrastructure synth and the Docker build run on every pull request and push.
+# Pushes to master (the default branch) also deploy to staging (bin/deploy staging + frontend sync), but only once the
+# Ranger tech team has configured the `rangers` GitHub Environment (PRD §7.3). Until then the
+# deploy job runs, finds no AWS_ECR_IMAGE_NAME and skips its steps.
+#
+# The dev environment in Alex's account is never deployed from here; see bin/dev-deploy.
+
+name: CI/CD
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+
+  backend:
+    name: Backend type check and tests
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+
+      - name: Harden CI
+        uses: step-security/harden-runner@v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npx jest
+
+  frontend:
+    name: Frontend build
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+
+      - name: Harden CI
+        uses: step-security/harden-runner@v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          # Create React App fails the build on lint warnings when CI=true.
+          CI: false
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-build
+          path: frontend/build
+          retention-days: 7
+
+  infra:
+    name: Infrastructure synth and tests
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: infra
+
+    steps:
+
+      - name: Harden CI
+        uses: step-security/harden-runner@v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npx jest
+
+      # No AWS credentials here: synth must work offline. Standard configs need an image tag.
+      - name: Synth alex-dev
+        run: npx cdk synth -c config=alex-dev --quiet
+
+      - name: Synth rangers-staging
+        run: npx cdk synth -c config=rangers-staging -c imageTag=synth --quiet
+
+      - name: Synth rangers-production
+        run: npx cdk synth -c config=rangers-production -c imageTag=synth --quiet
+
+  docker-build:
+    name: Build Docker image
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+
+      - name: Harden CI
+        uses: step-security/harden-runner@v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          tags: comms-scribe:local
+          load: true                      # load into local daemon for `docker image save`
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save Docker image
+        run: docker image save comms-scribe:local | gzip -1 > docker_image.tgz
+
+      - name: Upload Docker image artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker
+          path: docker_image.tgz
+          retention-days: 7
+
+  deploy-staging:
+    name: Deploy master to the staging environment
+
+    needs: [backend, frontend, infra, docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+    environment: rangers
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Each value may be an environment secret or an environment variable.
+      AWS_ECR_IMAGE_NAME: ${{ secrets.AWS_ECR_IMAGE_NAME || vars.AWS_ECR_IMAGE_NAME }}
+
+    steps:
+
+      - name: Harden CI
+        uses: step-security/harden-runner@v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Check that the rangers environment is configured
+        id: rangers
+        run: |
+          if [ -n "${AWS_ECR_IMAGE_NAME}" ]; then
+            echo "configured=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "configured=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::The rangers environment has no AWS_ECR_IMAGE_NAME yet; skipping the staging deploy."
+          fi
+
+      - name: Checkout source code
+        if: steps.rangers.outputs.configured == 'true'
+        uses: actions/checkout@v7
+
+      - name: Download Docker image artifacts
+        if: steps.rangers.outputs.configured == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: docker
+
+      - name: Load Docker image
+        if: steps.rangers.outputs.configured == 'true'
+        run: gzip --uncompress --stdout docker_image.tgz | docker image load
+
+      - name: Install Python
+        if: steps.rangers.outputs.configured == 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Deploy to staging
+        if: steps.rangers.outputs.configured == 'true'
+        run: ./bin/deploy staging
+        env:
+          SKIP_BUILD: "1"  # comms-scribe:local was loaded from the docker-build artifact
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || vars.AWS_DEFAULT_REGION }}
+          AWS_ECS_CLUSTER_STAGING: ${{ secrets.AWS_ECS_CLUSTER_STAGING || vars.AWS_ECS_CLUSTER_STAGING }}
+          AWS_ECS_SERVICE_STAGING: ${{ secrets.AWS_ECS_SERVICE_STAGING || vars.AWS_ECS_SERVICE_STAGING }}
+          NOTIFY_SMTP_HOST: ${{ secrets.NOTIFY_SMTP_HOST }}
+          NOTIFY_SMTP_PORT: ${{ secrets.NOTIFY_SMTP_PORT }}
+          NOTIFY_SMTP_USER: ${{ secrets.NOTIFY_SMTP_USER }}
+          NOTIFY_SMTP_PASSWORD: ${{ secrets.NOTIFY_SMTP_PASSWORD }}
+          NOTIFY_EMAIL_RECIPIENT: ${{ secrets.NOTIFY_EMAIL_RECIPIENT }}
+          NOTIFY_EMAIL_SENDER: ${{ secrets.NOTIFY_EMAIL_SENDER }}
+          CI: true
+          PROJECT_NAME: Comms Scribe
+          REPOSITORY_ID: ${{ github.repository }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_ID: ${{ github.event.head_commit.id }}
+          COMMIT_URL: ${{ github.event.head_commit.url }}
+          COMMIT_AUTHOR_USER: ${{ github.event.head_commit.author.username }}
+          COMMIT_AUTHOR_NAME: ${{ github.event.head_commit.author.name }}
+          COMMIT_AUTHOR_EMAIL: ${{ github.event.head_commit.author.email }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+
+      - name: Download frontend build
+        if: steps.rangers.outputs.configured == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-build
+          path: frontend/build
+
+      - name: Publish frontend to staging
+        if: steps.rangers.outputs.configured == 'true'
+        run: ./bin/publish-frontend "${SPA_BUCKET}" "${DISTRIBUTION_ID}" frontend/build
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION || vars.AWS_DEFAULT_REGION }}
+          SPA_BUCKET: ${{ secrets.AWS_S3_SPA_BUCKET_STAGING || vars.AWS_S3_SPA_BUCKET_STAGING }}
+          DISTRIBUTION_ID: ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_STAGING || vars.AWS_CLOUDFRONT_DISTRIBUTION_STAGING }}

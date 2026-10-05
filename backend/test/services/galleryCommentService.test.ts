@@ -84,8 +84,8 @@ describe('Gallery Comment Service', () => {
         replies: []
       };
 
-      // Mock R2.list to return objects for the media's comments
-      env.R2.list = jest.fn().mockResolvedValue({
+      // Mock STORE.list to return objects for the media's comments
+      env.STORE.list = jest.fn().mockResolvedValue({
         objects: [
           { key: `gallery/comments/${mediaId}/comment1` },
           { key: `gallery/comments/${mediaId}/comment2` },
@@ -93,8 +93,8 @@ describe('Gallery Comment Service', () => {
         ]
       });
 
-      // Mock R2.get for each comment
-      env.R2.get = jest.fn().mockImplementation(async (key: string) => {
+      // Mock STORE.get for each comment
+      env.STORE.get = jest.fn().mockImplementation(async (key: string) => {
         if (key === `gallery/comments/${mediaId}/comment1`) {
           return {
             json: jest.fn().mockResolvedValue(comment1)
@@ -121,27 +121,27 @@ describe('Gallery Comment Service', () => {
       expect(comments[0].replies?.length).toBe(1); // Comment 1 has one reply
       expect(comments[0].replies?.[0].id).toBe('reply1'); // The reply ID matches
       
-      // Verify caching functionality by checking if R2 was called
-      expect(env.R2.list).toHaveBeenCalledTimes(1);
-      // With caching implementation, R2.get may be called more times
-      expect(env.R2.get).toHaveBeenCalled();
-      expect(env.R2.get.mock.calls.length).toBeGreaterThanOrEqual(3);
+      // Verify caching functionality by checking if the store was called
+      expect(env.STORE.list).toHaveBeenCalledTimes(1);
+      // With caching implementation, STORE.get may be called more times
+      expect(env.STORE.get).toHaveBeenCalled();
+      expect(env.STORE.get.mock.calls.length).toBeGreaterThanOrEqual(3);
       
       // Now get comments again, should use the cache
-      env.R2.list = jest.fn(); // Reset mock
-      env.R2.get = jest.fn(); // Reset mock
+      env.STORE.list = jest.fn(); // Reset mock
+      env.STORE.get = jest.fn(); // Reset mock
       
       const cachedComments = await getGalleryComments(mediaId, env);
       
-      // Verify cache was used (R2 not called)
-      expect(env.R2.list).not.toHaveBeenCalled();
-      expect(env.R2.get).not.toHaveBeenCalled();
+      // Verify cache was used (store not called)
+      expect(env.STORE.list).not.toHaveBeenCalled();
+      expect(env.STORE.get).not.toHaveBeenCalled();
       expect(cachedComments.length).toBe(2);
     });
     
     it('should handle R2 errors gracefully', async () => {
-      // Mock R2.list to throw an error
-      env.R2.list = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock STORE.list to throw an error
+      env.STORE.list = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
       
       const comments = await getGalleryComments('error-media-id', env);
       
@@ -193,10 +193,10 @@ describe('Gallery Comment Service', () => {
       
       // Verify the comment was stored with the right pattern
       const expectedPattern = `gallery/comments/${mediaId}/comment_1609459200000_`;
-      expect(env.R2.put).toHaveBeenCalled();
+      expect(env.STORE.put).toHaveBeenCalled();
       
       // Check that at least one call has the expected pattern
-      const putCallArgs = env.R2.put.mock.calls.map((call: any[]) => call[0]);
+      const putCallArgs = env.STORE.put.mock.calls.map((call: any[]) => call[0]);
       const hasExpectedPattern = putCallArgs.some((key: string) => key.startsWith(expectedPattern));
       expect(hasExpectedPattern).toBe(true);
     });
@@ -245,12 +245,12 @@ describe('Gallery Comment Service', () => {
       
       expect(result.success).toBe(false);
       expect(result.message).toContain('not allowed to comment');
-      expect(env.R2.put).not.toHaveBeenCalled();
+      expect(env.STORE.put).not.toHaveBeenCalled();
     });
     
     it('should handle errors gracefully', async () => {
-      // Mock R2.put to throw an error
-      env.R2.put = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock STORE.put to throw an error
+      env.STORE.put = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
       
       const result = await addGalleryComment(
         'test-media-id',
@@ -274,7 +274,7 @@ describe('Gallery Comment Service', () => {
       const commentKey = `gallery/comments/${mediaId}/${commentId}`;
       
       // Mock the existence of the comment
-      env.R2.get = jest.fn().mockResolvedValue({
+      env.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue({
           id: commentId,
           mediaId,
@@ -291,7 +291,7 @@ describe('Gallery Comment Service', () => {
       
       expect(result.success).toBe(true);
       expect(result.message).toContain('deleted successfully');
-      expect(env.R2.delete).toHaveBeenCalledWith(commentKey);
+      expect(env.STORE.delete).toHaveBeenCalledWith(commentKey);
     });
     
     it('should delete a parent comment and its replies', async () => {
@@ -300,7 +300,7 @@ describe('Gallery Comment Service', () => {
       const commentKey = `gallery/comments/${mediaId}/${commentId}`;
       
       // Mock the parent comment
-      env.R2.get = jest.fn().mockImplementation(async (key: string) => {
+      env.STORE.get = jest.fn().mockImplementation(async (key: string) => {
         if (key === commentKey) {
           return {
             json: jest.fn().mockResolvedValue({
@@ -362,7 +362,7 @@ describe('Gallery Comment Service', () => {
       });
       
       // Mock listing all comments for this media
-      env.R2.list = jest.fn().mockResolvedValue({
+      env.STORE.list = jest.fn().mockResolvedValue({
         objects: [
           { key: `gallery/comments/${mediaId}/${commentId}` },
           { key: `gallery/comments/${mediaId}/reply1` },
@@ -376,29 +376,29 @@ describe('Gallery Comment Service', () => {
       expect(result.success).toBe(true);
       
       // Should delete the parent comment and both replies
-      expect(env.R2.delete).toHaveBeenCalledWith(`gallery/comments/${mediaId}/${commentId}`);
-      expect(env.R2.delete).toHaveBeenCalledWith(`gallery/comments/${mediaId}/reply1`);
-      expect(env.R2.delete).toHaveBeenCalledWith(`gallery/comments/${mediaId}/reply2`);
+      expect(env.STORE.delete).toHaveBeenCalledWith(`gallery/comments/${mediaId}/${commentId}`);
+      expect(env.STORE.delete).toHaveBeenCalledWith(`gallery/comments/${mediaId}/reply1`);
+      expect(env.STORE.delete).toHaveBeenCalledWith(`gallery/comments/${mediaId}/reply2`);
       
       // Should not delete other root comments
-      const deleteCallArgs = env.R2.delete.mock.calls.map((call: any[]) => call[0]);
+      const deleteCallArgs = env.STORE.delete.mock.calls.map((call: any[]) => call[0]);
       expect(deleteCallArgs).not.toContain(`gallery/comments/${mediaId}/other`);
     });
     
     it('should return error for non-existent comments', async () => {
-      // Mock R2.get to return null (comment doesn't exist)
-      env.R2.get = jest.fn().mockResolvedValue(null);
+      // Mock STORE.get to return null (comment doesn't exist)
+      env.STORE.get = jest.fn().mockResolvedValue(null);
       
       const result = await deleteGalleryComment('test-media-id', 'non-existent-id', env);
       
       expect(result.success).toBe(false);
       expect(result.message).toContain('not found');
-      expect(env.R2.delete).not.toHaveBeenCalled();
+      expect(env.STORE.delete).not.toHaveBeenCalled();
     });
     
     it('should handle R2 errors gracefully', async () => {
       // Mock the existence of the comment
-      env.R2.get = jest.fn().mockResolvedValue({
+      env.STORE.get = jest.fn().mockResolvedValue({
         json: jest.fn().mockResolvedValue({
           id: 'comment-id',
           mediaId: 'test-media-id',
@@ -411,8 +411,8 @@ describe('Gallery Comment Service', () => {
         })
       });
       
-      // Mock R2.delete to throw an error
-      env.R2.delete = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
+      // Mock STORE.delete to throw an error
+      env.STORE.delete = jest.fn().mockRejectedValue(new Error('Mock R2 error'));
       
       const result = await deleteGalleryComment('test-media-id', 'comment-id', env);
       

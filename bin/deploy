@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# Deploy the backend image with ranger-deploy (deploy_aws_ecs), the same wrapper pattern as
+# ranger-clubhouse-api's bin/deploy.
+#
+#   bin/deploy staging      build comms-scribe:local, push it to ECR, roll the staging service
+#   bin/deploy production   copy the staging service's image to the production service
+#
+# deploy_aws_ecs refuses to run unless CI=true and reads these from the environment:
+#   AWS_DEFAULT_REGION, AWS credentials (keys or AWS_PROFILE), AWS_ECR_IMAGE_NAME,
+#   AWS_ECS_CLUSTER_STAGING, AWS_ECS_SERVICE_STAGING,
+#   AWS_ECS_CLUSTER_PRODUCTION, AWS_ECS_SERVICE_PRODUCTION (production only),
+#   NOTIFY_SMTP_HOST, NOTIFY_SMTP_PORT, NOTIFY_SMTP_USER, NOTIFY_SMTP_PASSWORD,
+#   NOTIFY_EMAIL_SENDER, NOTIFY_EMAIL_RECIPIENT, PROJECT_NAME (all optional)
+#
+# AWS_ECR_IMAGE_NAME without a ":" gets the short commit ID as its tag (standard profile).
+# The dev profile passes "<repo>:dev" (see bin/dev-deploy).
+#
+# Set SKIP_BUILD=1 when comms-scribe:local was already built (CI loads it from an artifact).
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+image_name="comms-scribe:local"
+command="${1:-}"
+
+if [ "${command}" = "staging" ] && [ "${SKIP_BUILD:-}" != "1" ]; then
+    echo "==> Building ${image_name} from backend/Dockerfile (linux/amd64, the Fargate platform)"
+    docker build \
+        --platform linux/amd64 \
+        --file "${repo_root}/backend/Dockerfile" \
+        --tag "${image_name}" \
+        "${repo_root}/backend"
+fi
+
+version="master"
+
+host="raw.githubusercontent.com"
+repo="burningmantech/ranger-deploy"
+path="bin/deploy_aws_ecs"
+
+script_url="https://${host}/${repo}/${version}/${path}"
+
+export DEPLOY_TOOLS_VERSION="${version}"
+export     LOCAL_IMAGE_NAME="${image_name}"
+
+# ranger-deploy pins dependencies (an old zope.interface) that fail on Python 3.13+
+# ("InvalidInterface: Concrete attribute, __firstlineno__"); its own CI and the Clubhouse
+# workflows use 3.12. deploy_aws_ecs runs `python3`, and reuses an active virtualenv, so when
+# the default python3 is too new, activate a cached virtualenv built with an older Python.
+# Override the interpreter with RANGER_DEPLOY_PYTHON=/path/to/python3.12.
+if [ -z "${VIRTUAL_ENV:-}" ] && ! python3 -c 'import sys; sys.exit(sys.version_info >= (3, 13))' 2> /dev/null; then
+    deploy_python="${RANGER_DEPLOY_PYTHON:-}"
+    if [ -z "${deploy_python}" ]; then
+        for candidate in python3.12 python3.11 python3.10; do
+            if command -v "${candidate}" > /dev/null 2>&1; then
+                deploy_python="$(command -v "${candidate}")"
+                break
+            fi
+        done
+    fi
+    if [ -z "${deploy_python}" ]; then
+        echo "ranger-deploy needs Python 3.12 or older, but python3 is $(python3 -V 2>&1)." >&2
+        echo "Install python3.12 (e.g. brew install python@3.12) or set RANGER_DEPLOY_PYTHON." >&2
+        exit 69
+    fi
+    deploy_venv="${XDG_CACHE_HOME:-${HOME}/.cache}/comms-scribe/ranger-deploy-venv"
+    if [ ! -x "${deploy_venv}/bin/python3" ] \
+        || ! "${deploy_venv}/bin/python3" -c 'import sys; sys.exit(sys.version_info >= (3, 13))'; then
+        echo "==> Creating ${deploy_venv} with $("${deploy_python}" -V 2>&1) for ranger-deploy"
+        rm -rf "${deploy_venv}"
+        "${deploy_python}" -m venv "${deploy_venv}"
+    fi
+    export VIRTUAL_ENV="${deploy_venv}"
+    export PATH="${deploy_venv}/bin:${PATH}"
+    echo "==> Using $(python3 -V 2>&1) from ${deploy_venv} for ranger-deploy"
+fi
+
+# Download and run the deploy script.
+echo "==> Running: ${script_url} --profile=comms-scribe $*"
+deploy_cmd="$(mktemp)"
+trap 'rm -f "${deploy_cmd}"' EXIT
+curl --fail --silent --show-error --location "${script_url}" --output "${deploy_cmd}"
+sh "${deploy_cmd}" --profile="comms-scribe" "$@"

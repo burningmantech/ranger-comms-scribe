@@ -8,6 +8,7 @@ import ApprovalTracker from './ApprovalTracker';
 import { WebSocketMessage } from '../services/websocketService';
 import { API_URL } from '../config';
 import { useContent } from '../contexts/ContentContext';
+import { UserName } from './UserName';
 
 interface ContentSubmissionComponentProps {
   submission: ContentSubmissionType;
@@ -180,7 +181,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const canViewFilteredSubmissions = effectivePermissions.canViewFilteredSubmissions;
 
   // Use email as fallback for user ID since the id field is undefined
-  const effectiveUserId = currentUser.email;
+  const effectiveUserId = currentUser.id || currentUser.email;
 
   // Determine current user's existing approval decision (if any)
   const myApproval = React.useMemo(() => {
@@ -502,7 +503,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
       <div className="mb-6 bg-white rounded-lg shadow-sm p-6">
         <h2 className="text-2xl font-bold mb-2">{submission.title}</h2>
         <p className="text-sm text-gray-600">
-          Submitted by {submission.submittedBy} on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
+          Submitted by <UserName value={submission.submittedBy} /> on {submission.submittedAt ? new Date(submission.submittedAt).toLocaleDateString() : 'Unknown date'}
         </p>
         <p className="text-sm text-gray-600">Status: {submission.status}</p>
       </div>
@@ -704,7 +705,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
           <p className="mt-2 text-sm text-gray-600">Comms Approved by: {submission.commsApprovedBy}</p>
         )}
         {submission.sentBy && (
-          <p className="mt-1 text-sm text-gray-600">Sent by: {submission.sentBy} on {submission.sentAt?.toLocaleDateString()}</p>
+          <p className="mt-1 text-sm text-gray-600">Sent by: <UserName value={submission.sentBy} /> on {submission.sentAt?.toLocaleDateString()}</p>
         )}
         <div className="mt-2">
           <h4 className="font-medium">Required Approvers:</h4>

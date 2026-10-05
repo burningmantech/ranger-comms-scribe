@@ -18,7 +18,7 @@ import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
-import { getUserColorIndex, getUserColor } from '../../../utils/userColors';
+import { getUserColorIndex, getUserColor, getChangeColorIndex, getChangeColor } from '../../../utils/userColors';
 
 export interface TrackedChange {
   id: string;
@@ -41,6 +41,13 @@ interface TrackedChangesPluginProps {
   onChangeClick: (changeId: string) => void;
   liveBaseline?: string;
   currentUserId?: string;
+  /**
+   * 'yjs' (collaborative mode): decorations never mutate the editor tree. The tree is
+   * shared through Yjs, so DeletedTextNodes are created only by the deleting user's own
+   * edit (DeletionInterceptionPlugin) and removed only by the client that resolves the
+   * change; additions are CSS highlights only. Default: legacy behavior.
+   */
+  collabMode?: 'yjs';
 }
 
 // Per-user highlight name prefix for CSS Custom Highlight API
@@ -83,6 +90,19 @@ const deletionRegistry = new Map<string, ChangeDeletionRecord>();
 /** Reference to the active editor instance (set by the plugin). */
 let activeEditorRef: LexicalEditor | null = null;
 
+/**
+ * Collaborative (Yjs) mode, set by the mounted plugin. Tree writes made by the public API
+ * below then carry no update tag, so they sync through Yjs like any edit. 'historic' would
+ * keep them out of the Y.Doc (@lexical/yjs skips 'historic' updates) and the local tree
+ * would drift from everyone else's.
+ */
+let collabModeActive = false;
+
+/** Update options for the module's tree writes: 'historic' (legacy) or untagged (collaborative). */
+function decorationWriteOptions(): { tag?: string } {
+  return collabModeActive ? {} : { tag: 'historic' };
+}
+
 // ---- Public API ----
 
 /**
@@ -112,7 +132,7 @@ export function removeDecorationsForChange(changeId: string): void {
           }
         }
       },
-      { tag: 'historic' }
+      decorationWriteOptions()
     );
   }
   deletionRegistry.delete(changeId);
@@ -197,7 +217,7 @@ export function removeDecorationsForChangeAnimated(changeId: string): Promise<vo
               }
             }
           },
-          { tag: 'historic' }
+          decorationWriteOptions()
         );
         deletionRegistry.delete(changeId);
         resolve();
@@ -249,8 +269,10 @@ export default function TrackedChangesPlugin({
   onChangeClick,
   liveBaseline,
   currentUserId,
+  collabMode,
 }: TrackedChangesPluginProps): null {
   const [editor] = useLexicalComposerContext();
+  const isCollab = collabMode === 'yjs';
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastCleanTextRef = useRef<string>('');
   const isUpdatingRef = useRef(false);
@@ -263,12 +285,14 @@ export default function TrackedChangesPlugin({
   // Register this editor as the active one for public API
   useEffect(() => {
     activeEditorRef = editor;
+    collabModeActive = isCollab;
     return () => {
       if (activeEditorRef === editor) {
         activeEditorRef = null;
+        collabModeActive = false;
       }
     };
-  }, [editor]);
+  }, [editor, isCollab]);
 
   // Listen for tracked-change-click events from DeletedTextNode components
   useEffect(() => {
@@ -354,7 +378,16 @@ export default function TrackedChangesPlugin({
     (window as any).__isApplyingDecorations = true;
 
     try {
-      editor.update(
+      // Collaborative mode: compute highlights and register existing DeletedTextNodes
+      // only. Run inside a read so Lexical throws on any tree write that slips through.
+      const runDecorations = (body: () => void, options: { tag: string }) => {
+        if (isCollab) {
+          editor.getEditorState().read(body);
+        } else {
+          editor.update(body, options);
+        }
+      };
+      runDecorations(
         () => {
           const root = $getRoot();
 
@@ -396,12 +429,13 @@ export default function TrackedChangesPlugin({
 
           // Step 1: Remove decorations for changes that are no longer present
           for (const removedId of removedChangeIds) {
-            // Remove DeletedTextNodes for this change
+            // Remove DeletedTextNodes for this change (legacy only: in collaborative mode
+            // the client that resolved the change already removed them, through Yjs)
             const deletionRecord = deletionRegistry.get(removedId);
             if (deletionRecord) {
               for (const nodeKey of deletionRecord.nodeKeys) {
                 const node = $getNodeByKey(nodeKey);
-                if (node && $isDeletedTextNode(node)) {
+                if (!isCollab && node && $isDeletedTextNode(node)) {
                   node.remove();
                 }
               }
@@ -419,7 +453,7 @@ export default function TrackedChangesPlugin({
               if (deletionRecord) {
                 for (const nodeKey of deletionRecord.nodeKeys) {
                   const node = $getNodeByKey(nodeKey);
-                  if (node && $isDeletedTextNode(node)) {
+                  if (!isCollab && node && $isDeletedTextNode(node)) {
                     node.remove();
                   }
                 }
@@ -598,7 +632,7 @@ export default function TrackedChangesPlugin({
                     proposedCharOffset: insertOffset,
                     deletedText,
                     authorName: change.changedBy,
-                    authorColor: getUserColor(change.changedBy || ''),
+                    authorColor: getChangeColor(change.changedBy || '', currentUserId),
                   });
                 }
                 continue;
@@ -630,8 +664,8 @@ export default function TrackedChangesPlugin({
                   diffOldText, diffNewText, { paragraphAligned: true },
                 );
                 let ctxNewOff = 0;
-                const ctxColorIndex = getUserColorIndex(change.changedBy || '');
-                const ctxColor = getUserColor(change.changedBy || '');
+                const ctxColorIndex = getChangeColorIndex(change.changedBy || '', currentUserId);
+                const ctxColor = getChangeColor(change.changedBy || '', currentUserId);
                 const CTX_LEN = 50;
                 for (const seg of ctxDiff) {
                   if (seg.type === 'equal') {
@@ -681,8 +715,8 @@ export default function TrackedChangesPlugin({
               );
 
               let newOffset = 0;
-              const changeColorIndex = getUserColorIndex(change.changedBy || '');
-              const changeColor = getUserColor(change.changedBy || '');
+              const changeColorIndex = getChangeColorIndex(change.changedBy || '', currentUserId);
+              const changeColor = getChangeColor(change.changedBy || '', currentUserId);
               for (const seg of charDiff) {
                 if (seg.type === 'equal') {
                   newOffset += seg.value.length;
@@ -753,7 +787,9 @@ export default function TrackedChangesPlugin({
               n => n.getDeletedText() === deletion.deletedText
             );
             if (existingMatch) {
-              existingMatch.setChangeId(deletion.changeId);
+              // Collaborative mode: register only. Renaming is the author's job
+              // (commit-pending-deletion after their save), through Yjs.
+              if (!isCollab) existingMatch.setChangeId(deletion.changeId);
               let record = deletionRegistry.get(deletion.changeId);
               if (!record) {
                 record = { nodeKeys: [], specs: [] };
@@ -791,7 +827,7 @@ export default function TrackedChangesPlugin({
                   deletionRegistry.set(deletion.changeId, record);
                 }
                 for (const node of matched) {
-                  node.setChangeId(deletion.changeId);
+                  if (!isCollab) node.setChangeId(deletion.changeId);
                   record.nodeKeys.push(node.getKey());
                 }
                 record.specs.push(deletion);
@@ -799,6 +835,9 @@ export default function TrackedChangesPlugin({
               }
             }
 
+            // Collaborative mode: never insert markers. A deletion without a marker in the
+            // shared document stays visible in the changes sidebar only.
+            if (isCollab) continue;
             const nodeKey = insertDeletedTextNodeAtOffset(
               deletion.proposedCharOffset,
               deletion.changeId,
@@ -894,7 +933,7 @@ export default function TrackedChangesPlugin({
       isUpdatingRef.current = false;
       (window as any).__isApplyingDecorations = false;
     }
-  }, [editor, originalText, pendingChanges, getDisplayableText, liveBaseline, currentUserId]);
+  }, [editor, originalText, pendingChanges, getDisplayableText, liveBaseline, currentUserId, isCollab]);
 
   // Debounced update on editor changes
   useEffect(() => {
@@ -936,11 +975,14 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleCommit = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { newId } = customEvent.detail;
+      const { newId, authorId } = customEvent.detail;
       if (newId) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
           for (const node of deletions) {
+            // Collaborative mode passes the saving user's ID: other users' pending
+            // markers are in the shared document too and must keep theirs.
+            if (authorId && node.getAuthorId() !== authorId) continue;
             if (node.getChangeId() === '__pending_deletion__') {
               node.setChangeId(newId);
               // Only update the first one we find so that multiple pending deletions
@@ -959,7 +1001,7 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleResolve = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { changeId, action, deletedTexts, replacementPairs, insertedTexts, formatChanges } = customEvent.detail;
+      const { changeId, action, deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds } = customEvent.detail;
       if (changeId && action) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
@@ -976,7 +1018,11 @@ export default function TrackedChangesPlugin({
             // DeletedTextNodes loaded from saved content often have __pending_deletion__
             // instead of the real change ID because commit-pending-deletion may not
             // have fired before the content was persisted.
-            if (!match && nodeChangeId === '__pending_deletion__' &&
+            // Collaborative mode passes the change author's IDs: a pending marker made by
+            // someone else (it carries their authorId) is never theirs to resolve.
+            const authorMismatch = Array.isArray(pendingAuthorIds) && node.getAuthorId() !== undefined &&
+              !pendingAuthorIds.includes(node.getAuthorId());
+            if (!match && !authorMismatch && nodeChangeId === '__pending_deletion__' &&
                 Array.isArray(deletedTexts) && deletedTexts.length > 0) {
               if (deletedTexts.includes(nodeDeletedText) && !matchedTexts.has(nodeDeletedText)) {
                 match = true;
@@ -1194,38 +1240,73 @@ export default function TrackedChangesPlugin({
                   console.warn(`[FORMAT-REVERT] Indent revert NOT FOUND: text="${fc.text}"`);
                 }
               } else {
-                // Block type revert: find the block by matching text content
+                // Block type revert: find the block by matching text content,
+                // with fallback to normalized text and block index matching.
+                const normalizeText = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+                const revertBlock = (block: ElementNode) => {
+                  let newBlock: ElementNode;
+                  if (fc.fromType === 'heading' && fc.fromTag) {
+                    newBlock = $createHeadingNode(fc.fromTag as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
+                  } else {
+                    newBlock = $createParagraphNode();
+                  }
+                  const children = block.getChildren();
+                  for (const child of children) {
+                    newBlock.append(child);
+                  }
+                  block.replace(newBlock);
+                };
+
+                const matchesTag = (block: ElementNode): boolean => {
+                  if (fc.toType === 'heading' && 'getTag' in block) {
+                    return (block as any).getTag() === fc.toTag;
+                  }
+                  return true;
+                };
+
+                // Pass 1: Exact text + type match (most reliable)
+                let found = false;
                 for (const block of blocks) {
                   if (!$isElementNode(block)) continue;
-                  const blockType = block.getType();
-                  const blockText = block.getTextContent();
-
-                  // Match: current block type matches the "to" type and text matches
-                  if (blockType === fc.toType && blockText === fc.text) {
-                    // Also check heading tag if applicable
-                    if (fc.toType === 'heading' && 'getTag' in block) {
-                      const currentTag = (block as any).getTag();
-                      if (currentTag !== fc.toTag) continue;
-                    }
-
-                    // Create the target node (reverting to the "from" type)
-                    let newBlock: ElementNode;
-                    if (fc.fromType === 'heading' && fc.fromTag) {
-                      newBlock = $createHeadingNode(fc.fromTag as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
-                    } else {
-                      newBlock = $createParagraphNode();
-                    }
-
-                    // Move all children to the new block
-                    const children = block.getChildren();
-                    for (const child of children) {
-                      newBlock.append(child);
-                    }
-
-                    // Replace the old block with the new one
-                    block.replace(newBlock);
-                    break; // Found and reverted, move to next format change
+                  if (block.getType() === fc.toType && block.getTextContent() === fc.text && matchesTag(block)) {
+                    console.log(`[FORMAT-REVERT] Block exact match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+                    revertBlock(block);
+                    found = true;
+                    break;
                   }
+                }
+
+                // Pass 2: Normalized text match (handles whitespace/linebreak differences)
+                if (!found && fc.text) {
+                  const normalizedTarget = normalizeText(fc.text);
+                  for (const block of blocks) {
+                    if (!$isElementNode(block)) continue;
+                    if (block.getType() === fc.toType && normalizeText(block.getTextContent()) === normalizedTarget && matchesTag(block)) {
+                      console.log(`[FORMAT-REVERT] Block normalized match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+                      revertBlock(block);
+                      found = true;
+                      break;
+                    }
+                  }
+                }
+
+                // Pass 3: Block index fallback (if text changed since snapshot).
+                // Re-read blocks from root since prior replacements make the original array stale.
+                if (!found && fc.blockIndex !== undefined) {
+                  const freshBlocks = root.getChildren();
+                  if (fc.blockIndex < freshBlocks.length) {
+                    const block = freshBlocks[fc.blockIndex];
+                    if ($isElementNode(block) && block.getType() === fc.toType && matchesTag(block)) {
+                      console.log(`[FORMAT-REVERT] Block index fallback [${fc.blockIndex}]: "${block.getTextContent().substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+                      revertBlock(block);
+                      found = true;
+                    }
+                  }
+                }
+
+                if (!found) {
+                  console.warn(`[FORMAT-REVERT] Block revert NOT FOUND: text="${fc.text.substring(0, 40)}" type=${fc.toType} tag=${fc.toTag} blockIndex=${fc.blockIndex}`);
                 }
               }
             }
@@ -1660,8 +1741,8 @@ function applyDecorationsForSingleChange(
         );
 
         let newOffset = 0;
-        const changeColorIndex = getUserColorIndex(change.changedBy || '');
-        const changeColor = getUserColor(change.changedBy || '');
+        const changeColorIndex = getChangeColorIndex(change.changedBy || '');
+        const changeColor = getChangeColor(change.changedBy || '');
         for (const seg of charDiff) {
           if (seg.type === 'equal') {
             newOffset += seg.value.length;
@@ -1729,6 +1810,6 @@ function applyDecorationsForSingleChange(
         suppressSpellcheckNearDeletions(editor);
       });
     },
-    { tag: 'historic' }
+    decorationWriteOptions()
   );
 }

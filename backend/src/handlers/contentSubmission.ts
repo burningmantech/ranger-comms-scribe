@@ -5,7 +5,7 @@ import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
-import { uploadMedia } from '../services/mediaService';
+import { uploadMedia, absolutizeMediaUrls } from '../services/mediaService';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
 import { getTrackedChanges } from '../services/trackedChangesService';
@@ -765,24 +765,15 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  // Send to appropriate list. For now, announcements go to rangers-announce
-  const toAddress = 'rangers-announce@burningman.org';
+  // The list comes from config so dev and staging can't email the real announcement list
+  const toAddress = env.ANNOUNCE_EMAIL_TO;
+  if (!toAddress) {
+    return json({ error: 'Announcement email address is not configured (ANNOUNCE_EMAIL_TO)' }, { status: 503 });
+  }
   try {
-    if (!env.SESKey || !env.SESSecret) {
-      // Fall back to EMAIL provider if configured
-      if (env.EMAIL) {
-        await env.EMAIL.send({
-          to: toAddress,
-          subject: submission.title,
-          text: submission.content
-        });
-      } else {
-        return json({ error: 'Email service not configured' }, { status: 500 });
-      }
-    } else {
-      const { sendEmail } = await import('../utils/email');
-      await sendEmail(toAddress, submission.title, submission.content, env.SESKey, env.SESSecret);
-    }
+    const { sendEmail } = await import('../utils/email');
+    // Media URLs are stored relative to the site; email clients need absolute ones.
+    await sendEmail(toAddress, submission.title, absolutizeMediaUrls(submission.content, env.PUBLIC_URL), env);
 
     submission.status = 'sent';
     submission.sentBy = user.id || user.email;

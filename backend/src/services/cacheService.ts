@@ -1,101 +1,102 @@
 import { Env } from '../utils/sessionManager';
-
-// Interface for cached objects
-// Column names must match D1 snake_case columns exactly since .first<T>() returns raw column names
-interface CachedObject {
-    key: string;          // R2 object key
-    value: string;        // JSON string of the object
-    last_updated: number; // Timestamp of when the object was last updated
-    ttl: number;          // Cache TTL in seconds
-}
+import { PutOptions } from '../storage/objectStore';
 
 /**
- * Initialize the D1 cache database tables
- * This should be called during application startup
+ * Read-through cache in front of the object store (`env.STORE`).
+ *
+ * The cache is a module-level, in-memory TTL map. Values are kept as JSON strings
+ * and parsed on every read, so callers always get a fresh copy (as they did with the
+ * old D1 `object_cache` table) and can't mutate cached state by accident.
+ *
+ * `__list__:<prefix>` entries live only in this map. Everything passed to `putObject`
+ * (including `__meta__:`, `__exists__:`, `change:` and similar index keys) is durable
+ * data and is always written to the store.
  */
-export const initCache = async (env: Env): Promise<void> => {
-    if (!env.D1) {
-        console.warn('D1 database not available, caching disabled');
-        return;
-    }
 
-    try {
-        console.log('Initializing cache database...');
-        
-        // Create the cache table if it doesn't exist
-        // Fix: Put the entire SQL statement on one line without line breaks
-        console.log('Creating object_cache table...');
-        await env.D1.exec(
-            "CREATE TABLE IF NOT EXISTS object_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, last_updated INTEGER NOT NULL, ttl INTEGER NOT NULL)"
-        );
-        console.log('Object cache table created successfully');
-        
-        // Create the index in a separate statement
-        // Fix: Put the entire SQL statement on one line without line breaks
-        console.log('Creating index on last_updated...');
-        await env.D1.exec(
-            "CREATE INDEX IF NOT EXISTS idx_last_updated ON object_cache(last_updated)"
-        );
-        console.log('Index created successfully');
-        
-        // Verify table was created
-        const tableCheck = await env.D1.prepare(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='object_cache'"
-        ).first();
-        
-        if (tableCheck) {
-            console.log('Verified object_cache table exists');
-        } else {
-            console.error('Failed to create object_cache table - not found after creation');
-        }
-    } catch (error) {
-        console.error('Error initializing cache database:', error);
-        // Log more details about the error
-        if (error instanceof Error) {
-            console.error('Error name:', error.name);
-            console.error('Error message:', error.message);
-            console.error('Error stack:', error.stack);
+interface CacheEntry {
+    value: string;      // JSON string of the cached value
+    expiresAt: number;  // epoch ms
+}
+
+const memoryCache = new Map<string, CacheEntry>();
+
+// Sweep expired entries every N writes so the map can't grow without bound.
+const SWEEP_EVERY_N_WRITES = 1000;
+let writesSinceSweep = 0;
+
+const now = (): number => Date.now();
+
+const sweepExpired = (): void => {
+    const t = now();
+    for (const [key, entry] of memoryCache) {
+        if (entry.expiresAt < t) {
+            memoryCache.delete(key);
         }
     }
 };
 
 /**
+ * Clear the in-memory cache. Intended for tests (each test should start cold);
+ * safe to call at any time since the store remains the source of truth.
+ */
+export const clearMemoryCache = (): void => {
+    memoryCache.clear();
+    writesSinceSweep = 0;
+};
+
+/** R2-style put options, still accepted by `putObject` and translated to `PutOptions`. */
+export interface LegacyPutOptions {
+    httpMetadata?: { contentType?: string; cacheControl?: string; [key: string]: any };
+    customMetadata?: Record<string, string>;
+}
+
+/**
+ * Normalize `putObject` options: accepts `PutOptions`, the old R2 shape
+ * (`{ httpMetadata, customMetadata }`), `null` or `undefined`.
+ */
+export const toPutOptions = (options?: PutOptions | LegacyPutOptions | null): PutOptions | undefined => {
+    if (!options) {
+        return undefined;
+    }
+    const legacy = options as LegacyPutOptions;
+    if (legacy.httpMetadata !== undefined || legacy.customMetadata !== undefined) {
+        const translated: PutOptions = {};
+        if (legacy.httpMetadata?.contentType) translated.contentType = legacy.httpMetadata.contentType;
+        if (legacy.httpMetadata?.cacheControl) translated.cacheControl = legacy.httpMetadata.cacheControl;
+        if (legacy.customMetadata) translated.metadata = { ...legacy.customMetadata };
+        return translated;
+    }
+    const modern = options as PutOptions;
+    if (modern.contentType === undefined && modern.cacheControl === undefined && modern.metadata === undefined) {
+        return undefined;
+    }
+    return modern;
+};
+
+/**
+ * Initialize the cache. Nothing to set up for the in-memory cache; kept for API compatibility.
+ */
+export const initCache = async (_env: Env): Promise<void> => {
+    return;
+};
+
+/**
  * Get an object from the cache
- * @param key The R2 object key
- * @param env The environment with D1 access
+ * @param key The object key
+ * @param env The environment (unused; kept for API compatibility)
  * @returns The cached object value or null if not found or expired
  */
-export const getFromCache = async <T>(key: string, env: Env): Promise<T | null> => {
-    if (!env.D1) {
-        return null;
-    }
-
+export const getFromCache = async <T>(key: string, _env: Env): Promise<T | null> => {
     try {
-        const result = await env.D1.prepare(
-            'SELECT value, last_updated, ttl FROM object_cache WHERE key = ?'
-        )
-        .bind(key)
-        .first<CachedObject>();
-
-        if (!result) {
-            // Cache miss
-            console.log(`Cache miss for key: ${key}`);
+        const entry = memoryCache.get(key);
+        if (!entry) {
             return null;
         }
-
-        // Cache hit
-        console.log(`Cache hit for key: ${key}`);
-
-        // Check if the cache entry has expired
-        const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();
-        if (result.last_updated + result.ttl * 1000 < now) {
-            // Cache entry has expired, remove it
-            await removeFromCache(key, env);
+        if (entry.expiresAt < now()) {
+            memoryCache.delete(key);
             return null;
         }
-
-        // Parse and return the cached value
-        return JSON.parse(result.value) as T;
+        return JSON.parse(entry.value) as T;
     } catch (error) {
         console.error(`Error getting object ${key} from cache:`, error);
         return null;
@@ -104,31 +105,31 @@ export const getFromCache = async <T>(key: string, env: Env): Promise<T | null> 
 
 /**
  * Set an object in the cache
- * @param key The R2 object key
+ * @param key The object key
  * @param value The object value (will be JSON stringified)
- * @param env The environment with D1 access
+ * @param env The environment (unused; kept for API compatibility)
  * @param ttl The cache TTL in seconds (default: 1 hour)
  */
 export const setInCache = async (
-    key: string, 
-    value: any, 
-    env: Env, 
+    key: string,
+    value: any,
+    _env: Env,
     ttl: number = 3600
 ): Promise<void> => {
-    if (!env.D1) {
-        return;
-    }
-
     try {
         const jsonValue = JSON.stringify(value);
-        // Fix the Date.now issue by using a number directly
-        const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();
+        if (jsonValue === undefined) {
+            // JSON.stringify(undefined) has no representation; nothing to cache.
+            memoryCache.delete(key);
+            return;
+        }
+        memoryCache.set(key, { value: jsonValue, expiresAt: now() + ttl * 1000 });
 
-        await env.D1.prepare(
-            'INSERT OR REPLACE INTO object_cache (key, value, last_updated, ttl) VALUES (?, ?, ?, ?)'
-        )
-        .bind(key, jsonValue, now, ttl)
-        .run();
+        writesSinceSweep += 1;
+        if (writesSinceSweep >= SWEEP_EVERY_N_WRITES) {
+            writesSinceSweep = 0;
+            sweepExpired();
+        }
     } catch (error) {
         console.error(`Error setting object ${key} in cache:`, error);
     }
@@ -136,94 +137,108 @@ export const setInCache = async (
 
 /**
  * Remove an object from the cache
- * @param key The R2 object key
- * @param env The environment with D1 access
+ * @param key The object key
+ * @param env The environment (unused; kept for API compatibility)
  */
-export const removeFromCache = async (key: string, env: Env): Promise<void> => {
-    if (!env.D1) {
-        return;
-    }
-
-    try {
-        await env.D1.prepare('DELETE FROM object_cache WHERE key = ?')
-        .bind(key)
-        .run();
-    } catch (error) {
-        console.error(`Error removing object ${key} from cache:`, error);
-    }
+export const removeFromCache = async (key: string, _env: Env): Promise<void> => {
+    memoryCache.delete(key);
 };
 
 /**
  * Invalidate multiple objects matching a prefix from the cache
  * @param prefix The key prefix to match
- * @param env The environment with D1 access
+ * @param env The environment (unused; kept for API compatibility)
  */
-export const invalidateCacheWithPrefix = async (prefix: string, env: Env): Promise<void> => {
-    if (!env.D1) {
-        return;
-    }
-
-    try {
-        await env.D1.prepare('DELETE FROM object_cache WHERE key LIKE ?')
-        .bind(`${prefix}%`)
-        .run();
-    } catch (error) {
-        console.error(`Error invalidating cache with prefix ${prefix}:`, error);
+export const invalidateCacheWithPrefix = async (prefix: string, _env: Env): Promise<void> => {
+    for (const key of Array.from(memoryCache.keys())) {
+        if (key.startsWith(prefix)) {
+            memoryCache.delete(key);
+        }
     }
 };
 
 /**
  * Cleanup expired cache entries
- * @param env The environment with D1 access
+ * @param env The environment (unused; kept for API compatibility)
  */
-export const cleanupExpiredCache = async (env: Env): Promise<void> => {
-    if (!env.D1) {
-        return;
-    }
-
-    try {
-        const now = typeof Date.now === 'function' ? Date.now() : new Date().getTime();
-        await env.D1.prepare('DELETE FROM object_cache WHERE last_updated + ttl * 1000 < ?')
-        .bind(now)
-        .run();
-    } catch (error) {
-        console.error('Error cleaning up expired cache entries:', error);
-    }
+export const cleanupExpiredCache = async (_env: Env): Promise<void> => {
+    sweepExpired();
 };
 
 /**
- * Get an object from R2 with caching
- * 
- * This is the main function for implementing the read-through cache pattern.
- * It first tries to get the object from D1 cache, and if not found or expired,
- * it falls back to R2 and updates the cache.
- * 
- * @param key The R2 object key
- * @param env The environment with R2 and D1 access
+ * Invalidate the cached listings that could contain `key`.
+ */
+const invalidateListCachesFor = async (key: string, env: Env): Promise<void> => {
+    const keyParts = key.split('/');
+    if (keyParts.length > 1) {
+        // For each level of the path, invalidate the corresponding list cache
+        let currentPath = '';
+        for (let i = 0; i < keyParts.length - 1; i++) {
+            if (i > 0) currentPath += '/';
+            currentPath += keyParts[i];
+            await removeFromCache(`__list__:${currentPath}`, env);
+            await removeFromCache(`__list__:${currentPath}/`, env);
+        }
+    }
+    // Always invalidate the empty-prefix listing, which contains everything
+    await removeFromCache('__list__:', env);
+};
+
+/**
+ * Strict read-through get: like `getObject`, but returns `null` only when the object
+ * is genuinely missing (`STORE.get` returned `null`). Store errors (throttling,
+ * network, permissions) and unparseable JSON are rethrown.
+ *
+ * Use it wherever a `null` result leads to creating or overwriting data
+ * ("create if missing"). With `getObject` a transient store error looks exactly like
+ * a missing object, so such code would replace a real record with a fresh one.
+ *
+ * @param key The object key
+ * @param env The environment with the object store
  * @param ttl Cache TTL in seconds (default: 1 hour)
- * @returns The object or null if not found
+ * @returns The object, or null if it does not exist
+ */
+export const getObjectStrict = async <T>(key: string, env: Env, ttl: number = 3600): Promise<T | null> => {
+    // Try to get the object from cache first
+    const cachedObject = await getFromCache<T>(key, env);
+    if (cachedObject !== null) {
+        return cachedObject;
+    }
+
+    // If not in cache, get it from the store (throws on store errors)
+    const object = await env.STORE.get(key);
+    if (!object) {
+        return null;
+    }
+
+    // Parse the JSON content (throws on corrupt content)
+    const content = await object.json<T>();
+
+    // Store in cache for future requests
+    await setInCache(key, content, env, ttl);
+
+    return content;
+};
+
+/**
+ * Get an object from the store with caching
+ *
+ * This is the main function for implementing the read-through cache pattern.
+ * It first tries the in-memory cache, and if not found or expired,
+ * it falls back to the store and updates the cache.
+ *
+ * Lenient: any error is logged and reported as `null`, so callers can't tell a
+ * store failure from a missing object. Code that creates or overwrites data when
+ * the result is `null` must use `getObjectStrict` instead.
+ *
+ * @param key The object key
+ * @param env The environment with the object store
+ * @param ttl Cache TTL in seconds (default: 1 hour)
+ * @returns The object or null if not found (or on any error)
  */
 export const getObject = async <T>(key: string, env: Env, ttl: number = 3600): Promise<T | null> => {
     try {
-        // Try to get the object from cache first
-        const cachedObject = await getFromCache<T>(key, env);
-        if (cachedObject !== null) {
-            return cachedObject;
-        }
-
-        // If not in cache, get it from R2
-        const object = await env.R2.get(key);
-        if (!object) {
-            return null;
-        }
-
-        // Parse the JSON content
-        const content = await object.json() as T;
-
-        // Store in cache for future requests
-        await setInCache(key, content, env, ttl);
-
-        return content;
+        return await getObjectStrict<T>(key, env, ttl);
     } catch (error) {
         console.error(`Error getting object ${key}:`, error);
         return null;
@@ -231,118 +246,94 @@ export const getObject = async <T>(key: string, env: Env, ttl: number = 3600): P
 };
 
 /**
- * Put an object in R2 and update the cache
- * 
- * @param key The R2 object key
+ * Put an object in the store and update the cache
+ *
+ * @param key The object key
  * @param value The object value
- * @param env The environment with R2 and D1 access
- * @param options R2 put options
+ * @param env The environment with the object store
+ * @param options Put options: `PutOptions` (`{ contentType, cacheControl, metadata }`),
+ *                or the legacy R2 shape (`{ httpMetadata, customMetadata }`)
  * @param ttl Cache TTL in seconds (default: 1 hour)
  */
 export const putObject = async (
-    key: string, 
-    value: any, 
-    env: Env, 
-    options?: any, 
+    key: string,
+    value: any,
+    env: Env,
+    options?: PutOptions | LegacyPutOptions | null,
     ttl: number = 3600
 ): Promise<void> => {
     try {
-        // Convert the object to a string for R2
+        // Convert the object to a string for the store
         const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
 
-        // Store in R2
-        await env.R2.put(key, stringValue, options);
+        // Store durably
+        await env.STORE.put(key, stringValue, toPutOptions(options));
 
         // Also store in cache
         await setInCache(key, value, env, ttl);
-        
+
         // Invalidate any list caches that might contain this object
-        // We extract potential prefixes from the key path
-        const keyParts = key.split('/');
-        if (keyParts.length > 1) {
-            // For each level of the path, invalidate the corresponding list cache
-            let currentPath = '';
-            for (let i = 0; i < keyParts.length - 1; i++) {
-                if (i > 0) currentPath += '/';
-                currentPath += keyParts[i];
-                await removeFromCache(`__list__:${currentPath}`, env);
-                await removeFromCache(`__list__:${currentPath}/`, env);
-            }
-            // Also invalidate the empty prefix list which contains everything
-            await removeFromCache('__list__:', env);
-        } else {
-            // Top-level object, just invalidate the root listing
-            await removeFromCache('__list__:', env);
-        }
+        await invalidateListCachesFor(key, env);
     } catch (error) {
         console.error(`Error putting object ${key}:`, error);
-        throw error; // Rethrow to maintain the same error behavior as R2
+        throw error; // Rethrow to maintain the same error behavior as the store
     }
 };
 
 /**
- * Delete an object from R2 and cache
- * 
- * @param key The R2 object key
- * @param env The environment with R2 and D1 access
+ * Delete an object from the store and cache
+ *
+ * @param key The object key
+ * @param env The environment with the object store
  */
 export const deleteObject = async (key: string, env: Env): Promise<void> => {
     try {
-        // Delete from R2
-        await env.R2.delete(key);
+        // Delete from the store
+        await env.STORE.delete(key);
 
         // Also remove from cache
         await removeFromCache(key, env);
-        
+
         // Invalidate any list caches that might contain this object
-        // Similar logic as in putObject
-        const keyParts = key.split('/');
-        if (keyParts.length > 1) {
-            let currentPath = '';
-            for (let i = 0; i < keyParts.length - 1; i++) {
-                if (i > 0) currentPath += '/';
-                currentPath += keyParts[i];
-                await removeFromCache(`__list__:${currentPath}`, env);
-                await removeFromCache(`__list__:${currentPath}/`, env);
-            }
-            await removeFromCache('__list__:', env);
-        } else {
-            await removeFromCache('__list__:', env);
-        }
+        await invalidateListCachesFor(key, env);
     } catch (error) {
         console.error(`Error deleting object ${key}:`, error);
-        throw error; // Rethrow to maintain the same error behavior as R2
+        throw error; // Rethrow to maintain the same error behavior as the store
     }
 };
 
 /**
- * List objects from R2 with a given prefix, using cache when available
- * 
+ * List objects with a given prefix, using cache when available
+ *
+ * Returns `{ objects: [{ key, size, uploaded, etag, metadata, ... }] }` with every key
+ * under the prefix (the store paginates internally). On a cache hit `uploaded` is an
+ * ISO string rather than a Date, as it was with the old D1 cache.
+ *
  * @param prefix The key prefix to list
- * @param env The environment with R2 access
+ * @param env The environment with the object store
  * @param ttl Cache TTL in seconds (default: 5 minutes since listings change often)
- * @returns The list result from R2
+ * @returns The list result
  */
 export const listObjects = async (prefix: string, env: Env, ttl: number = 300): Promise<any> => {
     try {
         // Create a cache key specifically for this listing operation
         const cacheKey = `__list__:${prefix}`;
-        
+
         // Try to get the listing from cache first
         const cachedListing = await getFromCache(cacheKey, env);
         if (cachedListing !== null) {
             return cachedListing;
         }
 
-        // If not in cache, get from R2
-        const listing = await env.R2.list({ prefix });
-        
+        // If not in cache, get from the store
+        const listing = await env.STORE.list(prefix);
+
         // Store in cache for future requests with a shorter TTL
         await setInCache(cacheKey, listing, env, ttl);
-        
+
         return listing;
     } catch (error) {
         console.error(`Error listing objects with prefix ${prefix}:`, error);
-        throw error; // Rethrow to maintain the same error behavior as R2
+        throw error; // Rethrow to maintain the same error behavior as the store
     }
 };

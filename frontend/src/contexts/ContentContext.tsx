@@ -198,8 +198,29 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // The provider mounts once for the whole app, often on the login page with no session.
+    // Reload the user and their data when they log in (and clear it when they log out);
+    // otherwise pages like Requests show "Please log in" until a full page reload.
+    const handleLoginStateChange = (event: Event) => {
+      const user = (event as CustomEvent).detail;
+      if (user) {
+        fetchCurrentUser();
+        fetchSubmissions();
+        fetchCouncilManagers();
+        fetchCommsCadreMembers();
+        fetchUserPermissions();
+      } else {
+        setCurrentUser(null);
+        setUserPermissions(null);
+        setSubmissions([]);
+      }
+    };
+
+    window.addEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
     };
   }, []);
 

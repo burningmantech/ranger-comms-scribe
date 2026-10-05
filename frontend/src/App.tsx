@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import Login from './components/Login';
 import Admin from './components/Admin';
-import UserSettings from './components/UserSettings';
 import ResetPassword from './components/ResetPassword';
 import VerifyEmail from './components/VerifyEmail';
 import { User } from './types';
@@ -89,7 +88,6 @@ const App: React.FC = () => {
                 <Route path="/" element={<Navigate to="/requests" replace />} />
                 <Route path="/login" element={<Login skipNavbar={true} setParentUser={setUser} />} />
                 <Route path="/admin" element={<Admin skipNavbar={true} />} />
-                <Route path="/settings" element={<UserSettings skipNavbar={true} />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/verify-email" element={<VerifyEmail />} />
                 <Route path="/test-indentation" element={<IndentationTest />} />

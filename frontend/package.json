@@ -9,11 +9,17 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "deploy": "wrangler deploy --env frontend",
-    "start:local-backend": "REACT_APP_API_URL=http://localhost:8787 react-scripts start"
+    "start:local-backend": "REACT_APP_API_URL=http://localhost:8080/api react-scripts start"
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^lib0/webcrypto$": "<rootDir>/node_modules/lib0/dist/webcrypto.node.cjs",
+      "^lib0/(?!dist/)(.*)$": "<rootDir>/node_modules/lib0/dist/$1.cjs",
+      "^y-protocols/(.*)$": "<rootDir>/node_modules/y-protocols/dist/$1.cjs",
+      "^y-websocket$": "<rootDir>/node_modules/y-websocket/dist/y-websocket.cjs"
+    }
   },
   "dependencies": {
-    "@cloudflare/kv-asset-handler": "^0.4.0",
     "@heroicons/react": "^2.2.0",
     "@hookform/resolvers": "^2.9.11",
     "@lexical/clipboard": "^0.30.0",
@@ -41,6 +47,8 @@
     "react-router-dom": "^6.3.0",
     "react-scripts": "5.0.1",
     "typescript": "^4.7.4",
+    "y-websocket": "3.1.0",
+    "yjs": "^13.6.33",
     "zod": "^3.19.1"
   },
   "devDependencies": {
@@ -53,9 +61,7 @@
     "@types/react-dom": "^18.3.7",
     "@types/react-router-dom": "^5.3.3",
     "immutable": "^3.8.2",
-    "postcss-selector-parser": "^6.1.2",
-    "wrangler": "^4.6.0",
-    "yjs": "^13.6.27"
+    "postcss-selector-parser": "^6.1.2"
   },
   "author": "",
   "browserslist": {

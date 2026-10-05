@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { CouncilMember, CouncilRole, UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
-import { getObject, putObject, listObjects, removeFromCache } from '../services/cacheService';
+import { getObject, getObjectStrict, putObject, listObjects, removeFromCache } from '../services/cacheService';
 import { changeUserType, getUser } from '../services/userService';
 
 export const router = AutoRouter({ base: '/api/council' });
@@ -65,12 +65,12 @@ router.post('/members', withAuth, async (request: Request, env: Env) => {
 
     // Store council member in legacy location
     await putObject(`council_member/${newMember.id}`, newMember, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { memberId: newMember.id }
+      contentType: 'application/json',
+      metadata: { memberId: newMember.id }
     });
 
     // Also store in role-based location used by the approval system
-    const existingRoleMembers = await getObject<CouncilMember[]>(`council_members:role:${newMember.role}`, env) || [];
+    const existingRoleMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${newMember.role}`, env) || [];
     const isAlreadyInRole = existingRoleMembers.some(m => m.email === newMember.email);
     if (!isAlreadyInRole) {
       await putObject(`council_members:role:${newMember.role}`, [...existingRoleMembers, newMember], env);
@@ -97,8 +97,8 @@ router.post('/members', withAuth, async (request: Request, env: Env) => {
     targetUser.userType = UserType.CouncilManager;
 
     await putObject(`user/${newMember.email}`, targetUser, env, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { userId: targetUser.id }
+      contentType: 'application/json',
+      metadata: { userId: targetUser.id }
     });
     console.log('✅ User type updated successfully');
 
@@ -137,12 +137,12 @@ router.put('/members/:id', withAuth, async (request: Request, env: Env) => {
 
   // Update in legacy location
   await putObject(`council_member/${id}`, updatedMember, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { memberId: id }
+    contentType: 'application/json',
+    metadata: { memberId: id }
   });
 
   // Also update in role-based storage
-  const roleMembers = await getObject<CouncilMember[]>(`council_members:role:${updatedMember.role}`, env) || [];
+  const roleMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${updatedMember.role}`, env) || [];
   const updatedRoleMembers = roleMembers.map(m => m.email === updatedMember.email ? updatedMember : m);
   await putObject(`council_members:role:${updatedMember.role}`, updatedRoleMembers, env);
 
@@ -169,12 +169,12 @@ router.delete('/members/:id', withAuth, async (request: Request, env: Env) => {
   member.active = false;
   member.updatedAt = new Date().toISOString();
   await putObject(`council_member/${id}`, member, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { memberId: id }
+    contentType: 'application/json',
+    metadata: { memberId: id }
   });
 
   // Also remove from role-based storage
-  const roleMembers = await getObject<CouncilMember[]>(`council_members:role:${member.role}`, env) || [];
+  const roleMembers = await getObjectStrict<CouncilMember[]>(`council_members:role:${member.role}`, env) || [];
   const updatedRoleMembers = roleMembers.filter(m => m.email !== member.email);
   await putObject(`council_members:role:${member.role}`, updatedRoleMembers, env);
 

@@ -1,33 +1,37 @@
-import { Env } from '../utils/sessionManager';
+import { DeleteSessionsForUser, Env } from '../utils/sessionManager';
 import { User, UserType, Group } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
-import { getObject, putObject, deleteObject, listObjects } from './cacheService';
+import { getObject, getObjectStrict, putObject, deleteObject, listObjects } from './cacheService';
 import { DEFAULT_ROLES, Role } from './roleService';
 
 // Persist a user to R2 + cache (keyed by email, with UUID index)
 export async function saveUser(user: User, env: Env): Promise<void> {
   await putObject(`user/${user.email}`, user, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { userId: user.id }
+    contentType: 'application/json',
+    metadata: { userId: user.id }
   });
   // Secondary index: UUID → email for fast lookup by either key
   await putObject(`user-by-id/${user.id}`, { email: user.email }, env, {
-    httpMetadata: { contentType: 'application/json' }
+    contentType: 'application/json'
   });
 }
 
 // Persist a group to R2 + cache
 async function saveGroup(group: Group, env: Env): Promise<void> {
   await putObject(`group/${group.id}`, group, env, {
-    httpMetadata: { contentType: 'application/json' },
-    customMetadata: { updatedAt: group.updatedAt }
+    contentType: 'application/json',
+    metadata: { updatedAt: group.updatedAt }
   });
 }
 
-// Store users in R2 with prefix 'user:'
+// Users are stored at user/<email>, with a user-by-id/<uuid> index (see saveUser).
+//
+// The existence check is strict: a store error is thrown (callers answer 5xx), never
+// taken to mean "no such user". Otherwise a transient S3 error would overwrite an
+// existing account (admin, groups, password) with a fresh Public user.
 export async function getOrCreateUser({ name, email, password }: { name: string; email: string; password?: string }, env: Env): Promise<User> {
   // Check if user already exists
-  const existingUser = await getUser(email, env);
+  const existingUser = await getUserStrict(email, env);
   if (existingUser) {
     return existingUser;
   }
@@ -67,56 +71,48 @@ export async function getUser(id: string, env: Env): Promise<User | null> {
     return existingUser;
   }
 
-  // Auto-create first admin if needed
-  const isFirstAdmin = id === 'alexander.young@gmail.com';
-  if (isFirstAdmin) {
-    console.log('👑 Creating first admin user');
-    const newUser: User = {
-      id: crypto.randomUUID(),
-      name: "Alex Young",
-      email: id,
-      approved: true,
-      isAdmin: true,
-      userType: UserType.Admin,
-      groups: [],
-      roles: ['Admin']
-    };
-
-    await saveUser(newUser, env);
-
-    return newUser;
-  }
-
   console.log('❌ User not found:', id);
   return null;
 }
 
+// Lenient lookup: store errors are logged and reported as "not found". Fine for
+// reads and read-modify-write paths (they stop on null); never use it to decide
+// whether to create a user. See getUserStrict.
 export async function getUserInternal(id: string, env: Env): Promise<User | null> {
   try {
-    if (!id) {
-      return null;
-    }
-
-    // Try direct lookup (works when id is an email, since users are keyed by email)
-    const user = await getObject<User>(`user/${id}`, env);
-    if (user) {
-      return ensureUserDefaults(user);
-    }
-
-    // If not found, id may be a UUID — check the secondary index
-    const index = await getObject<{ email: string }>(`user-by-id/${id}`, env);
-    if (index?.email) {
-      const user = await getObject<User>(`user/${index.email}`, env);
-      if (user) {
-        return ensureUserDefaults(user);
-      }
-    }
-
-    return null;
+    return await getUserStrict(id, env);
   } catch (error) {
     console.error(`Error fetching user ${id}:`, error);
     return null;
   }
+}
+
+/**
+ * Look up a user by email or UUID. Returns null only when no such user exists;
+ * store errors (and corrupt records) are rethrown. Use this, not getUser, before
+ * creating or overwriting a user record because none was found.
+ */
+export async function getUserStrict(id: string, env: Env): Promise<User | null> {
+  if (!id) {
+    return null;
+  }
+
+  // Try direct lookup (works when id is an email, since users are keyed by email)
+  const user = await getObjectStrict<User>(`user/${id}`, env);
+  if (user) {
+    return ensureUserDefaults(user);
+  }
+
+  // If not found, id may be a UUID — check the secondary index
+  const index = await getObjectStrict<{ email: string }>(`user-by-id/${id}`, env);
+  if (index?.email) {
+    const indexedUser = await getObjectStrict<User>(`user/${index.email}`, env);
+    if (indexedUser) {
+      return ensureUserDefaults(indexedUser);
+    }
+  }
+
+  return null;
 }
 
 function ensureUserDefaults(user: User): User {
@@ -361,14 +357,17 @@ export async function getGroup(id: string, env: Env): Promise<Group | null> {
   }
 }
 
-// Get all groups
+// Get all groups.
+// Strict: a group that fails to load throws instead of being skipped. Callers
+// (changeUserType, getAllRoles, createGroupsForExistingRoles) create a role group
+// when they don't find one by name, so a silently skipped group would be duplicated.
 export async function getAllGroups(env: Env): Promise<Group[]> {
   const objects = await listObjects('group/', env);
   const groups: Group[] = [];
-  
+
   for (const object of objects.objects) {
-    // Use getObject for cached retrieval
-    const group = await getObject<Group>(object.key, env);
+    // Cached retrieval; null only if the group was deleted since the listing
+    const group = await getObjectStrict<Group>(object.key, env);
     if (!group) continue;
     
     groups.push(group);
@@ -538,24 +537,96 @@ export async function isAdmin(id: string, env: Env): Promise<boolean> {
   return user ? (user.isAdmin || user.userType === UserType.Admin) : false;
 }
 
-// Initialize first admin if not exists
+/** True when `email` is listed in BOOTSTRAP_ADMIN_EMAILS (case-insensitive). */
+export function isBootstrapAdminEmail(email: string | undefined | null, env: Env): boolean {
+  if (!email) return false;
+  const list = env.BOOTSTRAP_ADMIN_EMAILS || [];
+  const target = email.trim().toLowerCase();
+  return list.some((entry) => entry.trim().toLowerCase() === target);
+}
+
+/**
+ * First-admin bootstrap: a user whose email is in BOOTSTRAP_ADMIN_EMAILS becomes
+ * an approved Admin. Called on register, email verification, login and Google
+ * login, before the session is created. Saves only when something changes;
+ * returns the (possibly updated) user.
+ *
+ * Only users who have proven they own the address are promoted (`verified`:
+ * set by /auth/verify-email or by a Google sign-in). Otherwise anyone who knows
+ * a listed address could register it with a password and get an Admin session.
+ */
+export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
+  if (!isBootstrapAdminEmail(user.email, env)) return user;
+  if (user.verified !== true) return user;
+
+  const roles = user.roles || [];
+  const alreadyAdmin = user.userType === UserType.Admin && user.isAdmin === true &&
+    user.approved === true && roles.includes('Admin');
+  if (alreadyAdmin) return user;
+
+  console.log(`👑 Bootstrap admin: promoting ${user.email}`);
+  // Existing sessions resolve to this record, and may belong to whoever registered
+  // the address before its owner proved it. Callers create a fresh session after this.
+  await DeleteSessionsForUser(user.email, env);
+  const promoted: User = {
+    ...user,
+    userType: UserType.Admin,
+    isAdmin: true,
+    approved: true,
+    roles: roles.includes('Admin') ? roles : [...roles.filter((r) => r !== 'Public'), 'Admin'],
+  };
+  await saveUser(promoted, env);
+  return promoted;
+}
+
+/**
+ * A Google sign-in proves the user owns the email address. Mark the account
+ * verified. If it was not verified before, any password on it was set by
+ * whoever registered the address without proving ownership (possibly not the
+ * owner), so drop it; the owner can set one with "forgot password".
+ */
+export async function markVerifiedByGoogle(user: User, env: Env): Promise<User> {
+  if (user.verified === true) return user;
+  const { passwordHash: unproven, ...rest } = user;
+  const verifiedUser: User = { ...rest, verified: true };
+  if (unproven) {
+    // Sessions from that password (register/login) go too.
+    await DeleteSessionsForUser(user.email, env);
+  }
+  await saveUser(verifiedUser, env);
+  return verifiedUser;
+}
+
+/**
+ * After /auth/verify-email. The link proves the mailbox, not who chose the
+ * password: someone else may have registered the address and the owner just
+ * clicked the emailed link. So before promoting a bootstrap admin, drop the
+ * password (the owner sets one with "forgot password" or uses Google sign-in);
+ * applyBootstrapAdmin also ends existing sessions.
+ */
+export async function promoteAfterEmailVerification(user: User, env: Env): Promise<User> {
+  if (!isBootstrapAdminEmail(user.email, env) || user.verified !== true) return user;
+  if (user.userType === UserType.Admin && user.isAdmin === true) return user;
+  let candidate = user;
+  if (user.passwordHash) {
+    const { passwordHash: _unproven, ...rest } = user;
+    candidate = { ...rest };
+    await saveUser(candidate, env);
+  }
+  return applyBootstrapAdmin(candidate, env);
+}
+
+/**
+ * Runs once at boot: promote BOOTSTRAP_ADMIN_EMAILS users that already exist
+ * and are verified. Others are promoted when they verify their email or log in.
+ * (Replaces the old hardcoded first-admin, which pre-created a password-less
+ * account that anyone could then claim through /auth/register.)
+ */
 export async function initializeFirstAdmin(env: Env): Promise<void> {
-  const adminEmail = 'alexander.young@gmail.com';
-  const admin = await getUser(adminEmail, env);
-  
-  if (!admin) {
-    await getOrCreateUser({ 
-      name: 'Alexander Young', 
-      email: adminEmail 
-    }, env);
-    
-    // Ensure admin privileges
-    const newAdmin = await getUser(adminEmail, env);
-    if (newAdmin && (!newAdmin.isAdmin || newAdmin.userType !== UserType.Admin)) {
-      newAdmin.isAdmin = true;
-      newAdmin.approved = true;
-      newAdmin.userType = UserType.Admin;
-      await saveUser(newAdmin, env);
+  for (const email of env.BOOTSTRAP_ADMIN_EMAILS || []) {
+    const user = await getUserInternal(email, env);
+    if (user) {
+      await applyBootstrapAdmin(user, env);
     }
   }
 }

@@ -1,4 +1,5 @@
-import { CreateSession, GetSession, DeleteSession } from '../../src/utils/sessionManager';
+import { CreateSession, GetSession, DeleteSession, DeleteSessionsForUser } from '../../src/utils/sessionManager';
+import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
 import { mockEnv, setupMockStorage } from '../utils/test-helpers';
 
 describe('Session Manager', () => {
@@ -33,10 +34,10 @@ describe('Session Manager', () => {
       expect(typeof sessionId).toBe('string');
       expect(sessionId).toBe('test-session-id');
       
-      // Verify session was stored in R2
-      expect(env.R2.put).toHaveBeenCalled();
+      // Verify session was stored in the object store
+      expect(env.STORE.put).toHaveBeenCalled();
       
-      const callArgs = env.R2.put.mock.calls[0];
+      const callArgs = env.STORE.put.mock.calls[0];
       expect(callArgs[0]).toBe(`session/${sessionId}`);
       
       const storedData = JSON.parse(callArgs[1]);
@@ -45,8 +46,8 @@ describe('Session Manager', () => {
       expect(storedData.expiresAt).toBe(Date.now() + 864000 * 1000); // Default TTL
       
       // Check metadata
-      expect(callArgs[2].httpMetadata.contentType).toBe('application/json');
-      expect(callArgs[2].customMetadata.userId).toBe(userId);
+      expect(callArgs[2].contentType).toBe('application/json');
+      expect(callArgs[2].metadata.userId).toBe(userId);
     });
     
     it('should use custom TTL when provided', async () => {
@@ -56,10 +57,25 @@ describe('Session Manager', () => {
       
       const sessionId = await CreateSession(userId, sessionData, env, customTTL);
       
-      const callArgs = env.R2.put.mock.calls[0];
+      const callArgs = env.STORE.put.mock.calls[0];
       const storedData = JSON.parse(callArgs[1]);
       
       expect(storedData.expiresAt).toBe(Date.now() + customTTL * 1000);
+    });
+  });
+
+  describe('round trip', () => {
+    it('stores a session that GetSession can read back and DeleteSession removes', async () => {
+      const sessionId = await CreateSession('user-1', { role: 'admin' }, env);
+      const stored = await env.STORE.backing.head(`session/${sessionId}`);
+      expect(stored.contentType).toBe('application/json');
+      expect(stored.metadata).toEqual({ userId: 'user-1' });
+
+      const session = await GetSession(sessionId, env);
+      expect(session).toEqual({ userId: 'user-1', data: { role: 'admin' }, expiresAt: Date.now() + 864000 * 1000 });
+
+      await DeleteSession(sessionId, env);
+      expect(await GetSession(sessionId, env)).toBeNull();
     });
   });
 
@@ -73,25 +89,25 @@ describe('Session Manager', () => {
         expiresAt: Date.now() + 3600000 // 1 hour in the future
       };
       
-      env.R2.get.mockResolvedValue({
+      env.STORE.get.mockResolvedValue({
         json: () => Promise.resolve(sessionData)
       });
       
       const result = await GetSession(sessionId, env);
       
       expect(result).toEqual(sessionData);
-      expect(env.R2.get).toHaveBeenCalledWith(`session/${sessionId}`);
+      expect(env.STORE.get).toHaveBeenCalledWith(`session/${sessionId}`);
     });
     
     it('should return null for non-existent session', async () => {
       const sessionId = 'non-existent-session';
       
-      env.R2.get.mockResolvedValue(null);
+      env.STORE.get.mockResolvedValue(null);
       
       const result = await GetSession(sessionId, env);
       
       expect(result).toBeNull();
-      expect(env.R2.get).toHaveBeenCalledWith(`session/${sessionId}`);
+      expect(env.STORE.get).toHaveBeenCalledWith(`session/${sessionId}`);
     });
     
     it('should delete and return null for expired session', async () => {
@@ -103,31 +119,47 @@ describe('Session Manager', () => {
         expiresAt: Date.now() - 3600000 // 1 hour in the past
       };
       
-      env.R2.get.mockResolvedValue({
+      env.STORE.get.mockResolvedValue({
         json: () => Promise.resolve(sessionData)
       });
       
       const result = await GetSession(sessionId, env);
       
       expect(result).toBeNull();
-      expect(env.R2.get).toHaveBeenCalledWith(`session/${sessionId}`);
-      expect(env.R2.delete).toHaveBeenCalledWith(`session/${sessionId}`);
+      expect(env.STORE.get).toHaveBeenCalledWith(`session/${sessionId}`);
+      expect(env.STORE.delete).toHaveBeenCalledWith(`session/${sessionId}`);
     });
   });
 
   describe('DeleteSession', () => {
-    it('should delete a session from R2 storage', async () => {
+    it('should delete a session from the object store', async () => {
       const sessionId = 'test-session-id';
       
       await DeleteSession(sessionId, env);
       
-      expect(env.R2.delete).toHaveBeenCalledWith(`session/${sessionId}`);
+      expect(env.STORE.delete).toHaveBeenCalledWith(`session/${sessionId}`);
     });
     
     it('should not throw error when deleting non-existent session', async () => {
       await expect(DeleteSession('nonexistent-session-id', env)).resolves.not.toThrow();
       
-      expect(env.R2.delete).toHaveBeenCalledWith('session/nonexistent-session-id');
+      expect(env.STORE.delete).toHaveBeenCalledWith('session/nonexistent-session-id');
+    });
+  });
+
+  describe('DeleteSessionsForUser', () => {
+    it('deletes only that user\'s sessions (email matched case-insensitively)', async () => {
+      (global.crypto.randomUUID as jest.Mock)
+        .mockReturnValueOnce('s1').mockReturnValueOnce('s2').mockReturnValueOnce('s3');
+      const storeEnv: any = { STORE: new MemoryObjectStore() };
+      await CreateSession('boss@example.com', {}, storeEnv);
+      await CreateSession('Boss@Example.com', {}, storeEnv);
+      await CreateSession('other@example.com', {}, storeEnv);
+
+      expect(await DeleteSessionsForUser('boss@example.com', storeEnv)).toBe(2);
+      expect(await GetSession('s1', storeEnv)).toBeNull();
+      expect(await GetSession('s2', storeEnv)).toBeNull();
+      expect(await GetSession('s3', storeEnv)).not.toBeNull();
     });
   });
 });

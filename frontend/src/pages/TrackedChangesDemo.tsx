@@ -136,40 +136,6 @@ export const TrackedChangesDemo: React.FC = () => {
 
   };
 
-  const handleApproveProposedVersion = (approverId: string, comment?: string) => {
-    const approval: Approval = {
-      id: `approval-${Date.now()}`,
-      approverId,
-      approverEmail: demoUser.email,
-      status: 'APPROVED',
-      comment,
-      timestamp: new Date()
-    };
-
-    setSubmission(prev => ({
-      ...prev,
-      approvals: [...prev.approvals, approval]
-    }));
-
-  };
-
-  const handleRejectProposedVersion = (rejecterId: string, comment?: string) => {
-    const approval: Approval = {
-      id: `approval-${Date.now()}`,
-      approverId: rejecterId,
-      approverEmail: demoUser.email,
-      status: 'REJECTED',
-      comment,
-      timestamp: new Date()
-    };
-
-    setSubmission(prev => ({
-      ...prev,
-      approvals: [...prev.approvals, approval]
-    }));
-
-  };
-
   const handleRefreshNeeded = () => {
 
   };
@@ -185,8 +151,6 @@ export const TrackedChangesDemo: React.FC = () => {
         onReject={handleReject}
         onSuggestion={handleSuggestion}
         onUndo={handleUndo}
-        onApproveProposedVersion={handleApproveProposedVersion}
-        onRejectProposedVersion={handleRejectProposedVersion}
         onRefreshNeeded={handleRefreshNeeded}
       />
     </div>

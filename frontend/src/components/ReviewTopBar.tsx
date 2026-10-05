@@ -86,6 +86,7 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
             <button
               className="review-top-bar__action-btn review-top-bar__action-btn--request-changes"
               onClick={onRequestChanges}
+              title="Ask the submitter to revise this submission"
             >
               <i className="fas fa-comment-dots" />
               <span>Request Changes</span>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Change } from '../types/content';
 import './ChangeGroup.css';
+import { resolveUserEmail, useUserName } from '../services/userDirectory';
 
 interface ChangeGroupProps<T extends Change = Change> {
   authorName: string;
@@ -57,6 +58,8 @@ const ChangeGroup: React.FC<ChangeGroupProps> = ({
   canReview,
   renderChange,
 }) => {
+  // authorName is usually a user id (UUID); show the person's name
+  const displayName = useUserName(authorName);
   const pendingCount = changes.filter(c => c.status === 'pending').length;
   const allPending = pendingCount === changes.length;
 
@@ -64,7 +67,7 @@ const ChangeGroup: React.FC<ChangeGroupProps> = ({
     <div className={`change-group ${expanded ? 'change-group--expanded' : ''}`}>
       <div className="change-group__header" onClick={onToggle}>
         <div className="change-group__summary">
-          <span className="change-group__author">{abbreviateName(authorName)}</span>
+          <span className="change-group__author" title={resolveUserEmail(authorName)}>{abbreviateName(displayName)}</span>
           <span className="change-group__count">
             made {changes.length} edit{changes.length !== 1 ? 's' : ''}
           </span>

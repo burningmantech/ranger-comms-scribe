@@ -62,7 +62,7 @@ describe('Page Service', () => {
       expect(result.page?.createdBy).toBe('Admin User');
       expect(result.page?.isPublic).toBe(true);
       
-      // Verify the page was stored in R2
+      // Verify the page was stored
       const storedPage = await getPage(result.page!.id, env);
       expect(storedPage).toBeDefined();
       expect(storedPage?.title).toBe('Test Page');
@@ -113,13 +113,18 @@ describe('Page Service', () => {
       expect(result.page?.updatedAt).toBeDefined();
     });
     
-    it('should handle R2 errors gracefully', async () => {
-      // Mock putObject to throw an error
-      (putObject as jest.Mock).mockImplementationOnce(() => {
-        throw new Error('Mock cache error');
+    it('should handle storage errors gracefully', async () => {
+      // Make the page write itself fail (other writes, such as the slug mapping, still work)
+      const realPut = (putObject as jest.Mock).getMockImplementation()!;
+      (putObject as jest.Mock).mockImplementation((key: string, ...rest: any[]) => {
+        if (key.startsWith('page/')) {
+          throw new Error('Mock cache error');
+        }
+        return realPut(key, ...rest);
       });
       
       const result = await createPage(samplePage, 'admin@example.com', 'Admin User', env);
+      (putObject as jest.Mock).mockImplementation(realPut);
       
       expect(result.success).toBe(false);
       expect(result.error).toBe('Mock cache error');
@@ -179,16 +184,21 @@ describe('Page Service', () => {
       expect(page).toBeNull();
     });
     
-    it('should handle R2 errors gracefully', async () => {
+    it('should handle storage errors gracefully', async () => {
       // Create a page first
       await createPage(samplePage, 'admin@example.com', 'Admin User', env);
       
-      // Mock listObjects to throw an error
-      (listObjects as jest.Mock).mockImplementationOnce(() => {
-        throw new Error('Mock cache error');
+      // Make reads of the page object fail (the slug mapping resolves straight to it)
+      const realGet = (getObject as jest.Mock).getMockImplementation()!;
+      (getObject as jest.Mock).mockImplementation((key: string, ...rest: any[]) => {
+        if (key.startsWith('page/')) {
+          throw new Error('Mock cache error');
+        }
+        return realGet(key, ...rest);
       });
       
       const page = await getPageBySlug('test-page', env);
+      (getObject as jest.Mock).mockImplementation(realGet);
       
       expect(page).toBeNull();
     });
@@ -370,7 +380,7 @@ describe('Page Service', () => {
       expect(result.page?.content).toBe('Updated content');
       expect(result.page?.published).toBe(false);
       
-      // Verify the page was updated in R2
+      // Verify the page was updated
       const updatedPage = await getPage(pageId, env);
       expect(updatedPage?.title).toBe('Updated Page Title');
     });

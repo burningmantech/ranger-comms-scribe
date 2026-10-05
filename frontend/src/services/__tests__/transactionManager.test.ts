@@ -329,6 +329,43 @@ describe('TransactionManager', () => {
       expect(tm.getSaveStatus()).toBe('all-saved');
     });
 
+    it('asks the server to diff against oldValue only in collaborative mode', async () => {
+      const legacySave = makeSuccessSave();
+      const legacy = createTM('sub-1', { saveFunction: legacySave });
+      legacy.startTransaction('content', makeLexical('A'));
+      legacy.settleTransaction(makeLexical('B'));
+
+      const collabSave = makeSuccessSave();
+      const collab = new TransactionManager('sub-1', {
+        saveFunction: collabSave,
+        deleteFunction: makeDeleteFn(),
+        retryDelayMs: 0,
+        diffAgainstOldValue: true,
+      });
+      collab.startTransaction('content', makeLexical('A'));
+      collab.settleTransaction(makeLexical('B'));
+
+      await flush();
+
+      expect(legacySave.mock.calls[0][1]).not.toHaveProperty('diffAgainstOldValue');
+      expect(collabSave.mock.calls[0][1]).toEqual(expect.objectContaining({ diffAgainstOldValue: true, oldValue: 'A', newValue: 'B' }));
+    });
+
+    it('lets collaborative mode supply the final before/after states at settle time', async () => {
+      const saveFn = makeSuccessSave();
+      const resolveSnapshots = jest.fn(() => ({ before: makeLexical('remote'), after: makeLexical('remote mine') }));
+      const tm = new TransactionManager('sub-1', {
+        saveFunction: saveFn, deleteFunction: makeDeleteFn(), retryDelayMs: 0, resolveSnapshots,
+      });
+      tm.startTransaction('content', makeLexical('stale'));
+      const tx = tm.settleTransaction(makeLexical('mine'))!;
+      await flush();
+      expect(resolveSnapshots).toHaveBeenCalledTimes(1);
+      expect(tx.beforeSnapshot.text).toBe('remote');
+      expect(tx.afterSnapshot!.text).toBe('remote mine');
+      expect(saveFn.mock.calls[0][1]).toEqual(expect.objectContaining({ oldValue: 'remote', newValue: 'remote mine' }));
+    });
+
     it('does not save when before and after text are identical', async () => {
       const saveFn = makeSuccessSave();
       const tm = createTM('sub-1', { saveFunction: saveFn });

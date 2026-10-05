@@ -27,6 +27,22 @@ router.get('/approvers', withAuth, async (request: ExtendedRequest, env: Env) =>
 });
 
 // Get user settings
+// Directory for showing people by name: tracked changes, submissions and comments
+// store user ids (UUIDs), and the UI resolves them here. Same exposure as
+// /approvers (name + email) plus the id; includes unapproved users so their
+// earlier changes still show a name.
+router.get('/directory', withAuth, async (request: ExtendedRequest, env: Env) => {
+  try {
+    const users = await getAllUsers(env);
+    return json({
+      users: users.map(u => ({ id: u.id, name: u.name, email: u.email })),
+    });
+  } catch (error) {
+    console.error('Error fetching user directory:', error);
+    return json({ error: 'Error fetching user directory' }, { status: 500 });
+  }
+});
+
 router.get('/settings', withAuth, async (request: ExtendedRequest, env: Env) => {
   try {
     if (!request.user) {

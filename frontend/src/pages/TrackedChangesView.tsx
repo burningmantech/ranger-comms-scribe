@@ -6,6 +6,8 @@ import { ContentSubmission, User, Comment, Change, Approval, ApprovalGates } fro
 import { useContent } from '../contexts/ContentContext';
 import { API_URL } from '../config';
 import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
+import { useCollabMode } from '../services/collabConfig';
+import { useUserDirectory } from '../services/userDirectory';
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -14,6 +16,9 @@ export const TrackedChangesView: React.FC = () => {
   const [submission, setSubmission] = useState<ContentSubmission | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Real-time editing mode from GET /api/config (fetched in parallel with the submission).
+  // The editor waits for it so it never switches modes mid-session.
+  const collabMode = useCollabMode();
 
   // Set body background color for this page
   useEffect(() => {
@@ -624,66 +629,6 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  const handleApproveProposedVersion = async (approverId: string, comment?: string) => {
-    try {
-
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      const response = await fetch(`${API_URL}/content/submissions/${submissionId}/approve-proposed`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({
-          approverId,
-          comment
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to approve proposed version: ${response.status} - ${errorText}`);
-      }
-
-      // Refresh the data after approval by refetching
-      window.location.reload();
-    } catch (err) {
-      console.error('Error approving proposed version:', err);
-    }
-  };
-
-  const handleRejectProposedVersion = async (rejecterId: string, comment?: string) => {
-    try {
-
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      const response = await fetch(`${API_URL}/content/submissions/${submissionId}/reject-proposed`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({
-          rejecterId,
-          comment
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to reject proposed version: ${response.status} - ${errorText}`);
-      }
-
-      // Refresh the data after rejection by refetching
-      window.location.reload();
-    } catch (err) {
-      console.error('Error rejecting proposed version:', err);
-    }
-  };
-
   const handleSendEmail = async () => {
     if (!submission) return;
     await sendAnnouncementEmail(submission);
@@ -722,7 +667,7 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  if (loading) {
+  if (loading || !collabMode) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '24rem' }}>
         <div className="loading-container">Loading...</div>
@@ -837,6 +782,9 @@ export const TrackedChangesView: React.FC = () => {
       onNavigate={(id) => navigate(`/submissions/${id}/review`)}
     >
       <TrackedChangesEditor
+        // Collaborative mode: a fresh editor (Yjs room, TransactionManager, baseline) per
+        // submission when navigating between submissions. Legacy mode keeps today's behavior.
+        key={collabMode === 'yjs' ? submission.id : undefined}
         submission={submission}
         currentUser={currentUser}
         onSave={handleSave}
@@ -845,17 +793,14 @@ export const TrackedChangesView: React.FC = () => {
         onReject={handleReject}
         onSuggestion={handleSuggestion}
         onUndo={handleUndo}
-        onApproveProposedVersion={handleApproveProposedVersion}
-        onRejectProposedVersion={handleRejectProposedVersion}
         onRefreshNeeded={handleRefreshNeeded}
         onRemoteChangeResolved={handleRemoteChangeResolved}
         onBack={() => navigate('/requests')}
-        onSubmissionApprove={handleSubmissionApprove}
-        onSubmissionReject={handleSubmissionReject}
         reviewMode={true}
         onReset={handleReset}
         onDelete={handleDelete}
         onSendEmail={handleSendEmail}
+        collabMode={collabMode}
       />
     </ReviewLayout>
   );
@@ -892,6 +837,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   onNavigate,
   children,
 }) => {
+  const userName = useUserDirectory();
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
 
@@ -907,7 +853,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
       <ReviewTopBar
         submissionId={submission.id}
         title={submission.title}
-        submitterName={submission.submittedBy}
+        submitterName={userName(submission.submittedBy)}
         submittedAt={submission.submittedAt instanceof Date ? submission.submittedAt : new Date(submission.submittedAt)}
         isUrgent={isUrgent}
         approvalGates={(submission as any).approvalGates}
@@ -926,6 +872,9 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
         <div className="request-changes-overlay" onClick={() => setShowRequestChanges(false)}>
           <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
             <h3>Request Changes</h3>
+            <p style={{ margin: '0 0 12px', color: '#666', fontSize: '0.9em' }}>
+              The submitter will be notified and can revise their submission. This does not reject the submission.
+            </p>
             <textarea
               value={requestChangesComment}
               onChange={e => setRequestChangesComment(e.target.value)}
