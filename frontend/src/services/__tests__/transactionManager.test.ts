@@ -329,6 +329,28 @@ describe('TransactionManager', () => {
       expect(tm.getSaveStatus()).toBe('all-saved');
     });
 
+    it('asks the server to diff against oldValue only in collaborative mode', async () => {
+      const legacySave = makeSuccessSave();
+      const legacy = createTM('sub-1', { saveFunction: legacySave });
+      legacy.startTransaction('content', makeLexical('A'));
+      legacy.settleTransaction(makeLexical('B'));
+
+      const collabSave = makeSuccessSave();
+      const collab = new TransactionManager('sub-1', {
+        saveFunction: collabSave,
+        deleteFunction: makeDeleteFn(),
+        retryDelayMs: 0,
+        diffAgainstOldValue: true,
+      });
+      collab.startTransaction('content', makeLexical('A'));
+      collab.settleTransaction(makeLexical('B'));
+
+      await flush();
+
+      expect(legacySave.mock.calls[0][1]).not.toHaveProperty('diffAgainstOldValue');
+      expect(collabSave.mock.calls[0][1]).toEqual(expect.objectContaining({ diffAgainstOldValue: true, oldValue: 'A', newValue: 'B' }));
+    });
+
     it('does not save when before and after text are identical', async () => {
       const saveFn = makeSuccessSave();
       const tm = createTM('sub-1', { saveFunction: saveFn });

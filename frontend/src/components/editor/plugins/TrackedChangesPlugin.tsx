@@ -41,6 +41,13 @@ interface TrackedChangesPluginProps {
   onChangeClick: (changeId: string) => void;
   liveBaseline?: string;
   currentUserId?: string;
+  /**
+   * 'yjs' (collaborative mode): decorations never mutate the editor tree. The tree is
+   * shared through Yjs, so DeletedTextNodes are created only by the deleting user's own
+   * edit (DeletionInterceptionPlugin) and removed only by the client that resolves the
+   * change; additions are CSS highlights only. Default: legacy behavior.
+   */
+  collabMode?: 'yjs';
 }
 
 // Per-user highlight name prefix for CSS Custom Highlight API
@@ -83,6 +90,19 @@ const deletionRegistry = new Map<string, ChangeDeletionRecord>();
 /** Reference to the active editor instance (set by the plugin). */
 let activeEditorRef: LexicalEditor | null = null;
 
+/**
+ * Collaborative (Yjs) mode, set by the mounted plugin. Tree writes made by the public API
+ * below then carry no update tag, so they sync through Yjs like any edit. 'historic' would
+ * keep them out of the Y.Doc (@lexical/yjs skips 'historic' updates) and the local tree
+ * would drift from everyone else's.
+ */
+let collabModeActive = false;
+
+/** Update options for the module's tree writes: 'historic' (legacy) or untagged (collaborative). */
+function decorationWriteOptions(): { tag?: string } {
+  return collabModeActive ? {} : { tag: 'historic' };
+}
+
 // ---- Public API ----
 
 /**
@@ -112,7 +132,7 @@ export function removeDecorationsForChange(changeId: string): void {
           }
         }
       },
-      { tag: 'historic' }
+      decorationWriteOptions()
     );
   }
   deletionRegistry.delete(changeId);
@@ -197,7 +217,7 @@ export function removeDecorationsForChangeAnimated(changeId: string): Promise<vo
               }
             }
           },
-          { tag: 'historic' }
+          decorationWriteOptions()
         );
         deletionRegistry.delete(changeId);
         resolve();
@@ -249,8 +269,10 @@ export default function TrackedChangesPlugin({
   onChangeClick,
   liveBaseline,
   currentUserId,
+  collabMode,
 }: TrackedChangesPluginProps): null {
   const [editor] = useLexicalComposerContext();
+  const isCollab = collabMode === 'yjs';
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastCleanTextRef = useRef<string>('');
   const isUpdatingRef = useRef(false);
@@ -263,12 +285,14 @@ export default function TrackedChangesPlugin({
   // Register this editor as the active one for public API
   useEffect(() => {
     activeEditorRef = editor;
+    collabModeActive = isCollab;
     return () => {
       if (activeEditorRef === editor) {
         activeEditorRef = null;
+        collabModeActive = false;
       }
     };
-  }, [editor]);
+  }, [editor, isCollab]);
 
   // Listen for tracked-change-click events from DeletedTextNode components
   useEffect(() => {
@@ -354,7 +378,16 @@ export default function TrackedChangesPlugin({
     (window as any).__isApplyingDecorations = true;
 
     try {
-      editor.update(
+      // Collaborative mode: compute highlights and register existing DeletedTextNodes
+      // only. Run inside a read so Lexical throws on any tree write that slips through.
+      const runDecorations = (body: () => void, options: { tag: string }) => {
+        if (isCollab) {
+          editor.getEditorState().read(body);
+        } else {
+          editor.update(body, options);
+        }
+      };
+      runDecorations(
         () => {
           const root = $getRoot();
 
@@ -396,12 +429,13 @@ export default function TrackedChangesPlugin({
 
           // Step 1: Remove decorations for changes that are no longer present
           for (const removedId of removedChangeIds) {
-            // Remove DeletedTextNodes for this change
+            // Remove DeletedTextNodes for this change (legacy only: in collaborative mode
+            // the client that resolved the change already removed them, through Yjs)
             const deletionRecord = deletionRegistry.get(removedId);
             if (deletionRecord) {
               for (const nodeKey of deletionRecord.nodeKeys) {
                 const node = $getNodeByKey(nodeKey);
-                if (node && $isDeletedTextNode(node)) {
+                if (!isCollab && node && $isDeletedTextNode(node)) {
                   node.remove();
                 }
               }
@@ -419,7 +453,7 @@ export default function TrackedChangesPlugin({
               if (deletionRecord) {
                 for (const nodeKey of deletionRecord.nodeKeys) {
                   const node = $getNodeByKey(nodeKey);
-                  if (node && $isDeletedTextNode(node)) {
+                  if (!isCollab && node && $isDeletedTextNode(node)) {
                     node.remove();
                   }
                 }
@@ -753,7 +787,9 @@ export default function TrackedChangesPlugin({
               n => n.getDeletedText() === deletion.deletedText
             );
             if (existingMatch) {
-              existingMatch.setChangeId(deletion.changeId);
+              // Collaborative mode: register only. Renaming is the author's job
+              // (commit-pending-deletion after their save), through Yjs.
+              if (!isCollab) existingMatch.setChangeId(deletion.changeId);
               let record = deletionRegistry.get(deletion.changeId);
               if (!record) {
                 record = { nodeKeys: [], specs: [] };
@@ -791,7 +827,7 @@ export default function TrackedChangesPlugin({
                   deletionRegistry.set(deletion.changeId, record);
                 }
                 for (const node of matched) {
-                  node.setChangeId(deletion.changeId);
+                  if (!isCollab) node.setChangeId(deletion.changeId);
                   record.nodeKeys.push(node.getKey());
                 }
                 record.specs.push(deletion);
@@ -799,6 +835,9 @@ export default function TrackedChangesPlugin({
               }
             }
 
+            // Collaborative mode: never insert markers. A deletion without a marker in the
+            // shared document stays visible in the changes sidebar only.
+            if (isCollab) continue;
             const nodeKey = insertDeletedTextNodeAtOffset(
               deletion.proposedCharOffset,
               deletion.changeId,
@@ -894,7 +933,7 @@ export default function TrackedChangesPlugin({
       isUpdatingRef.current = false;
       (window as any).__isApplyingDecorations = false;
     }
-  }, [editor, originalText, pendingChanges, getDisplayableText, liveBaseline, currentUserId]);
+  }, [editor, originalText, pendingChanges, getDisplayableText, liveBaseline, currentUserId, isCollab]);
 
   // Debounced update on editor changes
   useEffect(() => {
@@ -936,11 +975,14 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleCommit = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { newId } = customEvent.detail;
+      const { newId, authorId } = customEvent.detail;
       if (newId) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
           for (const node of deletions) {
+            // Collaborative mode passes the saving user's ID: other users' pending
+            // markers are in the shared document too and must keep theirs.
+            if (authorId && node.getAuthorId() !== authorId) continue;
             if (node.getChangeId() === '__pending_deletion__') {
               node.setChangeId(newId);
               // Only update the first one we find so that multiple pending deletions
@@ -959,7 +1001,7 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleResolve = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { changeId, action, deletedTexts, replacementPairs, insertedTexts, formatChanges } = customEvent.detail;
+      const { changeId, action, deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds } = customEvent.detail;
       if (changeId && action) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
@@ -976,7 +1018,11 @@ export default function TrackedChangesPlugin({
             // DeletedTextNodes loaded from saved content often have __pending_deletion__
             // instead of the real change ID because commit-pending-deletion may not
             // have fired before the content was persisted.
-            if (!match && nodeChangeId === '__pending_deletion__' &&
+            // Collaborative mode passes the change author's IDs: a pending marker made by
+            // someone else (it carries their authorId) is never theirs to resolve.
+            const authorMismatch = Array.isArray(pendingAuthorIds) && node.getAuthorId() !== undefined &&
+              !pendingAuthorIds.includes(node.getAuthorId());
+            if (!match && !authorMismatch && nodeChangeId === '__pending_deletion__' &&
                 Array.isArray(deletedTexts) && deletedTexts.length > 0) {
               if (deletedTexts.includes(nodeDeletedText) && !matchedTexts.has(nodeDeletedText)) {
                 match = true;
@@ -1764,6 +1810,6 @@ function applyDecorationsForSingleChange(
         suppressSpellcheckNearDeletions(editor);
       });
     },
-    { tag: 'historic' }
+    decorationWriteOptions()
   );
 }

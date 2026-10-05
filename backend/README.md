@@ -57,6 +57,7 @@ All configuration is read from environment variables once at boot (`src/config/e
 | `DEV_BYPASS_AUTH` | no | `true` enables fake dev users. Local only |
 | `MAX_BODY_BYTES` | no | largest request body in bytes; default `26214400` (25 MiB). Larger requests get 413 |
 | `WS_MAX_PAYLOAD_BYTES` | no | largest WebSocket message in bytes; default `16777216` (16 MiB). A larger one closes the socket (1009) |
+| `COLLAB_MODE` | no | `yjs` or `legacy` (default). Served by the public `GET /api/config` (`{"collabMode": ...}`); `yjs` makes the editor use the Yjs socket below |
 | `STORE_DRIVER` | no | `memory` uses an in-process store instead of S3 (tests, quick runs; data lost on restart) |
 
 AWS credentials always come from the default credential chain: the ECS task role in AWS, a profile
@@ -146,6 +147,9 @@ submission), and so is `WS_MAX_PAYLOAD_BYTES`.
 - **Liveness:** the server sends WebSocket protocol pings (not JSON; the client decodes every
   message as binary) on the same 30 s interval as the rooms, and terminates a socket that has been
   silent for more than two intervals plus 10 s.
+- **Feature flag:** the frontend uses this socket only when `COLLAB_MODE=yjs` (it reads `GET /api/config`
+  once before showing the editor). With the default `legacy`, the editor keeps whole-document sync over the
+  JSON room.
 - **Known limits:** a seeder that syncs but never sends content leaves the others held until it
   disconnects. A client that kept a doc from a destroyed room and rejoins while someone else seeds
   from saved content brings a second copy of that content (separate Yjs histories).

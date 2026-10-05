@@ -85,6 +85,7 @@ export interface ObjectStore {
 | `DEV_BYPASS_AUTH` | no | `"true"` enables fake users (local only) |
 | `MAX_BODY_BYTES` | no | largest HTTP request body in bytes; default `26214400` (25 MiB, room for a gallery upload's three files). Larger requests get `413` before reaching the router; chunked bodies are cut off once they pass it |
 | `WS_MAX_PAYLOAD_BYTES` | no | largest WebSocket message in bytes; default `16777216` (16 MiB; whole-document `realtime_content_update` messages carry full Lexical JSON, images go by URL). A larger message closes the socket with code `1009` |
+| `COLLAB_MODE` | no | `yjs` or `legacy` (default). Served to the frontend by the unauthenticated `GET /api/config` as `{"collabMode": ...}`. `yjs` turns on merged editing over the Yjs socket (§9); `legacy` keeps whole-document sync. Any other value is a startup error |
 | `STORE_DRIVER` | no | local/test only: `s3` (default) or `memory` (in-process store, data lost on restart; `DATA_BUCKET` not required). Never set it in AWS. |
 
 The loader is `backend/src/config/env.ts`. It fails at startup, listing every missing required variable.
@@ -151,3 +152,7 @@ The frontend client (`frontend/src/services/websocketService.ts`) must work **wi
   - A held client therefore never sees an empty synced doc. Lexical's `CollaborationPlugin` only bootstraps (applies `initialEditorState`) when the synced doc is empty, so it can't duplicate content.
 - **Relay:** each update from a client is applied to the server doc and broadcast to the other clients in the room. Awareness is relayed, and cleaned up when a client disconnects.
 - **Limits:** the existing `WS_MAX_PAYLOAD_BYTES` applies, along with the same keepalive and dead-connection handling as the rooms.
+- **Feature flag:** the frontend uses this socket only when `GET /api/config` returns `{"collabMode": "yjs"}` (`COLLAB_MODE=yjs`, §3). It fetches the flag once before showing the editor and falls back to `legacy` if the request fails.
+  - In `yjs` mode the editor mounts Lexical's `CollaborationPlugin` with a fresh `Y.Doc` per mount, and the JSON room (§5) carries only presence and workflow events (`transaction_settled`, `change_status_updated`, ...). The editor never sends `realtime_content_update`, `content_updated`, typing or cursor messages, and never replaces the whole document after the initial load.
+  - In `legacy` mode nothing changes.
+- **Tracked changes in `yjs` mode:** `POST /api/tracked-changes/submission/:id` bodies add `"diffAgainstOldValue": true`. The server then diffs the change against the `oldValue` it was sent with (the merged document just before this user's edit) instead of the latest saved proposed version, which may be another user's concurrent save. Without the flag, behavior is unchanged.

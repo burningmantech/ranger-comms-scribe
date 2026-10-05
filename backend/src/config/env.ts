@@ -1,4 +1,4 @@
-import { Env } from '../utils/sessionManager';
+import { CollabMode, Env } from '../utils/sessionManager';
 import { ObjectStore } from '../storage/objectStore';
 import { S3ObjectStore } from '../storage/s3ObjectStore';
 import { MemoryObjectStore } from '../storage/memoryObjectStore';
@@ -24,6 +24,7 @@ import { MemoryObjectStore } from '../storage/memoryObjectStore';
  *   DEV_BYPASS_AUTH         "true" enables fake users (local only)
  *   MAX_BODY_BYTES          largest accepted HTTP request body; default 25 MiB (larger: 413)
  *   WS_MAX_PAYLOAD_BYTES    largest accepted WebSocket message; default 16 MiB (larger: close 1009)
+ *   COLLAB_MODE             "yjs" or "legacy" (default): real-time editing mode, served by GET /api/config
  *
  * Local/test only:
  *   STORE_DRIVER            "memory" uses an in-process MemoryObjectStore instead of S3.
@@ -98,6 +99,17 @@ export function parseByteLimit(name: string, value: string | undefined, fallback
   return bytes;
 }
 
+/** COLLAB_MODE: "yjs" or "legacy" (default when unset/blank). Anything else is a startup error. */
+export function parseCollabMode(value: string | undefined): CollabMode {
+  const raw = nonEmpty(value);
+  if (!raw) return 'legacy';
+  const mode = raw.toLowerCase();
+  if (mode !== 'yjs' && mode !== 'legacy') {
+    throw new Error(`Invalid COLLAB_MODE: ${value} (expected "yjs" or "legacy")`);
+  }
+  return mode;
+}
+
 /**
  * Build the Env from `source` (defaults to process.env). Throws one error listing
  * every missing required variable.
@@ -118,6 +130,7 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }
 
+  const collabMode = parseCollabMode(source.COLLAB_MODE);
   const frontendUrl = nonEmpty(source.FRONTEND_URL)!;
   const corsOrigins = parseCsv(source.CORS_ORIGINS);
 
@@ -147,6 +160,7 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
     EMAIL_BCC: parseCsv(source.EMAIL_BCC),
     ANNOUNCE_EMAIL_TO: nonEmpty(source.ANNOUNCE_EMAIL_TO),
     BOOTSTRAP_ADMIN_EMAILS: parseCsv(source.BOOTSTRAP_ADMIN_EMAILS).map((email) => email.toLowerCase()),
+    COLLAB_MODE: collabMode,
   };
 
   return {

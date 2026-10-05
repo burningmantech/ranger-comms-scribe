@@ -31,6 +31,8 @@ import { WebSocketManager, CursorPosition, WebSocketMessage } from '../services/
 import { TransactionManager, Transaction } from '../services/transactionManager';
 import { isLexicalJson, extractTextFromLexical } from '../utils/lexicalUtils';
 import { getUserColor, CURRENT_USER_COLOR } from '../utils/userColors';
+import { CollabUpdateListener, CollabUpdateKind, YjsCollaboration } from './editor/collab/YjsCollaboration';
+import type { CollabMode } from '../services/collabConfig';
 import './CollaborativeEditor.css';
 
 // ===================================================================
@@ -1588,6 +1590,26 @@ export interface CollaborativeEditorProps {
   onTransactionRedone?: (transaction: Transaction) => void;
   /** Whether to intercept deletions (tracked-changes suggest mode). */
   interceptDeletions?: boolean;
+  /**
+   * 'yjs': merged real-time editing through Lexical's CollaborationPlugin (requires
+   * useSubmissionWebSocket; the room socket then carries only presence and workflow
+   * events). Default 'legacy': whole-document sync, unchanged. Fixed for the life of
+   * the component.
+   */
+  collabMode?: CollabMode;
+  /**
+   * Collaborative mode only. Content changes that aren't the local user's typing:
+   * 'remote' for another user's edits merged through Yjs, 'baseline' for the initial
+   * seed and programmatic tracked-change bookkeeping. onContentChange then only ever
+   * receives the local user's own edits.
+   */
+  onRemoteContentChange?: (content: string, kind: 'remote' | 'baseline') => void;
+  /**
+   * Collaborative mode only. The saved content to seed the shared document with, read
+   * only if this client is the one the server picks to seed an empty room. Lexical JSON,
+   * HTML or plain text; '' for an empty document (never placeholder text).
+   */
+  getCollabSeedContent?: () => string;
 }
 
 /**
@@ -1632,7 +1654,18 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   onTransactionUndone,
   onTransactionRedone,
   interceptDeletions,
+  collabMode = 'legacy',
+  onRemoteContentChange,
+  getCollabSeedContent,
 }) => {
+  // Collaborative (Yjs) mode: CollaborationPlugin owns content sync, undo and remote
+  // cursors. Everything that writes or broadcasts the whole document is off.
+  const isCollab = collabMode === 'yjs' && useSubmissionWebSocket;
+  const cursorsContainerRef = useRef<HTMLDivElement | null>(null);
+  const getCollabSeedContentRef = useRef(getCollabSeedContent);
+  getCollabSeedContentRef.current = getCollabSeedContent;
+  const readCollabSeedContent = useCallback(() => getCollabSeedContentRef.current?.() ?? '', []);
+
   // Create a unique browser session identifier for collaborative editing
   const browserSessionId = useMemo(() => {
     const stored = localStorage.getItem('collaborativeSessionId');
@@ -2236,11 +2269,13 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             });
           });
 
-          client.on('cursor_position', handleRemoteCursorUpdate);
-          client.on('typing_start', handleTypingStart);
-          client.on('typing_stop', handleTypingStop);
+          // Collaborative mode: remote cursors come from Yjs awareness, and there is no
+          // typing or whole-document traffic on the room socket.
+          if (!isCollab) client.on('cursor_position', handleRemoteCursorUpdate);
+          if (!isCollab) client.on('typing_start', handleTypingStart);
+          if (!isCollab) client.on('typing_stop', handleTypingStop);
 
-          client.on('request_cursor_refresh', (message: any) => {
+          if (!isCollab) client.on('request_cursor_refresh', (message: any) => {
             // Only respond if this request is targeted at the current user
             if (message.targetUserId === effectiveUserId) {
               // Rate limit responses to prevent spam
@@ -2298,7 +2333,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             }
           });
 
-          client.on('request_cursor_refresh_all', (message: any) => {
+          if (!isCollab) client.on('request_cursor_refresh_all', (message: any) => {
             // Respond to requests for all users to refresh their cursor positions
             // Rate limit responses to prevent spam
             const now = Date.now();
@@ -2413,7 +2448,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             }
           });
 
-          client.on('realtime_content_update', (message) => {
+          if (!isCollab) client.on('realtime_content_update', (message) => {
             // Don't update our own content to avoid infinite loops
             if (message.userId !== (currentUser.id || currentUser.email)) {
               // Skip applying remote updates while the local user is actively
@@ -2445,8 +2480,9 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
             onWebSocketClientReady(client);
           }
 
-          // Register remote content update functions
-          if (onRemoteContentUpdate) {
+          // Register remote content update functions (never in collaborative mode:
+          // nothing may replace the whole document after the initial load)
+          if (onRemoteContentUpdate && !isCollab) {
             // Register the full update function for regular updates using closure
             onRemoteContentUpdate((content: string) => {
               applyRemoteContentUpdate(content);
@@ -2641,7 +2677,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
     // Register remote content update function immediately (independent of WebSocket)
     // so parent components can push content updates even if WebSocket fails
-    if (onRemoteContentUpdate) {
+    if (onRemoteContentUpdate && !isCollab) {
       onRemoteContentUpdate((content: string) => {
         applyRemoteContentUpdate(content);
       });
@@ -2817,6 +2853,16 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     });
   }, [currentContent, onContentChange, documentId, currentUser.id, currentUser.email, currentUser.name, effectiveUserId]);
 
+  // Collaborative mode: route each committed update by origin. Only the local user's
+  // own edits reach onContentChange (and so the TransactionManager).
+  const handleCollabUpdate = useCallback((json: string, kind: Exclude<CollabUpdateKind, 'ignore'>) => {
+    if (kind === 'local') {
+      onContentChange(json);
+    } else {
+      onRemoteContentChange?.(json, kind);
+    }
+  }, [onContentChange, onRemoteContentChange]);
+
   // Handle save - memoized to prevent re-renders
   const handleSave = useCallback(() => {
     if (onSave) {
@@ -2828,6 +2874,10 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
   // Initialize editor content when it becomes available
   useEffect(() => {
+    // Collaborative mode: CollaborationPlugin seeds the shared document (once, on the
+    // client the server picks) and Yjs keeps it in sync; re-initializing from
+    // initialContent would replace the whole document under everyone's edits.
+    if (isCollab) return;
     if (editorRef.current && initialContent && !isInitializedRef.current) {
       // Never replace the document under an in-progress local edit: the new
       // initialContent comes from a refetch that doesn't include those keystrokes.
@@ -3018,6 +3068,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
   // Reset initialization flag when initialContent changes
   useEffect(() => {
+    if (isCollab) return;
     console.log(`[EDITOR-INIT] initialContent changed — resetting isInitializedRef to false. First 150 chars:`, initialContent?.substring(0, 150));
     isInitializedRef.current = false;
     // Also reset the saved content tracking when initialContent changes
@@ -3123,14 +3174,30 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               {/* TrackedChangeTagDetector MUST be before OnChangePlugin so its
                   registerUpdateListener fires first, setting the decoration flag
                   before handleEditorChange reads it. */}
-              <TrackedChangeTagDetector flagRef={isTrackedChangeDecorationRef} />
-              <TrackedChangeTagDetector flagRef={isRemoteSyncUpdateRef} tag={REMOTE_SYNC_TAG} />
-              <OnChangePlugin onChange={handleEditorChange} />
-              <TransactionHistoryPlugin
-                transactionManager={transactionManager ?? null}
-                onTransactionUndone={onTransactionUndone}
-                onTransactionRedone={onTransactionRedone}
-              />
+              {!isCollab && <TrackedChangeTagDetector flagRef={isTrackedChangeDecorationRef} />}
+              {!isCollab && <TrackedChangeTagDetector flagRef={isRemoteSyncUpdateRef} tag={REMOTE_SYNC_TAG} />}
+              {!isCollab && <OnChangePlugin onChange={handleEditorChange} />}
+              {!isCollab && (
+                <TransactionHistoryPlugin
+                  transactionManager={transactionManager ?? null}
+                  onTransactionUndone={onTransactionUndone}
+                  onTransactionRedone={onTransactionRedone}
+                />
+              )}
+              {/* Collaborative mode: Yjs owns sync and undo (its UndoManager undoes only
+                  this user's edits); no HistoryPlugin or transaction-level undo. */}
+              {isCollab && (
+                <YjsCollaboration
+                  submissionId={documentId}
+                  getSeedContent={readCollabSeedContent}
+                  username={currentUser.name || currentUser.email}
+                  cursorColor={getUserColor(currentUser.id || currentUser.email)}
+                  cursorsContainerRef={cursorsContainerRef}
+                  readOnly={readOnly}
+                />
+              )}
+              {isCollab && <CollabUpdateListener onUpdate={handleCollabUpdate} />}
+              {isCollab && <div ref={cursorsContainerRef} className="collab-cursors-container" />}
               <ListPlugin />
               <LinkPlugin />
               <IndentationPlugin />
@@ -3145,6 +3212,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   onChangeClick={onTrackedChangeClick}
                   liveBaseline={liveBaseline}
                   currentUserId={currentUser.id || currentUser.email}
+                  collabMode={isCollab ? 'yjs' : undefined}
                 />
               )}
               {interceptDeletions && (
@@ -3152,27 +3220,33 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   enabled={true}
                   currentUserName={currentUser.name || currentUser.email}
                   currentUserId={currentUser.id || currentUser.email}
+                  collabMode={isCollab ? 'yjs' : undefined}
                   getBeforeText={() => {
                     const tx = transactionManager?.getActiveTransaction();
                     return tx?.beforeSnapshot?.text ?? null;
                   }}
                 />
               )}
-              {/* Always render CursorTrackingPlugin but let it handle WebSocket client internally */}
-              <CursorTrackingPlugin
-                webSocketClient={webSocketClientRef.current}
-                currentUser={currentUser}
-                documentId={documentId}
-                onCursorUpdate={handleCursorUpdate}
-                effectiveUserId={effectiveUserId}
-              />
-              <RemoteCursorPlugin
-                remoteCursors={remoteCursors}
-                currentUserCursor={currentUserCursor}
-                currentUserId={currentUser.id || currentUser.email}
-                needsRepositioning={needsCursorRepositioning}
-                webSocketClient={webSocketClientRef.current}
-              />
+              {/* Always render CursorTrackingPlugin but let it handle WebSocket client internally
+                  (legacy mode; collaborative mode shows Yjs awareness cursors instead) */}
+              {!isCollab && (
+                <CursorTrackingPlugin
+                  webSocketClient={webSocketClientRef.current}
+                  currentUser={currentUser}
+                  documentId={documentId}
+                  onCursorUpdate={handleCursorUpdate}
+                  effectiveUserId={effectiveUserId}
+                />
+              )}
+              {!isCollab && (
+                <RemoteCursorPlugin
+                  remoteCursors={remoteCursors}
+                  currentUserCursor={currentUserCursor}
+                  currentUserId={currentUser.id || currentUser.email}
+                  needsRepositioning={needsCursorRepositioning}
+                  webSocketClient={webSocketClientRef.current}
+                />
+              )}
             </div>
           </div>
         </div>

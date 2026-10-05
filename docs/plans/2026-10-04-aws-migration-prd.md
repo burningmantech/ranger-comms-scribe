@@ -35,6 +35,7 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
   - **Passed, two-user collaboration** (two Chrome profiles: Alex as Admin, HelpDesk as Comms Cadre): each user's presence avatar and labelled remote cursor appear in the other window, and typing from either side shows up live as that user's tracked change.
   - **Fixed along the way:** a fresh login showed "Please log in to view requests" until a page reload, because `ContentContext` ignored `USER_LOGIN_EVENT` (pre-existing; also on the live site).
   - **Still manual:** forgot-password, which needs a human to pass Turnstile and also proves SES from the task role. |
+| 5: Real-time merging with Yjs (§14) | Server and editor implemented behind `COLLAB_MODE=yjs` (on in `alex-dev` only); see §14.5. Not yet deployed or tested on the dev site. |
 
 **Changes made during implementation, beyond the requirements above:**
 - `POST /auth/register` returns 409 for any existing email. Registering the email of a Google-only or admin-created user used to return a session for that account, which was an account takeover.
@@ -514,6 +515,44 @@ The editor syncs by sending the whole document, and the last write wins. When tw
    - reloading shows the same content;
    - each change is credited to the user who made it;
    - today's one-typist tests still pass.
+
+### 14.5 Implementation (2026-10-05)
+
+**Flag.** `GET /api/config` returns `{"collabMode": "yjs" | "legacy"}` from `COLLAB_MODE` (default `legacy`). The review page fetches it once before showing the editor. In `legacy` mode the editor is unchanged.
+
+**Collaborative mode (`yjs`):**
+- **Sync.** `CollaborationPlugin` with the stock `y-websocket` provider and a fresh `Y.Doc` per editor mount (`frontend/src/components/editor/collab/YjsCollaboration.tsx`).
+  - The seed is the newest content the seeding client has (its own saves don't refetch), else the fetched content, and never the placeholder text.
+  - The editor is read-only until synced, and while the socket is down.
+  - After 20 s offline the next connection starts from a fresh doc, so an old Yjs history can't merge a second copy into a room that was seeded again.
+- **Off:** the init/re-init effects, `applyRemote*`, `realtime_content_update`/`content_updated`, typing and cursor messages, `HistoryPlugin` and transaction-level undo. The JSON room keeps presence and workflow events.
+- **Change tracking.** Every committed update is classified by its tags:
+  - `collaboration` is remote;
+  - `history-merge` and tracked-change bookkeeping are baseline;
+  - everything else is local, including `historic`, which now only comes from Yjs's UndoManager undoing the user's own edits.
+
+  Only local updates start or extend a transaction. A remote update during a local transaction settles it first, with the user's own last state.
+- **Saves.** Saves send `diffAgainstOldValue: true` so the server diffs each change against the user's own before-state, not another user's interleaved save.
+- **Decorations.** `applyDecorations` never writes the tree: highlights and bookkeeping only.
+  - Deletion markers are created only by their author's edit; they now carry `authorId` and a per-author color.
+  - Approve/reject changes the tree only on the resolving client, and that syncs.
+  - Remote status and undo events update the sidebar only.
+- **Undo.** A Yjs UndoManager that captures only the local user's own edits takes Ctrl+Z/Ctrl+Y. CollaborationPlugin's own manager would also undo the seed, approve/reject and marker renames.
+  - Undoing a saved change's text leaves its sidebar entry, which can be rejected.
+
+**Verified locally:**
+- headless convergence tests against the real server (`frontend/src/__integration__`);
+- a two-browser run (two isolated Chrome contexts on the real app, dev server and production build) of the §14.4 matrix, plus reload, attribution, reject/approve, undo, outages, re-seeding and editor remounts.
+
+**Known limits:**
+- **Text split by a concurrent edit.** When one user presses Enter, or applies a format, inside text the other user is typing in, the text typed concurrently into the part that was split off lands at the split point instead of moving with it.
+  - Likewise, a remote Enter before your caret in your paragraph moves your caret to the split point.
+  - Both editors still match and nothing is lost or duplicated.
+  - This is how `@lexical/yjs` 0.30 represents a split (delete plus insert).
+- **Same-position typing.** Two people typing at exactly the same position can interleave characters.
+- **Many small changes.** Two people typing at the same time produce many small tracked changes: one per stretch of typing between the other user's updates, often one per keystroke. The sidebar groups them by author.
+  - A follow-up could rebase the active transaction instead of settling it.
+- **Saved content.** The persisted proposed content is the last saver's full document, as before (see the §14.3 known limit).
 
 ## 13. Estimates
 

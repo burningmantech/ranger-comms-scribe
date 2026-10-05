@@ -74,6 +74,10 @@ class TrackedChangesService {
     oldValue: string;
     newValue: string;
     regionMap?: { field: string; ranges: Array<{ start: number; end: number }> };
+    richTextOldValue?: string;
+    richTextNewValue?: string;
+    /** Collaborative mode: diff against oldValue, not the latest saved version (backend createTrackedChange). */
+    diffAgainstOldValue?: boolean;
   }): Promise<TrackedChangeResponse> {
     try {
       const response = await fetch(`${API_URL}/tracked-changes/submission/${submissionId}`, {

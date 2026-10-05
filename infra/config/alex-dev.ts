@@ -57,6 +57,8 @@ const config: ScribeConfig = {
     ANNOUNCE_EMAIL_TO: process.env.SCRIBE_ALEX_DEV_ANNOUNCE_EMAIL_TO ?? '',
     BOOTSTRAP_ADMIN_EMAILS: process.env.SCRIBE_ALEX_DEV_BOOTSTRAP_ADMIN_EMAILS || 'alexander.young@gmail.com',
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
+    // Merged real-time editing (Yjs, PRD §14) is on in dev; the Rangers environments keep the default 'legacy'.
+    COLLAB_MODE: 'yjs',
   },
 
   // SSM SecureString you create by hand (infra/README.md, first-time setup).
