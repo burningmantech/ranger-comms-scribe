@@ -104,7 +104,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Build frontend from the staging commit
         working-directory: ${{ runner.temp }}/staging-src/frontend

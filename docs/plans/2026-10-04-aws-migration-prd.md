@@ -148,7 +148,7 @@ ECR repo for the image · CloudWatch Logs
 
 ### 7.3 CI/CD (copies Clubhouse)
 
-- `.github/workflows/cicd.yml` runs on pushes to `main`: backend and frontend tests, Docker build, then `bin/deploy staging`.
+- `.github/workflows/cicd.yml` runs on pushes to `master`: backend and frontend tests, Docker build, then `bin/deploy staging`.
 - `.github/workflows/deploy.yml` is a manual `workflow_dispatch` that runs `bin/deploy production`, limited to a list of approved users.
 - `bin/deploy` copies Clubhouse's wrapper, which downloads and runs `deploy_aws_ecs`.
 - **Frontend:** each workflow builds it, runs `aws s3 sync frontend/build` to that environment's SPA bucket, and invalidates its CloudFront distribution. Production syncs the same commit's build.
@@ -189,7 +189,7 @@ A hostname can be attached to only one CloudFront distribution in all of AWS.
 | Availability | **Wakes and sleeps on demand.** The ALB and ECS service exist only while dev is awake | Always on |
 | Network | Stack-created VPC: public subnets, no NAT, S3 gateway endpoint | Tech team's existing VPC and cluster (or stack-created) |
 | ALB | Own ALB, created on wake | Shared ALB with host rules (possibly the tech team's existing one) |
-| Deploys | `bin/dev-deploy` from a laptop, `:dev` image tag | GitHub Actions: pushes to `main` deploy staging, then manual promotion to production |
+| Deploys | `bin/dev-deploy` from a laptop, `:dev` image tag | GitHub Actions: pushes to `master` deploy staging, then manual promotion to production |
 | Secrets | SSM Parameter Store | Secrets Manager |
 | Cost guardrail | AWS Budgets alert at $15/month | Tech team's normal monitoring |
 
@@ -360,14 +360,14 @@ This uses the **standard** profile: the tech team's regular production setup, wi
 
 - Deploy with the `rangers-staging` and `rangers-production` configs: on-demand Fargate, always on, importing the existing VPC, cluster and ALB if the tech team prefers.
 - Configure the `rangers` GitHub Environment. From then on:
-  - pushes to `main` run tests and `bin/deploy staging`;
+  - pushes to `master` run tests and `bin/deploy staging`;
   - promotion is the manual `deploy.yml` workflow (`bin/deploy production`).
 - Request SES production access in their account, and set `EMAIL_BCC` to empty.
 - Point the final hostname, for example `scrivenly.com`, at the production CloudFront distribution.
 - Retire the Cloudflare deployment whenever Alex chooses. Its content isn't migrated.
 
 **Acceptance criteria**, in addition to Phase 4's app checks on the staging hostname:
-- A push to `main` deploys to staging through GitHub Actions.
+- A push to `master` deploys to staging through GitHub Actions.
 - `bin/deploy production` promotes staging's image to production.
 - Production stays up through a staging deploy.
 

@@ -114,7 +114,7 @@ grants live in the persistent stack.
 Prerequisites:
 
 - AWS CLI v2 with a profile for the account;
-- Node 20 or later;
+- Node 24 (LTS) or later;
 - Docker (Docker Desktop on macOS);
 - Python 3, used by ranger-deploy.
 

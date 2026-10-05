@@ -1,7 +1,7 @@
 # Docs: https://docs.github.com/en/actions
 #
 # Tests, infrastructure synth and the Docker build run on every pull request and push.
-# Pushes to main also deploy to staging (bin/deploy staging + frontend sync), but only once the
+# Pushes to master (the default branch) also deploy to staging (bin/deploy staging + frontend sync), but only once the
 # Ranger tech team has configured the `rangers` GitHub Environment (PRD §7.3). Until then the
 # deploy job runs, finds no AWS_ECR_IMAGE_NAME and skips its steps.
 #
@@ -46,7 +46,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
@@ -82,7 +82,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -125,7 +125,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "22"  # infra tooling only; the container stays on Node 20
+          node-version: "24"
           cache: npm
           cache-dependency-path: infra/package-lock.json
 
@@ -190,10 +190,10 @@ jobs:
           retention-days: 7
 
   deploy-staging:
-    name: Deploy main to the staging environment
+    name: Deploy master to the staging environment
 
     needs: [backend, frontend, infra, docker-build]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
 
     environment: rangers
 
