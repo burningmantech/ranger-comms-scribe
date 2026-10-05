@@ -136,7 +136,7 @@ Content submissions go through a multi-stage approval process:
 
 ### Real-time Collaboration
 
-WebSocket rooms run in the same Node process as the REST API:
+WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST API:
 
 1. **Rooms** (`backend/src/realtime/rooms.ts`, replaces the old Durable Object):
    - Upgrades on `/api/ws/submissions/:id` and `/api/ws/documents/:id` (`?sessionId=`) are handled in
@@ -147,12 +147,25 @@ WebSocket rooms run in the same Node process as the REST API:
    - REST handlers call `broadcastToSubmissionRoom()` / `broadcastToDocumentRoom()` directly
    - All state is in memory, so the service runs as a single task
 
-2. **WebSocket Client** (`frontend/src/services/websocketService.ts`):
+2. **Yjs collaboration rooms** (`backend/src/realtime/yjsRooms.ts`, contracts §9):
+   - Upgrades on `/api/ws/yjs/submissions/:id` (`?sessionId=`), routed in `src/httpServer.ts` and authorized
+     with the same `authorizeRoomConnection()`; a separate path from the JSON rooms above
+   - Standard y-websocket binary protocol (sync 0, awareness 1, query awareness 3) via `y-protocols`, so the
+     stock `y-websocket` `WebsocketProvider` (verified with 3.1.0) is the client
+   - One in-memory `Y.Doc` per submission; updates are applied and relayed, awareness is relayed (echoed to
+     the sender too) and removed on disconnect; the room is destroyed 30 s after the last client leaves
+   - **Seeding rule:** while the doc is empty only the first client (seeder) gets its sync step 1 answered;
+     others are held (no doc state in or out) until the seed lands, then get step 2 with the full state.
+     If the seeder leaves before seeding, the next held client is promoted. This keeps Lexical's
+     `CollaborationPlugin` from bootstrapping saved content twice
+   - Keepalive uses WebSocket protocol pings (never JSON frames on this socket)
+
+3. **WebSocket Client** (`frontend/src/services/websocketService.ts`):
    - Connects to submission rooms
    - Sends/receives real-time updates
    - Handles cursor positions and user presence
 
-3. **Message Types**:
+4. **Message Types** (JSON rooms):
    - `connected`, `room_state`, `user_joined`, `user_left`: User presence
    - `cursor_position`: Real-time cursor tracking
    - `realtime_content_update`: full Lexical state while typing (last write wins)

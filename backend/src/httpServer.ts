@@ -1,14 +1,20 @@
 import http, { IncomingMessage, ServerResponse, STATUS_CODES } from 'http';
 import type { Duplex } from 'stream';
 import { createServerAdapter } from '@whatwg-node/server';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { router } from './index';
 import { Env } from './utils/sessionManager';
 import { DEFAULT_MAX_BODY_BYTES, DEFAULT_WS_MAX_PAYLOAD_BYTES } from './config/env';
 import { authorizeRoomConnection } from './handlers/websocket';
-import { RoomTarget, closeAllRooms, joinRoom } from './realtime/rooms';
+import { RoomIdentity, RoomTarget, closeAllRooms, joinRoom } from './realtime/rooms';
+import { closeAllYjsRooms, joinYjsRoom } from './realtime/yjsRooms';
 
+// JSON relay rooms (presence, cursors, workflow events): /api/ws/{submissions,documents}/:id
 const WS_PATH = /^\/api\/ws\/(submissions|documents)\/([^/]+)\/?$/;
+// Yjs collaboration socket (contracts §9): /api/ws/yjs/submissions/:id. The two
+// patterns can't match the same path: WS_PATH needs `submissions` or `documents`
+// right after /api/ws/, this one needs `yjs`.
+const YJS_WS_PATH = /^\/api\/ws\/yjs\/submissions\/([^/]+)\/?$/;
 
 // Keep idle connections open longer than the ALB idle timeout (120 s,
 // infra/lib/scribe-service.ts). With Node's 5 s default the server closes
@@ -112,7 +118,10 @@ export interface AppServer {
 
 /**
  * Build the HTTP server: REST through the itty-router app (via @whatwg-node/server)
- * and WebSocket upgrades for /api/ws/{submissions,documents}/:id via `ws`.
+ * and WebSocket upgrades via `ws`: /api/ws/{submissions,documents}/:id (JSON relay
+ * rooms, src/realtime/rooms.ts) and /api/ws/yjs/submissions/:id (Yjs collaboration,
+ * src/realtime/yjsRooms.ts). Both share one WebSocketServer, so WS_MAX_PAYLOAD_BYTES
+ * applies to both.
  * The caller decides when to listen.
  */
 export function createAppServer(env: Env, options: AppServerOptions = {}): AppServer {
@@ -182,20 +191,26 @@ export function createAppServer(env: Env, options: AppServerOptions = {}): AppSe
         return;
       }
 
-      const match = WS_PATH.exec(url.pathname);
-      if (!match) {
+      const yjsMatch = YJS_WS_PATH.exec(url.pathname);
+      const match = yjsMatch ? null : WS_PATH.exec(url.pathname);
+      if (!yjsMatch && !match) {
         rejectUpgrade(socket, 404, { error: 'Not Found' });
         return;
       }
 
       let id: string;
       try {
-        id = decodeURIComponent(match[2]);
+        id = decodeURIComponent(yjsMatch ? yjsMatch[1] : match![2]);
       } catch {
         rejectUpgrade(socket, 400, { error: 'Bad request' });
         return;
       }
-      const target: RoomTarget = { kind: match[1] === 'submissions' ? 'submission' : 'document', id };
+      const target: RoomTarget = yjsMatch
+        ? { kind: 'submission', id }
+        : { kind: match![1] === 'submissions' ? 'submission' : 'document', id };
+      const join = yjsMatch
+        ? (ws: WebSocket, identity: RoomIdentity) => joinYjsRoom(ws, id, identity)
+        : (ws: WebSocket, identity: RoomIdentity) => joinRoom(ws, target, identity);
 
       try {
         const result = await authorizeRoomConnection(
@@ -208,7 +223,7 @@ export function createAppServer(env: Env, options: AppServerOptions = {}): AppSe
           return;
         }
         if (socket.destroyed) return;
-        wss.handleUpgrade(req, socket, head, (ws) => joinRoom(ws, target, result.identity));
+        wss.handleUpgrade(req, socket, head, (ws) => join(ws, result.identity));
       } catch (error) {
         console.error('Error handling WebSocket upgrade:', error);
         rejectUpgrade(socket, 500, { error: 'Failed to connect to WebSocket service' });
@@ -220,6 +235,7 @@ export function createAppServer(env: Env, options: AppServerOptions = {}): AppSe
     server,
     close: () => new Promise<void>((resolve) => {
       closeAllRooms(1001, 'Server shutting down');
+      closeAllYjsRooms(1001, 'Server shutting down');
       wss.close();
       if (!server.listening) {
         resolve();
