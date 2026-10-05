@@ -32,7 +32,9 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
     - SPA deep links, HSTS, API 404 stays a 404;
     - the ALB is unreachable directly;
     - no errors in the container logs.
-  - **Still manual:** forgot-password (needs a human to pass Turnstile; also proves SES from the task role) and a two-user collaboration session. |
+  - **Passed, two-user collaboration** (two Chrome profiles: Alex as Admin, HelpDesk as Comms Cadre): each user's presence avatar and labelled remote cursor appear in the other window, and typing from either side shows up live as that user's tracked change.
+  - **Fixed along the way:** a fresh login showed "Please log in to view requests" until a page reload, because `ContentContext` ignored `USER_LOGIN_EVENT` (pre-existing; also on the live site).
+  - **Still manual:** forgot-password, which needs a human to pass Turnstile and also proves SES from the task role. |
 
 **Changes made during implementation, beyond the requirements above:**
 - `POST /auth/register` returns 409 for any existing email. Registering the email of a Google-only or admin-created user used to return a session for that account, which was an account takeover.
