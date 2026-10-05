@@ -8,10 +8,17 @@ import { WebSocket } from 'ws';
  *   - on join: `user_joined` to the others, `room_state` to everyone (including the
  *     new socket), then `connected` to the new socket only;
  *   - every other message is relayed to the rest of the room with the sender's
- *     identity (userId, userName, userEmail) and a per-room `seq` stamped on;
+ *     identity (userId, userName, userEmail) and a `seq` stamped on;
  *   - ping -> pong, heartbeat -> heartbeat_response, client pongs are swallowed;
  *   - the server sends an app-level `ping` every 30 s;
  *   - on close: `user_left` and an updated `room_state` to the rest of the room.
+ *
+ * `seq` counts the broadcasts delivered to each connection (1, 2, 3, ...). The client
+ * treats a jump as missed messages and refetches (`sync_needed`), so the numbers must
+ * have no holes from that client's point of view. The Durable Object used one counter
+ * per room, which skipped a number for every message the client itself sent; each
+ * send then looked like a gap to the sender, whose refetch froze change tracking for
+ * 5 s and reloaded stale content over its newest keystrokes.
  *
  * All state is in memory; the service runs as a single task (desiredCount = 1).
  *
@@ -58,6 +65,8 @@ interface ConnectionMetadata extends RoomIdentity {
   documentId?: string;
   connectedAt: string;
   lastSeen: number;
+  /** Broadcasts delivered to this connection; the last value stamped as `seq`. */
+  seq: number;
 }
 
 export type RoomTarget = { kind: 'submission' | 'document'; id: string };
@@ -72,7 +81,6 @@ const DEFAULT_PING_INTERVAL_MS = 30000;
 const rooms = new Map<string, Set<WebSocket>>();
 const connections = new Map<WebSocket, ConnectionMetadata>();
 const pingTimers = new Map<WebSocket, ReturnType<typeof setInterval>>();
-const roomSeqCounters = new Map<string, number>();
 let pingIntervalMs = DEFAULT_PING_INTERVAL_MS;
 
 /** Override the server ping interval (tests). Applies to connections that join afterwards. */
@@ -98,23 +106,25 @@ function safeSend(ws: WebSocket, payload: string): boolean {
 }
 
 /**
- * Send `message` to every open socket in the room except `exclude`, stamping the
- * next per-room `seq`. Does nothing (and does not advance `seq`) for an empty room.
+ * Send `message` to every open socket in the room except `exclude`, stamping each
+ * recipient's next `seq` (see the header: per connection, so a client never sees a
+ * hole for messages it didn't need).
  */
 export function broadcastToRoom(roomKey: string, message: Record<string, any>, exclude?: WebSocket): number {
   const room = rooms.get(roomKey);
   if (!room || room.size === 0) return 0;
 
-  const seq = (roomSeqCounters.get(roomKey) ?? 0) + 1;
-  roomSeqCounters.set(roomKey, seq);
-  const payload = JSON.stringify({ ...message, seq });
-
   let sent = 0;
   for (const ws of Array.from(room)) {
     if (ws === exclude) continue;
+    const meta = connections.get(ws);
+    if (!meta) continue;
     // Sockets that are closing are skipped; their 'close' handler removes them
     // and announces user_left.
-    if (safeSend(ws, payload)) sent++;
+    if (safeSend(ws, JSON.stringify({ ...message, seq: meta.seq + 1 }))) {
+      meta.seq += 1;
+      sent++;
+    }
   }
   return sent;
 }
@@ -173,7 +183,6 @@ function removeConnection(ws: WebSocket, announce: boolean): void {
     room.delete(ws);
     if (room.size === 0) {
       rooms.delete(meta.roomKey);
-      roomSeqCounters.delete(meta.roomKey);
     }
   }
 
@@ -289,6 +298,7 @@ export function joinRoom(ws: WebSocket, target: RoomTarget, identity: RoomIdenti
     roomKey,
     connectedAt: now(),
     lastSeen: Date.now(),
+    seq: 0,
   });
   if (!rooms.has(roomKey)) rooms.set(roomKey, new Set());
   rooms.get(roomKey)!.add(ws);
@@ -337,7 +347,6 @@ export function closeAllRooms(code = 1001, reason = 'Server shutting down'): voi
   for (const timer of pingTimers.values()) clearInterval(timer);
   pingTimers.clear();
   rooms.clear();
-  roomSeqCounters.clear();
 }
 
 /** Number of open connections across all rooms (diagnostics). */

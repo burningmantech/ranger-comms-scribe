@@ -201,6 +201,28 @@ describe('real-time rooms (real sessions)', () => {
     await b.expectNone((m) => m.type === 'user_joined' && m.userEmail === bob.email, 100);
   });
 
+  it('numbers broadcasts per connection, so a sender never sees a seq gap', async () => {
+    // Regression: one counter per room skipped a number for each message the client
+    // itself sent, the client treated that as missed messages (sync_needed), and the
+    // resulting refetch froze change tracking and reloaded stale content.
+    const a = connect(`/api/ws/submissions/${submissionId}`, aliceSession);
+    const b = connect(`/api/ws/submissions/${submissionId}`, bobSession);
+    await Promise.all([a.opened(), b.opened()]);
+    await a.waitFor((m) => m.type === 'room_state' && m.users.length === 2);
+    await b.waitFor((m) => m.type === 'room_state' && m.users.length === 2);
+
+    for (let i = 0; i < 5; i++) a.send({ type: 'realtime_content_update', data: { n: i } });
+    for (let i = 0; i < 5; i++) await b.waitFor((m) => m.type === 'realtime_content_update' && m.data?.n === i);
+    b.send({ type: 'cursor_position', data: { position: 3 } });
+    await a.waitFor((m) => m.type === 'cursor_position');
+
+    for (const client of [a, b]) {
+      const seqs = client.messages.filter((m) => typeof m.seq === 'number').map((m) => m.seq);
+      expect(seqs.length).toBeGreaterThan(0);
+      seqs.forEach((seq, i) => expect(seq).toBe(seqs[0] + i)); // contiguous: no holes
+    }
+  });
+
   it('relays messages to the rest of the room with server-stamped identity and increasing seq', async () => {
     const a = connect(`/api/ws/submissions/${submissionId}`, aliceSession);
     const b = connect(`/api/ws/submissions/${submissionId}`, bobSession);
@@ -221,7 +243,7 @@ describe('real-time rooms (real sessions)', () => {
     expect(second.data).toEqual({ content: '{"root":{}}' });
     expect(second.seq).toBe(first.seq + 1);
 
-    // Seq is per room and monotonic across everything B received.
+    // Seq is per connection and monotonic across everything B received.
     const seqs = b.messages.filter((m) => typeof m.seq === 'number').map((m) => m.seq);
     expect([...seqs].sort((x, y) => x - y)).toEqual(seqs);
 

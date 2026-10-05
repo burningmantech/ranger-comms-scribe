@@ -1594,19 +1594,22 @@ export interface CollaborativeEditorProps {
  * Small plugin that detects tracked-changes-decoration update tags
  * and sets a ref flag so handleEditorChange can skip propagation.
  */
-function TrackedChangeTagDetector({ flagRef }: { flagRef: React.MutableRefObject<boolean> }): null {
+function TrackedChangeTagDetector({ flagRef, tag = 'tracked-changes-decoration' }: { flagRef: React.MutableRefObject<boolean>; tag?: string }): null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
     return editor.registerUpdateListener(({ tags }) => {
-      if (tags.has('tracked-changes-decoration')) {
+      if (tags.has(tag)) {
         flagRef.current = true;
       }
     });
-  }, [editor, flagRef]);
+  }, [editor, flagRef, tag]);
 
   return null;
 }
+
+/** Update tag for content applied from another user (real-time or remote save). */
+const REMOTE_SYNC_TAG = 'remote-sync';
 
 export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   documentId,
@@ -1662,6 +1665,9 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const contentChangedRef = useRef(false);
   const isInitializedRef = useRef(false);
   const isTrackedChangeDecorationRef = useRef(false);
+  // Set by the update listener for REMOTE_SYNC_TAG updates, so handleEditorChange
+  // knows deterministically (not by timer) that a change came from another user.
+  const isRemoteSyncUpdateRef = useRef(false);
   const webSocketClientRef = useRef<any>(null);
   const lastCursorPositionRef = useRef<CursorPosition | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1751,7 +1757,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         if (isLexicalJson(content)) {
           // Parse and set the full Lexical editor state to preserve rich text formatting
           const editorState = editorRef.current.parseEditorState(content);
-          editorRef.current.setEditorState(editorState);
+          editorRef.current.setEditorState(editorState, { tag: REMOTE_SYNC_TAG });
         } else {
           // Handle plain text by updating within editor
           editorRef.current.update(() => {
@@ -1931,7 +1937,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
         // For real-time updates, use setEditorState to preserve formatting
         const editorState = editorRef.current.parseEditorState(content);
-        editorRef.current.setEditorState(editorState);
+        editorRef.current.setEditorState(editorState, { tag: REMOTE_SYNC_TAG });
 
         // Transform cursor positions after real-time update
         setTimeout(() => {
@@ -2660,6 +2666,21 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     // Skip propagation for tracked-changes-decoration updates, but still
     // sync currentContent so the next non-suppressed handleEditorChange
     // doesn't see a stale diff and trigger TransactionManager.
+    // Content applied from another user: sync currentContent but never treat it as a
+    // local edit (no onContentChange, no content_updated / typing broadcast). The
+    // isApplyingRemoteUpdate timer used to expire before this async callback ran,
+    // so idle editors re-broadcast what they had just received.
+    if (isRemoteSyncUpdateRef.current) {
+      isRemoteSyncUpdateRef.current = false;
+      editorState.read(() => {
+        const jsonContent = JSON.stringify(editorState);
+        if (jsonContent !== currentContent) {
+          setCurrentContent(jsonContent);
+        }
+      });
+      return;
+    }
+
     if (isTrackedChangeDecorationRef.current) {
       isTrackedChangeDecorationRef.current = false;
       editorState.read(() => {
@@ -3094,6 +3115,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
                   registerUpdateListener fires first, setting the decoration flag
                   before handleEditorChange reads it. */}
               <TrackedChangeTagDetector flagRef={isTrackedChangeDecorationRef} />
+              <TrackedChangeTagDetector flagRef={isRemoteSyncUpdateRef} tag={REMOTE_SYNC_TAG} />
               <OnChangePlugin onChange={handleEditorChange} />
               <TransactionHistoryPlugin
                 transactionManager={transactionManager ?? null}
