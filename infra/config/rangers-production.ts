@@ -15,6 +15,10 @@ const config: ScribeConfig = {
   availabilityZones: azsFor(region),
 
   hostname,
+  // HSTS max-age only (the defaults). On the bare scrivenly.com, includeSubdomains would cover
+  // every subdomain and preload asks for browser preload-list inclusion, which is hard to undo.
+  // Turn them on only once every subdomain is known to be HTTPS-only.
+  hsts: { includeSubdomains: false, preload: false },
   // certificates: {
   //   cloudFrontCertificateArn: 'arn:aws:acm:us-east-1:<account>:certificate/<id>',
   //   albCertificateArn: 'arn:aws:acm:<region>:<account>:certificate/<id>',

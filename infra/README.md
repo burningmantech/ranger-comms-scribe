@@ -329,7 +329,9 @@ These are choices made where the PRD is silent:
 - **`/api/*`** uses the managed `CachingDisabled` policy with `AllViewerExceptHostHeader` (dev) or `AllViewerAndCloudFrontHeaders-2022-06` (standard: it forwards `Host` and adds `CloudFront-Viewer-Address`, which the backend reads for the client IP before falling back to the spoofable first `X-Forwarded-For` entry). `AllViewerExceptHostHeader` already includes the CloudFront viewer-location headers.
   - The origin read timeout is 60 s (the default is 30 s) for slow requests such as batch email.
   - Viewer protocol is HTTPS-only, because redirecting a POST would turn it into a GET.
-- **HSTS:** `max-age=63072000; includeSubDomains; preload`. The old Worker sent a 10-year max-age; 2 years is the usual value.
+- **HSTS:** `max-age=63072000` (2 years; the old Worker sent a 10-year max-age). `includeSubDomains` and `preload` are
+  opt-in per config (`hsts: { includeSubdomains, preload }`) and off in all three configs: on production's bare
+  `scrivenly.com` they would cover every subdomain and ask for browser preload-list inclusion, which is hard to undo.
   The policy also adds `X-Content-Type-Options` and a `Referrer-Policy` default.
 - **SPA publishing.** `static/` is uploaded with a one-year immutable `Cache-Control` and never deleted, so clients holding an
   older `index.html` still find their chunks. Everything else gets `no-cache` and stale files are deleted. Then `/*` is

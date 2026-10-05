@@ -176,8 +176,10 @@ export function createDistribution(scope: Construct, props: DistributionProps): 
     securityHeadersBehavior: {
       strictTransportSecurity: {
         accessControlMaxAge: Duration.seconds(63072000),
-        includeSubdomains: true,
-        preload: true,
+        // Opt-in per config (ScribeConfig.hsts): on a bare domain these reach every subdomain
+        // and the browsers' preload list.
+        includeSubdomains: config.hsts?.includeSubdomains ?? false,
+        preload: config.hsts?.preload ?? false,
         override: true,
       },
       contentTypeOptions: { override: true },

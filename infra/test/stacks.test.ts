@@ -153,9 +153,19 @@ describe('alex-dev (dev profile)', () => {
     expect(api.CachePolicyId).toBe(MANAGED_CACHING_DISABLED);
     expect(api.OriginRequestPolicyId).toBe(MANAGED_ALL_VIEWER_EXCEPT_HOST);
     expect(config.Origins.map((o: { DomainName: unknown }) => o.DomainName)).toContain('origin.aws-dev.scrivenly.com');
+  });
+
+  test('HSTS keeps a two-year max-age without includeSubdomains or preload', () => {
     persistent.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
       ResponseHeadersPolicyConfig: Match.objectLike({
-        SecurityHeadersConfig: Match.objectLike({ StrictTransportSecurity: Match.objectLike({ IncludeSubdomains: true }) }),
+        SecurityHeadersConfig: Match.objectLike({
+          StrictTransportSecurity: {
+            AccessControlMaxAgeSec: 63072000,
+            IncludeSubdomains: false,
+            Preload: false,
+            Override: true,
+          },
+        }),
       }),
     });
   });
@@ -256,6 +266,16 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
       expect(tagged.selection.countNumber).toBeGreaterThanOrEqual(100);
     });
   }
+
+  test('HSTS defaults: max-age only, no includeSubdomains or preload', () => {
+    stack.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
+      ResponseHeadersPolicyConfig: Match.objectLike({
+        SecurityHeadersConfig: Match.objectLike({
+          StrictTransportSecurity: Match.objectLike({ AccessControlMaxAgeSec: 63072000, IncludeSubdomains: false, Preload: false }),
+        }),
+      }),
+    });
+  });
 
   test('data bucket removes expired delete markers', () => {
     stack.hasResourceProperties('AWS::S3::Bucket', {

@@ -15,6 +15,9 @@ const config: ScribeConfig = {
   availabilityZones: azsFor(region),
 
   hostname,
+  // HSTS max-age only (the defaults). Production decides about includeSubdomains/preload for
+  // the parent domain; staging never should.
+  hsts: { includeSubdomains: false, preload: false },
   // certificates: {
   //   cloudFrontCertificateArn: 'arn:aws:acm:us-east-1:<account>:certificate/<id>',
   //   albCertificateArn: 'arn:aws:acm:<region>:<account>:certificate/<id>',

@@ -15,6 +15,9 @@ const config: ScribeConfig = {
 
   hostname,
   createHostedZone: true,
+  // HSTS max-age only. includeSubdomains/preload would reach other *.aws-dev.scrivenly.com
+  // names and browsers' preload list; leave them off unless that's intended.
+  hsts: { includeSubdomains: false, preload: false },
 
   buckets: {
     spa: `comms-scribe-alex-dev-spa-${account}`,
