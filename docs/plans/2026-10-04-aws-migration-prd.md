@@ -196,8 +196,8 @@ ECR repo for the image · CloudWatch Logs
 
 A hostname can be attached to only one CloudFront distribution in all of AWS.
 
-- **Alex's account** uses `aws-dev.scrivenly.com`, in a Route 53 hosted zone for `aws-dev.scrivenly.com` delegated from the Cloudflare zone by NS records (about $0.50/month). That zone also holds:
-  - `origin.aws-dev.scrivenly.com`, the stable name CloudFront uses for the API origin (§7.6);
+- **Alex's account** uses `app.scrivenly.com`, in a Route 53 hosted zone for `app.scrivenly.com` delegated from the Cloudflare zone by NS records (about $0.50/month). That zone also holds:
+  - `origin.app.scrivenly.com`, the stable name CloudFront uses for the API origin (§7.6);
   - automated ACM DNS validation.
 - **The tech team's account** keeps bare `scrivenly.com`, or whatever final names they choose.
 
@@ -217,10 +217,10 @@ A hostname can be attached to only one CloudFront distribution in all of AWS.
 **How the dev profile sleeps and wakes.** The CDK app has two stacks:
 
 - **`scribe-dev-persistent`:** buckets, ECR, CloudFront, certificates, the Route 53 zone, the cluster, IAM roles, SES identity, SSM parameters and log groups. It stays deployed, and costs about $1–3 a month at rest.
-- **`scribe-dev-compute`:** the ALB, listener, target group, ECS service and the `origin.aws-dev.scrivenly.com` alias record pointing at the ALB.
+- **`scribe-dev-compute`:** the ALB, listener, target group, ECS service and the `origin.app.scrivenly.com` alias record pointing at the ALB.
   - `bin/dev-up` deploys this stack. It takes about 5 minutes: creating the ALB and starting the task.
   - `bin/dev-down` destroys it.
-  - CloudFront is never changed when dev wakes or sleeps, because its API origin is the stable `origin.` name. The ALB's regional ACM certificate covers both `origin.aws-dev.scrivenly.com` and `aws-dev.scrivenly.com`.
+  - CloudFront is never changed when dev wakes or sleeps, because its API origin is the stable `origin.` name. The ALB's regional ACM certificate covers both `origin.app.scrivenly.com` and `app.scrivenly.com`.
   - While asleep, the SPA still loads, and `/api/*` fails until `bin/dev-up` runs.
 - **Data persists while dev is asleep.** Everything stateful lives in S3.
 
@@ -333,7 +333,7 @@ These are estimates from us-east-1 list prices, not a quote. Check them in the A
   - Network when the stack creates the VPC: public subnets only, `natGateways: 0`, an S3 gateway endpoint, the task gets a public IP, and the task security group accepts traffic only from the ALB.
 - R3.2: Dev sleep and wake (§7.6):
   - split the CDK app into `scribe-dev-persistent` and `scribe-dev-compute`;
-  - Route 53 zone for `aws-dev.scrivenly.com` with the stable `origin.` alias;
+  - Route 53 zone for `app.scrivenly.com` with the stable `origin.` alias;
   - `bin/dev-up`, `bin/dev-down` and `bin/dev-deploy`;
   - an AWS Budgets alert at $15/month.
 - R3.3: Add `.github/workflows/cicd.yml`, `.github/workflows/deploy.yml` and `bin/deploy` as described in §7.3. Deploy steps are skipped until the `rangers` environment is configured.
@@ -349,14 +349,14 @@ These are estimates from us-east-1 list prices, not a quote. Check them in the A
 
 **Steps**
 1. Run `cdk bootstrap`, then deploy `scribe-dev-persistent` with the `alex-dev` config.
-2. In the Cloudflare zone, add NS records delegating `aws-dev.scrivenly.com` to the new Route 53 zone, plus the SES DKIM records.
-3. Add `aws-dev.scrivenly.com` to the Google OAuth client's authorized JavaScript origins and to the Turnstile widget's allowed domains.
+2. In the Cloudflare zone, add NS records delegating `app.scrivenly.com` to the new Route 53 zone, plus the SES DKIM records.
+3. Add `app.scrivenly.com` to the Google OAuth client's authorized JavaScript origins and to the Turnstile widget's allowed domains.
 4. Run `bin/dev-up`, then `bin/dev-deploy`. Confirm the deploy goes through `ranger-deploy` (`deploy_aws_ecs staging`, `:dev` tag).
 5. Register with a `BOOTSTRAP_ADMIN_EMAILS` address, then create users, groups and council and cadre roles through the UI.
 
 SES sandbox mode is acceptable here.
 
-**Acceptance criteria** (on `aws-dev.scrivenly.com`)
+**Acceptance criteria** (on `app.scrivenly.com`)
 - Refreshing a deep link loads the SPA, and the HSTS header is present.
 - An API 403 and an API 404 through CloudFront return JSON with the correct status, not `index.html`.
 - An authenticated API call works through CloudFront, so `Authorization` is forwarded.

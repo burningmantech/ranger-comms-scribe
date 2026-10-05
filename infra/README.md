@@ -76,8 +76,8 @@ Where they differ:
 | Capacity | `FARGATE_SPOT` only, 0.25 vCPU / 0.5 GB | `FARGATE` (on-demand), 0.5 vCPU / 1 GB placeholder |
 | Network | Stack VPC: 2 public subnets, **no NAT**, S3 gateway endpoint, task public IP | Stack VPC (same shape), or `useExisting` VPC with private subnets |
 | ALB | Own ALB, created on wake; forwards everything to the service | Own ALB with a host-header rule and a 404 default, or a rule on a shared listener (`useExisting.albListenerArn`) |
-| CloudFront → ALB | `origin.aws-dev.scrivenly.com` over HTTPS; viewer `Host` **not** forwarded | ALB DNS name over HTTPS; viewer `Host` **forwarded** for host rules |
-| DNS | Route 53 zone `aws-dev.scrivenly.com` (delegated from Cloudflare); ACM validated automatically | No zone. Point the hostname at CloudFront yourself; ACM validated manually or bring ARNs |
+| CloudFront → ALB | `origin.app.scrivenly.com` over HTTPS; viewer `Host` **not** forwarded | ALB DNS name over HTTPS; viewer `Host` **forwarded** for host rules |
+| DNS | Route 53 zone `app.scrivenly.com` (delegated from Cloudflare); ACM validated automatically | No zone. Point the hostname at CloudFront yourself; ACM validated manually or bring ARNs |
 | `TURNSTILESECRET` | SSM SecureString you create by hand (free) | Secrets Manager secret the stack creates; you set its value |
 | Logs | 7 days | 30 days |
 | Image tag | Fixed `:dev` | Commit ID, passed to CDK with `-c imageTag` |
@@ -90,13 +90,13 @@ Where they differ:
 `scribe-dev-persistent` holds everything that's cheap at rest:
 
 - the SPA and data buckets, the ECR repository and CloudFront;
-- the Route 53 zone, the CloudFront certificate, and the regional ALB certificate for `origin.aws-dev.scrivenly.com` and
-  `aws-dev.scrivenly.com`;
+- the Route 53 zone, the CloudFront certificate, and the regional ALB certificate for `origin.app.scrivenly.com` and
+  `app.scrivenly.com`;
 - the VPC, the ECS cluster with the Fargate capacity providers, and the IAM roles;
 - the log group, the SES identity and the budget.
 
 `scribe-dev-compute` holds the ALB, listeners, target group, service, task definition, task security group and the
-`origin.aws-dev.scrivenly.com` alias.
+`origin.app.scrivenly.com` alias.
 
 **The stacks share no CloudFormation exports.** The persistent stack publishes the values the compute stack and scripts need
 as SSM parameters under `/scribe/alex-dev/`:
@@ -121,33 +121,35 @@ Prerequisites:
 - Python 3, used by ranger-deploy.
 
 ```sh
-export AWS_PROFILE=<alex-dev-profile>
-export SCRIBE_ALEX_DEV_ACCOUNT=<12-digit account ID>
+export AWS_PROFILE=mybestday   # the local profile for account 821327748249
 cd infra && npm ci
 ```
 
+`alex-dev` defaults to account 821327748249 (override with `SCRIBE_ALEX_DEV_ACCOUNT`).
+
 1. **Bootstrap CDK** (once per account and region):
    ```sh
-   npx cdk bootstrap "aws://${SCRIBE_ALEX_DEV_ACCOUNT}/us-east-1" -c config=alex-dev
+   npx cdk bootstrap "aws://821327748249/us-east-1" -c config=alex-dev
    ```
 2. **Deploy the persistent stack:**
    ```sh
    npx cdk deploy scribe-dev-persistent -c config=alex-dev
    ```
-   - If `scrivenly.com` is already a verified SES identity in this account, first set
-     `SCRIBE_ALEX_DEV_CREATE_SES_IDENTITY=false`. Creating a duplicate identity fails.
+   - `scrivenly.com` is already a verified SES identity in 821327748249, so `alex-dev` doesn't create it. For an
+     account where it doesn't exist yet, set `SCRIBE_ALEX_DEV_CREATE_SES_IDENTITY=true`.
    - The deploy **pauses at the ACM certificates** until step 3 is done. Their DNS validation records go into the new zone,
      and nothing resolves until Cloudflare delegates to it.
-3. **Delegate `aws-dev.scrivenly.com` from Cloudflare.** While step 2 is still waiting, read the zone's name servers in
+3. **Delegate `app.scrivenly.com` from Cloudflare.** While step 2 is still waiting, read the zone's name servers in
    another terminal:
    ```sh
-   zone_id="$(aws route53 list-hosted-zones-by-name --dns-name aws-dev.scrivenly.com \
+   zone_id="$(aws route53 list-hosted-zones-by-name --dns-name app.scrivenly.com \
      --query 'HostedZones[0].Id' --output text)"
    aws route53 get-hosted-zone --id "${zone_id}" --query 'DelegationSet.NameServers' --output text
    ```
-   In the Cloudflare `scrivenly.com` zone, add one `NS` record named `aws-dev` for each of the four name servers. The deploy
+   In the Cloudflare `scrivenly.com` zone, add one `NS` record named `app` for each of the four name servers. The deploy
    then finishes within a few minutes. The name servers are also in the `HostedZoneNameServers` output.
-4. **SES DKIM.**
+4. **SES DKIM.** *Already done in 821327748249* (the identity and its DKIM records were set up on 2026-10-04, and the
+   account is out of the SES sandbox). Only for an account where the stack creates the identity:
    - Add the three `SesDkimRecord*` outputs (`<token>._domainkey.scrivenly.com CNAME <token>.dkim.amazonses.com`) to the
      Cloudflare zone as **DNS-only** (not proxied) CNAMEs.
    - In SES sandbox mode, also verify every recipient you'll test with, including the `EMAIL_BCC` address:
@@ -156,11 +158,12 @@ cd infra && npm ci
      ```
 5. **Create the Turnstile secret** (it's never in git or CDK):
    ```sh
-   aws ssm put-parameter --type SecureString --name /scribe/alex-dev/TURNSTILESECRET --value '<turnstile secret key>'
+   read -rs -p 'Turnstile secret key: ' T; echo
+   aws ssm put-parameter --type SecureString --name /scribe/alex-dev/TURNSTILESECRET --value "$T"; unset T
    ```
-6. **Google OAuth.** Add `https://aws-dev.scrivenly.com` to the authorized JavaScript origins of the OAuth client
+6. **Google OAuth.** Add `https://app.scrivenly.com` to the authorized JavaScript origins of the OAuth client
    `402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg`.
-7. **Turnstile.** Add `aws-dev.scrivenly.com` to the widget's allowed hostnames.
+7. **Turnstile.** Add `app.scrivenly.com` to the widget's allowed hostnames.
 8. **Wake and deploy:**
    ```sh
    bin/dev-up       # ~5 min; pushes a first :dev image if the repository is empty
@@ -189,7 +192,7 @@ to a different account, and each prints its plan before acting.
 | `bin/dev-deploy` | Builds `comms-scribe:local` (linux/amd64), then runs `bin/deploy staging` with `CI=true`, `AWS_ECR_IMAGE_NAME=<repo>:dev` and the dev cluster and service, and forces a new ECS deployment. Then builds the frontend and runs `bin/publish-frontend`. |
 | `bin/dev-deploy --backend-only` / `--frontend-only` | Just one half. |
 
-While asleep, `https://aws-dev.scrivenly.com` still serves the SPA, and `/api/*` returns CloudFront 502s until `bin/dev-up`.
+While asleep, `https://app.scrivenly.com` still serves the SPA, and `/api/*` returns CloudFront 502s until `bin/dev-up`.
 
 **Why `dev-deploy` forces a deployment.** ranger-deploy compares the new task definition with the current one. With a fixed
 `:dev` tag they're identical after the first deploy, so it logs "Image name is unchanged. Nothing to deploy." and doesn't roll
@@ -319,8 +322,8 @@ These are choices made where the PRD is silent:
   because CDK would otherwise look the AZs up.
 - **Dev cross-stack wiring** uses SSM parameters (`valueForStringParameter`, resolved at deploy time) and deterministic names.
   There are no `Fn::ImportValue`s, and a test enforces that.
-- **Two dev certificates.** The CloudFront certificate is for `aws-dev.scrivenly.com`; the regional ALB certificate covers
-  `origin.aws-dev.scrivenly.com` and `aws-dev.scrivenly.com`. Both are in us-east-1, as the PRD asks.
+- **Two dev certificates.** The CloudFront certificate is for `app.scrivenly.com`; the regional ALB certificate covers
+  `origin.app.scrivenly.com` and `app.scrivenly.com`. Both are in us-east-1, as the PRD asks.
   - Outside us-east-1, `certificates.cloudFrontCertificateArn` is required.
 - **Gallery caching.** Default TTL 0, maximum one year, `Authorization` and all query strings in the cache key, all methods
   allowed (uploads and comments go through `/api/gallery/*`).
@@ -339,7 +342,7 @@ These are choices made where the PRD is silent:
 - **ECR.** Untagged images expire after 1 day. The tagged rule matches `*`, so `:dev` counts as one of the 10 kept.
   - `comms-scribe` is a per-account name: `rangers-staging` creates it and `rangers-production` imports it.
   - The SES identity follows the same pattern.
-- **SES identity** is `scrivenly.com`, because `EMAIL_FROM` is `@scrivenly.com`, not the aws-dev zone. Its DNS is on
+- **SES identity** is `scrivenly.com`, because `EMAIL_FROM` is `@scrivenly.com`, not the app.scrivenly.com zone. Its DNS is on
   Cloudflare, so DKIM is manual. The task role may send as any identity (`Resource: *`), because sandbox mode also checks
   recipients.
 - **alex-dev email settings** keep today's behaviour:

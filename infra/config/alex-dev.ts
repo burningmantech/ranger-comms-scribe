@@ -4,7 +4,7 @@ import { ScribeConfig, accountFromEnv, azsFor, regionFromEnv } from '../lib/conf
 // Account 821327748249 (local CLI profile `mybestday`); SCRIBE_ALEX_DEV_ACCOUNT overrides it.
 const account = accountFromEnv('SCRIBE_ALEX_DEV_ACCOUNT', '821327748249');
 const region = regionFromEnv('SCRIBE_ALEX_DEV_REGION');
-const hostname = 'aws-dev.scrivenly.com';
+const hostname = 'app.scrivenly.com';
 
 const config: ScribeConfig = {
   name: 'alex-dev',
@@ -15,7 +15,7 @@ const config: ScribeConfig = {
 
   hostname,
   createHostedZone: true,
-  // HSTS max-age only. includeSubdomains/preload would reach other *.aws-dev.scrivenly.com
+  // HSTS max-age only. includeSubdomains/preload would reach other *.app.scrivenly.com
   // names and browsers' preload list; leave them off unless that's intended.
   hsts: { includeSubdomains: false, preload: false },
 
@@ -51,9 +51,8 @@ const config: ScribeConfig = {
     FRONTEND_URL: `https://${hostname}`,
     SES_REGION: region,
     EMAIL_FROM: 'Comms Scribe <alex@scrivenly.com>',
-    // Keeps today's behaviour (backend/src/utils/email.ts BCCs this address). In SES sandbox mode
-    // the BCC address must be a verified identity too.
-    EMAIL_BCC: process.env.SCRIBE_ALEX_DEV_EMAIL_BCC ?? 'alexander.young@gmail.com',
+    // No BCC in dev. Set SCRIBE_ALEX_DEV_EMAIL_BCC to get a copy of every email while testing.
+    EMAIL_BCC: process.env.SCRIBE_ALEX_DEV_EMAIL_BCC ?? '',
     // Never the real announcement list in dev; set a test address to try the send-email flow.
     ANNOUNCE_EMAIL_TO: process.env.SCRIBE_ALEX_DEV_ANNOUNCE_EMAIL_TO ?? '',
     BOOTSTRAP_ADMIN_EMAILS: process.env.SCRIBE_ALEX_DEV_BOOTSTRAP_ADMIN_EMAILS || 'alexander.young@gmail.com',

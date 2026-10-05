@@ -69,8 +69,8 @@ export interface ObjectStore {
 | Name | Required | Format / default |
 |---|---|---|
 | `PORT` | no | default `8080` |
-| `PUBLIC_URL` | yes | e.g. `https://aws-dev.scrivenly.com/api` |
-| `FRONTEND_URL` | yes | e.g. `https://aws-dev.scrivenly.com` |
+| `PUBLIC_URL` | yes | e.g. `https://app.scrivenly.com/api` |
+| `FRONTEND_URL` | yes | e.g. `https://app.scrivenly.com` |
 | `CORS_ORIGINS` | no | comma-separated origins; default: `FRONTEND_URL` plus `http://localhost:3000` |
 | `DATA_BUCKET` | yes | S3 bucket name |
 | `S3_ENDPOINT` | no | e.g. `http://localhost:9000` for MinIO (forces path-style) |

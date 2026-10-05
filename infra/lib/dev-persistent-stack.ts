@@ -69,7 +69,7 @@ export class DevPersistentStack extends ScribeStack {
     const names = devParameterNames(config);
     const removalPolicy = removalPolicyFor(config);
 
-    // DNS: zone for aws-dev.scrivenly.com, delegated from Cloudflare with NS records.
+    // DNS: zone for app.scrivenly.com, delegated from Cloudflare with NS records.
     const zone = new route53.PublicHostedZone(this, 'HostedZone', {
       zoneName: config.hostname,
       comment: `Comms Scribe ${config.name}; delegated from the parent zone by NS records`,

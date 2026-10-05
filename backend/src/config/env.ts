@@ -8,8 +8,8 @@ import { MemoryObjectStore } from '../storage/memoryObjectStore';
  *
  * Variables (see docs/plans/2026-10-04-aws-migration-contracts.md, section 3):
  *   PORT                    default 8080
- *   PUBLIC_URL              required, e.g. https://aws-dev.scrivenly.com/api
- *   FRONTEND_URL            required, e.g. https://aws-dev.scrivenly.com
+ *   PUBLIC_URL              required, e.g. https://app.scrivenly.com/api
+ *   FRONTEND_URL            required, e.g. https://app.scrivenly.com
  *   CORS_ORIGINS            CSV; default FRONTEND_URL plus http://localhost:3000
  *   DATA_BUCKET             required unless STORE_DRIVER=memory
  *   S3_ENDPOINT             optional, e.g. http://localhost:9000 for MinIO (path-style)

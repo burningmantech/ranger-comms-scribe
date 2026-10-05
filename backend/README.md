@@ -40,8 +40,8 @@ All configuration is read from environment variables once at boot (`src/config/e
 | Name | Required | Notes |
 |---|---|---|
 | `PORT` | no | default `8080` |
-| `PUBLIC_URL` | yes | e.g. `https://aws-dev.scrivenly.com/api` |
-| `FRONTEND_URL` | yes | e.g. `https://aws-dev.scrivenly.com` (used in email links) |
+| `PUBLIC_URL` | yes | e.g. `https://app.scrivenly.com/api` |
+| `FRONTEND_URL` | yes | e.g. `https://app.scrivenly.com` (used in email links) |
 | `CORS_ORIGINS` | no | CSV; default `FRONTEND_URL` plus `http://localhost:3000` |
 | `DATA_BUCKET` | yes* | S3 bucket (*not needed with `STORE_DRIVER=memory`) |
 | `S3_ENDPOINT` | no | e.g. `http://localhost:9000` for MinIO (forces path-style) |

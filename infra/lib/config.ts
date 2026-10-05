@@ -58,7 +58,7 @@ export interface ScribeConfig {
    */
   availabilityZones: string[];
 
-  /** Public hostname served by CloudFront, e.g. `aws-dev.scrivenly.com`. */
+  /** Public hostname served by CloudFront, e.g. `app.scrivenly.com`. */
   hostname: string;
   /**
    * HSTS options beyond `max-age` (always two years). Both default to false.

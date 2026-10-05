@@ -152,7 +152,7 @@ describe('alex-dev (dev profile)', () => {
     const api = config.CacheBehaviors[1];
     expect(api.CachePolicyId).toBe(MANAGED_CACHING_DISABLED);
     expect(api.OriginRequestPolicyId).toBe(MANAGED_ALL_VIEWER_EXCEPT_HOST);
-    expect(config.Origins.map((o: { DomainName: unknown }) => o.DomainName)).toContain('origin.aws-dev.scrivenly.com');
+    expect(config.Origins.map((o: { DomainName: unknown }) => o.DomainName)).toContain('origin.app.scrivenly.com');
   });
 
   test('HSTS keeps a two-year max-age without includeSubdomains or preload', () => {
