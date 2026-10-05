@@ -1,6 +1,6 @@
 # PRD: Moving Comms Scribe to AWS
 
-**Status:** Phases 0–3 implemented; Phase 4 deployed to Alex's account (app.scrivenly.com), acceptance testing in progress · **Date:** 2026-10-04 · **Owner:** Alex Young · **Branch:** `feature/aws-migration`
+**Status:** Phases 0–5 implemented and deployed to Alex's account (app.scrivenly.com, `COLLAB_MODE=yjs`) · **Date:** 2026-10-04 · **Owner:** Alex Young · **Branch:** `feature/aws-migration`
 
 ## 1. Summary
 
@@ -573,9 +573,9 @@ Deployed with `COLLAB_MODE=yjs` and tested with two real Chrome profiles on app.
 | Both typing at the same position | ✅ Contiguous blocks, no interleaving |
 | Converged document survives a reload | ✅ |
 | Change attribution: different paragraphs, same position, bold | ✅ One change per user, only their own text |
-| Change attribution: concurrent Enter | ❌ The splitter is credited with some of the typist's characters (the split syncs as delete plus re-insert under the splitter) |
+| Change attribution: concurrent Enter | ✅ after the provenance fix: the splitter is credited with the line break only, the typist with all their characters (both directions, checked against server-stored changes) |
 
-**In progress:** attribution for concurrent paragraph splits.
+**Phase 5 result:** every scenario in the §14.4 matrix passes on the dev site with real browsers. Locally, every scenario passes 10 of 10 runs in the two-browser harness (`tools/collab-e2e/`), checked against server-stored changes.
 
 ## 13. Estimates
 
