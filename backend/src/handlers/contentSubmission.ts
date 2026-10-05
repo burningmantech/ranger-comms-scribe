@@ -768,21 +768,8 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
   // Send to appropriate list. For now, announcements go to rangers-announce
   const toAddress = 'rangers-announce@burningman.org';
   try {
-    if (!env.SESKey || !env.SESSecret) {
-      // Fall back to EMAIL provider if configured
-      if (env.EMAIL) {
-        await env.EMAIL.send({
-          to: toAddress,
-          subject: submission.title,
-          text: submission.content
-        });
-      } else {
-        return json({ error: 'Email service not configured' }, { status: 500 });
-      }
-    } else {
-      const { sendEmail } = await import('../utils/email');
-      await sendEmail(toAddress, submission.title, submission.content, env.SESKey, env.SESSecret);
-    }
+    const { sendEmail } = await import('../utils/email');
+    await sendEmail(toAddress, submission.title, submission.content, env);
 
     submission.status = 'sent';
     submission.sentBy = user.id || user.email;

@@ -67,26 +67,6 @@ export async function getUser(id: string, env: Env): Promise<User | null> {
     return existingUser;
   }
 
-  // Auto-create first admin if needed
-  const isFirstAdmin = id === 'alexander.young@gmail.com';
-  if (isFirstAdmin) {
-    console.log('👑 Creating first admin user');
-    const newUser: User = {
-      id: crypto.randomUUID(),
-      name: "Alex Young",
-      email: id,
-      approved: true,
-      isAdmin: true,
-      userType: UserType.Admin,
-      groups: [],
-      roles: ['Admin']
-    };
-
-    await saveUser(newUser, env);
-
-    return newUser;
-  }
-
   console.log('❌ User not found:', id);
   return null;
 }
@@ -538,24 +518,52 @@ export async function isAdmin(id: string, env: Env): Promise<boolean> {
   return user ? (user.isAdmin || user.userType === UserType.Admin) : false;
 }
 
-// Initialize first admin if not exists
+/** True when `email` is listed in BOOTSTRAP_ADMIN_EMAILS (case-insensitive). */
+export function isBootstrapAdminEmail(email: string | undefined | null, env: Env): boolean {
+  if (!email) return false;
+  const list = env.BOOTSTRAP_ADMIN_EMAILS || [];
+  const target = email.trim().toLowerCase();
+  return list.some((entry) => entry.trim().toLowerCase() === target);
+}
+
+/**
+ * First-admin bootstrap: a user whose email is in BOOTSTRAP_ADMIN_EMAILS becomes
+ * an approved, verified Admin. Called on register, login and Google login, before
+ * the session is created. Saves only when something changes; returns the
+ * (possibly updated) user.
+ */
+export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
+  if (!isBootstrapAdminEmail(user.email, env)) return user;
+
+  const roles = user.roles || [];
+  const alreadyAdmin = user.userType === UserType.Admin && user.isAdmin === true &&
+    user.approved === true && user.verified === true && roles.includes('Admin');
+  if (alreadyAdmin) return user;
+
+  console.log(`👑 Bootstrap admin: promoting ${user.email}`);
+  const promoted: User = {
+    ...user,
+    userType: UserType.Admin,
+    isAdmin: true,
+    approved: true,
+    verified: true,
+    roles: roles.includes('Admin') ? roles : [...roles.filter((r) => r !== 'Public'), 'Admin'],
+  };
+  await saveUser(promoted, env);
+  return promoted;
+}
+
+/**
+ * Runs once at boot: promote BOOTSTRAP_ADMIN_EMAILS users that already exist.
+ * Users that don't exist yet are promoted when they first register or log in.
+ * (Replaces the old hardcoded first-admin, which pre-created a password-less
+ * account that anyone could then claim through /auth/register.)
+ */
 export async function initializeFirstAdmin(env: Env): Promise<void> {
-  const adminEmail = 'alexander.young@gmail.com';
-  const admin = await getUser(adminEmail, env);
-  
-  if (!admin) {
-    await getOrCreateUser({ 
-      name: 'Alexander Young', 
-      email: adminEmail 
-    }, env);
-    
-    // Ensure admin privileges
-    const newAdmin = await getUser(adminEmail, env);
-    if (newAdmin && (!newAdmin.isAdmin || newAdmin.userType !== UserType.Admin)) {
-      newAdmin.isAdmin = true;
-      newAdmin.approved = true;
-      newAdmin.userType = UserType.Admin;
-      await saveUser(newAdmin, env);
+  for (const email of env.BOOTSTRAP_ADMIN_EMAILS || []) {
+    const user = await getUserInternal(email, env);
+    if (user) {
+      await applyBootstrapAdmin(user, env);
     }
   }
 }

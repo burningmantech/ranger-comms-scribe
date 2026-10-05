@@ -1,121 +1,89 @@
-import { sendEmail } from '../../src/utils/email';
-import { AwsClient } from 'aws4fetch';
-
-// Mock aws4fetch
-jest.mock('aws4fetch', () => {
-  return {
-    AwsClient: jest.fn().mockImplementation(() => {
-      return {
-        fetch: jest.fn().mockResolvedValue({
-          status: 200,
-          statusText: 'OK',
-          json: jest.fn().mockResolvedValue({ MessageId: 'test-message-id' })
-        })
-      };
-    })
-  };
-});
+import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { sendEmail, sendReplyNotification, DEFAULT_EMAIL_FROM } from '../../src/utils/email';
 
 describe('Email Utility', () => {
-  // Spy on console.log to prevent test output noise and check its calls
+  let sendSpy: jest.SpyInstance;
+
   beforeEach(() => {
-    jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
+    sendSpy = jest
+      .spyOn(SESv2Client.prototype, 'send')
+      .mockImplementation(async () => ({ MessageId: 'test-message-id', $metadata: {} }) as any);
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
+  const lastInput = () => {
+    const command = sendSpy.mock.calls[sendSpy.mock.calls.length - 1][0] as SendEmailCommand;
+    expect(command).toBeInstanceOf(SendEmailCommand);
+    return command.input;
+  };
+
   describe('sendEmail', () => {
-    it('should send an email successfully', async () => {
-      const toEmail = 'test@example.com';
-      const subject = 'Test Subject';
-      const message = 'Test message content';
-      const accessKey = 'test-access-key';
-      const secretKey = 'test-secret-key';
-      
-      const result = await sendEmail(toEmail, subject, message, accessKey, secretKey);
-      
-      // Verify result
+    it('sends through SES v2 with the configured From and BCC', async () => {
+      const result = await sendEmail('test@example.com', 'Test Subject', 'Line one\nLine two', {
+        EMAIL_FROM: 'Scribe <noreply@example.org>',
+        EMAIL_BCC: ['audit@example.org', 'copy@example.org'],
+        SES_REGION: 'us-west-2',
+      });
+
       expect(result).toBe(200);
-      
-      // Verify AWS client was initialized with correct credentials
-      expect(AwsClient).toHaveBeenCalledWith({
-        accessKeyId: accessKey,
-        secretAccessKey: secretKey
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+
+      const input = lastInput();
+      expect(input.FromEmailAddress).toBe('Scribe <noreply@example.org>');
+      expect(input.Destination).toEqual({
+        ToAddresses: ['test@example.com'],
+        BccAddresses: ['audit@example.org', 'copy@example.org'],
       });
-      
-      // Get the fetch mock to verify its calls
-      const awsClientInstance = (AwsClient as jest.Mock).mock.results[0].value;
-      
-      // Verify fetch was called with correct parameters
-      expect(awsClientInstance.fetch).toHaveBeenCalledWith(
-        'https://email.us-east-1.amazonaws.com/v2/email/outbound-emails',
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'content-type': 'application/json'
-          })
-        })
-      );
-      
-      // Verify email content in the request body
-      const fetchCall = awsClientInstance.fetch.mock.calls[0];
-      const requestBody = JSON.parse(fetchCall[1].body as string);
-      
-      expect(requestBody.Destination.ToAddresses).toContain(toEmail);
-      expect(requestBody.Content.Simple.Subject.Data).toBe(subject);
-      expect(requestBody.Content.Simple.Body.Text.Data).toBe(message);
-      expect(requestBody.Content.Simple.Body.Html.Data).toContain(message);
-      
-      // Verify logs were called
-      expect(console.log).toHaveBeenCalledTimes(2);
+      expect(input.Content?.Simple?.Subject?.Data).toBe('Test Subject');
+      expect(input.Content?.Simple?.Body?.Html?.Data).toContain('<h1>Comms Scribe</h1>');
+      expect(input.Content?.Simple?.Body?.Html?.Data).toContain('Line one<br>Line two');
     });
-    
-    it('should format HTML and plaintext correctly', async () => {
-      const toEmail = 'test@example.com';
-      const subject = 'Test Subject';
-      const message = 'Line 1<br>Line 2<br/>Line 3<br />Line 4';
-      const accessKey = 'test-access-key';
-      const secretKey = 'test-secret-key';
-      
-      await sendEmail(toEmail, subject, message, accessKey, secretKey);
-      
-      // Get the fetch mock to verify the request body
-      const awsClientInstance = (AwsClient as jest.Mock).mock.results[0].value;
-      const fetchCall = awsClientInstance.fetch.mock.calls[0];
-      const requestBody = JSON.parse(fetchCall[1].body as string);
-      
-      // Plain text should have <br> tags converted to newlines
-      expect(requestBody.Content.Simple.Body.Text.Data).toBe('Line 1\nLine 2\nLine 3\nLine 4');
-      
-      // HTML should have newlines converted to <br> tags
-      // The original has <br> tags already, so we're just verifying it contains the message
-      expect(requestBody.Content.Simple.Body.Html.Data).toContain(message);
+
+    it('uses the SES region from config', async () => {
+      await sendEmail('a@example.com', 'S', 'M', { SES_REGION: 'eu-west-1' });
+      const client = sendSpy.mock.instances[0] as SESv2Client;
+      expect(await client.config.region()).toBe('eu-west-1');
     });
-    
-    it('should throw an error when SES request fails', async () => {
-      // Override the mock to simulate a failed request
-      const mockFetch = jest.fn().mockResolvedValue({
-        status: 400,
-        statusText: 'Bad Request',
-        json: jest.fn().mockResolvedValue({ Error: 'Invalid parameters' })
+
+    it('omits BccAddresses when EMAIL_BCC is empty', async () => {
+      await sendEmail('test@example.com', 'Subject', 'Body', { EMAIL_BCC: [] });
+      const input = lastInput();
+      expect(input.Destination).toEqual({ ToAddresses: ['test@example.com'] });
+      expect(input.Destination).not.toHaveProperty('BccAddresses');
+    });
+
+    it('defaults the From address', async () => {
+      await sendEmail('test@example.com', 'Subject', 'Body', {});
+      expect(lastInput().FromEmailAddress).toBe(DEFAULT_EMAIL_FROM);
+      expect(lastInput().Destination).not.toHaveProperty('BccAddresses');
+    });
+
+    it('turns <br> tags into newlines in the text body', async () => {
+      await sendEmail('test@example.com', 'Subject', 'Hello<br>World<br/>Again<br />Done', {});
+      expect(lastInput().Content?.Simple?.Body?.Text?.Data).toBe('Hello\nWorld\nAgain\nDone');
+    });
+
+    it('throws when SES rejects the send', async () => {
+      sendSpy.mockRejectedValueOnce(Object.assign(new Error('Email address is not verified.'), { name: 'MessageRejected' }));
+      await expect(sendEmail('test@example.com', 'Subject', 'Body', {}))
+        .rejects.toThrow('Error sending email: MessageRejected: Email address is not verified.');
+    });
+  });
+
+  describe('sendReplyNotification', () => {
+    it('builds the reply email and passes config through', async () => {
+      await sendReplyNotification('author@example.com', 'Replier', 'post', 'Nice post', 'https://x.test/blog', {
+        EMAIL_FROM: 'Scribe <noreply@example.org>',
       });
-      
-      (AwsClient as jest.Mock).mockImplementation(() => {
-        return { fetch: mockFetch };
-      });
-      
-      const toEmail = 'test@example.com';
-      const subject = 'Test Subject';
-      const message = 'Test message content';
-      const accessKey = 'test-access-key';
-      const secretKey = 'test-secret-key';
-      
-      await expect(sendEmail(toEmail, subject, message, accessKey, secretKey))
-        .rejects
-        .toThrow('Error sending email: 400 Bad Request');
+      const input = lastInput();
+      expect(input.Destination?.ToAddresses).toEqual(['author@example.com']);
+      expect(input.FromEmailAddress).toBe('Scribe <noreply@example.org>');
+      expect(input.Content?.Simple?.Subject?.Data).toBe('New Reply from Replier on Comms Scribe');
+      expect(input.Content?.Simple?.Body?.Text?.Data).toContain('https://x.test/blog');
     });
   });
 });

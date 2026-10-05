@@ -2,11 +2,12 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified } from '../services/userService';
+import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
 import { verifyGoogleIdToken } from '../utils/googleToken';
+import { getClientIp } from '../utils/clientIp';
 
 export const router = AutoRouter({ base : '/api/auth' });
 
@@ -64,21 +65,24 @@ function buildTokenUrl(token: string, route: string, env: Env): string {
   return `${frontendUrl}/${route}?token=${token}`;
 }
 
-// Helper: send an email if SES is configured, return success boolean
+// Helper: send an email through SES, return success boolean
 async function sendEmailIfConfigured(
   to: string, subject: string, message: string, env: Env
 ): Promise<boolean> {
-  if (!env.SESKey || !env.SESSecret) {
-    console.warn('Email service not configured');
-    return false;
-  }
   try {
-    await sendEmail(to, subject, message, env.SESKey, env.SESSecret);
+    await sendEmail(to, subject, message, env);
     return true;
   } catch (error) {
     console.error('Error sending email:', error);
     return false;
   }
+}
+
+// Helper: when an email could not be sent, local development (DEV_BYPASS_AUTH)
+// gets the token back for convenience. Deployed environments never do: a failed
+// send (e.g. SES still in sandbox) must not hand out reset/verification tokens.
+function debugToken(token: string, env: Env): { debug?: string } {
+  return env.DEV_BYPASS_AUTH === 'true' ? { debug: 'Email not sent - token: ' + token } : {};
 }
 
 // Helper function to validate password strength
@@ -132,7 +136,7 @@ router.post('/register', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -145,27 +149,32 @@ router.post('/register', async (request: Request, env) => {
     }
 
     try {
-        // Check if user with this email already exists
+        // Check if user with this email already exists. This must include users
+        // without a password (Google sign-in or admin-created): getOrCreateUser
+        // returns an existing user unchanged, so registering their email would
+        // otherwise hand out a session for their account without any credential.
         const existingUser = await getUser(email, env);
-        if (existingUser && existingUser.passwordHash) {
+        if (existingUser) {
             return json({ error: 'User with this email already exists' }, { status: 409 });
         }
 
-        // Create the user with password
-        const user = await getOrCreateUser({ name, email, password }, env);
+        // Create the user with password (bootstrap admins are promoted here)
+        const user = await applyBootstrapAdmin(await getOrCreateUser({ name, email, password }, env), env);
 
-        // Generate and store verification token
-        const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
-        const verificationUrl = buildTokenUrl(verificationToken, 'verify-email', env);
+        if (!user.verified) {
+            // Generate and store verification token
+            const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
+            const verificationUrl = buildTokenUrl(verificationToken, 'verify-email', env);
 
-        // Send verification email
-        await sendEmailIfConfigured(user.email, 'Verify Your Email', `
+            // Send verification email
+            await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Welcome to our platform!</h1>
             <p>Hello ${user.name},</p>
             <p>Thank you for registering. Please click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
         `, env);
+        }
 
         const sessionId = await createUserSession(user, env);
 
@@ -176,7 +185,7 @@ router.post('/register', async (request: Request, env) => {
             userId: user.email,
             approved: user.approved,
             isAdmin: user.isAdmin,
-            verified: false,
+            verified: !!user.verified,
             sessionId,
         });
     } catch (error) {
@@ -260,7 +269,7 @@ router.post('/resend-verification', async (request: Request, env) => {
         if (!sent) {
             return json({
                 message: 'Verification email would have been sent.',
-                debug: 'Email service not configured - token: ' + verificationToken
+                ...debugToken(verificationToken, env)
             });
         }
 
@@ -286,7 +295,7 @@ router.post('/login', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -294,10 +303,11 @@ router.post('/login', async (request: Request, env) => {
 
     try {
         // Authenticate the user
-        const user = await authenticateUser(email, password, env);
-        if (!user) {
+        const authenticated = await authenticateUser(email, password, env);
+        if (!authenticated) {
             return json({ error: 'Invalid email or password' }, { status: 401 });
         }
+        const user = await applyBootstrapAdmin(authenticated, env);
 
         const sessionId = await createUserSession(user, env);
 
@@ -369,7 +379,7 @@ router.post('/forgot-password', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -400,7 +410,7 @@ router.post('/forgot-password', async (request: Request, env) => {
         if (!sent) {
             return json({
                 message: 'If an account with that email exists, a password reset link has been sent.',
-                debug: 'Email service not configured - token: ' + resetToken
+                ...debugToken(resetToken, env)
             });
         }
 
@@ -426,7 +436,7 @@ router.post('/reset-password', async (request: Request, env) => {
     }
 
     // Verify Turnstile token
-    const clientIp = request.headers.get('CF-Connecting-IP');
+    const clientIp = getClientIp(request);
     const isTurnstileValid = await verifyTurnstileToken(turnstileToken, clientIp, env);
     if (!isTurnstileValid) {
         return json({ error: 'Turnstile verification failed' }, { status: 400 });
@@ -496,8 +506,8 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         const payload = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
         const { email, name, sub } = payload; // Extract email, name, and user ID (sub)
 
-        // Create or get the user
-        const user = await getOrCreateUser({ name, email }, env);
+        // Create or get the user (bootstrap admins are promoted here)
+        const user = await applyBootstrapAdmin(await getOrCreateUser({ name, email }, env), env);
 
         const sessionId = await createUserSession(user, env);
 

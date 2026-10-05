@@ -5,8 +5,8 @@ import { sendReplyNotification, sendGroupContentNotification } from '../utils/em
 import { User, Group, AppNotification, NotificationType } from '../types';
 import { putObject, getObject } from './cacheService';
 
-// Use the frontend URL for links in emails
-const FRONTEND_URL = 'https://scrivenly.com';
+// Links in emails point at the frontend (FRONTEND_URL), defaulting to production.
+const frontendUrl = (env: Env): string => env.FRONTEND_URL || 'https://scrivenly.com';
 
 /**
  * Send notification about a reply to the original content author
@@ -35,29 +35,23 @@ export async function notifyAboutReply(
       return false;
     }
 
-    // Check if SES credentials are available
-    if (!env.SESKey || !env.SESSecret) {
-      console.error('Email service credentials not configured');
-      return false;
-    }
-
     // Prepare the content URL using the FRONTEND_URL
     let contentUrl: string;
     switch (contentType) {
       case 'post':
         // For blog posts, link directly to the blog view which will show the post
-        contentUrl = `${FRONTEND_URL}/blog?comment=${contentId}#${contentId}`;
+        contentUrl = `${frontendUrl(env)}/blog?comment=${contentId}#${contentId}`;
         break;
       case 'comment':
         // For comments, link to the blog with the comment fragment identifier
-        contentUrl = `${FRONTEND_URL}/blog?comment=${contentId}#${contentId}`;
+        contentUrl = `${frontendUrl(env)}/blog?comment=${contentId}#${contentId}`;
         break;
       case 'gallery':
         // For gallery, link to the gallery view with the comment fragment identifier
-        contentUrl = `${FRONTEND_URL}/gallery?comment=${contentId}#${contentId}`;
+        contentUrl = `${frontendUrl(env)}/gallery?comment=${contentId}#${contentId}`;
         break;
       default:
-        contentUrl = `${FRONTEND_URL}`;
+        contentUrl = `${frontendUrl(env)}`;
     }
 
     // Truncate content snippet if it's too long
@@ -70,8 +64,7 @@ export async function notifyAboutReply(
       contentType,
       truncatedSnippet,
       contentUrl,
-      env.SESKey,
-      env.SESSecret
+      env
     );
 
     console.log(`Reply notification sent to ${author.email}`);
@@ -96,12 +89,6 @@ export async function notifyGroupAboutNewContent(
   env: Env
 ): Promise<{ success: boolean; emailsSent: number }> {
   try {
-    // Check if SES credentials are available
-    if (!env.SESKey || !env.SESSecret) {
-      console.error('Email service credentials not configured');
-      return { success: false, emailsSent: 0 };
-    }
-
     // Get the group
     const group = await getGroup(groupId, env);
     if (!group) {
@@ -111,8 +98,8 @@ export async function notifyGroupAboutNewContent(
 
     // Prepare the content URL
     const contentUrl = contentType === 'post' 
-      ? `${FRONTEND_URL}/blog/post/${contentId}`
-      : `${FRONTEND_URL}/gallery/item/${contentId}`;
+      ? `${frontendUrl(env)}/blog/post/${contentId}`
+      : `${frontendUrl(env)}/gallery/item/${contentId}`;
 
     // Truncate content snippet if it's too long
     const truncatedSnippet = contentSnippet.length > 150 ? `${contentSnippet.substring(0, 147)}...` : contentSnippet;
@@ -149,8 +136,7 @@ export async function notifyGroupAboutNewContent(
           contentTitle,
           truncatedSnippet,
           contentUrl,
-          env.SESKey,
-          env.SESSecret
+          env
         );
 
         console.log(`Group content notification sent to ${member.email}`);

@@ -132,16 +132,17 @@ describe('User Service', () => {
       expect(putObject).not.toHaveBeenCalled();
     });
     
-    it('should make first admin correctly', async () => {
+    it('should not hardcode a first admin (BOOTSTRAP_ADMIN_EMAILS replaces it)', async () => {
       const adminData = {
         name: 'Admin User',
         email: 'alexander.young@gmail.com'
       };
-      
-      const admin = await getOrCreateUser(adminData, env);
-      
-      expect(admin.isAdmin).toBe(true);
-      expect(admin.userType).toBe(UserType.Admin);
+
+      expect(await getUser(adminData.email, env)).toBeNull();
+      const user = await getOrCreateUser(adminData, env);
+
+      expect(user.isAdmin).toBe(false);
+      expect(user.userType).toBe(UserType.Public);
     });
   });
 
