@@ -22,6 +22,8 @@ import { MemoryObjectStore } from '../storage/memoryObjectStore';
  *   GOOGLE_CLIENT_ID        required
  *   TURNSTILESECRET         required
  *   DEV_BYPASS_AUTH         "true" enables fake users (local only)
+ *   MAX_BODY_BYTES          largest accepted HTTP request body; default 25 MiB (larger: 413)
+ *   WS_MAX_PAYLOAD_BYTES    largest accepted WebSocket message; default 16 MiB (larger: close 1009)
  *
  * Local/test only:
  *   STORE_DRIVER            "memory" uses an in-process MemoryObjectStore instead of S3.
@@ -34,11 +36,27 @@ export const DEFAULT_PORT = 8080;
 export const DEFAULT_REGION = 'us-east-1';
 export const DEFAULT_EMAIL_FROM = 'Comms Scribe <alex@scrivenly.com>';
 
+const MIB = 1024 * 1024;
+/**
+ * Gallery uploads carry up to three files in one multipart request (original,
+ * thumbnail and medium), so this is well above the largest single image.
+ */
+export const DEFAULT_MAX_BODY_BYTES = 25 * MIB;
+/**
+ * Whole-document `realtime_content_update` messages carry the full Lexical JSON;
+ * images are uploaded separately and referenced by URL. (`ws` defaults to 100 MiB.)
+ */
+export const DEFAULT_WS_MAX_PAYLOAD_BYTES = 16 * MIB;
+
 const REQUIRED = ['PUBLIC_URL', 'FRONTEND_URL', 'GOOGLE_CLIENT_ID', 'TURNSTILESECRET'] as const;
 
 export interface LoadedConfig {
   port: number;
   storeDriver: 'memory' | 's3';
+  /** MAX_BODY_BYTES: requests with a larger body get 413. */
+  maxBodyBytes: number;
+  /** WS_MAX_PAYLOAD_BYTES: a larger WebSocket message closes the socket (1009). */
+  wsMaxPayloadBytes: number;
   env: Env;
 }
 
@@ -67,6 +85,17 @@ export function parsePort(value: string | undefined): number {
     throw new Error(`Invalid PORT: ${value}`);
   }
   return port;
+}
+
+/** A positive whole number of bytes, or `fallback` when unset/blank. */
+export function parseByteLimit(name: string, value: string | undefined, fallback: number): number {
+  const raw = nonEmpty(value);
+  if (!raw) return fallback;
+  const bytes = Number(raw);
+  if (!Number.isSafeInteger(bytes) || bytes <= 0) {
+    throw new Error(`Invalid ${name}: ${value} (expected a positive number of bytes)`);
+  }
+  return bytes;
 }
 
 /**
@@ -120,5 +149,11 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
     BOOTSTRAP_ADMIN_EMAILS: parseCsv(source.BOOTSTRAP_ADMIN_EMAILS).map((email) => email.toLowerCase()),
   };
 
-  return { port: parsePort(source.PORT), storeDriver: storeDriver as 'memory' | 's3', env };
+  return {
+    port: parsePort(source.PORT),
+    storeDriver: storeDriver as 'memory' | 's3',
+    maxBodyBytes: parseByteLimit('MAX_BODY_BYTES', source.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES),
+    wsMaxPayloadBytes: parseByteLimit('WS_MAX_PAYLOAD_BYTES', source.WS_MAX_PAYLOAD_BYTES, DEFAULT_WS_MAX_PAYLOAD_BYTES),
+    env,
+  };
 }

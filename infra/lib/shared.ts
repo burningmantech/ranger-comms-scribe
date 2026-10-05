@@ -44,6 +44,13 @@ export function createDataBucket(scope: Construct, config: ScribeConfig): s3.Buc
         noncurrentVersionExpiration: Duration.days(30),
         abortIncompleteMultipartUploadAfter: Duration.days(7),
       },
+      // Deletes and the expiry rules above leave delete markers; once their noncurrent
+      // versions expire they're "expired object delete markers" and only slow down listings.
+      // (S3 rejects this flag in a rule that also sets `expiration`, hence its own rule.)
+      {
+        id: 'remove-expired-delete-markers',
+        expiredObjectDeleteMarker: true,
+      },
     ],
   });
 }
@@ -132,6 +139,9 @@ export function backendEnvironment(config: ScribeConfig): Record<string, string>
     GOOGLE_CLIENT_ID: config.backendEnv.GOOGLE_CLIENT_ID,
   };
   if (config.backendEnv.CORS_ORIGINS) env.CORS_ORIGINS = config.backendEnv.CORS_ORIGINS;
+  // Optional; the backend defaults (25 MiB, 16 MiB) apply when unset.
+  if (config.backendEnv.MAX_BODY_BYTES) env.MAX_BODY_BYTES = config.backendEnv.MAX_BODY_BYTES;
+  if (config.backendEnv.WS_MAX_PAYLOAD_BYTES) env.WS_MAX_PAYLOAD_BYTES = config.backendEnv.WS_MAX_PAYLOAD_BYTES;
   return env;
 }
 
@@ -166,8 +176,10 @@ export function createDistribution(scope: Construct, props: DistributionProps): 
     securityHeadersBehavior: {
       strictTransportSecurity: {
         accessControlMaxAge: Duration.seconds(63072000),
-        includeSubdomains: true,
-        preload: true,
+        // Opt-in per config (ScribeConfig.hsts): on a bare domain these reach every subdomain
+        // and the browsers' preload list.
+        includeSubdomains: config.hsts?.includeSubdomains ?? false,
+        preload: config.hsts?.preload ?? false,
         override: true,
       },
       contentTypeOptions: { override: true },

@@ -1,9 +1,10 @@
-import http, { IncomingMessage, STATUS_CODES } from 'http';
+import http, { IncomingMessage, ServerResponse, STATUS_CODES } from 'http';
 import type { Duplex } from 'stream';
 import { createServerAdapter } from '@whatwg-node/server';
 import { WebSocketServer } from 'ws';
 import { router } from './index';
 import { Env } from './utils/sessionManager';
+import { DEFAULT_MAX_BODY_BYTES, DEFAULT_WS_MAX_PAYLOAD_BYTES } from './config/env';
 import { authorizeRoomConnection } from './handlers/websocket';
 import { RoomTarget, closeAllRooms, joinRoom } from './realtime/rooms';
 
@@ -36,6 +37,73 @@ function rejectUpgrade(socket: Duplex, status: number, body: Record<string, unkn
   socket.destroy();
 }
 
+function rejectTooLarge(res: ServerResponse, maxBodyBytes: number): void {
+  if (res.headersSent || res.destroyed) return;
+  const payload = JSON.stringify({ error: 'Request body too large', maxBytes: maxBodyBytes });
+  // Connection: close, so Node closes the socket once the response is out instead
+  // of waiting for (or reading) the rest of an oversized body.
+  res.writeHead(413, {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(payload),
+    'Connection': 'close',
+  });
+  res.end(payload);
+}
+
+/**
+ * Read a request body that has no Content-Length (chunked), up to `limit` bytes.
+ * Resolves with the body, or `null` as soon as it passes the limit (reading stops;
+ * the caller answers 413).
+ */
+function readBodyWithin(req: IncomingMessage, limit: number): Promise<Buffer | null> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const cleanup = () => {
+      req.off('data', onData);
+      req.off('end', onEnd);
+      req.off('error', onError);
+      req.off('close', onClose);
+    };
+    const onData = (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > limit) {
+        cleanup();
+        req.pause();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks, total));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('Request closed before the body was read'));
+    };
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+    req.on('close', onClose);
+  });
+}
+
+export interface AppServerOptions {
+  /** Largest accepted request body (MAX_BODY_BYTES); larger requests get 413. Default 25 MiB. */
+  maxBodyBytes?: number;
+  /**
+   * Largest accepted WebSocket message (WS_MAX_PAYLOAD_BYTES). A larger frame closes
+   * the socket with 1009 (message too big). Default 16 MiB.
+   */
+  wsMaxPayloadBytes?: number;
+}
+
 export interface AppServer {
   server: http.Server;
   /** Close all WebSocket rooms and stop the HTTP server. */
@@ -47,14 +115,60 @@ export interface AppServer {
  * and WebSocket upgrades for /api/ws/{submissions,documents}/:id via `ws`.
  * The caller decides when to listen.
  */
-export function createAppServer(env: Env): AppServer {
+export function createAppServer(env: Env, options: AppServerOptions = {}): AppServer {
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+
   // itty's fetch takes (request, ...args) and passes the args to handlers, so
   // handlers keep their (request, env, ctx) signature.
   const adapter = createServerAdapter((request: Request) => router.fetch(request, env, executionContext));
-  const server = http.createServer(adapter);
+
+  // Handlers buffer whole bodies (request.json(), formData()), so cap the size
+  // before the router sees the request.
+  //  - With Content-Length: decided from the header. Node's parser never delivers
+  //    more bytes than the header declares, so the adapter can stream the body as usual.
+  //  - Chunked (no Content-Length): read it here, within the limit, and hand the
+  //    adapter the buffered body (`req.body`, which @whatwg-node/server uses in
+  //    place of the stream when present).
+  const server = http.createServer((req, res) => {
+    const contentLength = req.headers['content-length'];
+    if (contentLength !== undefined) {
+      if (Number(contentLength) > maxBodyBytes) {
+        rejectTooLarge(res, maxBodyBytes);
+        return;
+      }
+      void adapter(req, res);
+      return;
+    }
+    if (req.headers['transfer-encoding'] === undefined) {
+      void adapter(req, res); // no body
+      return;
+    }
+    readBodyWithin(req, maxBodyBytes).then(
+      (body) => {
+        if (body === null) {
+          rejectTooLarge(res, maxBodyBytes);
+          return;
+        }
+        if (body.length > 0) {
+          (req as IncomingMessage & { body?: Buffer }).body = body;
+        }
+        void adapter(req, res);
+      },
+      (error) => {
+        console.error('Error reading request body:', error);
+        if (!res.headersSent && !res.destroyed) {
+          res.writeHead(400, { 'Content-Type': 'application/json', 'Connection': 'close' });
+          res.end(JSON.stringify({ error: 'Bad request' }));
+        }
+      }
+    );
+  });
   server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
   server.headersTimeout = KEEP_ALIVE_TIMEOUT_MS + 1_000; // must exceed keepAliveTimeout
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: options.wsMaxPayloadBytes ?? DEFAULT_WS_MAX_PAYLOAD_BYTES,
+  });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', (error) => console.error('Upgrade socket error:', error));

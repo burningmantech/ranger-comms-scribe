@@ -6,7 +6,7 @@
  */
 import { AddressInfo } from 'net';
 import WebSocket from 'ws';
-import { createAppServer, AppServer } from '../../src/httpServer';
+import { createAppServer, AppServer, AppServerOptions } from '../../src/httpServer';
 import { configureCors } from '../../src/index';
 import { loadConfig } from '../../src/config/env';
 import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
@@ -119,8 +119,8 @@ const BASE_ENV = {
   TURNSTILESECRET: 'test-secret',
 };
 
-async function startServer(env: Env): Promise<{ app: AppServer; base: string; http: string }> {
-  const app = createAppServer(env);
+async function startServer(env: Env, options: AppServerOptions = {}): Promise<{ app: AppServer; base: string; http: string }> {
+  const app = createAppServer(env, options);
   await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', () => resolve()));
   const { port } = app.server.address() as AddressInfo;
   return { app, base: `ws://127.0.0.1:${port}`, http: `http://127.0.0.1:${port}` };
@@ -290,32 +290,35 @@ describe('real-time rooms (real sessions)', () => {
     expect(state.users.map((u: Msg) => u.userEmail)).toEqual([alice.email]);
   });
 
-  it('exposes room users and broadcasts over the HTTP room routes', async () => {
+  it('has no HTTP routes to broadcast into a room or list its members', async () => {
     const a = connect(`/api/ws/submissions/${submissionId}`, aliceSession);
     await a.opened();
     await a.waitFor((m) => m.type === 'connected');
 
-    const roomRes = await fetch(`${httpBase}/api/ws/submissions/${submissionId}/room`, {
-      headers: { Authorization: `Bearer ${bobSession}` },
-    });
-    expect(roomRes.status).toBe(200);
-    const room = await roomRes.json() as Msg;
-    expect(room.roomId).toBe(`submission:${submissionId}`);
-    expect(room.userCount).toBe(1);
-    expect(room.users[0].userEmail).toBe(alice.email);
+    // Any logged-in user (Mallory has no access to the submission) used to be able to
+    // inject messages and list members through these.
+    for (const kind of ['submissions', 'documents']) {
+      const id = kind === 'submissions' ? submissionId : 'doc-9';
+      const postRes = await fetch(`${httpBase}/api/ws/${kind}/${id}/broadcast`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${mallorySession}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'comment_added', data: { text: 'injected' } }),
+      });
+      expect(postRes.status).toBe(404);
 
-    const postRes = await fetch(`${httpBase}/api/ws/submissions/${submissionId}/broadcast`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${bobSession}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'comment_added', data: { text: 'hi' } }),
-    });
-    expect(postRes.status).toBe(200);
-    const msg = await a.waitFor((m) => m.type === 'comment_added');
-    expect(msg).toMatchObject({ submissionId, userId: bob.id, userEmail: bob.email, data: { text: 'hi' } });
+      const roomRes = await fetch(`${httpBase}/api/ws/${kind}/${id}/room`, {
+        headers: { Authorization: `Bearer ${mallorySession}` },
+      });
+      expect(roomRes.status).toBe(404);
+    }
+    await a.expectNone((m) => m.type === 'comment_added', 200);
+  });
 
-    // A plain GET on the upgrade path still answers 426.
+  it('answers 426 to a plain GET on the upgrade paths', async () => {
     const plain = await fetch(`${httpBase}/api/ws/submissions/${submissionId}`);
     expect(plain.status).toBe(426);
+    const plainDoc = await fetch(`${httpBase}/api/ws/documents/doc-9`);
+    expect(plainDoc.status).toBe(426);
   });
 
   it('uses the same document:<id> key for connections and broadcasts', async () => {
@@ -424,5 +427,52 @@ describe('real-time rooms (DEV_BYPASS_AUTH and server ping)', () => {
     await a.opened();
     const ping = await a.waitFor((m) => m.type === 'ping', 2000);
     expect(ping).toMatchObject({ userId: 'server', userName: 'Server', userEmail: 'server@websocket', submissionId: 'pinged' });
+  });
+});
+
+describe('real-time rooms (WS_MAX_PAYLOAD_BYTES)', () => {
+  const LIMIT = 1024;
+  let app: AppServer;
+  let base: string;
+  const clients: TestClient[] = [];
+
+  beforeAll(async () => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const env = loadConfig({ ...BASE_ENV, DEV_BYPASS_AUTH: 'true' }, { store: new MemoryObjectStore() }).env;
+    ({ app, base } = await startServer(env, { wsMaxPayloadBytes: LIMIT }));
+  });
+
+  afterEach(async () => {
+    await Promise.all(clients.splice(0).map((c) => c.close()));
+  });
+
+  afterAll(async () => {
+    await app.close();
+    jest.restoreAllMocks();
+  });
+
+  it('defaults to 16 MiB and reads overrides', () => {
+    expect(loadConfig(BASE_ENV).wsMaxPayloadBytes).toBe(16 * 1024 * 1024);
+    expect(loadConfig({ ...BASE_ENV, WS_MAX_PAYLOAD_BYTES: '4096' }).wsMaxPayloadBytes).toBe(4096);
+    expect(() => loadConfig({ ...BASE_ENV, WS_MAX_PAYLOAD_BYTES: '0' })).toThrow('Invalid WS_MAX_PAYLOAD_BYTES');
+  });
+
+  it('relays messages under the limit and closes the socket with 1009 for a larger one', async () => {
+    const a = new TestClient(`${base}/api/ws/submissions/big?sessionId=a`);
+    const b = new TestClient(`${base}/api/ws/submissions/big?sessionId=b&testUser=user2`);
+    clients.push(a, b);
+    await Promise.all([a.opened(), b.opened()]);
+    await a.waitFor((m) => m.type === 'room_state' && m.users.length === 2);
+
+    a.send({ type: 'realtime_content_update', data: { content: 'x'.repeat(LIMIT / 2) } });
+    await b.waitFor((m) => m.type === 'realtime_content_update');
+
+    const closed = new Promise<number>((resolve) => a.ws.once('close', (code) => resolve(code)));
+    a.send({ type: 'realtime_content_update', data: { content: 'x'.repeat(LIMIT * 2) } });
+    expect(await closed).toBe(1009);
+
+    // The rest of the room carries on: B sees A leave, and the server is still up.
+    await b.waitFor((m) => m.type === 'user_left' && m.userEmail === 'dev@localhost');
   });
 });

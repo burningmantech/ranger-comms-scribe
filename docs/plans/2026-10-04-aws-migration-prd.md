@@ -429,6 +429,17 @@ These are outside the migration's scope except where a phase is noted.
   - Options: short-lived signed URLs (CloudFront or S3 presigned) for non-public media, or a signed query token checked by the route.
   - Not in migration scope. CloudFront caching doesn't widen the exposure, because private responses would also need `private`/`no-store` once fixed.
 
+Found in the AWS migration review and not fixed yet:
+
+- **Collaborator identity mismatch.** Sockets stamp `userId` with the email (`handlers/websocket.ts`), REST-triggered broadcasts use `user.id || user.email`, and the frontend compares against `currentUser.id || currentUser.email`, so users can see their own actions as another collaborator's. Pick one identifier (the UUID, with the email kept in `userEmail`) for sockets and broadcasts, and compare on it in the frontend.
+- **`seq` gap for the sender.** `broadcastToRoom` (`realtime/rooms.ts`) consumes a `seq` number for messages relayed to everyone except the sender, so the sender always sees a gap and refetches. Send the sender a lightweight ack carrying that `seq`, or keep the counter per recipient.
+- **Presence flicker with two tabs.** When a user with two tabs open closes one, the room broadcasts `user_left` for them although their other socket is still connected. Announce `user_left` only when the user's last socket in the room closes (`room_state` already deduplicates by `userId`).
+- **Long API calls time out at CloudFront.** The API origin's `readTimeout` is 60 s (`infra/lib/shared.ts`), so `/api` requests that run longer return 504. 60 s is CloudFront's default maximum (more needs a quota increase, up to 180 s), so prefer making slow endpoints asynchronous.
+- **Standard stacks each create their own network.** Without `useExisting`, staging and production each create a VPC, cluster and ALB (§7.7's ~$55–60/month case). Share them by creating them once (a small shared stack, or one stack importing the other's), or use the tech team's existing ones.
+- **Account pre-hijack by registration.** Anyone can register a victim's (non-bootstrap) email with their own password, and keeps that password once the victim clicks the verification link. On `/auth/verify-email`, clear the password of an account that was created by email registration and has never logged in, or require the password to be set from the emailed link.
+- **Unpinned MinIO image.** The local `docker-compose.yml` uses the community image `pgsty/minio` because the official images couldn't be pulled. Pin it by digest (`pgsty/minio@sha256:…`).
+- **Production deployer allow-list.** The "Check user" step in `.github/workflows/deploy.yml` allows `alexyoung`, but the maintainer's GitHub login is `alexanderyoung`. Left for the maintainer to change.
+
 ## 13. Estimates
 
 | Phase | Effort |

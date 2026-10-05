@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
+import { getUser, getUserStrict, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
@@ -153,7 +153,8 @@ router.post('/register', async (request: Request, env) => {
         // without a password (Google sign-in or admin-created): getOrCreateUser
         // returns an existing user unchanged, so registering their email would
         // otherwise hand out a session for their account without any credential.
-        const existingUser = await getUser(email, env);
+        // Strict: a store error answers 500 below instead of looking like "no user".
+        const existingUser = await getUserStrict(email, env);
         if (existingUser) {
             return json({ error: 'User with this email already exists' }, { status: 409 });
         }
@@ -505,9 +506,18 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
         return json({ error: 'Token is required' }, { status: 400 });
     }
 
+    let payload: Awaited<ReturnType<typeof verifyGoogleIdToken>>;
     try {
-        const payload = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
-        const { email, name, sub } = payload; // Extract email, name, and user ID (sub)
+        payload = await verifyGoogleIdToken(token, env.GOOGLE_CLIENT_ID);
+    } catch (error) {
+        console.error('Error verifying token:', error);
+        return json({ error: 'Invalid token' }, { status: 401 });
+    }
+
+    // Past this point a failure is ours (e.g. the store), not a bad token: answer
+    // 500 so the client retries rather than reporting an invalid login.
+    try {
+        const { email, name } = payload;
 
         // Create or get the user. Google has verified the address, so mark it
         // verified (dropping any unproven password) and promote bootstrap admins.
@@ -526,8 +536,8 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
             sessionId,
         });
     } catch (error) {
-        console.error('Error verifying token:', error);
-        return json({ error: 'Invalid token' }, { status: 401 });
+        console.error('Error signing in with Google:', error);
+        return json({ error: 'Failed to sign in' }, { status: 500 });
     }
 });
 

@@ -83,6 +83,8 @@ export interface ObjectStore {
 | `GOOGLE_CLIENT_ID` | yes | the frontend's OAuth client ID |
 | `TURNSTILESECRET` | yes | secret, injected through the ECS task definition's `secrets` |
 | `DEV_BYPASS_AUTH` | no | `"true"` enables fake users (local only) |
+| `MAX_BODY_BYTES` | no | largest HTTP request body in bytes; default `26214400` (25 MiB, room for a gallery upload's three files). Larger requests get `413` before reaching the router; chunked bodies are cut off once they pass it |
+| `WS_MAX_PAYLOAD_BYTES` | no | largest WebSocket message in bytes; default `16777216` (16 MiB; whole-document `realtime_content_update` messages carry full Lexical JSON, images go by URL). A larger message closes the socket with code `1009` |
 | `STORE_DRIVER` | no | local/test only: `s3` (default) or `memory` (in-process store, data lost on restart; `DATA_BUCKET` not required). Never set it in AWS. |
 
 The loader is `backend/src/config/env.ts`. It fails at startup, listing every missing required variable.

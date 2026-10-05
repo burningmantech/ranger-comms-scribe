@@ -1,6 +1,5 @@
 import { AutoRouter, json } from 'itty-router';
-import { withAuth } from '../authWrappers';
-import { User, UserType } from '../types';
+import { UserType } from '../types';
 import { Env, GetSession } from '../utils/sessionManager';
 import { getUser } from '../services/userService';
 import { getObject } from '../services/cacheService';
@@ -11,7 +10,6 @@ import {
   WebSocketMessage,
   broadcastToRoom,
   documentRoomKey,
-  getRoomUsers,
   submissionRoomKey,
 } from '../realtime/rooms';
 
@@ -111,48 +109,11 @@ const expectUpgrade = () => json(
 router.get('/submissions/:submissionId', expectUpgrade);
 router.get('/documents/:documentId', expectUpgrade);
 
-function senderFields(user: User) {
-  return {
-    userId: user.id || user.email,
-    userName: user.name,
-    userEmail: user.email,
-    timestamp: new Date().toISOString(),
-  };
-}
-
-// HTTP API for broadcasting messages to WebSocket rooms
-router.post('/submissions/:submissionId/broadcast', withAuth, async (request: Request) => {
-  const { submissionId } = (request as any).params;
-  const user = (request as any).user as User;
-  const message = await request.json() as Record<string, unknown>;
-
-  broadcastToRoom(submissionRoomKey(submissionId), { ...message, submissionId, ...senderFields(user) });
-  return json({ success: true });
-});
-
-// Get room information (connected users)
-router.get('/submissions/:submissionId/room', withAuth, (request: Request) => {
-  const { submissionId } = (request as any).params;
-  const roomId = submissionRoomKey(submissionId);
-  const users = getRoomUsers(roomId);
-  return json({ roomId, users, userCount: users.length });
-});
-
-router.post('/documents/:documentId/broadcast', withAuth, async (request: Request) => {
-  const { documentId } = (request as any).params;
-  const user = (request as any).user as User;
-  const message = await request.json() as Record<string, unknown>;
-
-  broadcastToRoom(documentRoomKey(documentId), { ...message, documentId, ...senderFields(user) });
-  return json({ success: true });
-});
-
-router.get('/documents/:documentId/room', withAuth, (request: Request) => {
-  const { documentId } = (request as any).params;
-  const roomId = documentRoomKey(documentId);
-  const users = getRoomUsers(roomId);
-  return json({ roomId, users, userCount: users.length });
-});
+// There are deliberately no HTTP routes to broadcast into a room or list its
+// members. The old POST .../broadcast and GET .../room routes only required a
+// login, so any user could inject messages into any room or see who was in it,
+// and the frontend never called them. Server code broadcasts with the functions
+// below; clients join rooms through the (access-checked) upgrade.
 
 // Utility function to broadcast messages from other parts of the application
 export async function broadcastToSubmissionRoom(

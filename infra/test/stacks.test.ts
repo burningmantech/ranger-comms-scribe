@@ -21,6 +21,44 @@ const MANAGED_ALL_VIEWER_AND_CLOUDFRONT = '33f36d7e-f396-46d9-90e0-52428a34d9dc'
 const MANAGED_ALL_VIEWER_EXCEPT_HOST = 'b689b0a8-53d0-40ab-baf2-68738e2966ac';
 const MANAGED_CACHING_DISABLED = '4135ea2d-6df8-44a3-9df3-4b5a84be39ad';
 
+/**
+ * A stack-created ALB must be reachable only through CloudFront: no ingress from anywhere
+ * (IPv4 or IPv6), exactly one rule (443) from the origin-facing managed prefix list, whose ID
+ * a custom resource resolves at deploy time, and no port 80 listener.
+ */
+function expectAlbOnlyFromCloudFront(stack: Template): void {
+  const groups = stack.findResources('AWS::EC2::SecurityGroup');
+  const albGroupIds = Object.keys(groups).filter((id) => id.includes('AlbSecurityGroup'));
+  expect(albGroupIds).toHaveLength(1);
+  const [albGroupId] = albGroupIds;
+
+  const inlineRules = (groups[albGroupId].Properties.SecurityGroupIngress ?? []) as Array<Record<string, unknown>>;
+  const separateRules = Object.values(stack.findResources('AWS::EC2::SecurityGroupIngress'))
+    .map((r) => r.Properties as Record<string, unknown>)
+    .filter((p) => JSON.stringify(p.GroupId).includes(albGroupId));
+  const rules = [...inlineRules, ...separateRules];
+
+  for (const rule of rules) {
+    expect(rule.CidrIp).not.toBe('0.0.0.0/0');
+    expect(rule.CidrIpv6).not.toBe('::/0');
+  }
+  expect(JSON.stringify(rules)).not.toMatch(/0\.0\.0\.0\/0|::\/0/);
+
+  expect(rules).toHaveLength(1);
+  const [rule] = rules;
+  expect(rule).toMatchObject({ IpProtocol: 'tcp', FromPort: 443, ToPort: 443 });
+  expect(JSON.stringify(rule.SourcePrefixListId)).toContain('CloudFrontPrefixListLookup');
+
+  const lookups = Object.values(stack.findResources('Custom::AWS'));
+  expect(lookups).toHaveLength(1);
+  const create = JSON.stringify(lookups[0].Properties.Create);
+  expect(create).toContain('describeManagedPrefixLists');
+  expect(create).toContain('com.amazonaws.global.cloudfront.origin-facing');
+
+  const listeners = Object.values(stack.findResources('AWS::ElasticLoadBalancingV2::Listener'));
+  expect(listeners.map((l) => l.Properties.Port)).toEqual([443]);
+}
+
 describe('alex-dev (dev profile)', () => {
   const app = synthApp({ config: 'alex-dev' });
   const persistent = template(app, DEV_PERSISTENT_STACK);
@@ -72,9 +110,11 @@ describe('alex-dev (dev profile)', () => {
   });
 
   test('task security group only accepts traffic from the ALB', () => {
-    const ingress = compute.findResources('AWS::EC2::SecurityGroupIngress');
-    expect(Object.keys(ingress)).toHaveLength(1);
-    const [rule] = Object.values(ingress);
+    const ingress = Object.values(compute.findResources('AWS::EC2::SecurityGroupIngress')).filter((r) =>
+      JSON.stringify(r.Properties.GroupId).includes('TaskSecurityGroup'),
+    );
+    expect(ingress).toHaveLength(1);
+    const [rule] = ingress;
     expect(rule.Properties.FromPort).toBe(8080);
     expect(JSON.stringify(rule.Properties.SourceSecurityGroupId)).toContain('Alb');
     const groups = compute.findResources('AWS::EC2::SecurityGroup');
@@ -87,10 +127,10 @@ describe('alex-dev (dev profile)', () => {
       LoadBalancerAttributes: Match.arrayWith([{ Key: 'idle_timeout.timeout_seconds', Value: '120' }]),
     });
     compute.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', { HealthCheckPath: '/healthz' });
-    compute.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
-      Port: 80,
-      DefaultActions: [Match.objectLike({ Type: 'redirect' })],
-    });
+  });
+
+  test('ALB accepts only HTTPS from the CloudFront origin-facing prefix list', () => {
+    expectAlbOnlyFromCloudFront(compute);
   });
 
   test('compute stack shares nothing with persistent through exports', () => {
@@ -113,9 +153,19 @@ describe('alex-dev (dev profile)', () => {
     expect(api.CachePolicyId).toBe(MANAGED_CACHING_DISABLED);
     expect(api.OriginRequestPolicyId).toBe(MANAGED_ALL_VIEWER_EXCEPT_HOST);
     expect(config.Origins.map((o: { DomainName: unknown }) => o.DomainName)).toContain('origin.aws-dev.scrivenly.com');
+  });
+
+  test('HSTS keeps a two-year max-age without includeSubdomains or preload', () => {
     persistent.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
       ResponseHeadersPolicyConfig: Match.objectLike({
-        SecurityHeadersConfig: Match.objectLike({ StrictTransportSecurity: Match.objectLike({ IncludeSubdomains: true }) }),
+        SecurityHeadersConfig: Match.objectLike({
+          StrictTransportSecurity: {
+            AccessControlMaxAgeSec: 63072000,
+            IncludeSubdomains: false,
+            Preload: false,
+            Override: true,
+          },
+        }),
       }),
     });
   });
@@ -135,6 +185,7 @@ describe('alex-dev (dev profile)', () => {
           Match.objectLike({ Prefix: 'verification-token/', ExpirationInDays: 14 }),
           Match.objectLike({ Prefix: 'reset-token/', ExpirationInDays: 14 }),
           Match.objectLike({ NoncurrentVersionExpiration: { NoncurrentDays: 30 } }),
+          Match.objectLike({ ExpiredObjectDeleteMarker: true, Status: 'Enabled' }),
         ]),
       },
     });
@@ -202,6 +253,10 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     });
   });
 
+  test('ALB accepts only HTTPS from the CloudFront origin-facing prefix list', () => {
+    expectAlbOnlyFromCloudFront(stack);
+  });
+
   if (configName === 'rangers-staging') {
     // Production runs older staging commit tags from this shared repository.
     test('ECR lifecycle keeps enough tagged images for production and rollback', () => {
@@ -211,6 +266,25 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
       expect(tagged.selection.countNumber).toBeGreaterThanOrEqual(100);
     });
   }
+
+  test('HSTS defaults: max-age only, no includeSubdomains or preload', () => {
+    stack.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
+      ResponseHeadersPolicyConfig: Match.objectLike({
+        SecurityHeadersConfig: Match.objectLike({
+          StrictTransportSecurity: Match.objectLike({ AccessControlMaxAgeSec: 63072000, IncludeSubdomains: false, Preload: false }),
+        }),
+      }),
+    });
+  });
+
+  test('data bucket removes expired delete markers', () => {
+    stack.hasResourceProperties('AWS::S3::Bucket', {
+      VersioningConfiguration: { Status: 'Enabled' },
+      LifecycleConfiguration: {
+        Rules: Match.arrayWith([Match.objectLike({ ExpiredObjectDeleteMarker: true, Status: 'Enabled' })]),
+      },
+    });
+  });
 
   test('Secrets Manager for TURNSTILESECRET and 30-day logs', () => {
     stack.resourceCountIs('AWS::SecretsManager::Secret', 1);

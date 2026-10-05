@@ -23,6 +23,10 @@ export interface BackendEnv {
   /** Comma-separated, case-insensitive. */
   BOOTSTRAP_ADMIN_EMAILS: string;
   GOOGLE_CLIENT_ID: string;
+  /** Largest HTTP request body in bytes. Omit for the backend default (25 MiB). */
+  MAX_BODY_BYTES?: string;
+  /** Largest WebSocket message in bytes. Omit for the backend default (16 MiB). */
+  WS_MAX_PAYLOAD_BYTES?: string;
 }
 
 export interface UseExisting {
@@ -56,6 +60,17 @@ export interface ScribeConfig {
 
   /** Public hostname served by CloudFront, e.g. `aws-dev.scrivenly.com`. */
   hostname: string;
+  /**
+   * HSTS options beyond `max-age` (always two years). Both default to false.
+   * - `includeSubdomains` applies HSTS to every subdomain of `hostname`. On a bare domain
+   *   (production's `scrivenly.com`) that covers every other site on it.
+   * - `preload` asks browsers to ship the domain in their HSTS preload list (once submitted to
+   *   hstspreload.org), which is slow and hard to undo. It requires `includeSubdomains`.
+   */
+  hsts?: {
+    includeSubdomains?: boolean;
+    preload?: boolean;
+  };
   /**
    * Dev only: create a Route 53 public hosted zone for `hostname` (delegated from Cloudflare by
    * NS records). It holds the CloudFront alias, `origin.<hostname>` and ACM validation records.
@@ -158,6 +173,9 @@ export function validateConfig(config: ScribeConfig): void {
     problems.push('outside us-east-1 you must supply certificates.cloudFrontCertificateArn (CloudFront certs live in us-east-1)');
   }
   const ue = config.useExisting;
+  if (config.hsts?.preload && !config.hsts.includeSubdomains) {
+    problems.push('hsts.preload requires hsts.includeSubdomains (the preload list rejects it otherwise)');
+  }
   if (ue?.albListenerArn && (!ue.albSecurityGroupId || !ue.albDnsName)) {
     problems.push('useExisting.albListenerArn also needs albSecurityGroupId and albDnsName');
   }
