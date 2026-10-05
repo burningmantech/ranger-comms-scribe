@@ -9,11 +9,9 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "deploy": "wrangler deploy --env frontend",
     "start:local-backend": "REACT_APP_API_URL=http://localhost:8787 react-scripts start"
   },
   "dependencies": {
-    "@cloudflare/kv-asset-handler": "^0.4.0",
     "@heroicons/react": "^2.2.0",
     "@hookform/resolvers": "^2.9.11",
     "@lexical/clipboard": "^0.30.0",
@@ -54,7 +52,6 @@
     "@types/react-router-dom": "^5.3.3",
     "immutable": "^3.8.2",
     "postcss-selector-parser": "^6.1.2",
-    "wrangler": "^4.6.0",
     "yjs": "^13.6.27"
   },
   "author": "",
