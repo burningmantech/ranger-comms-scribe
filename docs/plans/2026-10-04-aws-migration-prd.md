@@ -1,6 +1,6 @@
 # PRD: Moving Comms Scribe to AWS
 
-**Status:** Phases 0–3 implemented on `feature/aws-migration`; Phase 4 (deploy to Alex's account) not started · **Date:** 2026-10-04 · **Owner:** Alex Young · **Branch:** `feature/aws-migration`
+**Status:** Phases 0–3 implemented; Phase 4 deployed to Alex's account (app.scrivenly.com), acceptance testing in progress · **Date:** 2026-10-04 · **Owner:** Alex Young · **Branch:** `feature/aws-migration`
 
 ## 1. Summary
 
@@ -23,7 +23,7 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
 | 1: Storage layer on S3 | Done: `backend/src/storage/` and the in-memory cache. |
 | 2: Node server, rooms, bootstrap | Done: `src/server.ts`, `src/realtime/rooms.ts`, Dockerfile, docker-compose. Cloudflare pieces removed. |
 | 3: Infrastructure and CI | Done: `infra/` (dev and standard profiles), `bin/`, `.github/workflows/`. |
-| 4: Fresh setup in Alex's account | **Not started.** Needs the dev AWS account confirmed. The local AWS CLI is logged into 104850854094, but SES lives in 821327748249. |
+| 4: Fresh setup in Alex's account | **Deployed 2026-10-04** to account 821327748249 at `https://app.scrivenly.com` (CLI profile `mybestday`). Persistent and compute stacks are up, and the first deploy went through `ranger-deploy`. The bootstrap admin signed in with Google. Remaining: the manual acceptance checks (two-browser collaboration, uploads over 6 MB, reset email). |
 
 **Changes made during implementation, beyond the requirements above:**
 - `POST /auth/register` returns 409 for any existing email. Registering the email of a Google-only or admin-created user used to return a session for that account, which was an account takeover.
