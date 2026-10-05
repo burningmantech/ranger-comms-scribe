@@ -4,7 +4,8 @@ The backend for the Comms Scribe collaborative content platform. It is a single 
 that serves:
 
 - the REST API under `/api/*` (itty-router handlers, served through `@whatwg-node/server`);
-- WebSocket rooms for real-time editing under `/api/ws/*` (`ws`);
+- WebSocket rooms for real-time editing under `/api/ws/*` (`ws`), plus the Yjs collaboration socket
+  under `/api/ws/yjs/submissions/:id`;
 - `GET /healthz`, which returns `200 {"ok":true}` for load-balancer health checks.
 
 Data lives in S3 (MinIO locally) behind the `ObjectStore` interface, with an in-memory TTL cache in
@@ -22,6 +23,7 @@ backend/
 │   ├── index.ts             # itty-router app, CORS, initializeApp()
 │   ├── config/env.ts        # Builds Env from process.env
 │   ├── realtime/rooms.ts    # In-process WebSocket rooms (relay, presence, seq, ping)
+│   ├── realtime/yjsRooms.ts # Yjs collaboration rooms (y-websocket protocol, seeding rule)
 │   ├── storage/             # ObjectStore interface, S3ObjectStore, MemoryObjectStore
 │   ├── handlers/            # Route handlers (auth, blog, content, gallery, websocket, ...)
 │   ├── services/            # Business logic (cacheService, userService, mediaService, ...)
@@ -119,6 +121,34 @@ WebSocket after the same session and access checks as the REST API (`authorizeRo
 
 REST handlers broadcast with `broadcastToSubmissionRoom()` / `broadcastToDocumentRoom()`. Room state
 is in memory, so the service runs as a single task.
+
+## Yjs collaboration socket
+
+`/api/ws/yjs/submissions/:id?sessionId=...` (`src/realtime/yjsRooms.ts`, contracts §9) carries
+merged real-time editing. It's separate from the JSON room above, which keeps carrying presence,
+cursors and workflow events. Authorization is the same (`authorizeRoomConnection` with the
+submission), and so is `WS_MAX_PAYLOAD_BYTES`.
+
+- **Protocol:** the standard y-websocket binary protocol (`0` sync, `1` awareness, `3` query
+  awareness), so the stock client works:
+  `new WebsocketProvider(wsBase + '/api/ws/yjs/submissions', submissionId, doc, { params: { sessionId } })`.
+  Tested against `y-websocket` 3.1.0 with `yjs` 13.6.
+- **State:** one `Y.Doc` and one awareness per submission, in memory. Updates are applied and
+  relayed to the other clients; awareness is relayed to everyone (the sender's echo keeps the
+  client's 30 s no-message watchdog happy) and removed when its client disconnects. A room is
+  destroyed 30 s after its last client leaves; the next session seeds again from saved content.
+- **Exactly one bootstrap:** while the doc is empty, only the first client (the seeder) gets an
+  answer to sync step 1. Everyone else is held: no doc state goes to them, and their own doc
+  messages are ignored. When the seed makes the doc non-empty, held clients get step 2 with the
+  full state, then the server's step 1 (which collects anything they had). If the seeder leaves
+  before seeding, the next held client in join order becomes the seeder. So only one client ever
+  syncs against an empty doc, and Lexical's `CollaborationPlugin` bootstraps once.
+- **Liveness:** the server sends WebSocket protocol pings (not JSON; the client decodes every
+  message as binary) on the same 30 s interval as the rooms, and terminates a socket that has been
+  silent for more than two intervals plus 10 s.
+- **Known limits:** a seeder that syncs but never sends content leaves the others held until it
+  disconnects. A client that kept a doc from a destroyed room and rejoins while someone else seeds
+  from saved content brings a second copy of that content (separate Yjs histories).
 
 ## Docker
 

@@ -113,6 +113,7 @@ const expectUpgrade = () => json(
 );
 router.get('/submissions/:submissionId', expectUpgrade);
 router.get('/documents/:documentId', expectUpgrade);
+router.get('/yjs/submissions/:submissionId', expectUpgrade);
 
 // There are deliberately no HTTP routes to broadcast into a room or list its
 // members. The old POST .../broadcast and GET .../room routes only required a
