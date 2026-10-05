@@ -49,6 +49,8 @@ const config: ScribeConfig = {
     // Keeps today's behaviour (backend/src/utils/email.ts BCCs this address). In SES sandbox mode
     // the BCC address must be a verified identity too.
     EMAIL_BCC: process.env.SCRIBE_ALEX_DEV_EMAIL_BCC ?? 'alexander.young@gmail.com',
+    // Never the real announcement list in dev; set a test address to try the send-email flow.
+    ANNOUNCE_EMAIL_TO: process.env.SCRIBE_ALEX_DEV_ANNOUNCE_EMAIL_TO ?? '',
     BOOTSTRAP_ADMIN_EMAILS: process.env.SCRIBE_ALEX_DEV_BOOTSTRAP_ADMIN_EMAILS || 'alexander.young@gmail.com',
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
   },

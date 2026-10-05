@@ -18,6 +18,8 @@ export interface BackendEnv {
   EMAIL_FROM: string;
   /** Comma-separated. Must be empty in Rangers environments. */
   EMAIL_BCC: string;
+  /** Announcement list for approved submissions. Empty disables sending (use a test list outside production). */
+  ANNOUNCE_EMAIL_TO: string;
   /** Comma-separated, case-insensitive. */
   BOOTSTRAP_ADMIN_EMAILS: string;
   GOOGLE_CLIENT_ID: string;

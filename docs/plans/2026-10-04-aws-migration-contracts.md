@@ -78,6 +78,7 @@ export interface ObjectStore {
 | `SES_REGION` | no | default `us-east-1` |
 | `EMAIL_FROM` | no | default `Comms Scribe <alex@scrivenly.com>` |
 | `EMAIL_BCC` | no | comma-separated; default empty (no BCC) |
+| `ANNOUNCE_EMAIL_TO` | no | announcement list for approved submissions; unset disables sending (production: `rangers-announce@burningman.org`) |
 | `BOOTSTRAP_ADMIN_EMAILS` | no | comma-separated, case-insensitive |
 | `GOOGLE_CLIENT_ID` | yes | the frontend's OAuth client ID |
 | `TURNSTILESECRET` | yes | secret, injected through the ECS task definition's `secrets` |

@@ -20,6 +20,8 @@ export interface Env {
     EMAIL_FROM?: string;
     /** BCC recipients for outgoing email; empty means no BCC. */
     EMAIL_BCC?: string[];
+    /** Recipient for approved-submission announcements; unset means announcements can't be sent. */
+    ANNOUNCE_EMAIL_TO?: string;
     /** Emails (lowercased) that are promoted to Admin on register/login. */
     BOOTSTRAP_ADMIN_EMAILS?: string[];
 }

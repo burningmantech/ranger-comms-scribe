@@ -122,6 +122,7 @@ export function backendEnvironment(config: ScribeConfig): Record<string, string>
     SES_REGION: config.backendEnv.SES_REGION,
     EMAIL_FROM: config.backendEnv.EMAIL_FROM,
     EMAIL_BCC: config.backendEnv.EMAIL_BCC,
+    ANNOUNCE_EMAIL_TO: config.backendEnv.ANNOUNCE_EMAIL_TO,
     BOOTSTRAP_ADMIN_EMAILS: config.backendEnv.BOOTSTRAP_ADMIN_EMAILS,
     GOOGLE_CLIENT_ID: config.backendEnv.GOOGLE_CLIENT_ID,
   };

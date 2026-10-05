@@ -45,6 +45,7 @@ const config: ScribeConfig = {
     SES_REGION: region,
     EMAIL_FROM: 'Comms Scribe <noreply@scrivenly.com>', // placeholder: confirm sender
     EMAIL_BCC: '', // must stay empty in Rangers environments
+    ANNOUNCE_EMAIL_TO: 'rangers-announce@burningman.org',
     BOOTSTRAP_ADMIN_EMAILS: '', // placeholder: the first admin's email address
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
   },

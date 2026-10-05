@@ -35,6 +35,13 @@ describe('parsePort', () => {
 });
 
 describe('loadConfig', () => {
+  it('reads ANNOUNCE_EMAIL_TO and treats blank as unset', () => {
+    expect(loadConfig({ ...REQUIRED, DATA_BUCKET: 'b', ANNOUNCE_EMAIL_TO: 'list@example.org' }).env.ANNOUNCE_EMAIL_TO)
+      .toBe('list@example.org');
+    expect(loadConfig({ ...REQUIRED, DATA_BUCKET: 'b', ANNOUNCE_EMAIL_TO: '  ' }).env.ANNOUNCE_EMAIL_TO)
+      .toBeUndefined();
+  });
+
   it('applies defaults', () => {
     const { env, port, storeDriver } = loadConfig({ ...REQUIRED, DATA_BUCKET: 'bucket' });
     expect(port).toBe(8080);
@@ -43,6 +50,7 @@ describe('loadConfig', () => {
     expect(env.SES_REGION).toBe('us-east-1');
     expect(env.EMAIL_FROM).toBe(DEFAULT_EMAIL_FROM);
     expect(env.EMAIL_BCC).toEqual([]);
+    expect(env.ANNOUNCE_EMAIL_TO).toBeUndefined();
     expect(env.BOOTSTRAP_ADMIN_EMAILS).toEqual([]);
     expect(env.CORS_ORIGINS).toEqual(['https://aws-dev.example.com', 'http://localhost:3000']);
     expect(env.DEV_BYPASS_AUTH).toBeUndefined();

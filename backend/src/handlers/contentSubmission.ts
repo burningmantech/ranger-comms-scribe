@@ -765,8 +765,11 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  // Send to appropriate list. For now, announcements go to rangers-announce
-  const toAddress = 'rangers-announce@burningman.org';
+  // The list comes from config so dev and staging can't email the real announcement list
+  const toAddress = env.ANNOUNCE_EMAIL_TO;
+  if (!toAddress) {
+    return json({ error: 'Announcement email address is not configured (ANNOUNCE_EMAIL_TO)' }, { status: 503 });
+  }
   try {
     const { sendEmail } = await import('../utils/email');
     // Media URLs are stored relative to the site; email clients need absolute ones.
