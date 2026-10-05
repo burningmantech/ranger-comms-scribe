@@ -44,6 +44,38 @@ script_url="https://${host}/${repo}/${version}/${path}"
 export DEPLOY_TOOLS_VERSION="${version}"
 export     LOCAL_IMAGE_NAME="${image_name}"
 
+# ranger-deploy pins dependencies (an old zope.interface) that fail on Python 3.13+
+# ("InvalidInterface: Concrete attribute, __firstlineno__"); its own CI and the Clubhouse
+# workflows use 3.12. deploy_aws_ecs runs `python3`, and reuses an active virtualenv, so when
+# the default python3 is too new, activate a cached virtualenv built with an older Python.
+# Override the interpreter with RANGER_DEPLOY_PYTHON=/path/to/python3.12.
+if [ -z "${VIRTUAL_ENV:-}" ] && ! python3 -c 'import sys; sys.exit(sys.version_info >= (3, 13))' 2> /dev/null; then
+    deploy_python="${RANGER_DEPLOY_PYTHON:-}"
+    if [ -z "${deploy_python}" ]; then
+        for candidate in python3.12 python3.11 python3.10; do
+            if command -v "${candidate}" > /dev/null 2>&1; then
+                deploy_python="$(command -v "${candidate}")"
+                break
+            fi
+        done
+    fi
+    if [ -z "${deploy_python}" ]; then
+        echo "ranger-deploy needs Python 3.12 or older, but python3 is $(python3 -V 2>&1)." >&2
+        echo "Install python3.12 (e.g. brew install python@3.12) or set RANGER_DEPLOY_PYTHON." >&2
+        exit 69
+    fi
+    deploy_venv="${XDG_CACHE_HOME:-${HOME}/.cache}/comms-scribe/ranger-deploy-venv"
+    if [ ! -x "${deploy_venv}/bin/python3" ] \
+        || ! "${deploy_venv}/bin/python3" -c 'import sys; sys.exit(sys.version_info >= (3, 13))'; then
+        echo "==> Creating ${deploy_venv} with $("${deploy_python}" -V 2>&1) for ranger-deploy"
+        rm -rf "${deploy_venv}"
+        "${deploy_python}" -m venv "${deploy_venv}"
+    fi
+    export VIRTUAL_ENV="${deploy_venv}"
+    export PATH="${deploy_venv}/bin:${PATH}"
+    echo "==> Using $(python3 -V 2>&1) from ${deploy_venv} for ranger-deploy"
+fi
+
 # Download and run the deploy script.
 echo "==> Running: ${script_url} --profile=comms-scribe $*"
 deploy_cmd="$(mktemp)"
