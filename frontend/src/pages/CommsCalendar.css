@@ -4,9 +4,21 @@
 
 .comms-calendar {
   max-width: 1280px;
-  margin: 0 auto;
-  padding: 20px;
+  margin: 20px auto;
+  padding: 24px;
   color: var(--text-dark);
+  /* A solid panel over the patterned page background, like the Requests page */
+  background-color: var(--primary-light);
+  border-radius: var(--radius-md);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+@media (max-width: 640px) {
+  .comms-calendar {
+    margin: 0;
+    padding: 16px;
+    border-radius: 0;
+  }
 }
 
 .cc-header {

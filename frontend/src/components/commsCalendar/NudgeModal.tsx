@@ -6,7 +6,7 @@ import { formatShortDate, isValidEmail, splitEmails } from '../../utils/commsCal
 
 interface NudgeModalProps {
   entry: CommsCalendarEntry;
-  /** This year's date, going by last year's. */
+  /** When it's due this year, going by last year's date. */
   anniversary?: string;
   onClose: () => void;
   onSent: (entry: CommsCalendarEntry) => void;

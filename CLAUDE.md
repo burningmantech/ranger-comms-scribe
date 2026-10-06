@@ -309,7 +309,8 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
 `backend/src/handlers/commsCalendar.ts`, `services/commsCalendarService.ts`):
 - One `CommsCalendarEntry` per communication at `comms_calendar/<id>`; cycles run Sep→Aug. Next year's
   version of an entry is a new entry whose `carriedFromId` points at last year's
-- **Upcoming** lists anniversaries in a window that no entry continues yet and that aren't `notRepeating`;
+- **Coming up** lists last year's items due again within a window (`/upcoming`) that no entry continues yet
+  and that aren't `notRepeating`;
   **Nudge** emails the team contacts (Reply-To the sender) and is logged on the entry
 - A sent announcement (send-email, or PUT to `sent`) or a sent newsletter edition (`sendEdition`, each
   section's request) creates/updates entry `sub-<submissionId>` from the request's approved subject, Publish By,

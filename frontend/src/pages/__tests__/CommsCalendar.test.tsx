@@ -52,7 +52,7 @@ describe('CommsCalendar page', () => {
     service.upcoming.mockResolvedValue({ items: [{ entry: last, anniversary: `${cycle}-09-15`, daysUntil: 9, overdue: false }] });
   });
 
-  it('shows upcoming anniversaries for the chosen window', async () => {
+  it('shows what is due again in the chosen window', async () => {
     renderPage();
     expect(await screen.findByText('in 9 days')).toBeInTheDocument();
     expect(service.upcoming).toHaveBeenCalledWith(42, localToday());

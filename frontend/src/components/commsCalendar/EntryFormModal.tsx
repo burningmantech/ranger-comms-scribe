@@ -207,7 +207,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
         </label>
         <label className="cc-check cc-field--full">
           <input type="checkbox" checked={form.notRepeating} onChange={(e) => set('notRepeating', e.target.checked)} />
-          <span>Won't repeat next year (leave it off the Upcoming list)</span>
+          <span>Won't repeat next year (leave it off Coming up)</span>
         </label>
       </form>
     </Modal>

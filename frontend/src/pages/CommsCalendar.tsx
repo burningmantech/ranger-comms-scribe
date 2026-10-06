@@ -77,8 +77,8 @@ const ContactsLine: React.FC<{ entry: CommsCalendarEntry }> = ({ entry }) => (
 );
 
 /**
- * Comms Calendar: what was sent each Sep→Aug cycle, by whom, and which anniversaries are
- * coming up so Comms can ask the team whether to send something similar again.
+ * Comms Calendar: what was sent each Sep→Aug cycle, by whom, and what went out around this
+ * time last year, so Comms can ask the team whether to send something similar again.
  */
 export const CommsCalendar: React.FC = () => {
   const { submissions } = useContent();
@@ -208,7 +208,7 @@ export const CommsCalendar: React.FC = () => {
         <div>
           <h1>Comms Calendar</h1>
           <p className="cc-muted">
-            What went out each year (September to August), and whose anniversaries are coming up.
+            Everything we send each year (September to August), and what's due to go out again soon.
           </p>
         </div>
         {canEdit && (
@@ -222,7 +222,7 @@ export const CommsCalendar: React.FC = () => {
 
       <div className="cc-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'upcoming'} className={`cc-tab${tab === 'upcoming' ? ' cc-tab--active' : ''}`} onClick={() => chooseTab('upcoming')}>
-          Upcoming{upcoming.length > 0 ? ` (${upcoming.length})` : ''}
+          Coming up{upcoming.length > 0 ? ` (${upcoming.length})` : ''}
         </button>
         <button type="button" role="tab" aria-selected={tab === 'all'} className={`cc-tab${tab === 'all' ? ' cc-tab--active' : ''}`} onClick={() => chooseTab('all')}>
           All entries
@@ -234,24 +234,24 @@ export const CommsCalendar: React.FC = () => {
       {loading ? (
         <div className="cc-empty">Loading…</div>
       ) : tab === 'upcoming' ? (
-        <section aria-label="Upcoming anniversaries">
+        <section aria-label="Coming up">
           <div className="cc-filters">
             <label className="cc-inline">
-              <span>Anniversaries in the next</span>
+              <span>Due again in the next</span>
               <select value={weeks} onChange={(e) => chooseWeeks(Number(e.target.value))} aria-label="Window">
                 {WINDOW_OPTIONS.map((w) => <option key={w} value={w}>{w} weeks</option>)}
               </select>
             </label>
-            <span className="cc-muted cc-small">Includes the past two weeks. An item leaves this list once this year's entry continues it, or it's marked "won't repeat".</span>
+            <span className="cc-muted cc-small">Also shows the past two weeks. An item stays here until this year's entry is added or it's marked "Won't repeat".</span>
           </div>
           {upcoming.length === 0 ? (
-            <div className="cc-empty">Nothing coming up in the next {weeks} weeks.</div>
+            <div className="cc-empty">Nothing from last year is due again in the next {weeks} weeks.</div>
           ) : (
             <div className="cc-table-wrap">
               <table className="cc-table">
                 <thead>
                   <tr>
-                    <th>This year</th>
+                    <th>Due</th>
                     <th>Subject</th>
                     <th>Team</th>
                     <th>Last time</th>
