@@ -198,6 +198,16 @@ export const TrackedChangesView: React.FC = () => {
         sentBy: data.sentBy,
         sentAt: data.sentAt ? new Date(data.sentAt) : undefined,
         approvalGates: data.approvalGates,
+        // The newsletter item and where it went (edited through PATCH .../newsletter)
+        audiences: data.audiences,
+        writingHelp: data.writingHelp,
+        newsletter: data.newsletter,
+        keyDates: data.keyDates,
+        publicSlug: data.publicSlug,
+        publicPublishedAt: data.publicPublishedAt,
+        newsletterEditionId: data.newsletterEditionId,
+        newsletterSentIn: data.newsletterSentIn,
+        newsletterPlacement: data.newsletterPlacement,
         // Add proposed versions with rich text support
         proposedVersions: {
           // Start with base proposed versions (plain text)

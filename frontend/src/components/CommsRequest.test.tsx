@@ -78,8 +78,13 @@ function fillStep1(container: HTMLElement) {
   fireEvent.change(field(container, 'signatureText'), { target: { value: 'Thanks' } });
 }
 
+const audienceCard = (container: HTMLElement, label: string) =>
+  Array.from(container.querySelectorAll('.audience-card')).find((el) => el.textContent?.includes(label)) as HTMLElement;
+
+// The first audience card is the Newsletter, which asks for a blurb (or for help writing it)
 function fillStep2(container: HTMLElement) {
-  fireEvent.click(container.querySelector('.audience-card') as HTMLElement);
+  fireEvent.click(audienceCard(container, 'Newsletter'));
+  fireEvent.click(screen.getByLabelText('Please write the blurb for me'));
   fireEvent.change(field(container, 'owner'), { target: { value: 'Test Member' } });
   fireEvent.change(field(container, 'replyToAddress'), { target: { value: 'replies@example.com' } });
 }
@@ -208,5 +213,88 @@ describe('CommsRequest wizard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit Request' }));
     await waitFor(() => expect(screen.getByText(/could not be submitted/i)).toBeInTheDocument());
     expect(screen.queryByText('Request Submitted!')).not.toBeInTheDocument();
+  });
+
+  it('shows the newsletter item only for the Newsletter audience, and needs a blurb or a request for help', async () => {
+    const { container } = renderForm();
+    fillStep1(container);
+    await clickNext(container, 2);
+    expect(screen.queryByLabelText('Newsletter item')).not.toBeInTheDocument();
+
+    fireEvent.click(audienceCard(container, 'Newsletter'));
+    expect(screen.getByLabelText('Newsletter item')).toBeInTheDocument();
+    fireEvent.change(field(container, 'owner'), { target: { value: 'Test Member' } });
+    fireEvent.change(field(container, 'replyToAddress'), { target: { value: 'replies@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(screen.getByText(/write a short blurb/)).toBeInTheDocument());
+    expect(activeStep(container)).toBe(2);
+
+    // "My full announcement" needs text, or a request for help with it
+    const fullAnnouncement = screen.getByLabelText(/My full announcement/) as HTMLInputElement;
+    expect(fullAnnouncement.disabled).toBe(true);
+
+    // Without the newsletter, nothing about it is needed
+    fireEvent.click(audienceCard(container, 'Newsletter'));
+    fireEvent.click(audienceCard(container, 'Allcom'));
+    expect(screen.queryByLabelText('Newsletter item')).not.toBeInTheDocument();
+    await clickNext(container, 3);
+  });
+
+  it('sends the audience keys, the newsletter item, writing help and key dates', async () => {
+    const { container } = renderForm();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/council\/members$/), expect.anything()));
+    fillStep1(container);
+    fireEvent.click(screen.getByLabelText('Please help me write this'));
+    await clickNext(container, 2);
+    fillStep2(container);
+    fireEvent.click(audienceCard(container, 'Singular'));
+    fireEvent.change(screen.getByLabelText('Newsletter headline'), { target: { value: '  Join the Operators!  ' } });
+    fireEvent.click(screen.getByLabelText(/My full announcement/));
+    fireEvent.click(screen.getByRole('button', { name: '+ Add a link' }));
+    fireEvent.change(screen.getByLabelText('Link 1 text'), { target: { value: 'Operator shifts' } });
+    fireEvent.change(screen.getByLabelText('Link 1 address'), { target: { value: 'https://example.org/shifts' } });
+
+    // A key date with a bad link stops Next with a message
+    fireEvent.click(screen.getByRole('button', { name: '+ Add a date' }));
+    fireEvent.change(screen.getByLabelText('Key date 1'), { target: { value: '2026-08-15' } });
+    fireEvent.change(screen.getByLabelText('Key date 1 description'), { target: { value: 'Perimeter training' } });
+    fireEvent.change(screen.getByLabelText('Key date 1 link'), { target: { value: 'example.org' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await waitFor(() => expect(screen.getByText(/Key date 1: the link must start with https/)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Key date 1 link'), { target: { value: '' } });
+    await clickNext(container, 3);
+
+    await pickSuggestion(container, 'Pat', 'pat@example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Request' }));
+    await waitFor(() => expect(mockSaveSubmission).toHaveBeenCalledTimes(1));
+    const sent = mockSaveSubmission.mock.calls[0][0];
+    expect(sent.audiences).toEqual(['newsletter', 'singular']);
+    expect(sent.writingHelp).toEqual({ document: true, blurb: true });
+    expect(sent.newsletter).toEqual({
+      headline: 'Join the Operators!',
+      photos: [],
+      links: [{ label: 'Operator shifts', url: 'https://example.org/shifts' }],
+      readMore: { kind: 'document' },
+    });
+    expect(sent.keyDates).toEqual([{ date: '2026-08-15', label: 'Perimeter training' }]);
+  });
+
+  it('leaves the newsletter item out when the Newsletter is not an audience', async () => {
+    const { container } = renderForm();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/council\/members$/), expect.anything()));
+    fillStep1(container);
+    await clickNext(container, 2);
+    fireEvent.click(audienceCard(container, 'Allcom'));
+    fireEvent.change(field(container, 'owner'), { target: { value: 'Test Member' } });
+    fireEvent.change(field(container, 'replyToAddress'), { target: { value: 'replies@example.com' } });
+    await clickNext(container, 3);
+    await pickSuggestion(container, 'Pat', 'pat@example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Request' }));
+    await waitFor(() => expect(mockSaveSubmission).toHaveBeenCalledTimes(1));
+    const sent = mockSaveSubmission.mock.calls[0][0];
+    expect(sent.audiences).toEqual(['allcom']);
+    expect(sent.newsletter).toBeUndefined();
+    expect(sent.writingHelp).toBeUndefined();
+    expect(sent.keyDates).toBeUndefined();
   });
 });

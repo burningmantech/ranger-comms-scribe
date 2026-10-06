@@ -1,0 +1,294 @@
+/* Newsletter fields (request form, review panel, edition editor). Uses the tokens in styles.css. */
+
+.nl-panel {
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--accent-gold);
+  border-radius: var(--radius-lg);
+  background: #fffdf8;
+  padding: 20px 20px 4px 20px;
+  margin: 0 0 20px 0;
+}
+
+.nl-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-dark);
+  margin: 0 0 4px 0;
+}
+
+.nl-panel-intro {
+  font-size: 0.875rem;
+  color: var(--text-medium);
+  margin: 0 0 16px 0;
+}
+
+.nl-hint-top {
+  margin: 0 0 8px 0 !important;
+}
+
+.nl-mini-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8125rem !important;
+  font-weight: 600 !important;
+  color: var(--text-medium) !important;
+  margin: 0 !important;
+  min-width: 0;
+}
+
+.nl-mini-label .form-control {
+  font-weight: 500;
+}
+
+.nl-grow {
+  flex: 1 1 180px;
+}
+
+.nl-key-dates,
+.nl-links,
+.nl-photos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.nl-key-date-row,
+.nl-link-row,
+.nl-photo-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: white;
+}
+
+.nl-key-date-dates {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nl-key-date-dates .form-control {
+  width: 165px;
+}
+
+.nl-remove,
+.nl-icon-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: white;
+  color: var(--text-medium);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nl-icon-btn {
+  font-size: 0.8rem;
+}
+
+.nl-remove:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.nl-icon-btn:hover {
+  border-color: var(--accent-teal);
+  color: var(--accent-teal);
+}
+
+.nl-photo-row {
+  align-items: flex-start;
+}
+
+.nl-photo-thumb {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--primary-light);
+  flex: 0 0 auto;
+}
+
+.nl-photo-fields {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nl-photo-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nl-photo-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.nl-blurb-editor {
+  margin-bottom: 10px;
+}
+
+.nl-blurb-editor .lexical-editor-container .editor-input {
+  min-height: 110px;
+}
+
+.nl-help-check {
+  margin-top: 4px;
+}
+
+.nl-read-more {
+  border: 0;
+  padding: 0;
+  margin: 0 0 20px 0;
+  min-width: 0;
+}
+
+.nl-read-more legend {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin-bottom: 6px;
+}
+
+.nl-radio {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 500 !important;
+  margin: 0 0 6px 0 !important;
+  cursor: pointer;
+}
+
+.nl-radio input {
+  margin-top: 4px;
+  accent-color: var(--accent-teal);
+}
+
+.nl-radio.nl-disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.nl-radio-hint {
+  font-weight: 400;
+  color: var(--text-medium);
+  font-size: 0.8125rem;
+}
+
+.nl-read-more-url {
+  margin: 4px 0 6px 26px;
+  max-width: calc(100% - 26px);
+}
+
+.nl-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.nl-badge-help {
+  background: #fdf1e1;
+  color: #7a4100;
+  border: 1px solid #e8c9a3;
+}
+
+.nl-badge-status {
+  background: var(--primary-light);
+  color: var(--text-medium);
+  border: 1px solid var(--border-color);
+}
+
+.nl-badge-draft { background: #f2f2f2; color: #555; border: 1px solid #ddd; }
+.nl-badge-in_review { background: #fff6dc; color: #7a5b00; border: 1px solid #ecd9a0; }
+.nl-badge-approved { background: #e6f2ee; color: #2f6150; border: 1px solid #b9d9cc; }
+.nl-badge-sent { background: #e9eef6; color: #2d4a73; border: 1px solid #c5d3e8; }
+
+@media (max-width: 600px) {
+  .nl-key-date-dates .form-control {
+    width: 100%;
+  }
+  .nl-key-date-dates {
+    width: 100%;
+  }
+  .nl-key-date-dates .nl-mini-label {
+    flex: 1 1 140px;
+  }
+}
+
+/* Review page panel */
+.nl-review-panel {
+  margin: 24px 0 0 0;
+  padding-bottom: 12px;
+}
+
+.nl-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nl-review-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-medium);
+}
+
+.nl-review-toggle .nl-panel-title {
+  margin: 0;
+}
+
+.nl-review-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.nl-review-badges a.nl-badge {
+  text-decoration: none;
+}
+
+.nl-review-body {
+  margin-top: 16px;
+}
+
+.nl-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 8px 0;
+}
+
+.nl-saved {
+  color: var(--accent-teal);
+  font-size: 0.875rem;
+  font-weight: 600;
+}

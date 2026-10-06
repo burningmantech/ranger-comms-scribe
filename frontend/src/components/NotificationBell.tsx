@@ -9,6 +9,8 @@ interface Notification {
   title: string;
   message: string;
   submissionId?: string;
+  /** Where to go when it isn't a request (e.g. a newsletter edition). */
+  link?: string;
   read: boolean;
   createdAt: string;
 }
@@ -23,6 +25,7 @@ const NOTIFICATION_ICONS: Record<string, string> = {
   comment_on_change: 'fas fa-comment',
   comment_reply: 'fas fa-reply',
   changes_requested: 'fas fa-exclamation-circle',
+  newsletter_review: 'fas fa-newspaper',
 };
 
 function formatRelativeTime(date: Date): string {
@@ -124,7 +127,9 @@ const NotificationBell: React.FC = () => {
       } catch { /* ignore */ }
     }
     setOpen(false);
-    if (notif.submissionId) {
+    if (notif.link && notif.link.startsWith('/')) {
+      navigate(notif.link);
+    } else if (notif.submissionId) {
       navigate(`/tracked-changes/${notif.submissionId}`);
     }
   };

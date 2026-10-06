@@ -15,6 +15,7 @@ import DocumentViewBar from './DocumentViewBar';
 import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail, getActiveTrackedChangesEditor, reapplyRejectedChanges, dryRunRejects } from './editor/plugins/TrackedChangesPlugin';
 import ApprovalTracker from './ApprovalTracker';
 import { ReviewPanel, ReviewTab } from './review/ReviewPanel';
+import NewsletterReviewPanel from './newsletter/NewsletterReviewPanel';
 import { UndoToast } from './review/UndoToast';
 import { SendPreview } from './review/SendPreview';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
@@ -3727,6 +3728,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               </div>
             </div>}
 
+            {/* The newsletter item and key dates: edited directly, not as tracked changes */}
+            {activeTab === 'proposed' && (
+              <NewsletterReviewPanel
+                submission={submission}
+                audienceKeys={currentAudienceKeys}
+                currentUser={currentUser as any}
+                isCommsCadre={!!currentUser.roles?.some((r) => ['CommsCadre', 'Admin'].includes(r))}
+              />
+            )}
+
             {/* Content Comparison */}
             {activeTab === 'comparison' && <div className="diff-section">
               <div className="diff-content">
@@ -4122,7 +4133,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               {(() => {
                 // The preview (subject, recipient, Reply-To, body, signature) comes from the
                 // backend, built by the same code as Send Email, so it is exactly what is sent.
-                const emailAudiences = ['newsletter', 'singular', 'allcom'];
+                // The newsletter goes out in an edition (Newsletter page), not from here
+                const emailAudiences = ['singular', 'allcom'];
                 const audienceAsSubmitted = submission.formFields?.find(
                   (f) => f.id === 'audience' || f.label?.toLowerCase() === 'audience'
                 )?.value;
@@ -4170,7 +4182,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
                       return (
                         <>
-                          {!hasEmailAudience && (
+                          {!hasEmailAudience && audienceKeys.includes('newsletter') && (
+                            <span className="send-mode-note">
+                              <i className="fas fa-newspaper" style={{ marginRight: '4px' }} />
+                              {submission.newsletterSentIn
+                                ? `Went out in Ranger News #${submission.newsletterSentIn}`
+                                : submission.newsletterPlacement
+                                  ? `Goes out in the newsletter: Ranger News #${submission.newsletterPlacement.number}`
+                                  : 'Goes out in the newsletter (not in an edition yet)'}
+                            </span>
+                          )}
+
+                          {!hasEmailAudience && !audienceKeys.includes('newsletter') && (
                             <span className="send-mode-note">
                               <i className="fas fa-info-circle" style={{ marginRight: '4px' }} />
                               This submission is not an email item

@@ -4,6 +4,7 @@ import { API_URL } from '../config';
 import { LogoutUserReact, USER_LOGIN_EVENT } from '../utils/userActions';
 import { User } from '../types';
 import NotificationBell from './NotificationBell';
+import { canUseNewsletter } from '../utils/newsletterAccess';
 
 interface NavbarProps {
     skipNavbar?: boolean;
@@ -12,6 +13,7 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
     const [isAdmin, setIsAdmin] = useState<boolean>(false);
+    const [isNewsletterEditor, setIsNewsletterEditor] = useState<boolean>(false);
     const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
     const navigate = useNavigate();
     const location = useLocation();
@@ -25,12 +27,14 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
             try {
                 const user = JSON.parse(userJson);
                 setIsAdmin(user.isAdmin === true || user.userType === 'Admin');
+                setIsNewsletterEditor(canUseNewsletter(user));
             } catch (err) {
                 console.error('Error parsing user data:', err);
             }
         } else {
             setIsLoggedIn(false);
             setIsAdmin(false);
+            setIsNewsletterEditor(false);
         }
     };
 
@@ -61,6 +65,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
         const userData = event.detail;
         setIsLoggedIn(!!userData);
         setIsAdmin(userData?.isAdmin === true || userData?.userType === 'Admin');
+        setIsNewsletterEditor(canUseNewsletter(userData));
     };
 
     const checkAdminStatus = async (sessionId: string) => {
@@ -85,6 +90,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
         LogoutUserReact(navigate);
         setIsLoggedIn(false);
         setIsAdmin(false);
+        setIsNewsletterEditor(false);
     };
 
     const toggleMobileMenu = () => {
@@ -114,6 +120,9 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                     <>
                         <Link to="/requests" className={`navbar-item ${currentPageSlug === 'requests' ? 'active' : ''}`} onClick={handleMenuItemClick}>Requests</Link>
                         <Link to="/comms-request" className={`navbar-item ${currentPageSlug === 'comms-request' ? 'active' : ''}`} onClick={handleMenuItemClick}>New Request</Link>
+                        {isNewsletterEditor && (
+                            <Link to="/newsletter/editions" className={`navbar-item ${currentPageSlug === 'newsletter' ? 'active' : ''}`} onClick={handleMenuItemClick}>Newsletter</Link>
+                        )}
                     </>
                 )}
                 {isLoggedIn ? (

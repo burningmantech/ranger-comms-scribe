@@ -1,3 +1,5 @@
+import { KeyDate, NewsletterRequest, WritingHelp } from './newsletter';
+
 export interface User {
   id: string;
   email: string;
@@ -62,6 +64,18 @@ export interface ContentSubmission {
   approvalOverrideBy?: string;
   approvalOverrideReason?: string;
   approvalOverrideAt?: Date;
+  /** Audience keys ('newsletter', 'singular', ...); older requests only have formFields.audience. */
+  audiences?: string[];
+  writingHelp?: WritingHelp;
+  /** The newsletter item (when the audience includes the newsletter). */
+  newsletter?: NewsletterRequest;
+  keyDates?: KeyDate[];
+  publicSlug?: string;
+  publicPublishedAt?: string;
+  newsletterEditionId?: string;
+  newsletterSentIn?: number;
+  /** Set by GET /content/submissions/:id when the item is in an edition. */
+  newsletterPlacement?: { editionId: string; number: number; status: string };
 }
 
 export type SubmissionStatus =

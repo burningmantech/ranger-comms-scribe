@@ -12,6 +12,9 @@ import { API_URL } from '../config';
 import TemplatePicker from './TemplatePicker';
 import AudienceCard from './AudienceCard';
 import FormSummarySidebar from './FormSummarySidebar';
+import NewsletterItemFields, { cleanNewsletterItem, newsletterItemError } from './newsletter/NewsletterItemFields';
+import KeyDatesEditor, { filledKeyDates, keyDatesError } from './newsletter/KeyDatesEditor';
+import { EMPTY_NEWSLETTER_REQUEST, KeyDate, NewsletterRequest, isBlankRichText } from '../types/newsletter';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import './CommsRequest.css';
@@ -87,6 +90,13 @@ export const CommsRequest: React.FC = () => {
   const navigate = useNavigate();
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submittingRef = useRef(false);
+  // Newsletter item, key dates and writing help (outside react-hook-form: nested lists)
+  const [newsletterItem, setNewsletterItem] = useState<NewsletterRequest>(EMPTY_NEWSLETTER_REQUEST);
+  const [helpWithBlurb, setHelpWithBlurb] = useState(false);
+  const [helpWithDocument, setHelpWithDocument] = useState(false);
+  const [keyDates, setKeyDates] = useState<KeyDate[]>([]);
+  // Bumped when a draft is restored, so the blurb editor shows it
+  const [blurbEditorKey, setBlurbEditorKey] = useState(0);
 
   const userJson = localStorage.getItem('user');
   const user = userJson ? JSON.parse(userJson) : null;
@@ -133,11 +143,15 @@ export const CommsRequest: React.FC = () => {
           ...watchedValues,
           editorContent,
           selectedTemplateId,
+          newsletterItem,
+          helpWithBlurb,
+          helpWithDocument,
+          keyDates,
         }));
       } catch { /* ignore quota errors */ }
     }, 2000);
     return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
-  }, [watchedValues, editorContent, selectedTemplateId]);
+  }, [watchedValues, editorContent, selectedTemplateId, newsletterItem, helpWithBlurb, helpWithDocument, keyDates]);
 
   // Restore draft on mount
   useEffect(() => {
@@ -150,6 +164,15 @@ export const CommsRequest: React.FC = () => {
             setEditorContent(value as string);
           } else if (key === 'selectedTemplateId') {
             setSelectedTemplateId(value as string | null);
+          } else if (key === 'newsletterItem' && value && typeof value === 'object') {
+            setNewsletterItem({ ...EMPTY_NEWSLETTER_REQUEST, ...(value as NewsletterRequest) });
+            setBlurbEditorKey((k) => k + 1);
+          } else if (key === 'helpWithBlurb') {
+            setHelpWithBlurb(value === true);
+          } else if (key === 'helpWithDocument') {
+            setHelpWithDocument(value === true);
+          } else if (key === 'keyDates' && Array.isArray(value)) {
+            setKeyDates(value as KeyDate[]);
           } else if (key === 'email') {
             // Always use current user's email, not stale draft value
             setValue('email', userEmail);
@@ -373,11 +396,31 @@ export const CommsRequest: React.FC = () => {
           return false;
         }
       }
-      if (!valid) setFormError('Please fill in all required fields before continuing.');
-      return valid;
+      if (!valid) {
+        setFormError('Please fill in all required fields before continuing.');
+        return false;
+      }
+      const extraError = newsletterAndDatesError();
+      if (extraError) {
+        setFormError(extraError);
+        return false;
+      }
+      return true;
     }
 
     return true;
+  };
+
+  const hasDocument = helpWithDocument || !isBlankRichText(editorContent);
+  const wantsNewsletter = (audienceValue || []).includes('newsletter');
+
+  /** The newsletter item's and the key dates' first problem, or null. */
+  const newsletterAndDatesError = (): string | null => {
+    if ((getValues('audience') || []).includes('newsletter')) {
+      const itemError = newsletterItemError(newsletterItem, { helpWithBlurb, hasDocument });
+      if (itemError) return itemError;
+    }
+    return keyDatesError(keyDates);
   };
 
   const goNext = async () => {
@@ -420,8 +463,19 @@ export const CommsRequest: React.FC = () => {
       return;
     }
 
+    const extraError = newsletterAndDatesError();
+    if (extraError) {
+      setStep(2);
+      setFormError(extraError);
+      return;
+    }
+
     submittingRef.current = true;
     try {
+      const writingHelp = {
+        ...(helpWithDocument ? { document: true } : {}),
+        ...(data.audience.includes('newsletter') && helpWithBlurb ? { blurb: true } : {}),
+      };
 
       const submission: Partial<ContentSubmission> = {
         id: crypto.randomUUID(),
@@ -449,6 +503,10 @@ export const CommsRequest: React.FC = () => {
         assignedReviewers: [],
         assignedCouncilManagers: [],
         requiredApprovers: validApprovers,
+        audiences: data.audience,
+        ...(Object.keys(writingHelp).length ? { writingHelp } : {}),
+        ...(data.audience.includes('newsletter') ? { newsletter: cleanNewsletterItem(newsletterItem) } : {}),
+        ...(filledKeyDates(keyDates).length ? { keyDates: filledKeyDates(keyDates) } : {}),
       };
 
       await saveSubmission(submission as ContentSubmission);
@@ -460,6 +518,11 @@ export const CommsRequest: React.FC = () => {
       setSkipApprovers(false);
       setSuggestions({});
       setSelectedTemplateId(null);
+      setNewsletterItem(EMPTY_NEWSLETTER_REQUEST);
+      setHelpWithBlurb(false);
+      setHelpWithDocument(false);
+      setKeyDates([]);
+      setBlurbEditorKey((k) => k + 1);
       setStep(1);
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -559,6 +622,19 @@ export const CommsRequest: React.FC = () => {
             className="h-64"
             currentUserId={userId}
           />
+          <label className={`urgent-checkbox-label nl-help-check ${helpWithDocument ? 'checked' : ''}`} style={{ marginTop: 10 }}>
+            <input
+              type="checkbox"
+              checked={helpWithDocument}
+              onChange={(e) => setHelpWithDocument(e.target.checked)}
+            />
+            <span>Please help me write this</span>
+          </label>
+          {helpWithDocument && (
+            <div className="field-hint">
+              Comms will write or polish the text with you. Put what you know above or in Notes.
+            </div>
+          )}
         </div>
 
         <div className="form-field">
@@ -630,6 +706,26 @@ export const CommsRequest: React.FC = () => {
           {errors.audience && <div className="field-error">{errors.audience.message}</div>}
         </div>
 
+        {wantsNewsletter && (
+          <section className="nl-panel" aria-label="Newsletter item">
+            <h4 className="nl-panel-title"><i className="fas fa-newspaper" aria-hidden="true" /> Newsletter item</h4>
+            <p className="nl-panel-intro">
+              What goes in the next Ranger newsletter. The Comms Cadre may edit it to fit the issue.
+            </p>
+            <NewsletterItemFields
+              value={newsletterItem}
+              onChange={setNewsletterItem}
+              helpWithBlurb={helpWithBlurb}
+              onHelpWithBlurbChange={setHelpWithBlurb}
+              hasDocument={hasDocument}
+              singularSelected={(audienceValue || []).includes('singular')}
+              userId={userId}
+              uploader={user?.name || userEmail}
+              editorKey={`blurb-${blurbEditorKey}`}
+            />
+          </section>
+        )}
+
         <div className="form-field">
           <label>Owner <span className="required">*</span></label>
           <Form.Control
@@ -684,6 +780,15 @@ export const CommsRequest: React.FC = () => {
             <span className="urgent-date-legend"></span> Dates within the next week are urgent
           </div>
           {errors.publishBy && <div className="field-error">{errors.publishBy.message}</div>}
+        </div>
+
+        <div className="form-field">
+          <label>Key dates</label>
+          <KeyDatesEditor
+            value={keyDates}
+            onChange={setKeyDates}
+            hint="Deadlines and events your announcement mentions. They go in the newsletter's “Mark your calendar!” table."
+          />
         </div>
 
         <div className="form-row">

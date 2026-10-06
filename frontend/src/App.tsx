@@ -19,6 +19,10 @@ import { TrackedChangesDemo } from './pages/TrackedChangesDemo';
 import { ContentProvider } from './contexts/ContentContext';
 import CommsRequest from './components/CommsRequest';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { NewsletterEditions } from './pages/NewsletterEditions';
+import { NewsletterEditor } from './pages/NewsletterEditor';
+import { NewsletterArchive, PublicEdition, PublicDocument } from './pages/PublicNewsletter';
+import { UserType } from './types';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -78,6 +82,13 @@ const App: React.FC = () => {
                 <Route path="/comms-request" element={<ProtectedRoute element={<CommsRequest />} />} />
                 <Route path="/tracked-changes/:submissionId" element={<ProtectedRoute element={<TrackedChangesView />} />} />
                 <Route path="/tracked-changes-demo" element={<ProtectedRoute element={<TrackedChangesDemo />} />} />
+                {/* Newsletter editions: the Comms Cadre (by user type or role) and Admins */}
+                <Route path="/newsletter/editions" element={<ProtectedRoute element={<NewsletterEditions />} allowedRoles={[UserType.CommsCadre]} />} />
+                <Route path="/newsletter/editions/:id" element={<ProtectedRoute element={<NewsletterEditor />} allowedRoles={[UserType.CommsCadre]} />} />
+                {/* Public (no sign-in): sent editions and their Read more pages */}
+                <Route path="/newsletter" element={<NewsletterArchive />} />
+                <Route path="/newsletter/:number" element={<PublicEdition />} />
+                <Route path="/news/:slug" element={<PublicDocument />} />
 
                 {/* Final catch-all if nothing else matches */}
                 <Route path="*" element={<Navigate to="/" replace />} />

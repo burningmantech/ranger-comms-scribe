@@ -20,7 +20,7 @@ function readStoredUser(): User | null {
  *
  * The backend authorizes every request, so by default any signed-in user may open the
  * page (Members and Leads are the Rangers who submit content). `allowedRoles` narrows it
- * to those user types (Admins always pass); anyone else sees an access message. It never
+ * to those user types or roles (Admins always pass); anyone else sees an access message. It never
  * redirects to `/`, which redirects back to a protected page.
  */
 export const ProtectedRoute: React.FC<{
@@ -33,7 +33,11 @@ export const ProtectedRoute: React.FC<{
   }
 
   const isAdmin = user.isAdmin === true || user.userType === UserType.Admin;
-  if (allowedRoles && !isAdmin && !allowedRoles.includes(user.userType)) {
+  // A user type, or the same name among the user's roles (e.g. a Council Manager who is
+  // also in the Comms Cadre has userType CouncilManager and the CommsCadre role)
+  const allowed = !allowedRoles || isAdmin || allowedRoles.includes(user.userType)
+    || (user.roles || []).some((role) => (allowedRoles as string[]).includes(role));
+  if (!allowed) {
     return (
       <div className="container mt-4" role="alert">
         <h2>You don't have access to this page</h2>

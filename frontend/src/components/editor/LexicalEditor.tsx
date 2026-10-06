@@ -56,6 +56,8 @@ interface EditorProps {
   placeholder?: string;
   readOnly?: boolean;
   showToolbar?: boolean;
+  /** Focus the editor when it mounts (off for pages with several editors). */
+  autoFocus?: boolean;
   onChange?: (editor: LexicalEditor, json: string) => void;
   className?: string;
   onImageSelect?: () => void;
@@ -78,6 +80,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   placeholder = 'Enter content...',
   readOnly = false,
   showToolbar = true,
+  autoFocus = true,
   onChange,
   className = '',
   onImageSelect,
@@ -343,7 +346,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
             {!readOnly && <TableControlsPlugin />}
           </div>
           <TransactionHistoryPlugin transactionManager={null} />
-          {!readOnly && <AutoFocusPlugin />}
+          {!readOnly && autoFocus && <AutoFocusPlugin />}
           <OnChangePlugin onChange={handleChange} />
           <ListPlugin />
           <TablePlugin />
