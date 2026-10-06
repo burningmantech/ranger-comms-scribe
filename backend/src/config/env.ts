@@ -19,6 +19,7 @@ import { LatencyObjectStore } from '../storage/latencyObjectStore';
  *   EMAIL_FROM              default "Comms Scribe <alex@scrivenly.com>"
  *   EMAIL_BCC               CSV; default empty (no BCC)
  *   ANNOUNCE_EMAIL_TO       recipient for approved-submission announcements; unset disables sending
+ *   ALLOW_ANNOUNCEMENT_RESEND "true" lets a sent announcement be sent again (dev only)
  *   BOOTSTRAP_ADMIN_EMAILS  CSV, case-insensitive
  *   GOOGLE_CLIENT_ID        required
  *   TURNSTILESECRET         required
@@ -167,6 +168,7 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
     EMAIL_FROM: nonEmpty(source.EMAIL_FROM) || DEFAULT_EMAIL_FROM,
     EMAIL_BCC: parseCsv(source.EMAIL_BCC),
     ANNOUNCE_EMAIL_TO: nonEmpty(source.ANNOUNCE_EMAIL_TO),
+    ALLOW_ANNOUNCEMENT_RESEND: source.ALLOW_ANNOUNCEMENT_RESEND === 'true',
     BOOTSTRAP_ADMIN_EMAILS: parseCsv(source.BOOTSTRAP_ADMIN_EMAILS).map((email) => email.toLowerCase()),
     COLLAB_MODE: collabMode,
   };

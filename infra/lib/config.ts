@@ -29,6 +29,8 @@ export interface BackendEnv {
   WS_MAX_PAYLOAD_BYTES?: string;
   /** Real-time editing mode served by GET /api/config: 'yjs' (merged editing) or 'legacy'. Omit for the backend default ('legacy'). */
   COLLAB_MODE?: 'yjs' | 'legacy';
+  /** 'true' lets a sent announcement be sent again. Dev only, for testing email rendering. */
+  ALLOW_ANNOUNCEMENT_RESEND?: 'true';
 }
 
 export interface UseExisting {

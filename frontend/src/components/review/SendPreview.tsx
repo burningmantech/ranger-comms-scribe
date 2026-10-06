@@ -17,6 +17,8 @@ export interface EmailPreview {
   signature: string;
   html: string;
   text: string;
+  /** A sent announcement can be sent again here (dev only). */
+  resendAllowed?: boolean;
 }
 
 export async function fetchEmailPreview(submissionId: string, signal?: AbortSignal): Promise<EmailPreview> {
