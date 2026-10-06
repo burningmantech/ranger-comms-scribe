@@ -87,8 +87,8 @@ nothing keeps the version (and the approval).
 
 ## Known limits
 
-- The nav link and route guard look at `userType`/`roles`; someone who is only on the active Comms Cadre list (not
-  by type or role) can use the API but won't see the link.
+- Who can use the newsletter (Comms Cadre, Admins, and the Communications Manager for approving) comes from the
+  people model (`docs/plans/2026-10-06-people-and-roles.md`).
 - No real-time co-editing of an edition: two editors at once get the conflict prompt on save.
 - Images in an edition are referenced from the gallery (public, as before).
 

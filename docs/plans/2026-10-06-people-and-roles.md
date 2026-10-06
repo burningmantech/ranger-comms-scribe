@@ -1,7 +1,7 @@
 # People and roles: one model
 
 **Date:** 2026-10-06
-**Status:** Building on `feat/roles` (from `feat/review-ui`)
+**Status:** Built on `feat/roles` (from `feat/review-ui`)
 
 ## Problem
 
@@ -69,3 +69,9 @@ At startup, once (`migrations/people-access-v1`), every person gets the new fiel
 - `approved`: unchanged (Leads and Members stay approved)
 
 The old keys are left in place (unused) so a rollback still finds them.
+
+## Follow-ups (not changed here)
+
+Permission gaps the review found, left as they were so this change only moves checks onto the new model:
+`getTrackedChangesHandler` and `updateProposedVersionsHandler` allow any signed-in user (`|| true`); creating
+tracked changes, change comments, batch create, the timeline and submission comments check only for a session.

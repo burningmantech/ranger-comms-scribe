@@ -36,6 +36,7 @@ import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds
 import { remoteCommentFromMessage } from '../utils/remoteComments';
 import { REVIEW_STATE_MESSAGE_TYPES } from '../utils/reviewState';
 import { currentFormFieldValue } from '../utils/formFieldValue';
+import { canSendAnnouncements, isReviewer } from '../utils/access';
 
 const webSocketManager = new WebSocketManager();
 
@@ -398,10 +399,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   const canEditRequiredApprovers = useMemo(() => {
     const isSubmitter = currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy;
-    const isCommsCadre = currentUser.roles.includes('CommsCadre');
-    const isCouncilManager = currentUser.roles.includes('CouncilManager');
-    const isAdmin = currentUser.roles.includes('Admin');
-    return isSubmitter || isCommsCadre || isCouncilManager || isAdmin;
+    return isSubmitter || isReviewer(currentUser);
   }, [currentUser, submission.submittedBy]);
 
   const handleAddRequiredApprover = useCallback(() => {
@@ -1220,9 +1218,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Check if user can make editorial decisions
   const canMakeEditorialDecisions = useCallback(() => {
     // Check if user has admin, comms cadre, or council manager roles
-    const hasEditorialRole = currentUser.roles.includes('CommsCadre') ||
-      currentUser.roles.includes('CouncilManager') ||
-      currentUser.roles.includes('Admin');
+    const hasEditorialRole = isReviewer(currentUser);
 
     // Check if user is the submitter
     const isSubmitter = currentUser.id === submission.submittedBy ||
@@ -3734,7 +3730,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 submission={submission}
                 audienceKeys={currentAudienceKeys}
                 currentUser={currentUser as any}
-                isCommsCadre={!!currentUser.roles?.some((r) => ['CommsCadre', 'Admin'].includes(r))}
+                isCommsCadre={canSendAnnouncements(currentUser)}
               />
             )}
 
@@ -4139,9 +4135,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   (f) => f.id === 'audience' || f.label?.toLowerCase() === 'audience'
                 )?.value;
 
-                const isCommsCadreOrAdmin = currentUser.roles?.some(
-                  (r) => ['CommsCadre', 'Admin'].includes(r)
-                );
+                const isCommsCadreOrAdmin = canSendAnnouncements(currentUser);
 
                 const alreadySent = submission.status === 'sent';
 

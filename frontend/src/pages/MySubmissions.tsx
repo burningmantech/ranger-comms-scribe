@@ -7,6 +7,7 @@ import { ContentSubmission } from '../types/content';
 import ReviewerDashboard from '../components/ReviewerDashboard';
 import SubmitterDashboard from '../components/SubmitterDashboard';
 import './MySubmissions.css';
+import { isReviewer as accessIsReviewer } from '../utils/access';
 
 export const MySubmissions: React.FC = () => {
   const navigate = useNavigate();
@@ -30,8 +31,7 @@ export const MySubmissions: React.FC = () => {
     return <div className="error-message">Please log in to view requests.</div>;
   }
 
-  const isReviewer = userPermissions?.canViewFilteredSubmissions ||
-    currentUser.roles?.some(r => ['CommsCadre', 'CouncilManager', 'Admin'].includes(r));
+  const isReviewer = userPermissions?.canViewFilteredSubmissions || accessIsReviewer(currentUser);
 
   return (
     <div className="content-management">

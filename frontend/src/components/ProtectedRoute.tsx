@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { User, UserType } from '../types';
+import { isAdmin as accessIsAdmin } from '../utils/access';
 
 /** The signed-in user saved at login, or null when there is none (or it can't be read). */
 function readStoredUser(): User | null {
@@ -26,17 +27,20 @@ function readStoredUser(): User | null {
 export const ProtectedRoute: React.FC<{
   element: React.ReactElement;
   allowedRoles?: UserType[];
-}> = ({ element, allowedRoles }) => {
+  /** Who may open the page (utils/access.ts), instead of allowedRoles. Admins always pass. */
+  allow?: (user: User) => boolean;
+}> = ({ element, allowedRoles, allow }) => {
   const user = readStoredUser();
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  const isAdmin = user.isAdmin === true || user.userType === UserType.Admin;
+  const admin = accessIsAdmin(user);
   // A user type, or the same name among the user's roles (e.g. a Council Manager who is
   // also in the Comms Cadre has userType CouncilManager and the CommsCadre role)
-  const allowed = !allowedRoles || isAdmin || allowedRoles.includes(user.userType)
-    || (user.roles || []).some((role) => (allowedRoles as string[]).includes(role));
+  const allowed = admin
+    || (allow ? allow(user) : !allowedRoles || allowedRoles.includes(user.userType)
+      || (user.roles || []).some((role) => (allowedRoles as string[]).includes(role)));
   if (!allowed) {
     return (
       <div className="container mt-4" role="alert">

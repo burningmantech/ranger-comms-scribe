@@ -81,36 +81,40 @@ Frontend will be available at http://localhost:3000. `docker compose down -v` st
 
 ### Authentication & Authorization
 
-The system uses a multi-tier role-based access control:
+Access is one model, stored on each person's record (`user/<email>`); see
+`docs/plans/2026-10-06-people-and-roles.md`:
 
-1. **User Types** (in `backend/src/types.ts`):
-   - `Public`: Unauthenticated users
-   - `Member`: Authenticated users
-   - `Lead`: Team leads
-   - `CommsCadre`: Communications cadre reviewers
-   - `CouncilManager`: Council managers with specific roles
-   - `Admin`: Full system access
+1. **Access fields** (`User` in `backend/src/types.ts`), independent of each other:
+   - `approved`: can sign in and submit requests (new sign-ups wait for an Admin)
+   - `isAdmin`: the admin pages, overrides, everything
+   - `commsCadre`: reviews requests, sends announcements, builds and sends the newsletter
+   - `councilRoles`: any of CommunicationsManager, IntakeManager, LogisticsManager, OperationsManager,
+     PersonnelManager, DepartmentManager, DeputyDepartmentManager. Any council role satisfies a request's Council
+     gate; the Communications Manager also approves newsletter editions and can override approvals
+   - `userType` and `roles` are **derived** from these on every `saveUser` (never set them directly); one person can
+     be Comms Cadre and Communications Manager
 
-2. **Council Roles** (in `backend/src/types.ts`):
-   - CommunicationsManager
-   - IntakeManager
-   - LogisticsManager
-   - OperationsManager
-   - PersonnelManager
-   - DepartmentManager
-   - DeputyDepartmentManager
+2. **Checks**: always through `backend/src/services/access.ts` (`isAdmin`, `isCommsCadre`, `isCouncil`,
+   `hasCouncilRole`, `isCommsManager`, `isReviewer`) and its frontend mirror `frontend/src/utils/access.ts`. Never
+   compare `userType` or `roles` in a handler or component. Lists of who holds a role come from people records
+   (`services/peopleService.ts`); `GET /council/members` and `GET /comms-cadre` are read-only views of them
+3. **Changing access**: only `PUT /api/admin/people/:id/access` (Admin → People). It refuses removing your own Admin
+   or the last Admin. A one-time startup migration (`migrations/peopleAccess.ts`, marker
+   `migrations/people-access-v1`) moved access from the old type, roles, council lists and Comms Cadre list
 
-3. **Authentication Flow**:
+4. **Authentication Flow**:
    - Google OAuth handled in `backend/src/handlers/auth.ts`
    - Sessions stored in the object store (`session/<id>`)
    - Session ID passed via `Authorization: Bearer <token>` header
-   - Auth wrappers in `backend/src/authWrappers.ts` provide middleware
+   - Auth wrappers in `backend/src/authWrappers.ts` provide middleware (`withAuth`, `withAdminCheck`)
    - **First admin**: users whose email is in `BOOTSTRAP_ADMIN_EMAILS` become approved, verified Admins on
-     register/login (`applyBootstrapAdmin()` in `userService.ts`). There is no hardcoded admin.
+     register/login (`applyBootstrapAdmin()` in `userService.ts`); a verified bootstrap address is always Admin.
+     There is no hardcoded admin
+   - The frontend stores `/auth/me`'s record (no password hash) as the signed-in user (`utils/userActions.ts`)
 
-4. **Route Protection**:
-   - Backend: Use `withAuth` or `withAdminAuth` wrappers
-   - Frontend: Use `ProtectedRoute` component in `App.tsx`
+5. **Route Protection**:
+   - Backend: `withAuth` or `withAdminCheck`, then `access.ts` checks
+   - Frontend: `ProtectedRoute` in `App.tsx` (`allow={...}` with an `access.ts` predicate)
 
 ### Content Submission Workflow
 

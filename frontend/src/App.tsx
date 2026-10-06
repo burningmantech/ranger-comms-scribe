@@ -12,7 +12,6 @@ import { USER_LOGIN_EVENT } from './utils/userActions';
 import IndentationTest from './components/editor/tests/IndentationTest';
 import CheckboxTest from './components/editor/tests/CheckboxTest';
 import LexicalExtractionTest from './components/editor/tests/LexicalExtractionTest';
-import { ContentManagement } from './pages/ContentManagement';
 import { MySubmissions } from './pages/MySubmissions';
 import { TrackedChangesView } from './pages/TrackedChangesView';
 import { TrackedChangesDemo } from './pages/TrackedChangesDemo';
@@ -22,11 +21,10 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { NewsletterEditions } from './pages/NewsletterEditions';
 import { NewsletterEditor } from './pages/NewsletterEditor';
 import { NewsletterArchive, PublicEdition, PublicDocument } from './pages/PublicNewsletter';
-import { UserType } from './types';
+import { canUseNewsletter } from './utils/access';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -36,7 +34,6 @@ const App: React.FC = () => {
       try {
         const userData = JSON.parse(userJson) as User;
         setUser(userData);
-        setIsAdmin(userData.isAdmin === true || userData.userType === 'Admin');
       } catch (err) {
         console.error('Error parsing user data:', err);
       }
@@ -46,7 +43,6 @@ const App: React.FC = () => {
     const handleLoginStateChange = (event: CustomEvent<User | null>) => {
       const userData = event.detail;
       setUser(userData);
-      setIsAdmin(userData?.isAdmin === true || userData?.userType === 'Admin');
     };
 
     window.addEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
@@ -82,9 +78,9 @@ const App: React.FC = () => {
                 <Route path="/comms-request" element={<ProtectedRoute element={<CommsRequest />} />} />
                 <Route path="/tracked-changes/:submissionId" element={<ProtectedRoute element={<TrackedChangesView />} />} />
                 <Route path="/tracked-changes-demo" element={<ProtectedRoute element={<TrackedChangesDemo />} />} />
-                {/* Newsletter editions: the Comms Cadre (by user type or role) and Admins */}
-                <Route path="/newsletter/editions" element={<ProtectedRoute element={<NewsletterEditions />} allowedRoles={[UserType.CommsCadre]} />} />
-                <Route path="/newsletter/editions/:id" element={<ProtectedRoute element={<NewsletterEditor />} allowedRoles={[UserType.CommsCadre]} />} />
+                {/* Newsletter editions: the Comms Cadre, the Communications Manager and Admins */}
+                <Route path="/newsletter/editions" element={<ProtectedRoute element={<NewsletterEditions />} allow={canUseNewsletter} />} />
+                <Route path="/newsletter/editions/:id" element={<ProtectedRoute element={<NewsletterEditor />} allow={canUseNewsletter} />} />
                 {/* Public (no sign-in): sent editions and their Read more pages */}
                 <Route path="/newsletter" element={<NewsletterArchive />} />
                 <Route path="/newsletter/:number" element={<PublicEdition />} />

@@ -5,6 +5,7 @@ import { LogoutUserReact, USER_LOGIN_EVENT } from '../utils/userActions';
 import { User } from '../types';
 import NotificationBell from './NotificationBell';
 import { canUseNewsletter } from '../utils/newsletterAccess';
+import { isAdmin as accessIsAdmin } from '../utils/access';
 
 interface NavbarProps {
     skipNavbar?: boolean;
@@ -26,7 +27,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
             setIsLoggedIn(true);
             try {
                 const user = JSON.parse(userJson);
-                setIsAdmin(user.isAdmin === true || user.userType === 'Admin');
+                setIsAdmin(accessIsAdmin(user));
                 setIsNewsletterEditor(canUseNewsletter(user));
             } catch (err) {
                 console.error('Error parsing user data:', err);
@@ -64,7 +65,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     const handleLoginStateChange = (event: CustomEvent<User | null>) => {
         const userData = event.detail;
         setIsLoggedIn(!!userData);
-        setIsAdmin(userData?.isAdmin === true || userData?.userType === 'Admin');
+        setIsAdmin(accessIsAdmin(userData));
         setIsNewsletterEditor(canUseNewsletter(userData));
     };
 

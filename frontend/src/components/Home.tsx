@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { isAdmin as accessIsAdmin } from '../utils/access';
 
 interface HomeProps {
   skipNavbar?: boolean;
@@ -14,7 +15,7 @@ const Home: React.FC<HomeProps> = ({ skipNavbar }) => {
         if (userJson) {
             try {
                 const userData = JSON.parse(userJson);
-                setIsAdmin(userData.isAdmin === true || userData.userType === 'Admin');
+                setIsAdmin(accessIsAdmin(userData));
             } catch (err) {
                 console.error('Error parsing user data:', err);
             }

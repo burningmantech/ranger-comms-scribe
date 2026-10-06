@@ -13,6 +13,7 @@ import { countOpenEdits } from '../utils/reviewItems';
 import { mergeComment } from '../utils/remoteComments';
 import { applyCommentResolution, applyReviewStateMessage, needsReviewStateRefresh } from '../utils/reviewState';
 import type { WebSocketMessage } from '../services/websocketService';
+import { isReviewer } from '../utils/access';
 
 /** A stored submission comment in the frontend's shape (resolve fields included). */
 export function toFrontendComment(raw: any): Comment {
@@ -725,17 +726,13 @@ export const TrackedChangesView: React.FC = () => {
   }
 
   // Determine if current user can approve/reject the submission
-  const userRoles = currentUser.roles || [];
-  const canApprove = userRoles.includes('CommsCadre') ||
-    userRoles.includes('CouncilManager') ||
-    userRoles.includes('Admin') ||
+  const canApprove = isReviewer(currentUser) ||
     (submission.requiredApprovers || []).includes(currentUser.email) ||
     (submission.assignedCouncilManagers || []).includes(currentUser.email);
 
   // Works from the review queue: the same check MySubmissions uses to show the
   // ReviewerDashboard (the queue) instead of the SubmitterDashboard.
-  const isReviewer = !!userPermissions?.canViewFilteredSubmissions ||
-    userRoles.some(r => ['CommsCadre', 'CouncilManager', 'Admin'].includes(r));
+  const reviewer = !!userPermissions?.canViewFilteredSubmissions || isReviewer(currentUser);
 
   // Check urgency from form fields
   const isUrgent = submission.formFields?.some(
@@ -794,7 +791,7 @@ export const TrackedChangesView: React.FC = () => {
       submission={submission}
       currentUser={currentUser}
       canApprove={canApprove}
-      isReviewer={isReviewer}
+      isReviewer={reviewer}
       isUrgent={isUrgent}
       onBack={() => navigate('/requests')}
       onApprove={handleSubmissionApprove}

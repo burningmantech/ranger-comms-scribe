@@ -167,6 +167,8 @@ async function createRequest(m) {
   // Step 2: audience and timing (Publish By defaults to a week out)
   await page.waitForSelector('.audience-card', { visible: true });
   await page.click('.audience-card');
+  // The first card is the Newsletter, which asks for a blurb or for Comms to write it
+  await page.evaluate(() => [...document.querySelectorAll('label')].find((l) => l.textContent.includes('Please write the blurb for me'))?.click());
   await page.type('input[name="owner"]', 'Test Member');
   await page.type('input[name="replyToAddress"]', 'replies@example.com');
   await clickNext(page);

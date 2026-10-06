@@ -3,9 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { API_URL } from '../config';
 import './Admin.css';
 import Navbar from './Navbar';
-import { RoleManagement } from './RoleManagement';
-import { CouncilManagerManagement } from './CouncilManagerManagement';
-import { CommsCadreManagement } from './CommsCadreManagement';
+import { PeopleManagement } from './PeopleManagement';
 import { ApprovalReminders } from './ApprovalReminders';
 import TemplateManagement from './TemplateManagement';
 import { useContent } from '../contexts/ContentContext';
@@ -34,12 +32,9 @@ interface BulkUserEntry {
 
 // Admin panel tabs
 enum AdminTab {
-  Users = 'users',
+  People = 'people',
   Groups = 'groups',
   BulkAdd = 'bulkAdd',
-  Roles = 'roles',
-  Council = 'council',
-  CommsCadre = 'commsCadre',
   Reminders = 'reminders',
   Templates = 'templates'
 }
@@ -127,7 +122,7 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<AdminTab>(AdminTab.Users);
+  const [activeTab, setActiveTab] = useState<AdminTab>(AdminTab.People);
   const [newGroupName, setNewGroupName] = useState<string>('');
   const [newGroupDescription, setNewGroupDescription] = useState<string>('');
   const [showEmailDialog, setShowEmailDialog] = useState<boolean>(false);
@@ -147,10 +142,6 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
   const {
     submissions,
     councilManagers,
-    commsCadreMembers,
-    saveCouncilManagers,
-    addCommsCadreMember,
-    removeCommsCadreMember,
     sendReminder
   } = useContent();
 
@@ -228,36 +219,6 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
     } catch (err) {
       setError('Error fetching users');
       setLoading(false);
-    }
-  };
-
-  const approveUser = async (userId: string) => {
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) {
-      navigate('/');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/admin/approve-user`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({ userId }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to approve user');
-      }
-
-      // Update the local state
-      setUsers(users.map(user => 
-        user.id === userId ? { ...user, approved: true } : user
-      ));
-    } catch (err) {
-      setError('Error approving user');
     }
   };
 
@@ -443,169 +404,6 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
     }
   };
 
-  const changeUserType = async (userId: string, userType: UserType) => {
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) {
-      navigate('/');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/admin/change-user-type`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({ userId, userType }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to change user type');
-      }
-
-      // Update the local state
-      setUsers(users.map(user => 
-        user.id === userId 
-          ? { ...user, userType, isAdmin: userType === UserType.Admin } 
-          : user
-      ));
-    } catch (err) {
-      setError('Error changing user type');
-    }
-  };
-
-  const makeAdmin = async (userId: string) => {
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) {
-      navigate('/');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/admin/make-admin`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({ userId }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to make user admin');
-      }
-
-      // Update the local state
-      setUsers(users.map(user => 
-        user.id === userId ? { ...user, isAdmin: true } : user
-      ));
-    } catch (err) {
-      setError('Error making user admin');
-    }
-  };
-
-  const deleteUser = async (userId: string) => {
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) {
-      navigate('/');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/admin/users/${userId}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${sessionId}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete user');
-      }
-
-      // Remove the deleted user from the list
-      setUsers(users.filter(user => user.id !== userId));
-    } catch (err) {
-      setError('Error deleting user');
-    }
-  };
-
-  const updateUserName = async (userId: string, newName: string) => {
-    if (!newName.trim()) {
-      setError('User name cannot be empty');
-      return;
-    }
-
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) {
-      navigate('/');
-      return;
-    }
-
-    try {
-      setError(null);
-      const response = await fetch(`${API_URL}/admin/update-user-name`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({ userId, name: newName }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to update user name');
-      }
-
-      // Update the local state
-      setUsers(users.map(user =>
-        user.id === userId
-          ? { ...user, name: newName, isEditingName: false, tempName: undefined }
-          : user
-      ));
-      
-      setSuccessMessage('User name updated successfully');
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err) {
-      setError(`Error updating user name: ${(err as Error).message}`);
-    }
-  };
-
-  const startEditingUserName = (user: AdminUser) => {
-    // Cancel any other editing first
-    setUsers(users.map(u => ({ ...u, isEditingName: false, tempName: undefined })));
-    
-    // Then enable editing for this user
-    setUsers(users.map(u =>
-      u.id === user.id
-        ? { ...u, isEditingName: true, tempName: user.name }
-        : u
-    ));
-  };
-
-  const cancelEditingUserName = (userId: string) => {
-    setUsers(users.map(u =>
-      u.id === userId
-        ? { ...u, isEditingName: false, tempName: undefined }
-        : u
-    ));
-  };
-
-  const handleUserNameKeyDown = (e: React.KeyboardEvent, user: AdminUser) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (user.tempName && user.tempName.trim() !== user.name) {
-        updateUserName(user.id, user.tempName.trim());
-      } else {
-        cancelEditingUserName(user.id);
-      }
-    } else if (e.key === 'Escape') {
-      cancelEditingUserName(user.id);
-    }
-  };
-
   const updateBulkUserEntry = (index: number, field: keyof BulkUserEntry, value: string | boolean) => {
     const updatedBulkUsers = [...bulkUsers];
     updatedBulkUsers[index] = {
@@ -693,10 +491,10 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
       <div className="admin-content">
         <div className="admin-tabs">
           <button
-            className={activeTab === AdminTab.Users ? 'active' : ''}
-            onClick={() => setActiveTab(AdminTab.Users)}
+            className={activeTab === AdminTab.People ? 'active' : ''}
+            onClick={() => setActiveTab(AdminTab.People)}
           >
-            Users
+            People
           </button>
           <button
             className={activeTab === AdminTab.Groups ? 'active' : ''}
@@ -709,24 +507,6 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
             onClick={() => setActiveTab(AdminTab.BulkAdd)}
           >
             Bulk Add
-          </button>
-          <button
-            className={activeTab === AdminTab.Roles ? 'active' : ''}
-            onClick={() => setActiveTab(AdminTab.Roles)}
-          >
-            Roles
-          </button>
-          <button
-            className={activeTab === AdminTab.Council ? 'active' : ''}
-            onClick={() => setActiveTab(AdminTab.Council)}
-          >
-            Council
-          </button>
-          <button
-            className={activeTab === AdminTab.CommsCadre ? 'active' : ''}
-            onClick={() => setActiveTab(AdminTab.CommsCadre)}
-          >
-            Comms Cadre
           </button>
           <button
             className={activeTab === AdminTab.Reminders ? 'active' : ''}
@@ -745,128 +525,8 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
         {error && <div className="error-message">{error}</div>}
         {successMessage && <div className="success-message">{successMessage}</div>}
 
-        {activeTab === AdminTab.Users && (
-          <div className="admin-section">
-            <h2>User Management</h2>
-            <p className="admin-hint">
-              The Role menu sets one main role. Council roles (such as the Communications Manager) and Comms Cadre
-              membership are set on the <strong>Council</strong> and <strong>Comms Cadre</strong> tabs, and one person
-              can have both; changing the Role here keeps them.
-            </p>
-            {users.length === 0 ? (
-              <p>No users found. New users will appear here when they sign up.</p>
-            ) : (
-              <table className="users-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Status</th>
-                    <th>Role</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map(user => (
-                    <tr key={user.id}>
-                      <td>
-                        {user.isEditingName ? (
-                          <div className="editable-name">
-                            <input
-                              type="text"
-                              value={user.tempName || ''}
-                              onChange={(e) =>
-                                setUsers(users.map(u =>
-                                  u.id === user.id
-                                    ? { ...u, tempName: e.target.value }
-                                    : u
-                                ))
-                              }
-                              onBlur={() => {
-                                if (user.tempName && user.tempName.trim() !== user.name) {
-                                  updateUserName(user.id, user.tempName.trim());
-                                } else {
-                                  cancelEditingUserName(user.id);
-                                }
-                              }}
-                              onKeyDown={(e) => handleUserNameKeyDown(e, user)}
-                              autoFocus
-                            />
-                            <div className="editable-actions">
-                              <button 
-                                className="save-button"
-                                onClick={() => {
-                                  if (user.tempName && user.tempName.trim() !== user.name) {
-                                    updateUserName(user.id, user.tempName.trim());
-                                  }
-                                }}
-                                title="Save"
-                              >
-                                ✓
-                              </button>
-                              <button 
-                                className="cancel-button"
-                                onClick={() => cancelEditingUserName(user.id)}
-                                title="Cancel"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="user-name" onClick={() => startEditingUserName(user)}>
-                            <span>{user.name}</span>
-                            <button className="edit-name-button" title="Edit Name">✎</button>
-                          </div>
-                        )}
-                      </td>
-                      <td>{user.email}</td>
-                      <td>{user.approved ? 'Approved' : 'Pending'}</td>
-                      <td>{user.userType}</td>
-                      <td>
-                        <div className="action-buttons">
-                          {!user.approved && (
-                            <button 
-                              onClick={() => approveUser(user.id)}
-                              className="btn btn-tertiary"
-                            >
-                              <i className="fas fa-check"></i>
-                              <span className="btn-text">Approve</span>
-                            </button>
-                          )}
-                          <select 
-                            value={user.userType}
-                            onChange={(e) => changeUserType(user.id, e.target.value as UserType)}
-                            className="form-select"
-                          >
-                            <option value={UserType.Public}>Public</option>
-                            <option value={UserType.Member}>Member</option>
-                            <option value={UserType.Lead}>Lead</option>
-                            <option value={UserType.Admin}>Admin</option>
-                            <option value={UserType.CommsCadre}>Comms Cadre</option>
-                            <option value={UserType.CouncilManager}>Council Manager</option>
-                          </select>
-                          <button 
-                            onClick={() => {
-                              if (window.confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
-                                deleteUser(user.id);
-                              }
-                            }}
-                            className="btn btn-danger btn-with-icon"
-                          >
-                            <i className="fas fa-trash"></i>
-                            <span className="btn-text">Delete</span>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-        
+        {activeTab === AdminTab.People && <PeopleManagement />}
+
         {activeTab === AdminTab.Groups && (
           <div className="admin-section">
             <h2>Group Management</h2>
@@ -1093,27 +753,6 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
           </div>
         )}
         
-        {activeTab === AdminTab.Roles && (
-          <RoleManagement
-            onSave={() => {
-              setSuccessMessage('Role permissions updated successfully');
-              setTimeout(() => setSuccessMessage(null), 3000);
-            }}
-          />
-        )}
-        {activeTab === AdminTab.Council && (
-          <CouncilManagerManagement
-            initialManagers={councilManagers}
-            onSave={saveCouncilManagers}
-          />
-        )}
-        {activeTab === AdminTab.CommsCadre && (
-          <CommsCadreManagement
-            members={commsCadreMembers}
-            onAddMember={addCommsCadreMember}
-            onRemoveMember={removeCommsCadreMember}
-          />
-        )}
         {activeTab === AdminTab.Reminders && (
           <ApprovalReminders
             pendingSubmissions={submissions.filter(sub => sub.status === 'in_review')}

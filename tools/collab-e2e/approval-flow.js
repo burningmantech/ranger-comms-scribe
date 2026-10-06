@@ -14,13 +14,12 @@
 //
 // Fails on any console error in either browser.
 //
-// Setup: dev-admin (dev@localhost, userType Admin) satisfies the council and Comms Cadre
-// gates only as a listed member. The script adds dev@localhost to the Comms Cadre list
-// (POST /comms-cadre, dev bypass) and as a council manager (PUT /admin/council-managers,
-// which checks a real admin session and needs a stored user: it makes the bootstrap admin
-// like member.js and stores dev@localhost with POST /admin/bulk-create-users). So it needs
-// the backend started as for member.js (README.md). Run it after the other scripts on a
-// store: the seeded memberships change the gates they see.
+// Setup: dev-admin (dev@localhost, an Admin) satisfies the council and Comms Cadre gates only
+// once their stored record holds those roles. The script stores dev@localhost
+// (POST /admin/bulk-create-users) and gives it Comms Cadre and the Communications Manager role
+// (PUT /admin/people/:id/access), both with a real admin session (it makes the bootstrap admin
+// like member.js). So it needs the backend started as for member.js (README.md). Run it after
+// the other scripts on a store: the seeded roles change the gates they see.
 const L = require('./lib');
 
 const AUTHOR = 'dev-admin-session';
@@ -51,16 +50,13 @@ async function eventually(name, cond, ms = 10000, describe) {
 }
 
 async function seedMemberships() {
-  const cadre = await L.api('/comms-cadre');
-  if (!cadre.some((m) => m.email === DEV_EMAIL)) {
-    await L.api('/comms-cadre', { method: 'POST', body: { email: DEV_EMAIL, name: 'Dev Admin', userId: 'dev-admin' } });
-  }
-  const council = await L.api('/council/members');
-  if (!council.some((m) => m.email === DEV_EMAIL)) {
-    const session = await L.adminSession();
-    await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [{ name: 'Dev Admin', email: DEV_EMAIL, approved: true }] } });
-    await L.api('/admin/council-managers', { method: 'PUT', session, body: { email: DEV_EMAIL, role: 'CommunicationsManager', action: 'add' } });
-  }
+  // dev@localhost becomes a stored person with Comms Cadre and the Communications Manager
+  // council role (People page: PUT /admin/people/:id/access, a real admin session)
+  const session = await L.adminSession();
+  await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [{ name: 'Dev Admin', email: DEV_EMAIL, approved: true }] } });
+  await L.api(`/admin/people/${encodeURIComponent(DEV_EMAIL)}/access`, {
+    method: 'PUT', session, body: { commsCadre: true, councilRoles: ['CommunicationsManager'] },
+  });
 }
 
 async function createSubmission() {
