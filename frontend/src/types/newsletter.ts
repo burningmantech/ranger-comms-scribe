@@ -7,6 +7,8 @@ export interface KeyDate {
   label: string;
   link?: string;
   linkLabel?: string;
+  /** The annual date this row follows; the date stays as written and is flagged when the table disagrees. */
+  annualDateId?: string;
 }
 
 export interface NewsletterLink {

@@ -7,6 +7,7 @@ import TransactionHistoryPlugin from './editor/plugins/TransactionHistoryPlugin'
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin';
 import { EditorState, LexicalEditor } from 'lexical';
 import { EditorRefPlugin } from '@lexical/react/LexicalEditorRefPlugin';
+import EditorReadyPlugin from './editor/plugins/EditorReadyPlugin';
 import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
 import { HeadingNode, QuoteNode } from '@lexical/rich-text';
 import { ListItemNode, ListNode } from '@lexical/list';
@@ -1617,6 +1618,8 @@ export interface CollaborativeEditorProps {
    * DeletionInterceptionPlugin (it lets the user really delete text they just typed).
    */
   getCollabBeforeText?: () => string | null;
+  /** The editor instance, for changes made from outside it (e.g. updating a linked date). */
+  onEditorReady?: (editor: LexicalEditor | null) => void;
 }
 
 /**
@@ -1666,6 +1669,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   getCollabSeedContent,
   onCollabSessionReady,
   getCollabBeforeText,
+  onEditorReady,
 }) => {
   // Collaborative (Yjs) mode: CollaborationPlugin owns content sync, undo and remote
   // cursors. Everything that writes or broadcasts the whole document is off.
@@ -3216,6 +3220,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               <ImageDragPlugin />
               <ImageResizePlugin />
               <EditorRefPlugin editorRef={editorRef} />
+              {onEditorReady && <EditorReadyPlugin onReady={onEditorReady} />}
               {(trackedChanges || liveBaseline) && onTrackedChangeClick && (
                 <TrackedChangesPlugin
                   pendingChanges={trackedChanges || []}

@@ -1,4 +1,5 @@
 import { KeyDate, NewsletterRequest, WritingHelp } from './newsletter';
+import { DateLink } from './annualDates';
 
 /** A reminder to approve: to one required approver (target = email), or 'council' / 'commsCadre'. */
 export interface SubmissionReminder {
@@ -79,6 +80,8 @@ export interface ContentSubmission {
   /** The newsletter item (when the audience includes the newsletter). */
   newsletter?: NewsletterRequest;
   keyDates?: KeyDate[];
+  /** Dates in the body or blurb linked to annual dates (PUT /submissions/:id/date-links). */
+  dateLinks?: DateLink[];
   publicSlug?: string;
   publicPublishedAt?: string;
   newsletterEditionId?: string;

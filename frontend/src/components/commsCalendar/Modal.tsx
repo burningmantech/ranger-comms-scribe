@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
   title: string;
@@ -8,7 +9,10 @@ interface ModalProps {
   wide?: boolean;
 }
 
-/** A dialog over the page; Escape or a click outside closes it. */
+/**
+ * A dialog over the page; Escape or a click outside closes it. Rendered on document.body, so a
+ * dialog's own form works when it is opened from inside another form (the request form).
+ */
 export const Modal: React.FC<ModalProps> = ({ title, onClose, children, footer, wide }) => {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -18,7 +22,7 @@ export const Modal: React.FC<ModalProps> = ({ title, onClose, children, footer, 
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="cc-modal__overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className={`cc-modal${wide ? ' cc-modal--wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="cc-modal__header">
@@ -28,7 +32,8 @@ export const Modal: React.FC<ModalProps> = ({ title, onClose, children, footer, 
         <div className="cc-modal__body">{children}</div>
         {footer && <div className="cc-modal__footer">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
 

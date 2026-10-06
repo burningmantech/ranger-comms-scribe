@@ -1,0 +1,156 @@
+/* Annual dates: the "Dates in this request" panel and the Track dialog */
+
+.dt-panel {
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--accent-teal);
+  border-radius: var(--radius-lg);
+  background: #fbfdfd;
+  padding: 16px 20px 12px;
+  margin: 0 0 20px 0;
+}
+
+.dt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-dark);
+  margin: 0 0 4px 0;
+}
+
+.dt-intro {
+  font-size: 13px;
+  margin: 0 0 10px 0;
+}
+
+.dt-message {
+  font-size: 13px;
+  background: var(--primary-light);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
+.dt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dt-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-color);
+  font-size: 14px;
+}
+
+.dt-row:first-child {
+  border-top: none;
+}
+
+.dt-found q {
+  font-weight: 600;
+}
+
+.dt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.dt-entry,
+.dt-match {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dt-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dt-status--ok {
+  color: var(--accent-teal);
+}
+
+.dt-status--stale {
+  color: var(--accent-wine);
+  font-weight: 600;
+}
+
+.dt-status--gone {
+  color: var(--danger);
+}
+
+/* Track dialog */
+
+.dt-found {
+  margin: 0;
+}
+
+.dt-rule {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.dt-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: normal;
+}
+
+.dt-choice input {
+  width: auto;
+}
+
+.dt-offset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: 24px;
+}
+
+.cc-field .dt-offset input,
+.cc-field .dt-offset select {
+  width: auto;
+}
+
+.cc-field .dt-offset input {
+  max-width: 80px;
+}
+
+.dt-preview {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+}
+
+.dt-warn {
+  color: var(--danger);
+}
+
+/* Key dates rows */
+
+.dt-keydate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.nl-key-date-row .dt-keydate {
+  flex-basis: 100%;
+}

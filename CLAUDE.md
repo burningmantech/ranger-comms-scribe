@@ -346,6 +346,23 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
   the access PUT for a role). The old Groups, Bulk add, Reminders and Templates tabs are gone. Admin routes
   don't take the `DEV_BYPASS_AUTH` sessions
 
+## Annual dates
+
+Things that happen every year, so requests can follow them (`docs/plans/2026-10-06-annual-dates-design.md`):
+- One `AnnualDate` per entry at `annual_dates/<id>` (`/api/annual-dates`). Its rule is a fixed date, or
+  `offsetDays` from Labor Day (first Monday of September; the Burn is Labor Day - 2). It also has times
+  (`HH:mm`), `durationDays`, and per-year `overrides`.
+- Pure logic is in `backend/src/utils/annualDates.ts`, mirrored in `frontend/src/utils/annualDates.ts`.
+- The occurrence year is the calendar year, never the Comms Calendar cycle.
+- `frontend/src/utils/dateDetection.ts` (chrono-node, strict) finds dates in the body and blurb text.
+  `components/dates/DatesPanel.tsx` (on the request form and the review page) tracks and links them.
+- A request's `dateLinks` are saved by `PUT /content/submissions/:id/date-links`; PUT
+  `/submissions/:id` ignores them. A key date's `annualDateId` goes through the newsletter PATCH.
+- Links never change text by themselves. **Update text** rewrites the date in its written style: a
+  tracked change in the body, or an unsaved blurb edit.
+- Anyone signed in adds entries. Comms Calendar editors (and the entry's creator) change and delete them.
+  The table is the Annual dates tab on `/comms-calendar`.
+
 ## Notifications
 
 Email notifications (`backend/src/services/notificationService.ts`):

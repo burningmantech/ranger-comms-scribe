@@ -204,6 +204,7 @@ export const TrackedChangesView: React.FC = () => {
         writingHelp: data.writingHelp,
         newsletter: data.newsletter,
         keyDates: data.keyDates,
+        dateLinks: data.dateLinks,
         publicSlug: data.publicSlug,
         publicPublishedAt: data.publicPublishedAt,
         newsletterEditionId: data.newsletterEditionId,

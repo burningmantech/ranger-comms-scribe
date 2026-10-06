@@ -1,0 +1,125 @@
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { router } from '../../src/handlers/annualDates';
+import { router as contentRouter } from '../../src/handlers/contentSubmission';
+import { clearMemoryCache, getObject } from '../../src/services/cacheService';
+import { cleanCalendar, cleanKeyDate, cleanKeyDates } from '../../src/utils/newsletterInput';
+import { ContentSubmission } from '../../src/types';
+import { createMockObjectStore } from '../helpers/mockObjectStore';
+
+/**
+ * Annual dates API and a request's linked dates. Users come from the dev auth bypass: admin,
+ * user2 (Comms Cadre), member.
+ */
+
+const SESSIONS = { admin: 'dev-admin-session', cadre: 'dev-user2-session', member: 'dev-member-session' };
+
+async function call(
+  env: any,
+  method: string,
+  path: string,
+  { session = SESSIONS.admin, body }: { session?: string; body?: unknown } = {},
+  via: { fetch: (request: Request, env: any) => Promise<Response> } = router,
+): Promise<Response> {
+  return via.fetch(new Request(`http://localhost/api${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session}` },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  }), env);
+}
+
+const social = {
+  name: 'Ranger Social',
+  rule: { kind: 'laborDay', offsetDays: -6 },
+  startTime: '18:00',
+  endTime: '22:00',
+  createdFrom: { submissionId: 'abc', text: '6pm - 10pm on Sept. 1 2026' },
+};
+
+describe('Annual dates API', () => {
+  let env: any;
+
+  beforeEach(() => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    clearMemoryCache();
+    env = { STORE: createMockObjectStore(), DEV_BYPASS_AUTH: 'true', FRONTEND_URL: 'https://scrivenly.com' };
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('lets anyone signed in add and list; editors change and delete, the creator only changes', async () => {
+    const created = await call(env, 'POST', '/annual-dates', { session: SESSIONS.member, body: social });
+    expect(created.status).toBe(201);
+    const entry = await created.json() as any;
+    expect(entry).toMatchObject({ name: 'Ranger Social', rule: { kind: 'laborDay', offsetDays: -6 }, createdBy: 'member@localhost' });
+
+    const other = await (await call(env, 'POST', '/annual-dates', { session: SESSIONS.admin, body: { name: 'Gate opens', rule: { kind: 'laborDay', offsetDays: -8 } } })).json() as any;
+
+    const list = await (await call(env, 'GET', '/annual-dates', { session: SESSIONS.member })).json() as any;
+    expect(list.entries.map((e: any) => e.name)).toEqual(['Gate opens', 'Ranger Social']);
+    expect(list.canEditAll).toBe(false);
+
+    expect((await call(env, 'PUT', `/annual-dates/${entry.id}`, { session: SESSIONS.member, body: { endTime: '23:00' } })).status).toBe(200);
+    expect((await call(env, 'PUT', `/annual-dates/${other.id}`, { session: SESSIONS.member, body: { name: 'x' } })).status).toBe(403);
+    expect((await call(env, 'DELETE', `/annual-dates/${other.id}`, { session: SESSIONS.member })).status).toBe(403);
+    expect((await call(env, 'DELETE', `/annual-dates/${entry.id}`, { session: SESSIONS.member })).status).toBe(403);
+
+    const moved = await call(env, 'PUT', `/annual-dates/${other.id}`, {
+      session: SESSIONS.cadre, body: { overrides: { 2027: { date: '2027-08-27' } } },
+    });
+    expect(moved.status).toBe(200);
+    expect((await moved.json() as any).overrides).toEqual({ 2027: { date: '2027-08-27' } });
+    expect((await call(env, 'DELETE', `/annual-dates/${other.id}`, { session: SESSIONS.cadre })).status).toBe(200);
+  });
+
+  it('rejects bad rules and times', async () => {
+    const bad = async (body: unknown) => (await call(env, 'POST', '/annual-dates', { body })).status;
+    expect(await bad({ name: 'x', rule: { kind: 'fixed', month: 2, day: 30 } })).toBe(400);
+    expect(await bad({ name: 'x', rule: { kind: 'laborDay', offsetDays: 1.5 } })).toBe(400);
+    expect(await bad({ name: 'x', rule: { kind: 'weekly' } })).toBe(400);
+    expect(await bad({ name: '', rule: { kind: 'fixed', month: 1, day: 1 } })).toBe(400);
+    expect(await bad({ name: 'x', rule: { kind: 'fixed', month: 1, day: 1 }, startTime: '6pm' })).toBe(400);
+    expect(await bad({ name: 'x', rule: { kind: 'fixed', month: 2, day: 29 } })).toBe(201);
+  });
+
+  it('keeps a key date linked to an annual date (requests, edition sections and calendar rows)', () => {
+    const row = { date: '2026-09-01', label: 'Ranger Social', annualDateId: 'a1' };
+    expect(cleanKeyDate(row)).toEqual(row);
+    expect(cleanKeyDates([row])).toEqual([row]);
+    expect(cleanCalendar([{ id: 'c1', ...row }])).toEqual([{ id: 'c1', ...row }]);
+  });
+
+  it('saves a request\'s linked dates on create and through /date-links, and PUT leaves them alone', async () => {
+    const link = { id: 'l1', annualDateId: 'a1', field: 'body', text: 'Sept. 1 2026', year: 2026 };
+    const res = await call(env, 'POST', '/content/submissions', {
+      session: SESSIONS.member,
+      body: { title: 'Social', content: 'Join us 6pm - 10pm on Sept. 1 2026', status: 'submitted', dateLinks: [link] },
+    }, contentRouter);
+    expect(res.status).toBeLessThan(300);
+    const created = await res.json() as any;
+    const id = (created.submission || created).id;
+    const stored = () => getObject<ContentSubmission>(`content_submissions/${id}`, env);
+    expect((await stored())?.dateLinks).toEqual([link]);
+
+    const put = await call(env, 'PUT', `/content/submissions/${id}`, { session: SESSIONS.member, body: { dateLinks: [] } }, contentRouter);
+    expect(put.status).toBeLessThan(300);
+    expect((await stored())?.dateLinks).toEqual([link]);
+
+    const status = (await stored())?.status;
+    const moved = { ...link, text: 'Aug. 31 2027', year: 2027 };
+    const saved = await call(env, 'PUT', `/content/submissions/${id}/date-links`, { session: SESSIONS.member, body: { dateLinks: [moved] } }, contentRouter);
+    expect(saved.status).toBe(200);
+    expect((await stored())?.dateLinks).toEqual([moved]);
+    expect((await stored())?.status).toBe(status);
+
+    expect((await call(env, 'PUT', `/content/submissions/${id}/date-links`, {
+      session: SESSIONS.member, body: { dateLinks: [{ ...link, field: 'title' }] },
+    }, contentRouter)).status).toBe(400);
+    expect((await call(env, 'PUT', `/content/submissions/${id}/date-links`, {
+      session: 'dev-council-session', body: { dateLinks: [] },
+    }, contentRouter)).status).toBe(403);
+  });
+});

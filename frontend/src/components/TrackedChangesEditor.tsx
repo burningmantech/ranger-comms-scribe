@@ -36,7 +36,14 @@ import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds
 import { remoteCommentFromMessage } from '../utils/remoteComments';
 import { REVIEW_STATE_MESSAGE_TYPES } from '../utils/reviewState';
 import { currentFormFieldValue } from '../utils/formFieldValue';
-import { canSendAnnouncements, councilRoleLabel, isReviewer } from '../utils/access';
+import { canSendAnnouncements, councilRoleLabel, isAdmin, isCommsCadre, isReviewer } from '../utils/access';
+import { LexicalEditor } from 'lexical';
+import DatesPanel, { DateSource } from './dates/DatesPanel';
+import { useAnnualDates } from './dates/useAnnualDates';
+import { replaceTextInEditor } from './editor/utils/replaceText';
+import { annualDatesService } from '../services/annualDatesService';
+import { DateLink } from '../types/annualDates';
+import { todayIso } from './newsletter/dates';
 
 const webSocketManager = new WebSocketManager();
 
@@ -231,6 +238,47 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [showSuggestionDialog, setShowSuggestionDialog] = useState(false);
   // Always-on collaborative editing - no edit mode toggle needed
   const [editedProposedContent, setEditedProposedContent] = useState('');
+
+  // "Dates in this request": dates in the body and blurb, linked to the annual dates table
+  const annualDates = useAnnualDates();
+  const [dateLinks, setDateLinks] = useState<DateLink[]>(submission.dateLinks || []);
+  const [dateLinksError, setDateLinksError] = useState<string | null>(null);
+  const [blurbForDates, setBlurbForDates] = useState(submission.newsletter?.blurb || '');
+  const bodyEditorRef = useRef<LexicalEditor | null>(null);
+  const blurbReplacerRef = useRef<((search: string, replacement: string) => Promise<boolean>) | null>(null);
+  const setBodyEditor = useCallback((editor: LexicalEditor | null) => {
+    bodyEditorRef.current = editor;
+  }, []);
+  useEffect(() => {
+    setDateLinks(submission.dateLinks || []);
+  }, [submission.dateLinks]);
+  // Someone else linked or updated a date (PUT .../date-links broadcasts content_updated); in both
+  // editing modes, since collaborative mode ignores content_updated for the document itself
+  const handleDateLinksMessage = useCallback((message: any) => {
+    const links = message?.data?.changes?.dateLinks;
+    if (Array.isArray(links)) setDateLinks(links);
+  }, []);
+  const canLinkDates = useMemo(() => {
+    const email = (currentUser.email || '').toLowerCase();
+    return isAdmin(currentUser) || isCommsCadre(currentUser)
+      || currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy
+      || (submission.requiredApprovers || []).some((e) => (e || '').toLowerCase() === email);
+  }, [currentUser, submission.submittedBy, submission.requiredApprovers]);
+  const saveDateLinks = useCallback(async (next: DateLink[]) => {
+    const previous = dateLinks;
+    setDateLinks(next);
+    setDateLinksError(null);
+    try {
+      await annualDatesService.saveDateLinks(submission.id, next);
+    } catch (err) {
+      setDateLinks(previous);
+      setDateLinksError(err instanceof Error ? err.message : 'Could not save the linked dates');
+    }
+  }, [dateLinks, submission.id]);
+  const publishByForDates = (submission.formFields || []).find((f: any) => f.id === 'publishBy')?.value;
+  const datesReferenceYmd = typeof publishByForDates === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(publishByForDates)
+    ? publishByForDates
+    : todayIso();
   const editedProposedContentRef = useRef(editedProposedContent);
   const initialEditorContentRef = useRef<string>('');
   const [, setLastSavedProposedContent] = useState<string>('');
@@ -2829,6 +2877,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       // updates from the room socket.
       // Listen for content updates
       if (!isCollab) client.on('content_updated', handleWebSocketUpdate);
+      client.on('content_updated', handleDateLinksMessage);
 
       // Listen for real-time content updates (character-by-character)
       if (!isCollab) client.on('realtime_content_update', handleWebSocketUpdate);
@@ -3286,6 +3335,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     return result;
   }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content]);
 
+  // The body and blurb text that "Dates in this request" scans (not rebuilt on presence or cursor renders)
+  const proposedTextForDates = editedProposedContent || proposedEditorContent;
+  const blurbInNewsletter = currentAudienceKeys.includes('newsletter');
+  const dateSources: DateSource[] = useMemo(() => [
+    { field: 'body', label: 'the text', text: getDisplayableText(proposedTextForDates) },
+    ...(blurbInNewsletter && blurbForDates
+      ? [{ field: 'blurb' as const, label: 'the blurb', text: extractTextFromLexical(blurbForDates) }]
+      : []),
+  ], [proposedTextForDates, blurbInNewsletter, blurbForDates, getDisplayableText]);
+
   return (
     <div className={`tracked-changes-editor ${reviewMode ? 'review-mode' : ''}`}>
       {/* Error toast */}
@@ -3622,6 +3681,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     getCollabSeedContent={isCollab ? getCollabSeedContent : undefined}
                     onCollabSessionReady={isCollab ? handleCollabSessionReady : undefined}
                     getCollabBeforeText={isCollab ? getCollabBeforeText : undefined}
+                    onEditorReady={setBodyEditor}
                     onContentChange={isCollab ? handleCollabLocalChange : (json, cursorPosition) => {
                       // Skip processing if we're still initializing content to prevent auto-save on load
                       if (!hasInitializedContentRef.current) {
@@ -3746,6 +3806,29 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               </div>
             </div>}
 
+            {/* Dates in the body and blurb, linked to annual dates (links saved directly; the text
+                changes as a tracked change in the body, or an unsaved edit in the blurb) */}
+            {activeTab === 'proposed' && (
+              <>
+                {dateLinksError && <div className="field-error" role="alert">{dateLinksError}</div>}
+                <DatesPanel
+                  sources={dateSources}
+                  links={dateLinks}
+                  onLinksChange={saveDateLinks}
+                  referenceYmd={datesReferenceYmd}
+                  annualDates={annualDates.entries}
+                  onAnnualDateAdded={annualDates.added}
+                  onReplaceText={async (field, search, replacement) => {
+                    if (field === 'blurb') return blurbReplacerRef.current ? blurbReplacerRef.current(search, replacement) : false;
+                    return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement) : false;
+                  }}
+                  defaultName={submission.title || ''}
+                  submissionId={submission.id}
+                  disabled={!canLinkDates}
+                />
+              </>
+            )}
+
             {/* The newsletter item and key dates: edited directly, not as tracked changes */}
             {activeTab === 'proposed' && (
               <NewsletterReviewPanel
@@ -3753,6 +3836,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 audienceKeys={currentAudienceKeys}
                 currentUser={currentUser as any}
                 isCommsCadre={canSendAnnouncements(currentUser)}
+                onBlurbChange={setBlurbForDates}
+                blurbReplacer={blurbReplacerRef}
+                annualDates={annualDates.entries}
+                onAnnualDateAdded={annualDates.added}
+                referenceYmd={datesReferenceYmd}
               />
             )}
 

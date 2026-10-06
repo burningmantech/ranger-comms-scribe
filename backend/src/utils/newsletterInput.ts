@@ -88,6 +88,8 @@ export function cleanKeyDate(input: any, field = 'Date'): KeyDate {
   if (link) out.link = checkUrl(link, `${field} link`, 'link');
   const linkLabel = text(input.linkLabel, `${field} link text`, 120);
   if (linkLabel && out.link) out.linkLabel = linkLabel;
+  const annualDateId = text(input.annualDateId, `${field} annual date`, 200);
+  if (annualDateId) out.annualDateId = annualDateId;
   return out;
 }
 

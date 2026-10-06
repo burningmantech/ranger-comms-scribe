@@ -14,6 +14,7 @@ import { timelineRouter } from './handlers/timeline';
 import { router as templatesRouter } from './handlers/templates';
 import { router as notificationsRouter } from './handlers/notifications';
 import { router as commsCalendarRouter } from './handlers/commsCalendar';
+import { router as annualDatesRouter } from './handlers/annualDates';
 import { router as websocketRouter } from './handlers/websocket';
 import { router as newsletterRouter } from './handlers/newsletter';
 import { router as mailingListsRouter } from './handlers/mailingLists';
@@ -171,6 +172,8 @@ router
     .all('/api/public/*', publicNewsRouter.fetch) // Public pages: sent editions and published documents (no session)
     .all('/api/comms-calendar/*', withValidSession) // Middleware to check session for Comms Calendar routes
     .all('/api/comms-calendar/*', commsCalendarRouter.fetch) // Handle all Comms Calendar routes
+    .all('/api/annual-dates/*', withValidSession) // Annual dates (fixed or from Labor Day) that requests link to
+    .all('/api/annual-dates/*', annualDatesRouter.fetch)
     .all('/api/ws/*', websocketRouter.fetch) // Room HTTP routes; WebSocket upgrades are handled in httpServer.ts
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);

@@ -423,7 +423,12 @@ export async function publishDocumentPage(submissionId: string, env: Env): Promi
 
 function sourceHash(submission: ContentSubmission, title: string): string {
   return createHash('sha256')
-    .update(JSON.stringify({ title, newsletter: submission.newsletter || null, keyDates: submission.keyDates || [] }))
+    .update(JSON.stringify({
+      title,
+      newsletter: submission.newsletter || null,
+      // A row linked to an annual date is the same row: linking isn't a change to the item
+      keyDates: (submission.keyDates || []).map(({ annualDateId: _link, ...row }) => row),
+    }))
     .digest('hex')
     .slice(0, 16);
 }

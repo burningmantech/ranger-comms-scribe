@@ -18,6 +18,13 @@ import { EMPTY_NEWSLETTER_REQUEST, KeyDate, NewsletterRequest, isBlankRichText }
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import './CommsRequest.css';
+import { LexicalEditor } from 'lexical';
+import DatesPanel, { DateSource } from './dates/DatesPanel';
+import { useAnnualDates } from './dates/useAnnualDates';
+import { DateLink } from '../types/annualDates';
+import { extractTextFromLexical, replaceFirstInLexical } from '../utils/lexicalUtils';
+import { replaceTextInEditor } from './editor/utils/replaceText';
+import { todayIso } from './newsletter/dates';
 
 const commsRequestSchema = z.object({
   // The signed-in user's address, shown read-only and not sent with the request (the server
@@ -95,6 +102,12 @@ export const CommsRequest: React.FC = () => {
   const [helpWithBlurb, setHelpWithBlurb] = useState(false);
   const [helpWithDocument, setHelpWithDocument] = useState(false);
   const [keyDates, setKeyDates] = useState<KeyDate[]>([]);
+  const [dateLinks, setDateLinks] = useState<DateLink[]>([]);
+  const bodyEditorRef = useRef<LexicalEditor | null>(null);
+  const setBodyEditor = useCallback((editor: LexicalEditor | null) => {
+    bodyEditorRef.current = editor;
+  }, []);
+  const annualDates = useAnnualDates();
   // Bumped when a draft is restored, so the blurb editor shows it
   const [blurbEditorKey, setBlurbEditorKey] = useState(0);
 
@@ -147,11 +160,12 @@ export const CommsRequest: React.FC = () => {
           helpWithBlurb,
           helpWithDocument,
           keyDates,
+          dateLinks,
         }));
       } catch { /* ignore quota errors */ }
     }, 2000);
     return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
-  }, [watchedValues, editorContent, selectedTemplateId, newsletterItem, helpWithBlurb, helpWithDocument, keyDates]);
+  }, [watchedValues, editorContent, selectedTemplateId, newsletterItem, helpWithBlurb, helpWithDocument, keyDates, dateLinks]);
 
   // Restore draft on mount
   useEffect(() => {
@@ -173,6 +187,8 @@ export const CommsRequest: React.FC = () => {
             setHelpWithDocument(value === true);
           } else if (key === 'keyDates' && Array.isArray(value)) {
             setKeyDates(value as KeyDate[]);
+          } else if (key === 'dateLinks' && Array.isArray(value)) {
+            setDateLinks(value as DateLink[]);
           } else if (key === 'email') {
             // Always use current user's email, not stale draft value
             setValue('email', userEmail);
@@ -414,6 +430,24 @@ export const CommsRequest: React.FC = () => {
   const hasDocument = helpWithDocument || !isBlankRichText(editorContent);
   const wantsNewsletter = (audienceValue || []).includes('newsletter');
 
+  // Dates written in the text and blurb, for "Dates in this request"
+  const blurb = newsletterItem.blurb || '';
+  const dateSources: DateSource[] = React.useMemo(() => [
+    { field: 'body' as const, label: 'the text', text: extractTextFromLexical(editorContent) },
+    ...(wantsNewsletter && !helpWithBlurb ? [{ field: 'blurb' as const, label: 'the blurb', text: extractTextFromLexical(blurb) }] : []),
+  ], [editorContent, blurb, wantsNewsletter, helpWithBlurb]);
+
+  const replaceDateText = async (field: DateLink['field'], search: string, replacement: string): Promise<boolean> => {
+    if (field === 'body') {
+      return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement) : false;
+    }
+    const next = replaceFirstInLexical(blurb, search, replacement);
+    if (next === blurb || !blurb) return false;
+    setNewsletterItem((item) => ({ ...item, blurb: next }));
+    setBlurbEditorKey((k) => k + 1);
+    return true;
+  };
+
   /** The newsletter item's and the key dates' first problem, or null. */
   const newsletterAndDatesError = (): string | null => {
     if ((getValues('audience') || []).includes('newsletter')) {
@@ -507,6 +541,7 @@ export const CommsRequest: React.FC = () => {
         ...(Object.keys(writingHelp).length ? { writingHelp } : {}),
         ...(data.audience.includes('newsletter') ? { newsletter: cleanNewsletterItem(newsletterItem) } : {}),
         ...(filledKeyDates(keyDates).length ? { keyDates: filledKeyDates(keyDates) } : {}),
+        ...(dateLinks.length ? { dateLinks } : {}),
       };
 
       await saveSubmission(submission as ContentSubmission);
@@ -522,6 +557,7 @@ export const CommsRequest: React.FC = () => {
       setHelpWithBlurb(false);
       setHelpWithDocument(false);
       setKeyDates([]);
+      setDateLinks([]);
       setBlurbEditorKey((k) => k + 1);
       setStep(1);
     } catch (error) {
@@ -621,6 +657,7 @@ export const CommsRequest: React.FC = () => {
             placeholder="Start typing or paste your content..."
             className="h-64"
             currentUserId={userId}
+            onEditorReady={setBodyEditor}
           />
           <label className={`urgent-checkbox-label nl-help-check ${helpWithDocument ? 'checked' : ''}`} style={{ marginTop: 10 }}>
             <input
@@ -788,8 +825,22 @@ export const CommsRequest: React.FC = () => {
             value={keyDates}
             onChange={setKeyDates}
             hint="Deadlines and events your announcement mentions. They go in the newsletter's “Mark your calendar!” table."
+            annualDates={annualDates.entries}
+            onAnnualDateAdded={annualDates.added}
+            referenceYmd={publishByValue || undefined}
           />
         </div>
+
+        <DatesPanel
+          sources={dateSources}
+          links={dateLinks}
+          onLinksChange={setDateLinks}
+          referenceYmd={publishByValue || todayIso()}
+          annualDates={annualDates.entries}
+          onAnnualDateAdded={annualDates.added}
+          onReplaceText={replaceDateText}
+          defaultName={watch('suggestedSubjectLine') || ''}
+        />
 
         <div className="form-row">
           <div className="form-field">

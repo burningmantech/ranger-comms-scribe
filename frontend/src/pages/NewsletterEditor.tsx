@@ -45,6 +45,7 @@ function completeKeyDates(dates: KeyDate[]): KeyDate[] {
       label: d.label.trim(),
       ...(d.endDate && d.endDate !== d.date ? { endDate: d.endDate } : {}),
       ...(d.link && isWebUrl(d.link) ? { link: d.link.trim(), ...(d.linkLabel?.trim() ? { linkLabel: d.linkLabel.trim() } : {}) } : {}),
+      ...(d.annualDateId ? { annualDateId: d.annualDateId } : {}),
     }));
 }
 

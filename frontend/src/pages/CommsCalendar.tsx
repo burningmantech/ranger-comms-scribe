@@ -12,9 +12,10 @@ import { EntryFormModal } from '../components/commsCalendar/EntryFormModal';
 import { NudgeModal } from '../components/commsCalendar/NudgeModal';
 import { AddFromRequestModal } from '../components/commsCalendar/AddFromRequestModal';
 import { CsvImportModal } from '../components/commsCalendar/CsvImportModal';
+import { AnnualDatesTab } from '../components/commsCalendar/AnnualDatesTab';
 import './CommsCalendar.css';
 
-type Tab = 'upcoming' | 'all';
+type Tab = 'upcoming' | 'all' | 'dates';
 type Dialog =
   | { kind: 'edit'; entry?: CommsCalendarEntry; initial?: CommsCalendarInput }
   | { kind: 'nudge'; entry: CommsCalendarEntry; anniversary?: string }
@@ -89,7 +90,10 @@ export const CommsCalendar: React.FC = () => {
   const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>(() => (readSetting(TAB_KEY) === 'all' ? 'all' : 'upcoming'));
+  const [tab, setTab] = useState<Tab>(() => {
+    const saved = readSetting(TAB_KEY);
+    return saved === 'all' || saved === 'dates' ? saved : 'upcoming';
+  });
   const [weeks, setWeeks] = useState<number>(() => {
     const saved = Number(readSetting(WEEKS_KEY));
     return WINDOW_OPTIONS.includes(saved) ? saved : 6;
@@ -227,11 +231,16 @@ export const CommsCalendar: React.FC = () => {
         <button type="button" role="tab" aria-selected={tab === 'all'} className={`cc-tab${tab === 'all' ? ' cc-tab--active' : ''}`} onClick={() => chooseTab('all')}>
           All entries
         </button>
+        <button type="button" role="tab" aria-selected={tab === 'dates'} className={`cc-tab${tab === 'dates' ? ' cc-tab--active' : ''}`} onClick={() => chooseTab('dates')}>
+          Annual dates
+        </button>
       </div>
 
       {error && <div className="cc-error" role="alert">{error}</div>}
 
-      {loading ? (
+      {tab === 'dates' ? (
+        <AnnualDatesTab />
+      ) : loading ? (
         <div className="cc-empty">Loading…</div>
       ) : tab === 'upcoming' ? (
         <section aria-label="Coming up">

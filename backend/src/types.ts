@@ -192,6 +192,8 @@ export interface ContentSubmission {
   newsletter?: NewsletterRequest;
   /** Dates and deadlines; they go in the newsletter calendar. */
   keyDates?: KeyDate[];
+  /** Dates in the body or blurb linked to annual dates. Edited through PUT /submissions/:id/date-links. */
+  dateLinks?: DateLink[];
   /** The public "Read more" page (/news/<slug>). The slug is made when an edition links the document; the page is served once published. */
   publicSlug?: string;
   publicPublishedAt?: string;
@@ -244,6 +246,8 @@ export interface KeyDate {
   label: string;
   link?: string;
   linkLabel?: string;
+  /** The annual date this row follows (annual_dates/<id>). The date stays as written; the link only flags it when the table disagrees. */
+  annualDateId?: string;
 }
 
 export interface NewsletterLink {
@@ -671,6 +675,55 @@ export interface CommsCalendarEntry {
   createdAt: string;
   updatedBy?: string;
   updatedAt: string;
+}
+
+/**
+ * When an annual date falls: the same calendar date every year, or a number of days from Labor Day
+ * (the first Monday of September; the Man burns the Saturday before, Labor Day - 2).
+ */
+export type AnnualDateRule =
+  | { kind: 'fixed'; month: number; day: number }
+  | { kind: 'laborDay'; offsetDays: number };
+
+/** One year's date when it moved away from the rule. */
+export interface AnnualDateOverride {
+  date: string;
+  endDate?: string;
+  startTime?: string;
+  endTime?: string;
+  note?: string;
+}
+
+/** Something that happens every year (annual_dates/<id>); requests link the dates they mention to it. */
+export interface AnnualDate {
+  id: string;
+  name: string;
+  rule: AnnualDateRule;
+  /** Days after the start that it ends (multi-day events). */
+  durationDays?: number;
+  /** Wall-clock "HH:mm", Pacific. */
+  startTime?: string;
+  endTime?: string;
+  /** By year ("2027"). */
+  overrides?: Record<string, AnnualDateOverride>;
+  notes?: string;
+  link?: string;
+  createdFrom?: { submissionId: string; text: string };
+  createdBy: string;
+  createdAt: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+/** A date written in a request's body or blurb, linked to an annual date. */
+export interface DateLink {
+  id: string;
+  annualDateId: string;
+  field: 'body' | 'blurb';
+  /** The date as written ("Sept. 1 2026"). */
+  text: string;
+  /** The year of the occurrence the text was written for. */
+  year: number;
 }
 
 export type NotificationType =

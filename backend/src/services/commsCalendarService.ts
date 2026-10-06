@@ -9,6 +9,7 @@ import { approvedFieldValue } from './announcementEmail';
 import { audienceKeys } from '../utils/audiences';
 import { escapeHtml } from '../utils/lexicalEmail';
 import { renderEmailHtml } from '../utils/email';
+import { isValidYmd, addDays, daysBetween, toUtc } from '../utils/ymd';
 
 /**
  * Comms Calendar: the communications sent in each Sep→Aug cycle, so Comms can ask the
@@ -71,36 +72,7 @@ export async function canViewCalendar(user: User, env: Env): Promise<boolean> {
 // Dates (all YYYY-MM-DD strings, calendar arithmetic in UTC)
 // ---------------------------------------------------------------------------
 
-const YMD = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-export function isValidYmd(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const match = YMD.exec(value);
-  if (!match) return false;
-  const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  const date = new Date(Date.UTC(y, m - 1, d));
-  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
-}
-
-function toUtc(ymd: string): Date {
-  const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
-}
-
-function fromUtc(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-export function addDays(ymd: string, days: number): string {
-  const date = toUtc(ymd);
-  date.setUTCDate(date.getUTCDate() + days);
-  return fromUtc(date);
-}
-
-/** Days from `from` to `to` (negative when `to` is earlier). */
-export function daysBetween(from: string, to: string): number {
-  return Math.round((toUtc(to).getTime() - toUtc(from).getTime()) / 86_400_000);
-}
+export { isValidYmd, addDays, daysBetween };
 
 /** The same month and day `years` later; Feb 29 becomes Feb 28 in a non-leap year. */
 export function addYearsClamped(ymd: string, years: number): string {

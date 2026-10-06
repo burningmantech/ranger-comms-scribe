@@ -15,6 +15,7 @@ import { getUser } from '../services/userService';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
 import { getEdition } from '../services/newsletterService';
+import { AnnualDateInputError, cleanDateLinks } from '../services/annualDatesService';
 import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
 import { syncCalendarFromSubmission } from '../services/commsCalendarService';
 
@@ -251,7 +252,7 @@ function cleanNewsletterFields(input: any): Pick<ContentSubmission, 'audiences' 
 // endpoint (PATCH /submissions/:id/newsletter, PUT /submissions/:id/approvers); PUT bodies
 // often carry a stale loaded copy.
 const PUT_IGNORED_FIELDS = [
-  'newsletter', 'keyDates', 'writingHelp',
+  'newsletter', 'keyDates', 'writingHelp', 'dateLinks',
   'newsletterEditionId', 'newsletterSentIn', 'publicSlug', 'publicPublishedAt',
   'sentTo', 'reminders', 'requiredApprovers',
 ] as const;
@@ -262,10 +263,12 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
   const user = (request as any).user as User;
 
   let newsletterFields: Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'>;
+  let dateLinks: ContentSubmission['dateLinks'];
   try {
     newsletterFields = cleanNewsletterFields(submission);
+    dateLinks = cleanDateLinks(submission.dateLinks);
   } catch (err) {
-    if (err instanceof InputError) return json({ error: err.message }, { status: 400 });
+    if (err instanceof InputError || err instanceof AnnualDateInputError) return json({ error: err.message }, { status: 400 });
     throw err;
   }
 
@@ -286,6 +289,7 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     assignedCouncilManagers: submission.assignedCouncilManagers || [],
     requiredApprovers: submission.requiredApprovers || [],
     ...newsletterFields,
+    ...(dateLinks.length ? { dateLinks } : {}),
   };
   // The content as submitted, kept unchanged for the Original view (accept / reject
   // rewrite content and richTextContent). A copy of exactly what is stored above.
@@ -886,6 +890,51 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   return json({ success: true, comment: newComment });
 });
 
+/** Who may edit the fields that aren't tracked changes (newsletter item, key dates, linked dates). */
+function canEditDirectFields(user: User, submission: ContentSubmission, env: any): boolean {
+  return isAdmin(user, env) ||
+    submission.submittedBy === user.id ||
+    (submission.requiredApprovers || []).some((e) => (e || '').toLowerCase() === (user.email || '').toLowerCase()) ||
+    isCommsCadre(user);
+}
+
+// The dates in the body and blurb linked to annual dates. Links only: the text itself changes
+// through tracked changes (body) or the newsletter PATCH (blurb), so status and approvals stay.
+router.put('/submissions/:id/date-links', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const body = await request.json().catch(() => ({}));
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canEditDirectFields(user, submission, env)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+  try {
+    const dateLinks = cleanDateLinks(body?.dateLinks);
+    if (dateLinks.length) submission.dateLinks = dateLinks;
+    else delete submission.dateLinks;
+  } catch (err) {
+    if (err instanceof AnnualDateInputError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
+  submission.updatedAt = new Date().toISOString();
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  await broadcastToSubmissionRoom(id, {
+    type: 'content_updated',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: { title: submission.title, status: submission.status, changes: { dateLinks: submission.dateLinks || [] } },
+  }, env);
+
+  return json({ dateLinks: submission.dateLinks || [], updatedAt: submission.updatedAt });
+});
+
 // The newsletter item, key dates and writing help. Not tracked changes: the submitter,
 // required approvers, the Comms Cadre and Admins edit them directly (the cadre may write the
 // blurb for someone who asked for help). Fixed once the item has gone out in an edition.
@@ -898,11 +947,7 @@ router.patch('/submissions/:id/newsletter', withAuth, async (request: Request, e
   if (!submission) {
     return json({ error: 'Submission not found' }, { status: 404 });
   }
-  const canEdit = isAdmin(user, env) ||
-    submission.submittedBy === user.id ||
-    (submission.requiredApprovers || []).some((e) => (e || '').toLowerCase() === (user.email || '').toLowerCase()) ||
-    isCommsCadre(user);
-  if (!canEdit) {
+  if (!canEditDirectFields(user, submission, env)) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
   if (submission.newsletterSentIn) {
