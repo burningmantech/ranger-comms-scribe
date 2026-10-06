@@ -129,7 +129,15 @@ export async function syncSubmissionStatus(
     }
     const changed = submission.status !== before;
     if (changed) {
-      await putObject(`content_submissions/${submissionId}`, submission, env);
+      // Write only the status fields, onto a fresh copy: the reads above take a while, and
+      // a concurrent write (another decision, an autosave) must keep its content.
+      const fresh = (await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env)) || submission;
+      if (fresh.status === 'sent') return fresh;
+      fresh.status = submission.status;
+      if (submission.finalApprovalDate) fresh.finalApprovalDate = submission.finalApprovalDate;
+      else delete fresh.finalApprovalDate;
+      if (submission.approvalOverride !== undefined) fresh.approvalOverride = submission.approvalOverride;
+      await putObject(`content_submissions/${submissionId}`, fresh, env);
       await deleteObject('content_submissions/list', env);
     }
     // Open review pages show the gates ("N/4 conditions met") and the status (Send): tell

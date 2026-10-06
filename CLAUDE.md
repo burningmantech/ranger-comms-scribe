@@ -119,10 +119,7 @@ Content submissions go through a multi-stage approval process:
 1. **Submission Creation** (`backend/src/handlers/contentSubmission.ts`)
    - User creates submission with title, content, media
    - Submission gets assigned required approvers
-   - Status starts as `pending`
-   - Comment threads can be resolved and reopened (`POST /content/submissions/:id/comments/:commentId/resolve`
-     with `{resolved}`; any user who can view the submission; stores `resolvedBy`/`resolvedAt`, broadcasts
-     `comment_resolved`). The review sidebar moves resolved threads to History
+   - Status starts as `draft` or `submitted`
 
 2. **Approval Process**:
    - Council Manager approval required
@@ -135,13 +132,21 @@ Content submissions go through a multi-stage approval process:
      delete). The submission becomes `approved` once all gates are met, including when the last pending change
      is resolved after the approvals. An `approved` submission with a pending change (a new edit, or an undo)
      drops back to `in_review` (approved content changed; `finalApprovalDate` and an override approval are
-     cleared). `sent` never changes. A status change is broadcast as `status_changed` (with `approvalGates`)
+     cleared). `sent` never changes. Only a pending change demotes (a changed vote does not). After every such
+     operation the room gets `status_changed` (status changed) or `approval_state`, both with `approvalGates`;
+     `approval_added` carries them too. The review page applies these live (`frontend/src/utils/reviewState.ts`)
 
 3. **Change Tracking** (`backend/src/handlers/trackedChanges.ts`):
    - All content changes are tracked as revisions
    - Stored in the object store for versioning
    - Changes can be accepted/rejected
    - Tracked changes service in `backend/src/services/trackedChangesService.ts`
+
+4. **Comments**:
+   - Comment threads can be resolved and reopened (`POST /content/submissions/:id/comments/:commentId/resolve`
+     with `{resolved}`; any user who can view the submission; stores `resolvedBy`/`resolvedByName`/`resolvedAt`,
+     broadcasts `comment_resolved`). The review sidebar moves resolved threads to History, with Reopen
+   - `PUT /content/submissions/:id` ignores `comments` and `approvals` (their own endpoints own them)
 
 ### Real-time Collaboration
 
@@ -178,7 +183,8 @@ WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST AP
    - `connected`, `room_state`, `user_joined`, `user_left`: User presence
    - `cursor_position`: Real-time cursor tracking
    - `realtime_content_update`: full Lexical state while typing (last write wins)
-   - `content_updated`, `comment_added`, `comment_resolved`, `approval_added`, `status_changed`: Workflow updates
+   - `content_updated`, `comment_added`, `comment_resolved`, `approval_added`, `status_changed`, `approval_state`:
+     Workflow updates
    - `ping`/`pong`, `heartbeat`/`heartbeat_response`: Connection health
 
 ### Data Caching
