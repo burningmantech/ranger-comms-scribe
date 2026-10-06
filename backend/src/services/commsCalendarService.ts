@@ -1,8 +1,11 @@
-import { CommsCalendarEntry, CommsMethod, ContentSubmission, CouncilRole, User, UserType } from '../types';
+import { CommsCalendarEntry, CommsMethod, ContentSubmission, User, UserType } from '../types';
 import { Env } from '../utils/sessionManager';
 import { getObject, getObjectStrict, putObject, deleteObject, listObjects } from './cacheService';
-import { getCouncilManagersForRole } from './councilManagerService';
+import { isAdminUser, isCommsCadre, isCommsManager } from './commsCadreService';
 import { getUser } from './userService';
+import { getTrackedChanges, TrackedChange } from './trackedChangesService';
+import { approvedFieldValue } from './announcementEmail';
+import { audienceKeys } from '../utils/audiences';
 import { escapeHtml } from '../utils/lexicalEmail';
 import { renderEmailHtml } from '../utils/email';
 
@@ -54,15 +57,7 @@ const normalizeEmail = (email: string | undefined | null) => (email || '').trim(
  * Cadre list) and the Council's Communications Manager can change it and send nudges.
  */
 export async function canEditCalendar(user: User, env: Env): Promise<boolean> {
-  if (user.isAdmin || user.userType === UserType.Admin) return true;
-  if (user.userType === UserType.CommsCadre || (user.roles || []).includes('CommsCadre')) return true;
-
-  const email = normalizeEmail(user.email);
-  if (!email) return false;
-  const cadre = (await getObject<Array<{ email: string; active: boolean }>>('comms_cadre:active', env)) || [];
-  if (cadre.some((m) => m.active && normalizeEmail(m.email) === email)) return true;
-  const commsManagers = await getCouncilManagersForRole(CouncilRole.CommunicationsManager, env);
-  return commsManagers.some((m) => m.active && normalizeEmail(m.email) === email);
+  return isAdminUser(user) || (await isCommsCadre(user, env)) || (await isCommsManager(user, env));
 }
 
 /** Everyone who can edit, plus the rest of Council (read only). */
@@ -388,17 +383,13 @@ export function duplicateKey(entry: Pick<CommsCalendarEntry, 'subject' | 'target
 // Submissions → calendar
 // ---------------------------------------------------------------------------
 
-// The exact Audience labels a Comms Request stores (AUDIENCE_LABELS in
-// frontend/src/components/CommsRequest.tsx). Each one mentions the other channel, so
-// only the whole label tells them apart.
-export const NEWSLETTER_AUDIENCE_LABEL = 'Include in Ranger Newsletter (sent over Ranger Announce)';
-export const SINGULAR_AUDIENCE_LABEL = 'Singular announcement (outside of Ranger Newsletter)';
-
-/** The calendar method for a request's Audience field. */
-export function mapAudienceToMethod(audience: unknown, fallback: CommsMethod = 'N/A'): CommsMethod {
-  const value = Array.isArray(audience) ? audience.join(', ') : String(audience ?? '');
-  const newsletter = value.includes(NEWSLETTER_AUDIENCE_LABEL) || (Array.isArray(audience) && audience.includes('newsletter'));
-  const singular = value.includes(SINGULAR_AUDIENCE_LABEL) || (Array.isArray(audience) && audience.includes('singular'));
+/**
+ * The calendar method for a request's audiences: the newsletter, a standalone announcement
+ * ('singular'), or both. Anything else (Allcom, website, ...) is `fallback`.
+ */
+export function mapAudienceToMethod(keys: string[], fallback: CommsMethod = 'N/A'): CommsMethod {
+  const newsletter = keys.includes('newsletter');
+  const singular = keys.includes('singular');
   if (newsletter && singular) return 'Both';
   if (newsletter) return 'Newsletter';
   if (singular) return 'Announce';
@@ -409,16 +400,28 @@ function formField(submission: ContentSubmission, id: string): unknown {
   return (submission.formFields || []).find((field) => field.id === id)?.value;
 }
 
+function validDate(iso: string | undefined): Date | null {
+  const date = iso ? new Date(iso) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
 /**
- * Create or update the calendar entry for a submission. Subject, target date, sent date
- * and method come from the submission every time; team and contacts only fill in when
- * empty, so what Comms typed is kept. Entries without a submission work the same way,
- * which is why the values are copied rather than read live.
+ * Create or update the calendar entry for a submission, when it goes out on its own
+ * (send-email, or marked sent) or in a newsletter edition. Subject (as approved), target
+ * date, method and the date it first went out come from the submission every time; team
+ * and contacts only fill in when empty, so what Comms typed is kept. Entries without a
+ * submission work the same way, which is why the values are copied rather than read live.
  */
 export async function syncCalendarFromSubmission(
   submission: ContentSubmission,
   env: Env,
-  options: { subject?: string; fallbackMethod?: CommsMethod; by?: string } = {},
+  options: {
+    subject?: string;
+    fallbackMethod?: CommsMethod;
+    by?: string;
+    /** It went out in this Ranger News edition. */
+    newsletter?: { number: number; sentAt: string };
+  } = {},
 ): Promise<CommsCalendarEntry> {
   const linked = (await listEntries(env)).find((e) => e.submissionId === submission.id);
   // A fixed ID, so two sends close together can't make two entries
@@ -426,15 +429,30 @@ export async function syncCalendarFromSubmission(
   const existing = linked ?? (await getObjectStrict<CommsCalendarEntry>(`${CALENDAR_PREFIX}${id}`, env));
   const by = options.by || submission.sentBy || submission.submittedBy || 'system';
   const entry = existing ?? newEntry({}, by, 'submission', id);
+  const alreadyLinked = entry.submissionId === submission.id;
+  const changes: TrackedChange[] = await getTrackedChanges(submission.id, env).catch(() => []);
 
   entry.submissionId = submission.id;
-  const subject = (options.subject || submission.title || '').trim();
+  const subject = (options.subject || approvedFieldValue(changes, 'title', submission.title || '')).trim();
   if (subject) entry.subject = subject.slice(0, LIMITS.subject);
   const publishBy = formField(submission, 'publishBy');
   if (typeof publishBy === 'string' && isValidYmd(publishBy.slice(0, 10))) entry.targetDate = publishBy.slice(0, 10);
-  const sentAt = submission.sentAt ? new Date(submission.sentAt) : null;
-  if (sentAt && !Number.isNaN(sentAt.getTime())) entry.dateSent = pacificDate(sentAt.toISOString());
-  entry.method = mapAudienceToMethod(formField(submission, 'audience'), options.fallbackMethod ?? entry.method ?? 'N/A');
+
+  // Date sent: the first time it went out (its own email or the edition). An entry linked
+  // by hand loses whatever date it had before.
+  const sentDates = [validDate(submission.sentAt), options.newsletter ? validDate(options.newsletter.sentAt) : null]
+    .filter((d): d is Date => d !== null)
+    .map((d) => pacificDate(d.toISOString()));
+  if (alreadyLinked && entry.dateSent) sentDates.push(entry.dateSent);
+  if (sentDates.length > 0) entry.dateSent = sentDates.sort()[0];
+
+  if (options.newsletter) entry.newsletterSentIn = options.newsletter.number;
+  const keys = audienceKeys(submission, changes);
+  const fallback = options.fallbackMethod ?? (options.newsletter ? 'Newsletter' : entry.method ?? 'N/A');
+  let method = mapAudienceToMethod(keys, fallback);
+  // Went out both ways, whatever the audience said
+  if (entry.newsletterSentIn && submission.announcementSent) method = 'Both';
+  entry.method = method;
 
   if (!entry.team) {
     const owner = formField(submission, 'owner');
@@ -480,7 +498,8 @@ export function buildNudgeEmail(
   const lastDate = entry.dateSent || entry.targetDate;
   const anniversary = nextAnniversary(entry, options.today, 30);
   const requestUrl = `${options.frontendUrl.replace(/\/+$/, '')}/comms-request`;
-  const via = METHOD_PHRASE[entry.method];
+  const via = METHOD_PHRASE[entry.method]
+    + (entry.newsletterSentIn && (entry.method === 'Newsletter' || entry.method === 'Both') ? ` (Ranger News #${entry.newsletterSentIn})` : '');
   const signer = nudger.name || nudger.email;
 
   // Each paragraph as [text, html]; values people typed are escaped in the HTML

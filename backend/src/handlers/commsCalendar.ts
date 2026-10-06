@@ -107,7 +107,7 @@ router.post('/import', withAuth, requireEdit, async (request: Request, env: Env)
 });
 
 // POST /api/comms-calendar/from-submission/:submissionId — add (or refresh) the entry for
-// a Scribe request; mainly for Newsletter items, which have no send of their own
+// a Scribe request that went out some other way (sends and editions add theirs)
 router.post('/from-submission/:submissionId', withAuth, requireEdit, async (request: Request, env: Env) => {
   const { submissionId } = (request as any).params;
   const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);

@@ -3,7 +3,6 @@ import { CommsCalendarEntry } from '../../src/types';
 import {
   addYearsClamped, cycleStartYear, nextAnniversary, computeUpcoming, mapAudienceToMethod,
   validateEntryInput, applyPatch, buildNudgeEmail, duplicateKey, pacificDate, isValidYmd,
-  NEWSLETTER_AUDIENCE_LABEL, SINGULAR_AUDIENCE_LABEL,
 } from '../../src/services/commsCalendarService';
 
 function entry(overrides: Partial<CommsCalendarEntry> = {}): CommsCalendarEntry {
@@ -94,16 +93,16 @@ describe('computeUpcoming', () => {
 });
 
 describe('mapAudienceToMethod', () => {
-  it('tells the two Announce labels apart', () => {
-    expect(mapAudienceToMethod(SINGULAR_AUDIENCE_LABEL)).toBe('Announce');
-    expect(mapAudienceToMethod(NEWSLETTER_AUDIENCE_LABEL)).toBe('Newsletter');
-    expect(mapAudienceToMethod(`${NEWSLETTER_AUDIENCE_LABEL}, ${SINGULAR_AUDIENCE_LABEL}, Allcom`)).toBe('Both');
+  it('maps the newsletter and standalone announcement audiences', () => {
+    expect(mapAudienceToMethod(['singular'])).toBe('Announce');
+    expect(mapAudienceToMethod(['newsletter'])).toBe('Newsletter');
+    expect(mapAudienceToMethod(['newsletter', 'singular', 'allcom'])).toBe('Both');
   });
 
   it('uses the fallback for anything else', () => {
-    expect(mapAudienceToMethod('Other: newsletter, announce')).toBe('N/A');
-    expect(mapAudienceToMethod('Allcom', 'Announce')).toBe('Announce');
-    expect(mapAudienceToMethod(undefined)).toBe('N/A');
+    expect(mapAudienceToMethod(['other'])).toBe('N/A');
+    expect(mapAudienceToMethod(['allcom'], 'Announce')).toBe('Announce');
+    expect(mapAudienceToMethod([])).toBe('N/A');
   });
 });
 
@@ -167,6 +166,13 @@ describe('buildNudgeEmail', () => {
     expect(email.text).toContain('around September 15, 2026');
     expect(email.text).toContain('https://scrivenly.com/comms-request');
     expect(email.text).toContain('Note from Hazel: Same as last year?');
+
+    const newsletter = buildNudgeEmail(
+      entry({ subject: 'Thank you Rangers', method: 'Newsletter', newsletterSentIn: 12, dateSent: '2025-10-04' }),
+      { name: 'Hazel', email: 'hb@example.org' },
+      { frontendUrl: 'https://scrivenly.com', today: '2026-09-20' },
+    );
+    expect(newsletter.text).toContain('via the Ranger Newsletter (Ranger News #12).');
     expect(email.html).toContain('<a href="https://scrivenly.com/comms-request">');
   });
 

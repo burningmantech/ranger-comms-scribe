@@ -606,6 +606,8 @@ export interface CommsCalendarEntry {
   comments: string;
   /** The Scribe request this was sent from. Subject and dates are copied from it on send. */
   submissionId?: string;
+  /** The Ranger News edition the request's newsletter item went out in. */
+  newsletterSentIn?: number;
   /** Last year's entry that this one continues. */
   carriedFromId?: string;
   /** The team won't send it again: it leaves the Upcoming list. */

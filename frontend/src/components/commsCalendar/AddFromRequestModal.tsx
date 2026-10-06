@@ -12,8 +12,8 @@ interface AddFromRequestModalProps {
 }
 
 /**
- * Add a Scribe request to the calendar. Sent announcements are added on their own; this is
- * for the rest (Newsletter items, things sent another way).
+ * Add a Scribe request to the calendar. Sent announcements and newsletter editions add their
+ * requests on their own; this is for the rest (things sent another way, older requests).
  */
 export const AddFromRequestModal: React.FC<AddFromRequestModalProps> = ({ entries, submissions, onClose, onAdded }) => {
   const [search, setSearch] = useState('');

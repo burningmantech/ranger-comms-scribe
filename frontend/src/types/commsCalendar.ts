@@ -27,6 +27,8 @@ export interface CommsCalendarEntry {
   contactEmails: string[];
   comments: string;
   submissionId?: string;
+  /** The Ranger News edition its newsletter item went out in. */
+  newsletterSentIn?: number;
   carriedFromId?: string;
   notRepeating?: boolean;
   nudges: CommsCalendarNudge[];

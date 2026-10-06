@@ -239,7 +239,7 @@ describe('Comms Calendar API', () => {
         formFields: [
           { id: 'owner', label: 'Owner', value: 'Volunteer Coordinators', type: 'text', required: true },
           { id: 'publishBy', label: 'Publish By', value: '2026-10-01', type: 'date', required: true },
-          { id: 'audience', label: 'Audience', value: calendarService.SINGULAR_AUDIENCE_LABEL, type: 'text', required: true },
+          { id: 'audience', label: 'Audience', value: 'Singular announcement (outside of Ranger Newsletter)', type: 'text', required: true },
           { id: 'replyToAddress', label: 'Reply-To Address', value: 'vc-team@example.org', type: 'text', required: true },
         ],
         comments: [], approvals: [], changes: [], commsCadreApprovals: 0, councilManagerApprovals: [],
@@ -296,7 +296,7 @@ describe('Comms Calendar API', () => {
 
     it('records a request marked sent by hand', async () => {
       await putObject('content_submissions/sub-1', submission({
-        formFields: [{ id: 'audience', label: 'Audience', value: calendarService.NEWSLETTER_AUDIENCE_LABEL, type: 'text', required: true }],
+        formFields: [{ id: 'audience', label: 'Audience', value: 'Include in Ranger Newsletter (sent over Ranger Announce)', type: 'text', required: true }],
       }), env);
       const response = await contentRouter.fetch(new Request('http://localhost/api/content/submissions/sub-1', {
         method: 'PUT',
@@ -306,6 +306,17 @@ describe('Comms Calendar API', () => {
       expect(response.status).toBe(200);
       const stored = await getObject<CommsCalendarEntry>('comms_calendar/sub-sub-1', env);
       expect(stored).toMatchObject({ method: 'Newsletter', dateSent: '2026-10-04', contactEmails: ['vc@example.org'] });
+    });
+
+    it('records the subject as approved in review', async () => {
+      await putObject('content_submissions/sub-1', submission(), env);
+      await putObject('tracked-changes/submission/sub-1/c1', {
+        id: 'c1', submissionId: 'sub-1', field: 'title', oldValue: 'Please update your Burner Profile!',
+        newValue: 'Update your Burner Profile by Oct 15', status: 'approved', changedBy: 'r', timestamp: '2026-09-21T00:00:00Z',
+      }, env);
+      expect((await call(env, 'POST', '/from-submission/sub-1')).status).toBe(200);
+      expect(await getObject<CommsCalendarEntry>('comms_calendar/sub-sub-1', env))
+        .toMatchObject({ subject: 'Update your Burner Profile by Oct 15' });
     });
 
     it('adds a request from the calendar page', async () => {

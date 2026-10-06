@@ -45,7 +45,7 @@ describe('CommsCalendar page', () => {
     service.list.mockResolvedValue({
       entries: [
         last,
-        entry({ id: 'cur', subject: 'Calling All Shiny Pennies', team: 'RIDE Delegation', method: 'Both', link: 'https://example.org/m' }),
+        entry({ id: 'cur', subject: 'Calling All Shiny Pennies', team: 'RIDE Delegation', method: 'Both', link: 'https://example.org/m', newsletterSentIn: 12 }),
       ],
       canEdit: true,
     });
@@ -66,6 +66,7 @@ describe('CommsCalendar page', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'All entries' }));
     const link = screen.getByRole('link', { name: 'Calling All Shiny Pennies' });
     expect(link).toHaveAttribute('href', 'https://example.org/m');
+    expect(screen.getByRole('link', { name: 'News #12' })).toHaveAttribute('href', '/newsletter/12');
     // Last cycle's entry is under its own year
     expect(screen.queryByText('Thank you Rangers')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Cycle'), { target: { value: 'all' } });

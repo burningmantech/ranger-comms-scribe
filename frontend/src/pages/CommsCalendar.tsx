@@ -58,6 +58,18 @@ const SubjectCell: React.FC<{ entry: CommsCalendarEntry }> = ({ entry }) => (
   </>
 );
 
+/** The method, with the Ranger News edition it went out in (its public page). */
+const MethodCell: React.FC<{ entry: CommsCalendarEntry }> = ({ entry }) => (
+  <>
+    {entry.method}
+    {entry.newsletterSentIn && (
+      <a href={`/newsletter/${entry.newsletterSentIn}`} className="cc-tag" target="_blank" rel="noopener noreferrer" title="Open the edition">
+        News #{entry.newsletterSentIn}
+      </a>
+    )}
+  </>
+);
+
 const ContactsLine: React.FC<{ entry: CommsCalendarEntry }> = ({ entry }) => (
   entry.contactEmails.length > 0
     ? <div className="cc-muted cc-small">{entry.contactEmails.join(', ')}</div>
@@ -261,7 +273,7 @@ export const CommsCalendar: React.FC = () => {
                       </td>
                       <td className="cc-nowrap">
                         <div>{formatShortDate(item.entry.dateSent || item.entry.targetDate, true)}</div>
-                        <div className="cc-muted cc-small">{item.entry.method}</div>
+                        <div className="cc-muted cc-small"><MethodCell entry={item.entry} /></div>
                       </td>
                       <td className="cc-small">{lastNudgeText(item.entry) || <span className="cc-muted">Not yet</span>}</td>
                       {canEdit && (
@@ -339,7 +351,7 @@ export const CommsCalendar: React.FC = () => {
                         <SubjectCell entry={entry} />
                         {entry.notRepeating && <span className="cc-tag cc-tag--muted">Won't repeat</span>}
                       </td>
-                      <td>{entry.method}</td>
+                      <td><MethodCell entry={entry} /></td>
                       <td className="cc-nowrap">{formatShortDate(entry.dateSent, cycle === 'all')}</td>
                       <td>
                         <div>{entry.team}</div>

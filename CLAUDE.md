@@ -307,8 +307,10 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
   version of an entry is a new entry whose `carriedFromId` points at last year's
 - **Upcoming** lists anniversaries in a window that no entry continues yet and that aren't `notRepeating`;
   **Nudge** emails the team contacts (Reply-To the sender) and is logged on the entry
-- A sent announcement (send-email, or PUT to `sent`) creates/updates entry `sub-<submissionId>` from the
-  request's subject, Publish By, Audience and Owner; the sync never fails the send
+- A sent announcement (send-email, or PUT to `sent`) or a sent newsletter edition (`sendEdition`, each
+  section's request) creates/updates entry `sub-<submissionId>` from the request's approved subject, Publish By,
+  audiences and Owner, with `newsletterSentIn` for editions; the date sent is the first time it went out. The
+  sync never fails the send
 - Comms Cadre, Admins and the Council Communications Manager edit; other Council members read only
 - CSV import is parsed in the browser (`frontend/src/utils/commsCalendarImport.ts`); same subject + cycle is
   skipped as a duplicate
