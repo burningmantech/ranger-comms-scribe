@@ -75,8 +75,12 @@ async function openUser(browser, name, session, submissionId) {
   });
   user.sockets = sockets;
   user.changePosts = [];
+  user.changeUrls = [];
   cdp.on('Network.requestWillBeSent', ({ request }) => {
-    if (request.method === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(request.url)) user.changePosts.push(request.postData || '');
+    if (request.method === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(request.url)) {
+      user.changePosts.push(request.postData || '');
+      user.changeUrls.push(request.url);
+    }
   });
   // Keep every WebSocket the page opens, so tests can drop connections (a real outage).
   await page.evaluateOnNewDocument(() => {

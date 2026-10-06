@@ -220,6 +220,17 @@ async function saveState(u) {
       await g.page.click(nextEnabled ? '.queue-nav__btn:last-child' : '.queue-nav__btn:first-child');
       await L.waitFor(async () => g.page.url() !== before, 'url change', 5000).catch(() => null);
       check('pager navigates to another /tracked-changes/ page', /\/tracked-changes\/[^/]+$/.test(g.page.url()) && g.page.url() !== before, g.page.url());
+      // An edit after paging is saved against the new submission, not the first one.
+      const newId = g.page.url().split('/').pop();
+      await g.page.waitForSelector(`${L.EDITOR}[contenteditable="true"]`, { timeout: 15000 });
+      await L.sleep(1000);
+      const postsBefore = g.changePosts.length;
+      const urlsBefore = g.changeUrls.length;
+      await L.caret(g, 0, -1);
+      await g.page.keyboard.type(' paged', { delay: 30 });
+      await L.waitFor(() => g.changePosts.length > postsBefore, 'save after paging', 10000).catch(() => null);
+      const target = g.changeUrls.slice(urlsBefore).map((u) => u.split('/').pop());
+      check('edit after paging is saved to the new submission', target.length > 0 && target.every((id) => id === newId), `${target.join(',')} vs ${newId}`);
     }
     await g.context.close();
 
