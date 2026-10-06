@@ -375,8 +375,15 @@ export class TransactionManager {
   }
 
   /**
-   * Save again every transaction whose autosave failed (status 'failed'). Clears the
-   * error state first; it comes back if a retry fails too.
+   * Save again every transaction whose autosave failed (status 'failed'), oldest first.
+   * Clears the error state first; it comes back if a retry fails too.
+   *
+   * Legacy mode: the server takes the newest change's rich text as the proposed version,
+   * so re-sending an old transaction's after-state once a newer edit is saved would roll
+   * the document back to it. There each retried transaction carries the newest
+   * after-state instead (its own diff may then come out empty; the content stays right).
+   * Collaborative mode keeps each transaction's own states: the server diffs them
+   * against their own before-state, and the live document is the Yjs doc.
    */
   async retryFailedSaves(): Promise<void> {
     const failed = this.undoStack.filter((tx) => tx.status === 'failed');
@@ -385,10 +392,15 @@ export class TransactionManager {
       this.emitSaveStatus();
       return;
     }
-    await Promise.all(failed.map((tx) => {
+    const newest = this.undoStack[this.undoStack.length - 1];
+    for (const tx of failed) {
+      if (!this.diffAgainstOldValue && tx !== newest && newest.afterSnapshot) {
+        tx.afterSnapshot = newest.afterSnapshot;
+        tx.regionMap = this.computeRegionMap(tx.field, tx.beforeSnapshot.text, newest.afterSnapshot.text);
+      }
       tx.status = 'settled';
-      return this.autosave(tx);
-    }));
+      await this.autosave(tx);
+    }
   }
 
   /**

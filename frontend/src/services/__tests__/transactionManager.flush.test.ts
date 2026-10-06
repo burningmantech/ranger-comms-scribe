@@ -79,6 +79,53 @@ describe('TransactionManager.retryFailedSaves', () => {
     expect(tm.getUndoStack()[0].remoteChangeId).toBe('remote-1');
   });
 
+  function failFirstSave() {
+    let calls = 0;
+    let failing = true;
+    const save = jest.fn(async (sid: string, change: any) => {
+      calls++;
+      if (failing && calls <= 2) throw new Error('offline'); // the save and its automatic retry
+      return { id: `remote-${calls}`, submissionId: sid, field: change.field, oldValue: change.oldValue, newValue: change.newValue,
+        changedBy: 'u', changedByName: 'U', timestamp: '', status: 'pending' as const, comments: [] };
+    });
+    return { save, stop: () => { failing = false; } };
+  }
+
+  async function failThenSaveNewer(tm: TransactionManager) {
+    tm.startTransaction('content', lex('one'));
+    tm.notifyActivity(lex('one two'));
+    tm.flush();
+    await settle();
+    tm.startTransaction('content', lex('one two'));
+    tm.notifyActivity(lex('one two three'));
+    tm.flush();
+    await settle();
+  }
+
+  it('legacy: a retried older edit carries the newest state, so the document is not rolled back', async () => {
+    const { save } = failFirstSave();
+    const tm = new TransactionManager('s1', { saveFunction: save, deleteFunction: jest.fn(), retryDelayMs: 0, pauseDelayMs: 60000 });
+    await failThenSaveNewer(tm);
+    expect(save).toHaveBeenCalledTimes(3);
+    await tm.retryFailedSaves();
+    const retried = save.mock.calls[3][1];
+    expect(retried.oldValue).toBe('one');
+    expect(retried.newValue).toBe('one two three');
+    expect(JSON.parse(retried.richTextNewValue).root.children[0].children[0].text).toBe('one two three');
+    expect(tm.getSaveStatus()).toBe('all-saved');
+  });
+
+  it('collaborative: a retried edit keeps its own before/after states', async () => {
+    const { save } = failFirstSave();
+    const tm = new TransactionManager('s1', { saveFunction: save, deleteFunction: jest.fn(), retryDelayMs: 0, pauseDelayMs: 60000, diffAgainstOldValue: true });
+    await failThenSaveNewer(tm);
+    await tm.retryFailedSaves();
+    const retried = save.mock.calls[3][1];
+    expect(retried.oldValue).toBe('one');
+    expect(retried.newValue).toBe('one two');
+    expect(retried.diffAgainstOldValue).toBe(true);
+  });
+
   it('returns to the error state when the retry fails too', async () => {
     const save = jest.fn(async () => { throw new Error('offline'); });
     const tm = new TransactionManager('s1', { saveFunction: save, deleteFunction: jest.fn(), retryDelayMs: 0, pauseDelayMs: 60000 });
