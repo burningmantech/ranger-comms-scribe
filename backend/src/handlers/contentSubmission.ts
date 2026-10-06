@@ -202,6 +202,12 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     assignedCouncilManagers: submission.assignedCouncilManagers || [],
     requiredApprovers: submission.requiredApprovers || []
   };
+  // The content as submitted, kept unchanged for the Original view (accept / reject
+  // rewrite content and richTextContent). A copy of exactly what is stored above.
+  newSubmission.originalContent = newSubmission.content;
+  if (newSubmission.richTextContent !== undefined) {
+    newSubmission.originalRichTextContent = newSubmission.richTextContent;
+  }
 
   // Store in cache with appropriate key
   await putObject(`content_submissions/${newSubmission.id}`, newSubmission, env);
@@ -410,6 +416,11 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     ...updates,
     updatedAt: new Date().toISOString()
   };
+  // The content as submitted never changes (the frontend PUTs whole objects)
+  for (const key of ['originalContent', 'originalRichTextContent'] as const) {
+    if (submission[key] === undefined) delete updatedSubmission[key];
+    else updatedSubmission[key] = submission[key];
+  }
 
   // If proposedVersions are included, also save them to the tracked changes system
   if (updates.proposedVersions) {

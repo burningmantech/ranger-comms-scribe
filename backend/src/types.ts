@@ -146,6 +146,15 @@ export interface ContentSubmission {
   title: string;
   content: string;
   richTextContent?: string; // Stores the Lexical editor state as JSON
+  /**
+   * The content as submitted: copies of `content` and `richTextContent` taken when the
+   * submission is created and never changed afterwards (PUT keeps them). Accepting or
+   * rejecting tracked changes rewrites `content` / `richTextContent`, so the review tool's
+   * Original view and Compare baseline read these. Missing on submissions created before
+   * they existed.
+   */
+  originalContent?: string;
+  originalRichTextContent?: string;
   submittedBy: string;
   submittedAt: string;
   status: 'draft' | 'submitted' | 'in_review' | 'approved' | 'rejected' | 'sent';

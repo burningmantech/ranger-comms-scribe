@@ -36,6 +36,12 @@ export interface ContentSubmission {
   title: string;
   content: string;
   richTextContent?: string;
+  /**
+   * The content as submitted (set at creation, never changed; see originalDocument() in
+   * utils/originalContent.ts). content / richTextContent follow accepted and rejected changes.
+   */
+  originalContent?: string;
+  originalRichTextContent?: string;
   status: SubmissionStatus;
   submittedBy: string;
   submittedAt: Date;

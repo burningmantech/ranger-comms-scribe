@@ -21,6 +21,7 @@ import { locateChange } from './editor/collab/rejectRestore';
 import { collectTextNodes, detectInlineFormatChanges, describeChange, ChangeDescription } from '../utils/changeDescriptions';
 import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, pendingOnly } from '../utils/reviewItems';
 import { ApprovalGates } from '../types/content';
+import { originalDocument } from '../utils/originalContent';
 import type { CollabMode } from '../services/collabConfig';
 import type { CollabSession } from './editor/collab/YjsCollaboration';
 import type { LocalEditSession } from './editor/collab/localEditTracker';
@@ -1196,6 +1197,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         regionMap: c.regionMap,
       }));
   }, [trackedChanges]);
+
+  // The document as submitted, for the Original view and the Compare baseline. Not
+  // submission.richTextContent: the server rewrites that on every accept and reject.
+  const submittedDocument = useMemo(
+    () => originalDocument({
+      originalContent: submission.originalContent,
+      originalRichTextContent: submission.originalRichTextContent,
+      changes: submission.changes,
+      richTextContent: submission.richTextContent,
+      content: submission.content,
+    }),
+    [submission.originalContent, submission.originalRichTextContent, submission.changes, submission.richTextContent, submission.content],
+  );
 
   const originalTextForInlineChanges = useMemo(() => {
     const originalContent = submission.richTextContent || submission.content || '';
@@ -3808,8 +3822,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             {activeTab === 'comparison' && <div className="diff-section">
               <div className="diff-content">
                 {(() => {
-                  // Get the original and proposed content for comparison
-                  const originalContent = submission.richTextContent || submission.content || '';
+                  // Get the original (as submitted) and proposed content for comparison
+                  const originalContent = submittedDocument;
                   const proposedContent = editedProposedContent || submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
 
                   const originalText = getDisplayableText(originalContent);
@@ -4162,7 +4176,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 <div className="rich-text-display">
                   <LexicalEditorComponent
                     key="original-display-editor"
-                    initialContent={getRichTextContent(submission.richTextContent || submission.content || '')}
+                    initialContent={getRichTextContent(submittedDocument)}
                     readOnly={true}
                     showToolbar={false}
                     className="original-display-editor"
