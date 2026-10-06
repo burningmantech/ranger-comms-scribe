@@ -9,6 +9,7 @@ import { verifyTurnstileToken } from '../utils/turnstile';
 import { verifyGoogleIdToken } from '../utils/googleToken';
 import { getClientIp } from '../utils/clientIp';
 import { getDevUserForRequest } from '../utils/devUsers';
+import { withAdminCheck } from '../authWrappers';
 
 export const router = AutoRouter({ base : '/api/auth' });
 
@@ -602,7 +603,8 @@ router.post('/logout', async (request: Request, env) => {
 });
 
 // This route is now handled by the admin handler
-router.post('/approve', async (request: Request, env) => {
+// Admins only: approving a user grants them access to the app.
+router.post('/approve', withAdminCheck, async (request: Request, env) => {
   const body = await request.json() as { userId: string };
   const { userId } = body;
 
