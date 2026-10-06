@@ -103,9 +103,11 @@ describe('SaveStatus', () => {
 
   it("keeps Couldn't save after a later edit saves, until Retry saves the failed one", async () => {
     let fail = true;
+    let calls = 0;
     const save = jest.fn(async (sid: string, change: any) => {
+      calls++;
       if (fail) throw new Error('offline');
-      return { id: `r${save.mock.calls.length}`, submissionId: sid, field: change.field, oldValue: change.oldValue, newValue: change.newValue,
+      return { id: `r${calls}`, submissionId: sid, field: change.field, oldValue: change.oldValue, newValue: change.newValue,
         changedBy: 'u', changedByName: 'U', timestamp: '', status: 'pending' as const, comments: [] };
     });
     const tm = new TransactionManager('s1', { saveFunction: save, deleteFunction: jest.fn(), retryDelayMs: 0, pauseDelayMs: 60000 });
