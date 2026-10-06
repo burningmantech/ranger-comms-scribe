@@ -68,6 +68,16 @@ export async function planPeopleAccess(env: Env): Promise<MigrationPlan> {
     if (isActive(entry)) legacy.push(entry!);
   }
 
+  // Role groups (groups named Admin / CommsCadre / CouncilManager) gave the old /admin/user-roles
+  // their role; no permission check read them. Not migrated: reported below if they differ.
+  const roleGroups: Array<{ name: string; members: string[] }> = [];
+  for (const object of (await listObjects('group/', env)).objects || []) {
+    const group = await getObject<{ name?: string; members?: string[] }>(object.key, env);
+    if (group && ['Admin', 'CommsCadre', 'CouncilManager'].includes(group.name || '')) {
+      roleGroups.push({ name: group.name!, members: (group.members || []).map(String) });
+    }
+  }
+
   // Entries that name nobody we know
   const known = (e: ListEntry) => users.some((u) => matches(e, u));
   for (const e of cadre) if (!known(e)) anomalies.push(`Comms Cadre list names ${e.email || e.userId}, who has no account: ignored`);
@@ -116,6 +126,14 @@ export async function planPeopleAccess(env: Env): Promise<MigrationPlan> {
     }
     if (councilByType && councilRoles.size === 0) {
       anomalies.push(`${user.email}: a council manager by type or role, but no council role is recorded anywhere: not on Council now (give them a role on the People page)`);
+    }
+
+    for (const group of roleGroups) {
+      const member = group.members.some((m) => m === user.id || normalizeEmail(m) === normalizeEmail(user.email));
+      const holds = group.name === 'Admin' ? isAdmin : group.name === 'CommsCadre' ? commsCadre : councilRoles.size > 0;
+      if (member && !holds) {
+        anomalies.push(`${user.email}: in the "${group.name}" group (which only the old role list read), but not ${group.name} now: give them the role on the People page if they should have it`);
+      }
     }
 
     people.push({

@@ -102,4 +102,15 @@ describe('people access migration', () => {
     expect(await migratePeopleAccess(env)).toBeNull();
     expect(await after('b@x.org')).toMatchObject({ commsCadre: false });
   });
+
+  it('reports people whose only Admin / Comms Cadre came from a role group', async () => {
+    await put('user/grp@x.org', user('grp@x.org'));
+    await put('user/fine@x.org', user('fine@x.org', { userType: 'CommsCadre' }));
+    await put('group/g1', { id: 'g1', name: 'CommsCadre', members: ['id-grp', 'fine@x.org'] });
+    await put('group/g2', { id: 'g2', name: 'Hiking', members: ['id-grp'] });
+    const plan = await migratePeopleAccess(env);
+    expect(plan!.anomalies).toEqual([
+      'grp@x.org: in the "CommsCadre" group (which only the old role list read), but not CommsCadre now: give them the role on the People page if they should have it',
+    ]);
+  });
 });
