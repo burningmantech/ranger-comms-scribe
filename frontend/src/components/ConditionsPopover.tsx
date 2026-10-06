@@ -21,11 +21,17 @@ export interface GateRow {
 
 const personName = (p: { name?: string; email: string }) => p.name || p.email;
 
-export function buildGateRows(gates: ApprovalGates): GateRow[] {
+/**
+ * `pendingEdits`: the edits still to accept or reject as the review sidebar counts them
+ * (one per card: a move is one edit). The server's gate counts change records, so a move
+ * would count twice; without it, the gate's count is shown.
+ */
+export function buildGateRows(gates: ApprovalGates, pendingEdits?: number): GateRow[] {
   const cm = gates.councilManager;
   const cc = gates.commsCadre;
   const ra = gates.requiredApprovers;
   const tc = gates.trackedChanges;
+  const pending = tc.met ? 0 : (pendingEdits ?? tc.pending);
 
   const waitingFor = ra.details.filter((d) => d.status !== 'approved');
   const declined = ra.details.filter((d) => d.status === 'rejected');
@@ -69,11 +75,11 @@ export function buildGateRows(gates: ApprovalGates): GateRow[] {
       key: 'trackedChanges',
       label: 'Edits resolved',
       met: tc.met,
-      status: tc.met ? 'met' : tc.pending > 0 ? 'partial' : 'pending',
+      status: tc.met ? 'met' : pending > 0 ? 'partial' : 'pending',
       detail: tc.met
         ? 'All edits accepted or rejected'
-        : tc.pending > 0
-          ? `${tc.pending} edit${tc.pending === 1 ? '' : 's'} still to accept or reject`
+        : pending > 0
+          ? `${pending} edit${pending === 1 ? '' : 's'} still to accept or reject`
           : 'No edits yet',
     },
   ];
@@ -88,14 +94,16 @@ const STATUS_ICON: Record<GateRowStatus, string> = {
 
 interface ConditionsPopoverProps {
   gates: ApprovalGates;
+  /** Edits still to accept or reject, counted like the review sidebar (see buildGateRows). */
+  pendingEdits?: number;
 }
 
-const ConditionsPopover: React.FC<ConditionsPopoverProps> = ({ gates }) => {
+const ConditionsPopover: React.FC<ConditionsPopoverProps> = ({ gates, pendingEdits }) => {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const popoverId = useId();
-  const rows = buildGateRows(gates);
+  const rows = buildGateRows(gates, pendingEdits);
   const metCount = rows.filter((r) => r.met).length;
 
   const close = useCallback((returnFocus: boolean) => {

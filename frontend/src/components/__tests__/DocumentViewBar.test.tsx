@@ -55,3 +55,18 @@ describe('buildGateRows', () => {
     expect(rows[3].detail).toBe('No edits yet');
   });
 });
+
+describe('buildGateRows: pending edits counted like the review sidebar', () => {
+  const gates = {
+    councilManager: { met: false },
+    commsCadre: { met: false },
+    requiredApprovers: { met: false, approved: 0, total: 0, details: [] },
+    trackedChanges: { met: false, pending: 2, total: 2 },
+  };
+  it("uses the sidebar's count (a move is one edit) when given", () => {
+    expect(buildGateRows(gates, 1)[3].detail).toBe('1 edit still to accept or reject');
+  });
+  it("falls back to the gate's count", () => {
+    expect(buildGateRows(gates)[3].detail).toBe('2 edits still to accept or reject');
+  });
+});

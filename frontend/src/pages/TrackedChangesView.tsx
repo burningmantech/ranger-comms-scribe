@@ -9,6 +9,7 @@ import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import { useCollabMode } from '../services/collabConfig';
 import { useUserDirectory } from '../services/userDirectory';
 import { applyChangeStatus, ChangeResolver, ResolvedStatus } from '../utils/changeStatus';
+import { countOpenEdits } from '../utils/reviewItems';
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -735,6 +736,8 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   children,
 }) => {
   const userName = useUserDirectory();
+  // Counted like the review sidebar's Open tab: one per card (a move is one edit).
+  const pendingEdits = useMemo(() => countOpenEdits(submission.changes || []), [submission.changes]);
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
   const requestChangesInputRef = useRef<HTMLTextAreaElement>(null);
@@ -762,6 +765,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
         submittedAt={submission.submittedAt instanceof Date ? submission.submittedAt : new Date(submission.submittedAt)}
         isUrgent={isUrgent}
         approvalGates={(submission as any).approvalGates}
+        pendingEdits={pendingEdits}
         canApprove={canApprove}
         isReviewer={isReviewer}
         onBack={onBack}

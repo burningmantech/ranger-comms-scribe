@@ -203,6 +203,20 @@ export function orderByPosition<I>(items: I[], positionOf: (item: I) => number |
  * to document positions (the reject locator's unit index); a card's position is its
  * earliest change, a thread's the change it is on. Items without a position go last.
  */
+/**
+ * The number of edits still to accept or reject, as the review sidebar shows them: one per
+ * card (a move's deletion and insertion are one), comments not counted. Takes Open items,
+ * or change records (only the pending ones count).
+ */
+export function countOpenEdits<T extends ReviewChangeLike>(itemsOrChanges: Array<OpenItem<T>> | T[]): number {
+  if (itemsOrChanges.length === 0) return 0;
+  const first = itemsOrChanges[0] as any;
+  if (first && typeof first.type === 'string' && Array.isArray(first.ids)) {
+    return (itemsOrChanges as Array<OpenItem<T>>).filter((i) => i.type !== 'comment').length;
+  }
+  return pairMoves(pendingOnly(itemsOrChanges as T[])).length;
+}
+
 export function buildOpenItems<T extends ReviewChangeLike>(
   pendingChanges: T[],
   comments: Comment[],

@@ -19,7 +19,7 @@ import { UndoToast } from './review/UndoToast';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
 import { locateChange } from './editor/collab/rejectRestore';
 import { describeChange, ChangeDescription } from '../utils/changeDescriptions';
-import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, pendingOnly } from '../utils/reviewItems';
+import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, countOpenEdits, pendingOnly } from '../utils/reviewItems';
 import { ApprovalGates } from '../types/content';
 import { originalDocument } from '../utils/originalContent';
 import { buildResolveHints } from '../utils/resolveHints';
@@ -1877,6 +1877,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   );
   const openItemsRef = useRef(openItems);
   openItemsRef.current = openItems;
+  // Pending edits as the reviewer sees them: one per card (a move is one), comments excluded.
+  const openEditCount = useMemo(() => countOpenEdits(openItems), [openItems]);
 
   const decidedAt = useMemo(() => {
     const map = new Map<string, number>();
@@ -2236,7 +2238,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onTabChange: setSidebarTab,
     openItems,
     history,
-    pendingCount: trackedChanges.length,
+    pendingCount: openEditCount,
     canReview: canMakeEditorialDecisions(),
     currentUserId: currentUser.email || currentUser.id,
     selectedKey,
@@ -4116,19 +4118,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 </button>
               </div>
             )}
-            {sidebarCollapsed && !isSmallScreen && (
+            {/* The collapsed sidebar's count. Never in review mode: the review panel is
+                always open there and counts its items itself. */}
+            {sidebarCollapsed && !isSmallScreen && !reviewMode && (
               <div className="collapsed-sidebar-indicator">
                 <div
-                  className={`change-count-badge ${trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'has-pending' : ''}`}
-                  title={`${trackedChanges.filter(c => c.status === 'pending').length > 0 ? trackedChanges.filter(c => c.status === 'pending').length + ' pending' : trackedChanges.length + ' changes'}`}
+                  className={`change-count-badge ${openEditCount > 0 ? 'has-pending' : ''}`}
+                  title={`${openEditCount} pending`}
                 >
-                  {trackedChanges.filter(c => c.status === 'pending').length || trackedChanges.length}
+                  {openEditCount}
                 </div>
               </div>
             )}
             {sidebarCollapsed && isSmallScreen && sidebarAutoCollapsed && (
               <div className="mobile-auto-collapsed-indicator">
-                <span>💬 {trackedChanges.length} changes</span>
+                <span>💬 {openEditCount} changes</span>
               </div>
             )}
             {(!sidebarCollapsed || reviewMode) && (
