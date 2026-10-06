@@ -9,12 +9,15 @@ import { uploadMedia, absolutizeMediaUrls } from '../services/mediaService';
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
-import { getTrackedChanges } from '../services/trackedChangesService';
+import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
 
 export const router = AutoRouter({ base: '/api/content' });
 
-// Helper: recompute approval status using unique latest decisions and membership lists
+// Helper: recompute approval status using unique latest decisions and membership lists.
+// Promotes to 'approved' only; never demotes (syncSubmissionStatus does that) and never
+// touches a 'sent' submission.
 export async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
+  if (submission.status === 'sent') return submission;
   // Deduplicate by latest decision per approver
   const approvalsByApprover = new Map<string, ContentApproval>();
   for (const a of submission.approvals || []) {
@@ -79,6 +82,81 @@ export async function recomputeApprovalStatus(submission: ContentSubmission, env
   }
 
   return submission;
+}
+
+/**
+ * Keep a submission's status in step with its tracked changes. Called last by every
+ * handler that creates, resolves, undoes or deletes tracked changes (handlers/trackedChanges.ts).
+ *
+ * The rule:
+ *  - `sent` never changes: the announcement has gone out.
+ *  - `approved` with a pending tracked change drops back to `in_review`: the approved
+ *    content has changed (a new edit, or an undo that made a change pending again).
+ *    `finalApprovalDate` is cleared and an override approval (`approvalOverride`) no longer
+ *    holds; its audit fields (`approvalOverrideBy/Reason/At`) stay. It becomes `approved`
+ *    again only when the approval gates are met (recomputeApprovalStatus) or after a new
+ *    override.
+ *  - Anything else becomes `approved` when recomputeApprovalStatus says so: every required
+ *    approver, a council manager and a Comms Cadre member approved, and no tracked change
+ *    is pending (e.g. the last change was resolved after the approvals).
+ *  - Only pending changes demote. An approver changing their vote does not (as before), so
+ *    an override approval survives accepting or rejecting changes.
+ *
+ * Re-reads the submission (the caller may just have written it). Writes and broadcasts
+ * `status_changed` only when the status changes. `onlyDemote` skips the promotion check
+ * (a newly created change can only make a change pending).
+ */
+export async function syncSubmissionStatus(
+  submissionId: string,
+  env: any,
+  actor?: { id?: string; email?: string; name?: string },
+  options: { onlyDemote?: boolean } = {}
+): Promise<ContentSubmission | null> {
+  try {
+    const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
+    if (!submission || submission.status === 'sent') return submission;
+    const before = submission.status;
+    if (before === 'approved') {
+      const changes = await getTrackedChanges(submissionId, env);
+      if (!changes.some(c => c.status === 'pending')) return submission;
+      submission.status = 'in_review';
+      delete submission.finalApprovalDate;
+      if (submission.approvalOverride) submission.approvalOverride = false;
+    } else if (!options.onlyDemote) {
+      await recomputeApprovalStatus(submission, env);
+    }
+    if (submission.status === before) return submission;
+
+    await putObject(`content_submissions/${submissionId}`, submission, env);
+    await deleteObject('content_submissions/list', env);
+    await broadcastToSubmissionRoom(submissionId, {
+      type: 'status_changed',
+      userId: actor?.id || actor?.email || 'system',
+      userName: actor?.name || '',
+      userEmail: actor?.email || '',
+      data: {
+        status: submission.status,
+        previousStatus: before,
+        title: submission.title,
+        reason: 'tracked_changes',
+        approvalGates: await computeApprovalGates(submission, env),
+      },
+    }, env);
+    return submission;
+  } catch (err) {
+    console.error(`Failed to sync the status of submission ${submissionId}:`, err);
+    return null;
+  }
+}
+
+/** Who may see a submission (GET /submissions/:id); also who may resolve its comments. */
+export function canViewSubmission(user: User, submission: ContentSubmission): boolean {
+  return user.userType === UserType.Admin ||
+    submission.submittedBy === user.id ||
+    user.userType === UserType.CouncilManager ||
+    user.userType === UserType.CommsCadre ||
+    !!(submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
+    !!(submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 }
 
 // Compute structured approval gate data for the frontend approval tracker
@@ -353,14 +431,7 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   }
 
   // Check if user has access to this submission
-  const hasAccess = user.userType === UserType.Admin ||
-                   submission.submittedBy === user.id ||
-                   user.userType === UserType.CouncilManager ||
-                   user.userType === UserType.CommsCadre ||
-                   (submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
-                   (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
-
-  if (!hasAccess) {
+  if (!canViewSubmission(user, submission)) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
@@ -414,7 +485,14 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
   // to proposed_versions/<id> here: it lives only in that object, whose one writer from a
   // client is PUT /tracked-changes/submission/:id. Bodies here often carry a copy loaded
   // earlier (the submission list, a stale record), which would hide every edit since.
-  const { proposedVersions: _ignoredProposedVersions, ...fieldUpdates } = updates;
+  // Comments and approvals are likewise left out: they change only through their own
+  // endpoints (comments, resolve, approve), and a loaded copy would undo those.
+  const {
+    proposedVersions: _ignoredProposedVersions,
+    comments: _ignoredComments,
+    approvals: _ignoredApprovals,
+    ...fieldUpdates
+  } = updates;
   const updatedSubmission = {
     ...submission,
     ...fieldUpdates,
@@ -497,6 +575,98 @@ router.post('/submissions/:id/comments', withAuth, async (request: Request, env:
   }, env);
 
   return json(newComment);
+});
+
+/**
+ * Resolve or reopen a comment thread (Google Docs style): body `{ resolved: boolean }`.
+ * The thread is its root comment; replies (`@reply:<id>` in their content) follow it in the
+ * UI. Any user who can view the submission may resolve or reopen (posting a comment has no
+ * stricter rule). Looks in the submission's comments first, then in the change comments
+ * (POST /tracked-changes/change/:id/comment) of this submission; `changeId` in the body
+ * finds those directly. Broadcasts `comment_resolved` to the submission room.
+ */
+router.post('/submissions/:id/comments/:commentId/resolve', withAuth, async (request: Request, env: any) => {
+  const { id, commentId } = (request as any).params;
+  const user = (request as any).user as User;
+  let body: any = {};
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  if (typeof body?.resolved !== 'boolean') {
+    return json({ error: 'resolved (boolean) is required' }, { status: 400 });
+  }
+  const resolved: boolean = body.resolved;
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canViewSubmission(user, submission)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  const now = new Date().toISOString();
+  const apply = <C extends object>(comment: C): C => {
+    const next: any = { ...comment, resolved, updatedAt: now };
+    if (resolved) {
+      next.resolvedBy = user.email || user.id;
+      next.resolvedByName = user.name;
+      next.resolvedAt = now;
+    } else {
+      delete next.resolvedBy;
+      delete next.resolvedByName;
+      delete next.resolvedAt;
+    }
+    return next;
+  };
+
+  let updated: any;
+  let changeId: string | undefined;
+  const index = (submission.comments || []).findIndex(c => c.id === commentId);
+  if (index !== -1) {
+    updated = apply(submission.comments[index]);
+    submission.comments[index] = updated;
+    await putObject(`content_submissions/${id}`, submission, env);
+    await deleteObject('content_submissions/list', env);
+  } else {
+    // A change comment: stored per change under change-comments/change/<changeId>/<id>
+    const candidates: string[] = typeof body.changeId === 'string' && body.changeId
+      ? [body.changeId]
+      : (await getTrackedChanges(id, env)).map(c => c.id);
+    for (const candidate of candidates) {
+      const key = `change-comments/change/${candidate}/${commentId}`;
+      const stored = await getObject<ChangeComment>(key, env);
+      if (!stored || stored.submissionId !== id) continue;
+      updated = apply(stored);
+      changeId = candidate;
+      await putObject(key, updated, env);
+      await putObject(`comment:${key}`, updated, env, undefined, 3600);
+      await deleteObject(`change_comments:change:${candidate}`, env);
+      break;
+    }
+  }
+  if (!updated) {
+    return json({ error: 'Comment not found' }, { status: 404 });
+  }
+
+  await broadcastToSubmissionRoom(id, {
+    type: 'comment_resolved',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: {
+      commentId,
+      ...(changeId ? { changeId } : {}),
+      resolved,
+      resolvedBy: updated.resolvedBy,
+      resolvedByName: updated.resolvedByName,
+      resolvedAt: updated.resolvedAt,
+    },
+  }, env);
+
+  return json(updated);
 });
 
 // Approve or reject a submission

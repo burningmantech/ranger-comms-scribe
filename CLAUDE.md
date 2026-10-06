@@ -120,13 +120,22 @@ Content submissions go through a multi-stage approval process:
    - User creates submission with title, content, media
    - Submission gets assigned required approvers
    - Status starts as `pending`
+   - Comment threads can be resolved and reopened (`POST /content/submissions/:id/comments/:commentId/resolve`
+     with `{resolved}`; any user who can view the submission; stores `resolvedBy`/`resolvedAt`, broadcasts
+     `comment_resolved`). The review sidebar moves resolved threads to History
 
 2. **Approval Process**:
    - Council Manager approval required
    - Comms Cadre approval required
    - All required approvers must approve
-   - Status transitions: `pending` → `approved` → `published`
+   - Status transitions: `submitted`/`in_review` → `approved` → `sent`
    - Approval logic in `recomputeApprovalStatus()` function
+   - **Status follows the tracked changes** (`syncSubmissionStatus()` in `contentSubmission.ts`, called last
+     by every tracked-change handler: create, batch create, accept/reject incl. cascade, batch status, undo,
+     delete). The submission becomes `approved` once all gates are met, including when the last pending change
+     is resolved after the approvals. An `approved` submission with a pending change (a new edit, or an undo)
+     drops back to `in_review` (approved content changed; `finalApprovalDate` and an override approval are
+     cleared). `sent` never changes. A status change is broadcast as `status_changed` (with `approvalGates`)
 
 3. **Change Tracking** (`backend/src/handlers/trackedChanges.ts`):
    - All content changes are tracked as revisions
@@ -169,7 +178,7 @@ WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST AP
    - `connected`, `room_state`, `user_joined`, `user_left`: User presence
    - `cursor_position`: Real-time cursor tracking
    - `realtime_content_update`: full Lexical state while typing (last write wins)
-   - `content_updated`, `comment_added`, `approval_added`, `status_changed`: Workflow updates
+   - `content_updated`, `comment_added`, `comment_resolved`, `approval_added`, `status_changed`: Workflow updates
    - `ping`/`pong`, `heartbeat`/`heartbeat_response`: Connection health
 
 ### Data Caching
