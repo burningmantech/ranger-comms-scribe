@@ -1,5 +1,6 @@
 import { json } from 'itty-router-extras';
 import { router as authRouter } from './handlers/auth';
+import { getDevUserForRequest } from './utils/devUsers';
 import { router as blogRouter } from './handlers/blog';
 import { router as galleryRouter } from './handlers/gallery';
 import { router as adminRouter } from './handlers/admin';
@@ -67,16 +68,6 @@ export const router = AutoRouter({
     finally: [corsify]
 });
 
-// Dev bypass: detect user2 from X-Dev-User header or session token containing "user2"
-function getDevUser(request: Request) {
-    const devUser = request.headers.get('X-Dev-User');
-    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
-    if (devUser === 'user2' || sessionId.includes('user2')) {
-        return { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre' as const, isAdmin: false, roles: ['CommsCadre'], groups: [] };
-    }
-    return { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin' as const, isAdmin: true, roles: ['Admin'], groups: [] };
-}
-
 /** Body of GET /api/config. Anything but an explicit 'yjs' is the legacy mode. */
 export function clientConfig(env: Env): { collabMode: 'yjs' | 'legacy' } {
     return { collabMode: env.COLLAB_MODE === 'yjs' ? 'yjs' : 'legacy' };
@@ -100,7 +91,7 @@ const withValidSession = async (request: Request, env: Env) => {
 
     // Fall back to dev bypass if no real session/user
     if (env.DEV_BYPASS_AUTH === 'true') {
-        (request as any).user = getDevUser(request);
+        (request as any).user = getDevUserForRequest(request); // utils/devUsers.ts
         return undefined;
     }
 

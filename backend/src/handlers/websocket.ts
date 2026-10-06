@@ -3,6 +3,7 @@ import { UserType } from '../types';
 import { Env, GetSession } from '../utils/sessionManager';
 import { getUser } from '../services/userService';
 import { getObject } from '../services/cacheService';
+import { getDevUser } from '../utils/devUsers';
 import { canViewDocument, getDocument } from '../services/documentService';
 import {
   RoomIdentity,
@@ -29,8 +30,9 @@ export type RoomAuthResult =
  * Session and access checks for joining a room. Same semantics as the old Worker
  * handler:
  *   - 400 when `sessionId` is missing (even with DEV_BYPASS_AUTH);
- *   - with DEV_BYPASS_AUTH=true, no further checks (dev user, or user2 when
- *     `testUser=user2` or the session ID contains "user2");
+ *   - with DEV_BYPASS_AUTH=true, no further checks: a fake user from utils/devUsers.ts
+ *     (dev-admin, or dev-user2 / dev-member when `testUser=user2|member` or the session
+ *     ID contains "user2" / "member");
  *   - 403 for an unknown/expired session or a user that no longer exists;
  *   - 404 when the submission/document is missing, 403 without access. (The old
  *     handler skipped this for documents; harmless then because document broadcasts
@@ -52,12 +54,9 @@ export async function authorizeRoomConnection(
   }
 
   if (env.DEV_BYPASS_AUTH === 'true') {
-    const isUser2 = testUser === 'user2' || sessionId.includes('user2');
-    const email = isUser2 ? 'user2@localhost' : 'dev@localhost';
-    const name = isUser2 ? 'Test Reviewer' : 'Dev Admin';
-    // Same ids as the fake REST users in index.ts / authWrappers.ts
-    const userId = isUser2 ? 'dev-user2' : 'dev-admin';
-    return { ok: true, identity: { userId, userName: name, userEmail: email } };
+    // The same fake users as REST (utils/devUsers.ts)
+    const devUser = getDevUser(sessionId, testUser);
+    return { ok: true, identity: { userId: devUser.id, userName: devUser.name, userEmail: devUser.email } };
   }
 
   const session = await GetSession(sessionId, env);

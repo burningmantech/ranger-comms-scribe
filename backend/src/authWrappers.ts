@@ -2,6 +2,7 @@ import { GetSession, Env } from './utils/sessionManager';
 import { isAdmin, getUser, canAccessGroup } from './services/userService';
 import { json } from 'itty-router-extras';
 import { UserType, User } from './types';
+import { getDevUserForRequest } from './utils/devUsers';
 
 // Middleware to check if the user is an admin
 export const withAdminCheck = async (request: Request, env: Env) => {
@@ -72,12 +73,7 @@ export const withAuth = async (request: Request, env: Env) => {
 
   // Fall back to dev bypass if no real session/user
   if (env.DEV_BYPASS_AUTH === 'true') {
-    const devUser = request.headers.get('X-Dev-User');
-    if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
-      (request as any).user = { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: UserType.CommsCadre, isAdmin: false, roles: ['CommsCadre'], groups: [] };
-    } else {
-      (request as any).user = { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: UserType.Admin, isAdmin: true, roles: ['Admin'], groups: [] };
-    }
+    (request as any).user = getDevUserForRequest(request);
     return undefined;
   }
 

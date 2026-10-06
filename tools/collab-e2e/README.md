@@ -35,7 +35,32 @@ node stray-marker.js      # the dev-site Moved card: deletion markers stamped on
                           # transaction, a paragraph + list moved over an empty paragraph rejects
                           # exactly; a move whose paste was rewritten is rejected all or nothing and
                           # a failed reject never carries over to another card
+node member.js            # a Member (dev-member): /requests loads with no redirect loop, New Request form
+                          # (no early step errors, approver picked from the suggestions, no /api/admin/
+                          # calls), types on its request and it saves, no Finish review menu; dev-user2
+                          # rejects the edit and the member's card goes live. Fails on any console error.
+                          # Needs the backend started as below (it seeds an approver as a bootstrap admin)
 ```
+
+`member.js` stores an approved approver through the admin API, which needs a real admin session, so it
+registers and verifies a bootstrap admin first. Start the backend for it with Cloudflare's always-pass
+Turnstile test secret, the bootstrap address, and AWS keys that can't send email (the backend then
+returns the verification and reset tokens instead of mailing them); it needs network access to
+challenges.cloudflare.com:
+
+```bash
+cd backend && env -u AWS_PROFILE PORT=8080 STORE_DRIVER=memory DEV_BYPASS_AUTH=true COLLAB_MODE=yjs \
+  GOOGLE_CLIENT_ID=x TURNSTILESECRET=1x0000000000000000000000000000000AA \
+  BOOTSTRAP_ADMIN_EMAILS=e2e-admin@example.com AWS_ACCESS_KEY_ID=AKIAINVALIDLOCALE2E \
+  AWS_SECRET_ACCESS_KEY=invalid AWS_EC2_METADATA_DISABLED=true PUBLIC_URL=http://localhost:8080/api \
+  FRONTEND_URL=http://localhost:3000 npm run dev
+```
+
+The dev-bypass users (`backend/src/utils/devUsers.ts`) are picked by the session ID: `dev-admin-session`
+(or any other) is `dev-admin` (Admin), `dev-user2-session` is `dev-user2` (CommsCadre) and
+`dev-member-session` is `dev-member` (`member@localhost`, Member). `X-Dev-User: user2|member` (REST) and
+`testUser=user2|member` (WebSocket) do the same. Names on review cards come from `/user/directory`, which
+only lists stored users, so the dev users show as their ids.
 
 To run against a second stack on other ports (e.g. a second checkout running in parallel), set
 `E2E_APP_URL` and `E2E_API_URL` (defaults `http://localhost:3000` and `http://localhost:8080/api`);

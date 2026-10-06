@@ -8,6 +8,8 @@ import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
 import { verifyGoogleIdToken } from '../utils/googleToken';
 import { getClientIp } from '../utils/clientIp';
+import { getDevUserForRequest } from '../utils/devUsers';
+import { withAdminCheck } from '../authWrappers';
 
 export const router = AutoRouter({ base : '/api/auth' });
 
@@ -554,11 +556,8 @@ router.get('/session', async (request: Request, env) => {
 
     // Fall back to dev bypass if no real session
     if (env.DEV_BYPASS_AUTH === 'true') {
-        const devUser = request.headers.get('X-Dev-User');
-        if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
-            return json({ message: 'Session retrieved', session: { userId: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer' } });
-        }
-        return json({ message: 'Session retrieved', session: { userId: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin' } });
+        const devUser = getDevUserForRequest(request);
+        return json({ message: 'Session retrieved', session: { userId: devUser.id, email: devUser.email, name: devUser.name } });
     }
 
     if (!sessionId) {
@@ -584,11 +583,7 @@ router.get('/me', async (request: Request, env) => {
 
     // Fall back to dev bypass if no real session/user
     if (env.DEV_BYPASS_AUTH === 'true') {
-        const devUser = request.headers.get('X-Dev-User');
-        if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
-            return json({ user: { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre', isAdmin: false, roles: ['CommsCadre'], groups: [] } });
-        }
-        return json({ user: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin', isAdmin: true, roles: ['Admin'], groups: [] } });
+        return json({ user: getDevUserForRequest(request) });
     }
 
     if (!sessionId) {
@@ -608,7 +603,8 @@ router.post('/logout', async (request: Request, env) => {
 });
 
 // This route is now handled by the admin handler
-router.post('/approve', async (request: Request, env) => {
+// Admins only: approving a user grants them access to the app.
+router.post('/approve', withAdminCheck, async (request: Request, env) => {
   const body = await request.json() as { userId: string };
   const { userId } = body;
 
