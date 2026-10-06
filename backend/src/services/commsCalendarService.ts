@@ -120,7 +120,12 @@ export function formatLongDate(ymd: string): string {
 
 export interface UpcomingItem {
   entry: CommsCalendarEntry;
-  /** YYYY-MM-DD */
+  /**
+   * 'planned': an entry of its own cycle due soon and not sent yet. 'anniversary': a past entry due
+   * again that nothing continues yet.
+   */
+  kind: 'planned' | 'anniversary';
+  /** YYYY-MM-DD: the planned target date, or the anniversary */
   anniversary: string;
   /** Negative when the anniversary has passed (within the lookback). */
   daysUntil: number;
@@ -158,13 +163,20 @@ export function computeUpcoming(
 ): UpcomingItem[] {
   const continued = new Set(entries.map((e) => e.carriedFromId).filter(Boolean));
   const until = addDays(today, days);
+  const from = addDays(today, -lookback);
   const items: UpcomingItem[] = [];
   for (const entry of entries) {
+    // Planned for its own date and not sent yet
+    if (entry.targetDate && !entry.dateSent && entry.targetDate >= from && entry.targetDate <= until) {
+      const daysUntil = daysBetween(today, entry.targetDate);
+      items.push({ entry, kind: 'planned', anniversary: entry.targetDate, daysUntil, overdue: daysUntil < 0 });
+      continue;
+    }
     if (entry.notRepeating || continued.has(entry.id)) continue;
     const anniversary = nextAnniversary(entry, today, lookback);
     if (!anniversary || anniversary > until) continue;
     const daysUntil = daysBetween(today, anniversary);
-    items.push({ entry, anniversary, daysUntil, overdue: daysUntil < 0 });
+    items.push({ entry, kind: 'anniversary', anniversary, daysUntil, overdue: daysUntil < 0 });
   }
   return items.sort((a, b) => a.anniversary.localeCompare(b.anniversary) || a.entry.subject.localeCompare(b.entry.subject));
 }
@@ -520,4 +532,103 @@ export function buildNudgeEmail(
     text: paragraphs.map(([text]) => text).join('\n\n'),
     html: renderEmailHtml(paragraphs.map(([, html]) => html).join('\n\n')),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Past messages brought in from their documents
+// ---------------------------------------------------------------------------
+
+export interface MessageInput {
+  title: string;
+  /** Plain text */
+  content: string;
+  /** Lexical JSON */
+  richTextContent: string;
+  /** The document it came from */
+  link: string;
+  /** When it went out (YYYY-MM-DD), from the document; else a year before the entry's target. */
+  publishedOn?: string;
+}
+
+/**
+ * Bring in a past message (from its Google Doc) as a sent Scribe request. It belongs to the entry
+ * for the cycle it went out in: this entry when it went out in this entry's cycle, else last
+ * year's entry, which this one continues (made when there's none). Importing the same document
+ * again replaces the request's content. Sends nothing.
+ */
+export async function attachMessage(
+  entryId: string,
+  input: MessageInput,
+  user: User,
+  env: Env,
+): Promise<{ entry: CommsCalendarEntry; holder: CommsCalendarEntry; submission: ContentSubmission } | null> {
+  const entry = await getEntry(entryId, env);
+  if (!entry) return null;
+  const now = new Date().toISOString();
+  const publishedOn = input.publishedOn && isValidYmd(input.publishedOn) ? input.publishedOn : undefined;
+
+  // Which entry the message belongs to
+  let holder = entry;
+  if (!publishedOn || cycleStartYear(publishedOn) !== entryCycle(entry)) {
+    const previous = entry.carriedFromId ? await getEntry(entry.carriedFromId, env) : null;
+    if (previous) {
+      holder = previous;
+    } else {
+      const lastYear = publishedOn || (entry.targetDate ? addYearsClamped(entry.targetDate, -1) : undefined);
+      holder = newEntry({
+        subject: entry.subject,
+        ...(lastYear ? { targetDate: lastYear } : { cycleYear: entryCycle(entry) - 1 }),
+        ...(publishedOn ? { dateSent: publishedOn } : {}),
+        method: entry.method,
+        team: entry.team,
+        contactEmails: entry.contactEmails,
+        comments: '',
+      }, user.email, 'import');
+      entry.carriedFromId = holder.id;
+    }
+  }
+
+  // The request: the one already made from this document, else a new sent one
+  const existing = holder.submissionId
+    ? await getObject<ContentSubmission>(`content_submissions/${holder.submissionId}`, env)
+    : null;
+  const sentAt = publishedOn ? `${publishedOn}T12:00:00.000Z` : undefined;
+  const submission: ContentSubmission = existing && existing.importedFrom === input.link
+    ? { ...existing, title: input.title, content: input.content, richTextContent: input.richTextContent, updatedAt: now }
+    : {
+      id: crypto.randomUUID(),
+      title: input.title,
+      content: input.content,
+      richTextContent: input.richTextContent,
+      originalContent: input.content,
+      originalRichTextContent: input.richTextContent,
+      submittedBy: user.id,
+      submittedAt: sentAt || now,
+      status: 'sent',
+      formFields: publishedOn ? [{ id: 'publishBy', name: 'publishBy', label: 'Publish By', value: publishedOn, type: 'date', required: true }] : [],
+      comments: [],
+      approvals: [],
+      changes: [],
+      commsCadreApprovals: 0,
+      councilManagerApprovals: [],
+      announcementSent: true,
+      assignedCouncilManagers: [],
+      requiredApprovers: [],
+      ...(sentAt ? { sentAt } : {}),
+      importedFrom: input.link,
+    } as ContentSubmission;
+  await putObject(`content_submissions/${submission.id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  // The text now lives in the request
+  holder.submissionId = submission.id;
+  holder.link = input.link;
+  for (const e of new Set([holder, entry])) {
+    delete e.documentText;
+    delete e.dateLinks;
+    e.updatedAt = now;
+    e.updatedBy = user.email;
+    await saveEntry(e, env);
+  }
+  return { entry, holder, submission };
 }

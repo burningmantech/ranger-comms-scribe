@@ -88,7 +88,8 @@ describe('computeUpcoming', () => {
       entry({ id: 'nudged', targetDate: '2025-09-20', nudges: [{ at: '2026-09-01T00:00:00Z', by: 'a@b.org', byName: 'A', to: ['x@y.org'] }] }),
       entry({ id: 'undated' }),
     ], today, 42, 14);
-    expect(items.map((i) => i.entry.id)).toEqual(['nudged']);
+    // This year's entry is due and not sent yet: it shows as planned (last year's, which it continues, doesn't)
+    expect(items.map((i) => [i.entry.id, i.kind])).toEqual([['this-year', 'planned'], ['nudged', 'anniversary']]);
   });
 });
 

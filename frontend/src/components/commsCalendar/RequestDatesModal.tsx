@@ -11,6 +11,10 @@ import { blockTextFromLexical, isLexicalJson } from '../../utils/lexicalUtils';
 
 interface RequestDatesModalProps {
   entry: CommsCalendarEntry;
+  /** The Scribe request with its message (its own, or last year's for an entry that continues one). */
+  submissionId?: string;
+  /** The request is last year's message: its dates are compared, the text is changed on its review page. */
+  lastYear?: boolean;
   /** The next occurrence on or after this is what the text should show (Coming up: the date it's due again). */
   referenceYmd: string;
   canEdit: boolean;
@@ -25,9 +29,11 @@ interface RequestDatesModalProps {
  * Calendar. Rewriting a request's text happens on its review page (a tracked change); a document is
  * last year's message, so its dates are only compared, never rewritten.
  */
-export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ entry, referenceYmd, canEdit, onClose, onEntryChange }) => {
-  const fromDocument = !!entry.documentText;
-  const submissionId = fromDocument ? undefined : entry.submissionId;
+export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({
+  entry, submissionId: messageSubmissionId, lastYear, referenceYmd, canEdit, onClose, onEntryChange,
+}) => {
+  const fromDocument = !messageSubmissionId && !!entry.documentText;
+  const submissionId = fromDocument ? undefined : messageSubmissionId || entry.submissionId;
   const [sources, setSources] = useState<DateSource[] | null>(
     fromDocument ? [{ field: 'body', label: 'the message', text: entry.documentText! }] : null,
   );
@@ -78,7 +84,7 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ entry, ref
 
   return (
     <Modal
-      title={`Dates in “${entry.subject}”`}
+      title={`Dates in “${entry.subject}”${lastYear ? " (last year's message)" : ''}`}
       onClose={onClose}
       wide
       footer={(

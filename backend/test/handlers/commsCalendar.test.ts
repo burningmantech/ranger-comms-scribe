@@ -139,7 +139,8 @@ describe('Comms Calendar API', () => {
 
     await call(env, 'POST', '/', { body: { ...sample, targetDate: '2026-09-15', dateSent: null, carriedFromId: last.id } });
     upcoming = await (await call(env, 'GET', '/upcoming?today=2026-09-01&days=42')).json();
-    expect(upcoming.items).toHaveLength(0);
+    // Last year's is continued; this year's shows as planned until it's sent
+    expect(upcoming.items.map((i: any) => [i.entry.carriedFromId === last.id, i.kind])).toEqual([[true, 'planned']]);
   });
 
   describe('import', () => {

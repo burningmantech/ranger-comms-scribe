@@ -60,6 +60,14 @@ class CommsCalendarService {
   fromSubmission(submissionId: string): Promise<CommsCalendarEntry> {
     return this.request(`/from-submission/${encodeURIComponent(submissionId)}`, { method: 'POST' });
   }
+
+  /** A past message (from its document) as a sent Scribe request on the entry for the cycle it went out in. */
+  attachMessage(
+    entryId: string,
+    message: { title: string; content: string; richTextContent: string; link: string; publishedOn?: string },
+  ): Promise<{ entry: CommsCalendarEntry; holder: CommsCalendarEntry; submissionId: string }> {
+    return this.request(`/${encodeURIComponent(entryId)}/message`, { method: 'POST', body: JSON.stringify(message) });
+  }
 }
 
 export const commsCalendarService = new CommsCalendarService();

@@ -169,3 +169,69 @@ describe('Comms Calendar entries: document text and linked dates', () => {
     expect(cleared.dateLinks).toBeUndefined();
   });
 });
+
+describe('Comms Calendar: past messages and planned entries', () => {
+  let env: any;
+
+  beforeEach(() => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    clearMemoryCache();
+    env = { STORE: createMockObjectStore(), DEV_BYPASS_AUTH: 'true', FRONTEND_URL: 'https://scrivenly.com' };
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  const calendar = (method: string, path: string, session: string, body?: unknown) =>
+    calendarRouter.fetch(new Request(`http://localhost/api/comms-calendar${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session}` },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    }), env);
+
+  const message = {
+    title: 'Reminder about Ranger Social',
+    content: 'Tuesday Ranger Social, on September 1, at 5 pm',
+    richTextContent: JSON.stringify({ root: { type: 'root', children: [] } }),
+    link: 'https://docs.google.com/document/d/abc/edit',
+    publishedOn: '2026-08-12',
+  };
+
+  it("files last year's message as a sent request on last year's entry, which this year's continues", async () => {
+    const thisYear = await (await calendar('POST', '/', SESSIONS.cadre, {
+      subject: 'Reminder about Ranger Social', targetDate: '2027-08-12', team: 'VCs', documentText: 'plain text',
+    })).json() as any;
+    const res = await calendar('POST', `/${thisYear.id}/message`, SESSIONS.cadre, message);
+    expect(res.status).toBe(200);
+    const { entry, holder, submissionId } = await res.json() as any;
+    expect(holder).toMatchObject({ subject: 'Reminder about Ranger Social', targetDate: '2026-08-12', dateSent: '2026-08-12', submissionId, link: message.link, team: 'VCs' });
+    expect(entry.carriedFromId).toBe(holder.id);
+    expect(entry.documentText).toBeUndefined();
+    const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
+    expect(submission).toMatchObject({ status: 'sent', title: message.title, importedFrom: message.link, sentAt: '2026-08-12T12:00:00.000Z' });
+
+    // Again: same request, same last year's entry
+    const again = await (await calendar('POST', `/${thisYear.id}/message`, SESSIONS.cadre, { ...message, title: 'Edited' })).json() as any;
+    expect(again.holder.id).toBe(holder.id);
+    expect(again.submissionId).toBe(submissionId);
+    expect((await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env))?.title).toBe('Edited');
+
+    expect((await calendar('POST', `/${thisYear.id}/message`, SESSIONS.member, message)).status).toBe(403);
+  });
+
+  it("files a message that went out in this entry's cycle on the entry itself", async () => {
+    const entry = await (await calendar('POST', '/', SESSIONS.cadre, { subject: 'Survey', targetDate: '2026-09-14' })).json() as any;
+    const { holder } = await (await calendar('POST', `/${entry.id}/message`, SESSIONS.cadre, { ...message, publishedOn: '2026-09-14' })).json() as any;
+    expect(holder.id).toBe(entry.id);
+  });
+
+  it('lists planned entries due soon and not yet sent in Coming up', async () => {
+    await calendar('POST', '/', SESSIONS.cadre, { subject: 'Camp Hosts feedback', targetDate: '2026-10-26' });
+    await calendar('POST', '/', SESSIONS.cadre, { subject: 'Already sent', targetDate: '2026-10-20', dateSent: '2026-10-05' });
+    await calendar('POST', '/', SESSIONS.cadre, { subject: 'Much later', targetDate: '2027-03-04' });
+    const { items } = await (await calendar('GET', '/upcoming?days=42&today=2026-10-06', SESSIONS.cadre)).json() as any;
+    expect(items.map((i: any) => [i.entry.subject, i.kind, i.anniversary])).toEqual([['Camp Hosts feedback', 'planned', '2026-10-26']]);
+  });
+});

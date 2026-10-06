@@ -14,6 +14,8 @@ import { AddFromRequestModal } from '../components/commsCalendar/AddFromRequestM
 import { CsvImportModal } from '../components/commsCalendar/CsvImportModal';
 import { AnnualDatesTab } from '../components/commsCalendar/AnnualDatesTab';
 import { RequestDatesModal } from '../components/commsCalendar/RequestDatesModal';
+import { DocsImportModal } from '../components/commsCalendar/DocsImportModal';
+import { storedUser } from '../utils/access';
 import './CommsCalendar.css';
 
 type Tab = 'upcoming' | 'all' | 'dates';
@@ -22,7 +24,8 @@ type Dialog =
   | { kind: 'nudge'; entry: CommsCalendarEntry; anniversary?: string }
   | { kind: 'import' }
   | { kind: 'fromRequest' }
-  | { kind: 'dates'; entry: CommsCalendarEntry; referenceYmd: string };
+  | { kind: 'dates'; entry: CommsCalendarEntry; referenceYmd: string; message: EntryMessage | null }
+  | { kind: 'docs' };
 
 const WINDOW_OPTIONS = [2, 4, 6, 8, 12];
 const TAB_KEY = 'commsCalendar.tab';
@@ -50,13 +53,31 @@ function lastNudgeText(entry: CommsCalendarEntry): string {
   return `Nudged ${formatShortDate(last.at.slice(0, 10))} by ${last.byName}`;
 }
 
-const SubjectCell: React.FC<{ entry: CommsCalendarEntry }> = ({ entry }) => (
+/** The Scribe request with an entry's message: its own, else last year's (the entry it continues). */
+interface EntryMessage {
+  submissionId: string;
+  lastYear: boolean;
+}
+
+function messageOf(entry: CommsCalendarEntry, byId: Map<string, CommsCalendarEntry>): EntryMessage | null {
+  if (entry.submissionId) return { submissionId: entry.submissionId, lastYear: false };
+  const previous = entry.carriedFromId ? byId.get(entry.carriedFromId) : undefined;
+  return previous?.submissionId ? { submissionId: previous.submissionId, lastYear: true } : null;
+}
+
+/** The subject opens the message in Scribe (or last year's); the document it came from is a small link beside it. */
+const SubjectCell: React.FC<{ entry: CommsCalendarEntry; message: EntryMessage | null; docLink?: string }> = ({ entry, message, docLink }) => (
   <>
-    {entry.link ? (
+    {message ? (
+      <Link to={`/tracked-changes/${message.submissionId}`} title={message.lastYear ? "Open last year's message in Scribe" : 'Open the Scribe request'}>
+        {entry.subject}
+      </Link>
+    ) : entry.link ? (
       <a href={entry.link} target="_blank" rel="noopener noreferrer">{entry.subject}</a>
     ) : entry.subject}
-    {entry.submissionId && (
-      <Link to={`/tracked-changes/${entry.submissionId}`} className="cc-tag" title="Open the Scribe request">Scribe</Link>
+    {message?.lastYear && <span className="cc-tag cc-tag--muted" title="The link opens last year's message">Last year's</span>}
+    {message && (docLink || entry.link) && (
+      <a href={docLink || entry.link} className="cc-tag" target="_blank" rel="noopener noreferrer" title="The Google Doc it came from">Doc</a>
     )}
   </>
 );
@@ -89,6 +110,9 @@ export const CommsCalendar: React.FC = () => {
   const thisCycle = cycleStartYear(today);
 
   const [entries, setEntries] = useState<CommsCalendarEntry[]>([]);
+  const byId = useMemo(() => new Map(entries.map((e) => [e.id, e])), [entries]);
+  const message = (entry: CommsCalendarEntry) => messageOf(entry, byId);
+  const docLinkOf = (entry: CommsCalendarEntry) => entry.link || (entry.carriedFromId ? byId.get(entry.carriedFromId)?.link : undefined);
   const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -222,6 +246,7 @@ export const CommsCalendar: React.FC = () => {
             <button type="button" className="cc-btn cc-btn--primary" onClick={() => setDialog({ kind: 'edit' })}>Add entry</button>
             <button type="button" className="cc-btn" onClick={() => setDialog({ kind: 'fromRequest' })}>Add from request</button>
             <button type="button" className="cc-btn" onClick={() => setDialog({ kind: 'import' })}>Import CSV</button>
+            <button type="button" className="cc-btn" onClick={() => setDialog({ kind: 'docs' })}>Import messages</button>
           </div>
         )}
       </div>
@@ -256,7 +281,7 @@ export const CommsCalendar: React.FC = () => {
             <span className="cc-muted cc-small">Also shows the past two weeks. An item stays here until this year's entry is added or it's marked "Won't repeat".</span>
           </div>
           {upcoming.length === 0 ? (
-            <div className="cc-empty">Nothing from last year is due again in the next {weeks} weeks.</div>
+            <div className="cc-empty">Nothing planned or due again in the next {weeks} weeks.</div>
           ) : (
             <div className="cc-table-wrap">
               <table className="cc-table">
@@ -276,8 +301,9 @@ export const CommsCalendar: React.FC = () => {
                       <td className="cc-nowrap">
                         <div>{formatShortDate(item.anniversary)}</div>
                         <div className={`cc-small ${item.overdue ? 'cc-overdue' : 'cc-muted'}`}>{describeDaysUntil(item.daysUntil)}</div>
+                        <div className="cc-small cc-muted">{item.kind === 'planned' ? 'Planned' : 'Due again'}</div>
                       </td>
-                      <td><SubjectCell entry={item.entry} /></td>
+                      <td><SubjectCell entry={item.entry} message={message(item.entry)} docLink={docLinkOf(item.entry)} /></td>
                       <td>
                         <div>{item.entry.team || <span className="cc-missing">No team</span>}</div>
                         <ContactsLine entry={item.entry} />
@@ -293,22 +319,26 @@ export const CommsCalendar: React.FC = () => {
                             <button type="button" className="cc-btn cc-btn--primary cc-btn--small" onClick={() => setDialog({ kind: 'nudge', entry: item.entry, anniversary: item.anniversary })}>
                               Nudge
                             </button>
-                            <button type="button" className="cc-btn cc-btn--small" onClick={() => startThisYear(item)}>
-                              This year's entry
-                            </button>
-                            {(item.entry.submissionId || item.entry.documentText) && (
+                            {item.kind === 'anniversary' && (
+                              <button type="button" className="cc-btn cc-btn--small" onClick={() => startThisYear(item)}>
+                                This year's entry
+                              </button>
+                            )}
+                            {(message(item.entry) || item.entry.documentText) && (
                               <button
                                 type="button"
                                 className="cc-btn cc-btn--small"
-                                onClick={() => setDialog({ kind: 'dates', entry: item.entry, referenceYmd: item.anniversary })}
-                                title="Track the dates in its request for the coming year"
+                                onClick={() => setDialog({ kind: 'dates', entry: item.entry, referenceYmd: item.anniversary, message: message(item.entry) })}
+                                title="The dates in its message, against this year's"
                               >
                                 Dates
                               </button>
                             )}
-                            <button type="button" className="cc-btn cc-btn--ghost cc-btn--small" onClick={() => markNotRepeating(item.entry)}>
-                              Won't repeat
-                            </button>
+                            {item.kind === 'anniversary' && (
+                              <button type="button" className="cc-btn cc-btn--ghost cc-btn--small" onClick={() => markNotRepeating(item.entry)}>
+                                Won't repeat
+                              </button>
+                            )}
                           </div>
                         </td>
                       )}
@@ -369,7 +399,7 @@ export const CommsCalendar: React.FC = () => {
                     <tr key={entry.id} className={entry.notRepeating ? 'cc-row--off' : ''}>
                       <td className="cc-nowrap">{formatShortDate(entry.targetDate, cycle === 'all')}</td>
                       <td>
-                        <SubjectCell entry={entry} />
+                        <SubjectCell entry={entry} message={message(entry)} docLink={docLinkOf(entry)} />
                         {entry.notRepeating && <span className="cc-tag cc-tag--muted">Won't repeat</span>}
                       </td>
                       <td><MethodCell entry={entry} /></td>
@@ -391,11 +421,14 @@ export const CommsCalendar: React.FC = () => {
                             ) : (
                               <>
                                 <button type="button" className="cc-btn cc-btn--small" onClick={() => setDialog({ kind: 'edit', entry })}>Edit</button>
-                                {(entry.submissionId || entry.documentText) && (
+                                {(message(entry) || entry.documentText) && (
                                   <button
                                     type="button"
                                     className="cc-btn cc-btn--small"
-                                    onClick={() => setDialog({ kind: 'dates', entry, referenceYmd: localToday() })}
+                                    onClick={() => setDialog({
+                                      kind: 'dates', entry, message: message(entry),
+                                      referenceYmd: message(entry)?.lastYear && entry.targetDate ? entry.targetDate : localToday(),
+                                    })}
                                     title="Track the dates in its request"
                                   >
                                     Dates
@@ -444,12 +477,23 @@ export const CommsCalendar: React.FC = () => {
       {dialog?.kind === 'dates' && (
         <RequestDatesModal
           entry={dialog.entry}
+          submissionId={dialog.message?.submissionId}
+          lastYear={dialog.message?.lastYear}
           referenceYmd={dialog.referenceYmd}
           canEdit={canEdit}
           onClose={() => {
             setDialog(null);
             load();
           }}
+        />
+      )}
+      {dialog?.kind === 'docs' && (
+        <DocsImportModal
+          entries={entries}
+          cycle={thisCycle}
+          userId={storedUser()?.id || storedUser()?.email || ''}
+          onClose={() => setDialog(null)}
+          onDone={load}
         />
       )}
       {dialog?.kind === 'fromRequest' && (

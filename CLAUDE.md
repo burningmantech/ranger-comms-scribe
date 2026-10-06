@@ -320,8 +320,8 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
 - One `CommsCalendarEntry` per communication at `comms_calendar/<id>`; cycles run Sep→Aug and are labelled by
   the event they lead up to (`cycleLabel`: the cycle starting Sep 2026 is the "2027 event"). Next year's
   version of an entry is a new entry whose `carriedFromId` points at last year's
-- **Coming up** lists last year's items due again within a window (`/upcoming`) that no entry continues yet
-  and that aren't `notRepeating`;
+- **Coming up** lists this cycle's planned entries due within a window and not sent yet (`kind: 'planned'`), and
+  last year's items due again that no entry continues yet and that aren't `notRepeating` (`kind: 'anniversary'`);
   **Nudge** emails the team contacts (Reply-To the sender) and is logged on the entry
 - A sent announcement (send-email, or PUT to `sent`) or a sent newsletter edition (`sendEdition`, each
   section's request) creates/updates entry `sub-<submissionId>` from the request's approved subject, Publish By,
@@ -330,6 +330,14 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
 - Comms Cadre, Admins and the Council Communications Manager edit; other Council members read only
 - CSV import is parsed in the browser (`frontend/src/utils/commsCalendarImport.ts`); same subject + cycle is
   skipped as a duplicate
+- **Import messages** (`DocsImportModal.tsx`): each sheet row's Google Doc becomes a sent Scribe request
+  (`importedFrom`: the doc; Subject and Body of the Comms request form, formatting kept, images copied to the
+  gallery) via `POST /api/comms-calendar/:id/message`. It goes on the entry for the cycle it went out in ("Date to
+  publish"): this entry, or last year's, which this one continues (made when missing); re-importing updates the
+  same request. Google won't let Scribe read the docs, so Scribe opens the sheet ("htmlview") in a tab of the same
+  browser and a helper script there (`sheetHelperScript`) posts the docs, images inlined as data: URLs, back to
+  the Scribe tab. The HTML becomes Lexical in an off-screen request editor (the paste path)
+- An entry's subject opens its Scribe request, or last year's (tagged "Last year's"); "Doc" is the Google Doc
 
 ## Mailing lists, reminders and admin screens
 

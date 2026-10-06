@@ -8,7 +8,7 @@ import { sendEmail } from '../utils/email';
 import {
   listEntries, getEntry, saveEntry, deleteEntry, canEditCalendar, canViewCalendar,
   validateEntryInput, applyPatch, newEntry, duplicateKey, anchorDate, computeUpcoming,
-  isValidYmd, splitEmails, isValidEmail, buildNudgeEmail, syncCalendarFromSubmission, pacificDate,
+  isValidYmd, splitEmails, isValidEmail, buildNudgeEmail, syncCalendarFromSubmission, pacificDate, attachMessage,
 } from '../services/commsCalendarService';
 
 // Comms Calendar: Comms Cadre, Admins and the Communications Manager edit and nudge;
@@ -129,6 +129,31 @@ router.put('/:id', withAuth, requireEdit, async (request: Request, env: Env) => 
   entry.updatedBy = userOf(request).email;
   await saveEntry(entry, env);
   return json(entry);
+});
+
+// POST /api/comms-calendar/:id/message — { title, content, richTextContent, link, publishedOn? }: a past
+// message brought in from its document, as a sent Scribe request on the entry for the cycle it went out in
+router.post('/:id/message', withAuth, requireEdit, async (request: Request, env: Env) => {
+  const { id } = (request as any).params;
+  const body = (await readBody(request)) as Record<string, unknown> | undefined;
+  const text = (key: string, max: number) => (typeof body?.[key] === 'string' ? (body[key] as string).trim().slice(0, max) : '');
+  const title = text('title', 500);
+  const content = typeof body?.content === 'string' ? body.content : '';
+  const richTextContent = typeof body?.richTextContent === 'string' ? body.richTextContent : '';
+  const link = text('link', 2000);
+  const publishedOn = text('publishedOn', 10);
+  if (!title || !richTextContent || !link) return json({ error: 'title, richTextContent and link are required' }, { status: 400 });
+  if (!/^https?:\/\//i.test(link)) return json({ error: 'link must be an http(s) URL' }, { status: 400 });
+  if (richTextContent.length > 2_000_000) return json({ error: 'The message is too long' }, { status: 400 });
+  try {
+    JSON.parse(richTextContent);
+  } catch {
+    return json({ error: 'richTextContent must be Lexical JSON' }, { status: 400 });
+  }
+  if (publishedOn && !isValidYmd(publishedOn)) return json({ error: 'publishedOn must be a date (YYYY-MM-DD)' }, { status: 400 });
+  const result = await attachMessage(id, { title, content, richTextContent, link, ...(publishedOn ? { publishedOn } : {}) }, userOf(request), env);
+  if (!result) return json({ error: 'Entry not found' }, { status: 404 });
+  return json({ entry: result.entry, holder: result.holder, submissionId: result.submission.id });
 });
 
 // DELETE /api/comms-calendar/:id

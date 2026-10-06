@@ -65,6 +65,9 @@ export interface CommsCalendarInput {
 
 export interface UpcomingItem {
   entry: CommsCalendarEntry;
+  /** 'planned': its own date, not sent yet. 'anniversary': a past entry due again. */
+  kind: 'planned' | 'anniversary';
+  /** The planned target date, or the anniversary */
   anniversary: string;
   daysUntil: number;
   overdue: boolean;

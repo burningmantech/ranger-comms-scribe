@@ -49,7 +49,7 @@ describe('CommsCalendar page', () => {
       ],
       canEdit: true,
     });
-    service.upcoming.mockResolvedValue({ items: [{ entry: last, anniversary: `${cycle}-09-15`, daysUntil: 9, overdue: false }] });
+    service.upcoming.mockResolvedValue({ items: [{ entry: last, kind: 'anniversary', anniversary: `${cycle}-09-15`, daysUntil: 9, overdue: false }] });
   });
 
   it('shows what is due again in the chosen window', async () => {

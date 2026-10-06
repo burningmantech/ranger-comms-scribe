@@ -476,3 +476,42 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Import messages from Google Docs */
+
+.cc-docs-import ol {
+  padding-left: 20px;
+}
+
+.cc-docs-import li {
+  margin-bottom: 12px;
+}
+
+.cc-docs-script {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.cc-docs-script code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  background: var(--primary-light);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+
+/* The converter editor: rendered so its plugins run, never seen */
+.cc-docs-converter {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 760px;
+  height: 400px;
+  overflow: hidden;
+}
