@@ -82,6 +82,12 @@ export interface ContentSubmission {
   keyDates?: KeyDate[];
   /** Dates in the body or blurb linked to annual dates (PUT /submissions/:id/date-links). */
   dateLinks?: DateLink[];
+  /** Imported from this Google Doc (a past message, for the Comms Calendar). */
+  importedFrom?: string;
+  /** The request this one was started from ("New request"). */
+  copiedFrom?: string;
+  /** On create: the Comms Calendar entry to link it to (Comms Calendar editors). */
+  calendarEntryId?: string;
   publicSlug?: string;
   publicPublishedAt?: string;
   newsletterEditionId?: string;

@@ -632,3 +632,48 @@ export async function attachMessage(
   }
   return { entry, holder, submission };
 }
+
+/**
+ * A new request started from a past message ("New request"): link it to this year's calendar entry,
+ * so Coming up, the subject link and the send all point at it. The entry is the one asked for (Comms
+ * Calendar editors), else the latest entry that continues the past message's entry and has no request
+ * yet, else a new entry that continues it (so last year's leaves Coming up). Nothing when the past
+ * message isn't in the calendar. Never replaces another request's link (only the copied message's own).
+ * Returns the linked entry.
+ */
+export async function linkCopyToCalendar(
+  submission: Pick<ContentSubmission, 'id' | 'title' | 'formFields' | 'submittedBy'>,
+  copiedFrom: string,
+  env: Env,
+  askedEntryId?: string,
+): Promise<CommsCalendarEntry | null> {
+  const submissionId = submission.id;
+  const entries = await listEntries(env);
+  let target = askedEntryId ? entries.find((e) => e.id === askedEntryId) : undefined;
+  if (!target) {
+    const holder = entries.find((e) => e.submissionId === copiedFrom);
+    if (!holder) return null;
+    target = entries
+      .filter((e) => e.carriedFromId === holder.id && !e.submissionId)
+      .sort((a, b) => anchorDate(b).localeCompare(anchorDate(a)))[0];
+    if (!target) {
+      if (entries.some((e) => e.carriedFromId === holder.id)) return null; // already continued by another request
+      const publishBy = formField(submission as ContentSubmission, 'publishBy');
+      target = newEntry({
+        subject: submission.title || holder.subject,
+        ...(typeof publishBy === 'string' && isValidYmd(publishBy.slice(0, 10)) ? { targetDate: publishBy.slice(0, 10) } : {}),
+        method: holder.method,
+        team: holder.team,
+        contactEmails: holder.contactEmails,
+        comments: '',
+        carriedFromId: holder.id,
+      }, submission.submittedBy || 'system', 'submission');
+    }
+  }
+  // An entry holding the very message copied (an imported one planned again) takes the new request
+  if (target.submissionId && target.submissionId !== submissionId && target.submissionId !== copiedFrom) return null;
+  target.submissionId = submissionId;
+  target.updatedAt = new Date().toISOString();
+  await saveEntry(target, env);
+  return target;
+}

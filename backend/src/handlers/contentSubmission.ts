@@ -17,7 +17,7 @@ import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } f
 import { getEdition } from '../services/newsletterService';
 import { cleanDateLinks, DateLinkError } from '../utils/dateLinks';
 import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
-import { canEditCalendar, syncCalendarFromSubmission } from '../services/commsCalendarService';
+import { canEditCalendar, linkCopyToCalendar, syncCalendarFromSubmission } from '../services/commsCalendarService';
 
 export const router = AutoRouter({ base: '/api/content' });
 
@@ -290,6 +290,9 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     requiredApprovers: submission.requiredApprovers || [],
     ...newsletterFields,
     ...(dateLinks.length ? { dateLinks } : {}),
+    ...(typeof (submission as any).copiedFrom === 'string' && (submission as any).copiedFrom
+      ? { copiedFrom: String((submission as any).copiedFrom).slice(0, 200) }
+      : {}),
   };
   // The content as submitted, kept unchanged for the Original view (accept / reject
   // rewrite content and richTextContent). A copy of exactly what is stored above.
@@ -303,6 +306,18 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
   
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
+
+  // Started from a past message: this year's calendar entry now points at it (never fails the create)
+  if (newSubmission.copiedFrom) {
+    try {
+      const askedEntryId = typeof (submission as any).calendarEntryId === 'string' && (await canEditCalendar(user, env))
+        ? (submission as any).calendarEntryId as string
+        : undefined;
+      await linkCopyToCalendar(newSubmission, newSubmission.copiedFrom, env, askedEntryId);
+    } catch (err) {
+      console.warn('Could not link the new request to the Comms Calendar:', err);
+    }
+  }
 
   return json(newSubmission);
 });

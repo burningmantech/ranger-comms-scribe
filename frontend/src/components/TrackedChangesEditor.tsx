@@ -3678,6 +3678,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             <span>Submitted by <UserName value={submission.submittedBy} /></span>
             <span className="separator">•</span>
             <span>{new Date(submission.submittedAt).toLocaleDateString()}</span>
+            {submission.status === 'sent' && (
+              <>
+                <span className="separator">•</span>
+                <a
+                  className="document-meta-action"
+                  href={`/comms-request?from=${encodeURIComponent(submission.id)}`}
+                  title="Start a new request from this message (for next time)"
+                >
+                  <i className="fas fa-copy" aria-hidden="true" /> New request from this
+                </a>
+              </>
+            )}
+            {submission.importedFrom && (
+              <>
+                <span className="separator">•</span>
+                <a className="document-meta-action" href={submission.importedFrom} target="_blank" rel="noopener noreferrer">
+                  Imported from Google Docs
+                </a>
+              </>
+            )}
           </div>
 
           <div className="document-body">

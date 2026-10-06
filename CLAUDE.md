@@ -338,6 +338,11 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
   browser and a helper script there (`sheetHelperScript`) posts the docs, images inlined as data: URLs, back to
   the Scribe tab. The HTML becomes Lexical in an off-screen request editor (the paste path)
 - An entry's subject opens its Scribe request, or last year's (tagged "Last year's"); "Doc" is the Google Doc
+- **New request** (Coming up, All entries for this year's entries, and "New request from this" on a sent request's
+  page) opens `/comms-request?from=<request>&entry=<entry>&publishBy=<date>`: the form starts from that message
+  (subject, body with images, newsletter item, key dates, linked dates, details) without touching the saved draft.
+  The created request records `copiedFrom`; `linkCopyToCalendar` puts it on this year's entry (the one asked for,
+  else the one continuing the message's entry, else a new entry continuing it), so its send updates that entry
 
 ## Mailing lists, reminders and admin screens
 

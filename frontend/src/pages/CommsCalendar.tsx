@@ -59,6 +59,14 @@ interface EntryMessage {
   lastYear: boolean;
 }
 
+/** The request form, filled from a past message; the new request goes on `entryId` (this year's entry). */
+function newRequestUrl(message: EntryMessage, entryId: string | undefined, publishBy: string | undefined): string {
+  const params = new URLSearchParams({ from: message.submissionId });
+  if (entryId) params.set('entry', entryId);
+  if (publishBy) params.set('publishBy', publishBy);
+  return `/comms-request?${params}`;
+}
+
 function messageOf(entry: CommsCalendarEntry, byId: Map<string, CommsCalendarEntry>): EntryMessage | null {
   if (entry.submissionId) return { submissionId: entry.submissionId, lastYear: false };
   const previous = entry.carriedFromId ? byId.get(entry.carriedFromId) : undefined;
@@ -324,6 +332,15 @@ export const CommsCalendar: React.FC = () => {
                                 This year's entry
                               </button>
                             )}
+                            {message(item.entry) && (
+                              <Link
+                                className="cc-btn cc-btn--small"
+                                to={newRequestUrl(message(item.entry)!, item.kind === 'planned' ? item.entry.id : undefined, item.anniversary)}
+                                title="Start this year's request from this message"
+                              >
+                                New request
+                              </Link>
+                            )}
                             {(message(item.entry) || item.entry.documentText) && (
                               <button
                                 type="button"
@@ -421,6 +438,15 @@ export const CommsCalendar: React.FC = () => {
                             ) : (
                               <>
                                 <button type="button" className="cc-btn cc-btn--small" onClick={() => setDialog({ kind: 'edit', entry })}>Edit</button>
+                                {message(entry)?.lastYear && entry.targetDate && entry.targetDate >= localToday() && (
+                                  <Link
+                                    className="cc-btn cc-btn--small"
+                                    to={newRequestUrl(message(entry)!, entry.id, entry.targetDate)}
+                                    title="Start this year's request from last year's message"
+                                  >
+                                    New request
+                                  </Link>
+                                )}
                                 {(message(entry) || entry.documentText) && (
                                   <button
                                     type="button"

@@ -196,6 +196,8 @@ export interface ContentSubmission {
   dateLinks?: DateLink[];
   /** Imported from this document (a past message brought in from Google Docs for the Comms Calendar); sent outside Scribe. */
   importedFrom?: string;
+  /** The request this one was started from ("New request" on a past message). */
+  copiedFrom?: string;
   /** The public "Read more" page (/news/<slug>). The slug is made when an edition links the document; the page is served once published. */
   publicSlug?: string;
   publicPublishedAt?: string;

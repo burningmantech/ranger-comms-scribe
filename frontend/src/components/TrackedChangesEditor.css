@@ -628,6 +628,15 @@
   padding-bottom: 0;
 }
 
+.document-meta-action {
+  color: var(--accent-teal);
+  text-decoration: none;
+}
+
+.document-meta-action:hover {
+  text-decoration: underline;
+}
+
 .document-meta .separator {
   margin: 0 8px;
 }

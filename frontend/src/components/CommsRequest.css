@@ -742,3 +742,13 @@
     width: 100%;
   }
 }
+
+/* Starting from a past message */
+.wizard-copy-note {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-light);
+  border-left: 3px solid var(--accent-teal);
+  font-size: 14px;
+}

@@ -4,7 +4,7 @@ import { FieldErrors, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useContent } from '../contexts/ContentContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ContentSubmission } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { User } from '../types';
@@ -22,6 +22,7 @@ import { LexicalEditor } from 'lexical';
 import DatesPanel, { DateSource } from './dates/DatesPanel';
 import { useAnnualDates } from './dates/useAnnualDates';
 import { DateLink } from '../types/annualDates';
+import { annualDatesService } from '../services/annualDatesService';
 import { blockTextFromLexical, replaceNthInLexical } from '../utils/lexicalUtils';
 import { replaceTextInEditor } from './editor/utils/replaceText';
 import { todayIso } from './newsletter/dates';
@@ -96,6 +97,14 @@ export const CommsRequest: React.FC = () => {
   const { saveSubmission } = useContent();
   const navigate = useNavigate();
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // "New request" from a past message: /comms-request?from=<request>&entry=<calendar entry>&publishBy=<date>
+  const [searchParams] = useSearchParams();
+  const copyFrom = searchParams.get('from');
+  const copyEntryId = searchParams.get('entry');
+  const copyPublishBy = searchParams.get('publishBy');
+  const [copySource, setCopySource] = useState<{ id: string; title: string; sentAt?: string } | null>(null);
+  // The copied body, given to the editor once it has loaded (it only takes initialContent at mount)
+  const [copiedBody, setCopiedBody] = useState<string | undefined>(undefined);
   const submittingRef = useRef(false);
   // Newsletter item, key dates and writing help (outside react-hook-form: nested lists)
   const [newsletterItem, setNewsletterItem] = useState<NewsletterRequest>(EMPTY_NEWSLETTER_REQUEST);
@@ -146,9 +155,11 @@ export const CommsRequest: React.FC = () => {
   const audienceValue = watch('audience');
   const urgentRequestValue = watch('urgentRequest');
 
-  // Auto-save draft on field changes (debounced 2s)
+  // Auto-save draft on field changes (debounced 2s). Not for a copy of a past message: that would
+  // overwrite the draft the person had going.
   const watchedValues = watch();
   useEffect(() => {
+    if (copyFrom) return undefined;
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(() => {
       try {
@@ -165,10 +176,11 @@ export const CommsRequest: React.FC = () => {
       } catch { /* ignore quota errors */ }
     }, 2000);
     return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
-  }, [watchedValues, editorContent, selectedTemplateId, newsletterItem, helpWithBlurb, helpWithDocument, keyDates, dateLinks]);
+  }, [watchedValues, editorContent, selectedTemplateId, newsletterItem, helpWithBlurb, helpWithDocument, keyDates, dateLinks, copyFrom]);
 
-  // Restore draft on mount
+  // Restore draft on mount (not when starting from a past message)
   useEffect(() => {
+    if (copyFrom) return;
     try {
       const saved = localStorage.getItem('commsRequestDraft');
       if (saved) {
@@ -198,7 +210,51 @@ export const CommsRequest: React.FC = () => {
         });
       }
     } catch { /* ignore parse errors */ }
-  }, [setValue]);
+  }, [setValue, copyFrom]);
+
+  // Start from a past message: its subject, text (images and all), newsletter item, key dates and
+  // linked dates, and its details where it had them. Its dates are still the old ones until updated
+  // in "Dates in this request".
+  useEffect(() => {
+    if (!copyFrom) return undefined;
+    let cancelled = false;
+    annualDatesService.getSubmission(copyFrom)
+      .then((source) => {
+        if (cancelled) return;
+        const field = (id: string) => {
+          const value = source.formFields?.find((f) => f.id === id)?.value;
+          return typeof value === 'string' ? value : '';
+        };
+        setValue('suggestedSubjectLine', source.title || '');
+        setValue('description', field('description') || `Based on “${source.title}”`);
+        if (field('owner')) setValue('owner', field('owner'));
+        if (field('replyToAddress')) setValue('replyToAddress', field('replyToAddress'));
+        if (field('signatureText')) setValue('signatureText', field('signatureText'));
+        if (source.audiences?.length) setValue('audience', source.audiences as CommsRequestFormData['audience']);
+        const body = source.proposedVersions?.richTextContent || source.richTextContent || '';
+        if (body) {
+          setEditorContent(body);
+          setCopiedBody(body);
+          setValue('text', body);
+        }
+        if (source.newsletter) {
+          setNewsletterItem({ ...EMPTY_NEWSLETTER_REQUEST, ...source.newsletter });
+          setBlurbEditorKey((k) => k + 1);
+        }
+        setKeyDates(source.keyDates || []);
+        setDateLinks(source.dateLinks || []);
+        if (source.requiredApprovers?.length) setApproverEmails(source.requiredApprovers);
+        const tomorrow = toLocalIsoDate(new Date(Date.now() + 86_400_000));
+        if (copyPublishBy && /^\d{4}-\d{2}-\d{2}$/.test(copyPublishBy) && copyPublishBy >= tomorrow) {
+          setValue('publishBy', copyPublishBy);
+        }
+        setCopySource({ id: source.id, title: source.title, sentAt: source.sentAt ? String(source.sentAt) : undefined });
+      })
+      .catch((err) => !cancelled && setFormError(`Couldn't load the request to start from: ${err instanceof Error ? err.message : err}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [copyFrom, copyPublishBy, setValue]);
 
   const getTomorrow = () => {
     const d = new Date();
@@ -544,6 +600,7 @@ export const CommsRequest: React.FC = () => {
         ...(data.audience.includes('newsletter') ? { newsletter: cleanNewsletterItem(newsletterItem) } : {}),
         ...(filledKeyDates(keyDates).length ? { keyDates: filledKeyDates(keyDates) } : {}),
         ...(dateLinks.length ? { dateLinks } : {}),
+        ...(copySource ? { copiedFrom: copySource.id, ...(copyEntryId ? { calendarEntryId: copyEntryId } : {}) } : {}),
       };
 
       await saveSubmission(submission as ContentSubmission);
@@ -660,6 +717,7 @@ export const CommsRequest: React.FC = () => {
             className="h-64"
             currentUserId={userId}
             onEditorReady={setBodyEditor}
+            content={copiedBody}
           />
           <label className={`urgent-checkbox-label nl-help-check ${helpWithDocument ? 'checked' : ''}`} style={{ marginTop: 10 }}>
             <input
@@ -986,6 +1044,13 @@ export const CommsRequest: React.FC = () => {
         <p>
           Ranger Communications can write, edit, and help you get your message out.
         </p>
+        {copySource && (
+          <div className="wizard-copy-note" role="status">
+            <i className="fas fa-copy" aria-hidden="true" /> Starting from <strong>{copySource.title}</strong>
+            {copySource.sentAt ? ` (sent ${new Date(copySource.sentAt).toLocaleDateString()})` : ''}. Its dates are still
+            the old ones: update them under “Dates in this request” on the Audience &amp; Timing step.
+          </div>
+        )}
       </div>
 
       {renderStepper()}

@@ -227,6 +227,43 @@ describe('Comms Calendar: past messages and planned entries', () => {
     expect(holder.id).toBe(entry.id);
   });
 
+  it("links a new request started from last year's message to this year's entry", async () => {
+    const thisYear = await (await calendar('POST', '/', SESSIONS.cadre, { subject: 'Reminder about Ranger Social', targetDate: '2027-08-12' })).json() as any;
+    const { submissionId: lastYears } = await (await calendar('POST', `/${thisYear.id}/message`, SESSIONS.cadre, message)).json() as any;
+
+    const created = await (await call(env, 'POST', '/content/submissions', {
+      session: SESSIONS.member,
+      body: { title: 'Reminder about Ranger Social', content: 'Tuesday, Aug. 31 2027', status: 'in_review', copiedFrom: lastYears },
+    }, contentRouter)).json() as any;
+    expect(created.copiedFrom).toBe(lastYears);
+    const { entries } = await (await calendar('GET', '/', SESSIONS.cadre)).json() as any;
+    expect(entries.find((e: any) => e.id === thisYear.id).submissionId).toBe(created.id);
+
+    // A second copy doesn't take over the entry
+    const second = await (await call(env, 'POST', '/content/submissions', {
+      session: SESSIONS.member, body: { title: 'Again', content: 'x', status: 'in_review', copiedFrom: lastYears },
+    }, contentRouter)).json() as any;
+    const after = await (await calendar('GET', '/', SESSIONS.cadre)).json() as any;
+    expect(after.entries.find((e: any) => e.id === thisYear.id).submissionId).toBe(created.id);
+    expect(after.entries.some((e: any) => e.submissionId === second.id)).toBe(false);
+  });
+
+  it("starts this year's entry for a copy of a message nothing continues yet", async () => {
+    const lastYear = await (await calendar('POST', '/', SESSIONS.cadre, { subject: 'Thank you Rangers', targetDate: '2026-09-15', team: 'Council' })).json() as any;
+    const { submissionId: lastYears } = await (await calendar('POST', `/${lastYear.id}/message`, SESSIONS.cadre, { ...message, publishedOn: '2026-09-15' })).json() as any;
+    const created = await (await call(env, 'POST', '/content/submissions', {
+      session: SESSIONS.member,
+      body: {
+        title: 'Thank you Rangers', content: 'x', status: 'in_review', copiedFrom: lastYears,
+        formFields: [{ id: 'publishBy', name: 'publishBy', label: 'Publish By', value: '2027-09-14', type: 'date', required: true }],
+      },
+    }, contentRouter)).json() as any;
+    const { entries } = await (await calendar('GET', '/', SESSIONS.cadre)).json() as any;
+    expect(entries.find((e: any) => e.submissionId === created.id)).toMatchObject({
+      subject: 'Thank you Rangers', targetDate: '2027-09-14', carriedFromId: lastYear.id, team: 'Council', source: 'submission',
+    });
+  });
+
   it('lists planned entries due soon and not yet sent in Coming up', async () => {
     await calendar('POST', '/', SESSIONS.cadre, { subject: 'Camp Hosts feedback', targetDate: '2026-10-26' });
     await calendar('POST', '/', SESSIONS.cadre, { subject: 'Already sent', targetDate: '2026-10-20', dateSent: '2026-10-05' });
