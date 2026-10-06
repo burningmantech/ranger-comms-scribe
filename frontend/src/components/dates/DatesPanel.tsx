@@ -3,6 +3,7 @@ import { AnnualDate, DateLink } from '../../types/annualDates';
 import { dateSnippet, rewriteDate, suggestDateName } from '../../utils/dateDetection';
 import { describeRule, formatOccurrence, formatTimes, occurrenceOn, nextOccurrence } from '../../utils/annualDates';
 import TrackDateModal from './TrackDateModal';
+import TrackAllModal from './TrackAllModal';
 import { bestMention, buildDateGroups, DateGroup, DateSource, Mention } from './dateGroups';
 import './Dates.css';
 
@@ -18,9 +19,11 @@ interface DatesPanelProps {
   onAnnualDateAdded: (entry: AnnualDate) => void;
   /**
    * Replace the `occurrence`th (from 0) `search` in a field with `replacement`; false when it isn't
-   * there any more.
+   * there any more. Without it (outside the request's own pages) out-of-date text links to `updateHref`.
    */
-  onReplaceText: (field: DateLink['field'], search: string, replacement: string, occurrence: number) => Promise<boolean>;
+  onReplaceText?: (field: DateLink['field'], search: string, replacement: string, occurrence: number) => Promise<boolean>;
+  /** Where to update the text when it can't be changed here (the review page). */
+  updateHref?: string;
   /** Scroll the text to a mention (the review editor); without it, mentions aren't clickable. */
   onShowMention?: (mention: Mention) => void;
   /** A group to bring into view and highlight (a bubble in the text was clicked). */
@@ -53,10 +56,11 @@ export const groupElementId = (key: string) => `date-group-${key.replace(/[^\w-]
  * year says it should now be a different date. Nothing changes without a click.
  */
 export const DatesPanel: React.FC<DatesPanelProps> = ({
-  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, onShowMention, focusKey,
-  submissionId, disabled,
+  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, updateHref, onShowMention,
+  focusKey, submissionId, disabled,
 }) => {
   const [tracking, setTracking] = useState<DateGroup | null>(null);
+  const [trackingAll, setTrackingAll] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -73,16 +77,20 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
 
   if (!groups.length && !orphanLinks.length) return null;
 
-  /** Link every mention of the group to `entry` (one link per distinct text). */
-  const linkGroup = (group: DateGroup, entry: AnnualDate) => {
-    const occurrence = occurrenceOn(entry, group.date) || nextOccurrence(entry, group.date);
-    const texts = distinctTexts(group);
-    const keep = links.filter((l) => !texts.some((m) => m.source.field === l.field && m.found.text === l.text));
+  /** Link every mention of each group to its annual date (one link per distinct text), in one save. */
+  const linkGroups = (pairs: Array<{ group: DateGroup; entry: AnnualDate }>) => {
+    const texts = pairs.flatMap(({ group, entry }) => {
+      const occurrence = occurrenceOn(entry, group.date) || nextOccurrence(entry, group.date);
+      return distinctTexts(group).map((m) => ({ m, entry, year: occurrence.year }));
+    });
+    const keep = links.filter((l) => !texts.some(({ m }) => m.source.field === l.field && m.found.text === l.text));
     onLinksChange([
       ...keep,
-      ...texts.map((m) => ({ id: newId(), annualDateId: entry.id, field: m.source.field, text: m.found.text, year: occurrence.year })),
+      ...texts.map(({ m, entry, year }) => ({ id: newId(), annualDateId: entry.id, field: m.source.field, text: m.found.text, year })),
     ]);
   };
+  const linkGroup = (group: DateGroup, entry: AnnualDate) => linkGroups([{ group, entry }]);
+  const unlinked = groups.filter((g) => g.status === 'untracked' || g.status === 'match');
 
   const unlinkGroup = (group: DateGroup) => {
     const ids = new Set(group.mentions.map((m) => m.link?.id).filter(Boolean));
@@ -91,6 +99,7 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
 
   /** Rewrite every mention to the group's target date, last first so earlier ones keep their place. */
   const update = async (group: DateGroup) => {
+    if (!onReplaceText) return;
     const target = group.target!;
     setBusy(group.key);
     setMessage(null);
@@ -172,14 +181,18 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
             {group.status === 'stale' ? (
               <span className="dt-status dt-status--stale">
                 {group.target!.year}: {formatOccurrence(group.target!)}
-                <button
-                  type="button"
-                  className="cc-btn cc-btn--small cc-btn--primary"
-                  onClick={() => update(group)}
-                  disabled={disabled || busy === group.key}
-                >
-                  {busy === group.key ? 'Updating…' : group.mentions.length > 1 ? `Update all ${group.mentions.length}` : 'Update text'}
-                </button>
+                {onReplaceText ? (
+                  <button
+                    type="button"
+                    className="cc-btn cc-btn--small cc-btn--primary"
+                    onClick={() => update(group)}
+                    disabled={disabled || busy === group.key}
+                  >
+                    {busy === group.key ? 'Updating…' : group.mentions.length > 1 ? `Update all ${group.mentions.length}` : 'Update text'}
+                  </button>
+                ) : updateHref && (
+                  <a className="cc-btn cc-btn--small" href={updateHref}>Update in the request</a>
+                )}
               </span>
             ) : (
               <span className="dt-status dt-status--ok"><i className="fas fa-check" aria-hidden="true" /> Right for {group.target!.year}</span>
@@ -219,6 +232,13 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
         mention of it here in one click.
       </p>
       {message && <div className="dt-message" role="status">{message}</div>}
+      {unlinked.length > 1 && !disabled && (
+        <div className="dt-all-bar">
+          <button type="button" className="cc-btn cc-btn--small cc-btn--primary" onClick={() => setTrackingAll(true)}>
+            Track all {unlinked.length} dates…
+          </button>
+        </div>
+      )}
       <ul className="dt-list">
         {groups.map((group) => {
           const best = bestMention(group).found;
@@ -266,6 +286,19 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
           </li>
         ))}
       </ul>
+      {trackingAll && (
+        <TrackAllModal
+          groups={unlinked}
+          submissionId={submissionId}
+          onClose={() => setTrackingAll(false)}
+          onDone={(pairs, created, error) => {
+            created.forEach(onAnnualDateAdded);
+            linkGroups(pairs);
+            setTrackingAll(false);
+            if (error) setMessage(`Tracked ${pairs.length} dates, then stopped: ${error}`);
+          }}
+        />
+      )}
       {tracking && (
         <TrackDateModal
           found={bestMention(tracking).found}

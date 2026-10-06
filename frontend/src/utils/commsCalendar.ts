@@ -15,8 +15,12 @@ export function cycleStartYear(ymd: string): number {
   return m >= 9 ? y : y - 1;
 }
 
+/**
+ * A cycle by the event it leads up to: the cycle starting September 2026 is the 2027 event's
+ * ("2027 event (Sep 2026 – Aug 2027)"). People think in event years, not start years.
+ */
 export function cycleLabel(startYear: number): string {
-  return `${startYear}–${String((startYear + 1) % 100).padStart(2, '0')}`;
+  return `${startYear + 1} event (Sep ${startYear} – Aug ${startYear + 1})`;
 }
 
 /** The date an entry sorts by: target, else sent, else when it was added. */

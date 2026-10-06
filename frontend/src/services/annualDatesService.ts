@@ -1,5 +1,6 @@
 import { API_URL } from '../config';
 import { AnnualDate, AnnualDateInput, DateLink } from '../types/annualDates';
+import { ContentSubmission } from '../types/content';
 
 /** Client for /api/annual-dates and a request's linked dates. Every method throws an Error with the server's message. */
 class AnnualDatesService {
@@ -37,6 +38,11 @@ class AnnualDatesService {
 
   remove(id: string): Promise<void> {
     return this.request(`/annual-dates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  /** A request as stored (for its text, blurb and linked dates). */
+  getSubmission(submissionId: string): Promise<ContentSubmission> {
+    return this.request(`/content/submissions/${encodeURIComponent(submissionId)}`);
   }
 
   saveDateLinks(submissionId: string, dateLinks: DateLink[]): Promise<{ dateLinks: DateLink[] }> {

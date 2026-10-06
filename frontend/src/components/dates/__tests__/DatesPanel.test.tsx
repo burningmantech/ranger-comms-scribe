@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import DatesPanel from '../DatesPanel';
+import { annualDatesService } from '../../../services/annualDatesService';
 import { AnnualDate, DateLink } from '../../../types/annualDates';
 
 const social: AnnualDate = {
@@ -121,6 +122,53 @@ describe('DatesPanel', () => {
     setup({ onShowMention });
     fireEvent.click(screen.getByTitle('Show in the text'));
     expect(onShowMention).toHaveBeenCalledWith(expect.objectContaining({ key: 'body|6pm - 10pm on Sept. 1 2026|0' }));
+  });
+
+  it('defaults a new annual date to Labor Day, even far from it', () => {
+    setup({ sources: [{ field: 'body', label: 'the text', text: 'Applications close February 1st, 2026.' }] });
+    fireEvent.click(screen.getByRole('button', { name: 'Track every year…' }));
+    expect(screen.getByLabelText(/Relative to Labor Day/)).toBeChecked();
+    expect(screen.getByLabelText('Name')).toHaveValue('Applications close');
+  });
+
+  it('tracks every date in the request at once', async () => {
+    let n = 0;
+    const create = jest.spyOn(annualDatesService, 'create').mockImplementation(async (input) => ({
+      ...social, id: `new${++n}`, name: input.name!, rule: input.rule!,
+    }));
+    const onAnnualDateAdded = jest.fn();
+    const { onLinksChange } = setup({
+      onAnnualDateAdded,
+      annualDates: [social],
+      sources: [{
+        field: 'body',
+        label: 'the text',
+        text: 'Claim your tickets by July 12th. Pay by July 31st. Ranger Social 6pm - 10pm on Sept. 1 2026.',
+      }],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Track all 3 dates…' }));
+    const rows = screen.getAllByTestId('track-all-row');
+    expect(rows).toHaveLength(3);
+    expect(within(rows[0]).getByLabelText('Name')).toHaveValue('Claim your tickets');
+    expect(within(rows[2]).getByLabelText('Link or add')).toHaveValue('a1'); // looks like the Ranger Social
+    fireEvent.click(screen.getByRole('button', { name: 'Track 3 dates' }));
+    await waitFor(() => expect(onLinksChange).toHaveBeenCalled());
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create.mock.calls[0][0]).toMatchObject({ name: 'Claim your tickets', rule: { kind: 'laborDay', offsetDays: -57 } });
+    expect(onAnnualDateAdded).toHaveBeenCalledTimes(2);
+    expect(onLinksChange).toHaveBeenCalledTimes(1);
+    expect(onLinksChange.mock.calls[0][0].map((l: DateLink) => [l.annualDateId, l.text])).toEqual([
+      ['new1', 'July 12th'],
+      ['new2', 'July 31st'],
+      ['a1', '6pm - 10pm on Sept. 1 2026'],
+    ]);
+    create.mockRestore();
+  });
+
+  it('links to the request to update text when it cannot be changed here', () => {
+    const link: DateLink = { id: 'l1', annualDateId: 'a1', field: 'body', text: '6pm - 10pm on Sept. 1 2026', year: 2026 };
+    setup({ annualDates: [social], links: [link], referenceYmd: '2027-07-01', onReplaceText: undefined, updateHref: '/tracked-changes/x' });
+    expect(screen.getByRole('link', { name: 'Update in the request' })).toHaveAttribute('href', '/tracked-changes/x');
   });
 
   it('lists a link whose text is gone', () => {

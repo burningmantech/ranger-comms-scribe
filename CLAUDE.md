@@ -317,7 +317,8 @@ Media files (`backend/src/services/mediaService.ts`):
 
 Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-calendar`,
 `backend/src/handlers/commsCalendar.ts`, `services/commsCalendarService.ts`):
-- One `CommsCalendarEntry` per communication at `comms_calendar/<id>`; cycles run Sep→Aug. Next year's
+- One `CommsCalendarEntry` per communication at `comms_calendar/<id>`; cycles run Sep→Aug and are labelled by
+  the event they lead up to (`cycleLabel`: the cycle starting Sep 2026 is the "2027 event"). Next year's
   version of an entry is a new entry whose `carriedFromId` points at last year's
 - **Coming up** lists last year's items due again within a window (`/upcoming`) that no entry continues yet
   and that aren't `notRepeating`;
@@ -361,8 +362,12 @@ Things that happen every year, so requests can follow them (`docs/plans/2026-10-
 - On the review page `DateBubbles.tsx` overlays the editor: each date is underlined in its status color with a
   bubble in the margin that opens its row; clicking a mention in the panel scrolls to it. Outside the document,
   so tracked changes and Yjs never see it
-- A request's `dateLinks` are saved by `PUT /content/submissions/:id/date-links`; PUT
-  `/submissions/:id` ignores them. A key date's `annualDateId` goes through the newsletter PATCH.
+- A new annual date defaults to a Labor Day rule. **Track all** adds and links every unlinked date at once
+  (`TrackAllModal.tsx`). On the Comms Calendar, entries from a Scribe request have a **Dates** button
+  (`RequestDatesModal.tsx`; Coming up compares against the date it's due again); text updates there link to the
+  review page
+- A request's `dateLinks` are saved by `PUT /content/submissions/:id/date-links` (the request's editors or Comms
+  Calendar editors); PUT `/submissions/:id` ignores them. A key date's `annualDateId` goes through the newsletter PATCH.
 - Links never change text by themselves. **Update text** rewrites the date in its written style: a
   tracked change in the body, or an unsaved blurb edit.
 - Anyone signed in adds entries. Comms Calendar editors (and the entry's creator) change and delete them.

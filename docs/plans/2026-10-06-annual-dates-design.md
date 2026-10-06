@@ -55,7 +55,12 @@ that mentions one when its text is out of date.
 - **Untracked dates:**
   - "Looks like <entry>" appears when an entry falls on that day; this is the next-year workflow,
     where last year's text is pasted in.
-  - **Track every year…** opens a dialog that defaults to a Labor Day rule within 45 days of Labor Day.
+  - **Track every year…** opens a dialog that defaults to a Labor Day rule.
+  - **Track all N dates…** adds every unlinked date at once (each named from its sentence, counted from Labor
+    Day unless switched to "Same date", or linked to the annual date it looks like) and links every mention.
+- **From the Comms Calendar:** an entry that came from a Scribe request has a **Dates** button that opens the
+  same panel for that request (track, link, track all). In Coming up it compares against the date the entry is
+  due again, so it shows next year's dates. Text is only rewritten on the review page, so stale dates link there.
 
 ## Access
 

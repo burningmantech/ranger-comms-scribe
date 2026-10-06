@@ -129,6 +129,8 @@ describe('CommsCalendar page', () => {
     const rows = service.importEntries.mock.calls[0][0];
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ subject: 'Upcoming Ranger Trainings Want YOU!', targetDate: `${cycle}-04-20`, team: 'Training Academy' });
-    expect(await within(dialog).findByText('added.', { exact: false })).toBeInTheDocument();
+    // Says which event it went into, and the page shows that cycle under All entries
+    expect(await within(dialog).findByText(/added to the \d{4} event \(Sep \d{4} – Aug \d{4}\)/)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'All entries' })).toHaveAttribute('aria-selected', 'true');
   });
 });

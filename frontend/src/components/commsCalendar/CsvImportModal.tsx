@@ -9,7 +9,8 @@ import { cycleLabel, cycleStartYear, entryCycle, formatShortDate, localToday } f
 interface CsvImportModalProps {
   entries: CommsCalendarEntry[];
   onClose: () => void;
-  onImported: () => void;
+  /** After an import: the cycle (start year) it went into, to show it. */
+  onImported: (cycleStartYear: number) => void;
 }
 
 // Same rule as the server: one entry per subject (ignoring case) per cycle
@@ -61,7 +62,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({ entries, onClose
     try {
       const imported = await commsCalendarService.importEntries(included.map((row) => row.input));
       setResult(imported);
-      onImported();
+      onImported(startYear);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Import failed');
     } finally {
@@ -95,7 +96,10 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({ entries, onClose
       {error && <div className="cc-error" role="alert">{error}</div>}
       {result ? (
         <div className="cc-import-result">
-          <p><strong>{result.created}</strong> added{result.skipped.length > 0 ? `, ${result.skipped.length} skipped` : ''}.</p>
+          <p>
+            <strong>{result.created}</strong> added to the {cycleLabel(startYear)}
+            {result.skipped.length > 0 ? `, ${result.skipped.length} skipped` : ''}. They're under All entries.
+          </p>
           {result.skipped.length > 0 && (
             <ul>
               {result.skipped.map((s) => (
@@ -120,7 +124,7 @@ export const CsvImportModal: React.FC<CsvImportModalProps> = ({ entries, onClose
             <label className="cc-field">
               <span>The sheet covers</span>
               <select value={startYear} onChange={(e) => setStartYear(Number(e.target.value))} aria-label="Cycle">
-                {years.map((y) => <option key={y} value={y}>Sep {y} – Aug {y + 1} ({cycleLabel(y)})</option>)}
+                {years.map((y) => <option key={y} value={y}>{cycleLabel(y)}</option>)}
               </select>
             </label>
           </div>

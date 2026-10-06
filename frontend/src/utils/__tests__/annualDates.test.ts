@@ -1,5 +1,5 @@
 import {
-  laborDay, burnDay, resolveAnnualDate, nextOccurrence, ruleFromDate, describeRule, formatOccurrence, formatTimes, nearLaborDay,
+  laborDay, burnDay, resolveAnnualDate, nextOccurrence, ruleFromDate, describeRule, formatOccurrence, formatTimes,
 } from '../annualDates';
 
 // The same cases as backend/test/utils/annualDates.test.ts
@@ -33,7 +33,5 @@ describe('annual dates', () => {
     expect(formatTimes('09:00', '13:30')).toBe('9am–1:30pm');
     expect(formatTimes('12:00')).toBe('noon');
     expect(formatOccurrence({ date: '2026-08-30', endDate: '2026-09-07' })).toBe('Sun Aug 30 – Mon Sep 7, 2026');
-    expect(nearLaborDay('2026-08-16')).toBe(true);
-    expect(nearLaborDay('2026-03-01')).toBe(false);
   });
 });

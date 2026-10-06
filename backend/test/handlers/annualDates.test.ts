@@ -121,5 +121,9 @@ describe('Annual dates API', () => {
     expect((await call(env, 'PUT', `/content/submissions/${id}/date-links`, {
       session: 'dev-council-session', body: { dateLinks: [] },
     }, contentRouter)).status).toBe(403);
+    // The Comms Cadre (and other Comms Calendar editors) link dates from the calendar too
+    expect((await call(env, 'PUT', `/content/submissions/${id}/date-links`, {
+      session: SESSIONS.cadre, body: { dateLinks: [moved] },
+    }, contentRouter)).status).toBe(200);
   });
 });

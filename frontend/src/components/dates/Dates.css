@@ -308,3 +308,65 @@
   0%, 100% { transform: translateY(-50%) scale(1); }
   50% { transform: translateY(-50%) scale(1.5); }
 }
+
+/* Track all */
+
+.dt-all-bar {
+  margin: 0 0 8px 0;
+}
+
+.dt-all-intro {
+  margin: 0 0 10px 0;
+}
+
+.dt-all-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dt-all-row {
+  border-top: 1px solid var(--border-color);
+  padding: 8px 0;
+}
+
+.dt-all-row:first-child {
+  border-top: none;
+}
+
+.dt-all-row--off {
+  opacity: 0.6;
+}
+
+.dt-all-include {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.dt-all-include input {
+  width: auto;
+}
+
+.dt-all-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 6px 0 0 24px;
+}
+
+.dt-all-fields input,
+.dt-all-fields select {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.dt-all-fields input {
+  flex: 1 1 220px;
+}

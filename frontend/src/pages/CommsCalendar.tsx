@@ -13,6 +13,7 @@ import { NudgeModal } from '../components/commsCalendar/NudgeModal';
 import { AddFromRequestModal } from '../components/commsCalendar/AddFromRequestModal';
 import { CsvImportModal } from '../components/commsCalendar/CsvImportModal';
 import { AnnualDatesTab } from '../components/commsCalendar/AnnualDatesTab';
+import { RequestDatesModal } from '../components/commsCalendar/RequestDatesModal';
 import './CommsCalendar.css';
 
 type Tab = 'upcoming' | 'all' | 'dates';
@@ -20,7 +21,8 @@ type Dialog =
   | { kind: 'edit'; entry?: CommsCalendarEntry; initial?: CommsCalendarInput }
   | { kind: 'nudge'; entry: CommsCalendarEntry; anniversary?: string }
   | { kind: 'import' }
-  | { kind: 'fromRequest' };
+  | { kind: 'fromRequest' }
+  | { kind: 'dates'; entry: CommsCalendarEntry; referenceYmd: string };
 
 const WINDOW_OPTIONS = [2, 4, 6, 8, 12];
 const TAB_KEY = 'commsCalendar.tab';
@@ -294,6 +296,16 @@ export const CommsCalendar: React.FC = () => {
                             <button type="button" className="cc-btn cc-btn--small" onClick={() => startThisYear(item)}>
                               This year's entry
                             </button>
+                            {item.entry.submissionId && (
+                              <button
+                                type="button"
+                                className="cc-btn cc-btn--small"
+                                onClick={() => setDialog({ kind: 'dates', entry: item.entry, referenceYmd: item.anniversary })}
+                                title="Track the dates in its request for the coming year"
+                              >
+                                Dates
+                              </button>
+                            )}
                             <button type="button" className="cc-btn cc-btn--ghost cc-btn--small" onClick={() => markNotRepeating(item.entry)}>
                               Won't repeat
                             </button>
@@ -379,6 +391,16 @@ export const CommsCalendar: React.FC = () => {
                             ) : (
                               <>
                                 <button type="button" className="cc-btn cc-btn--small" onClick={() => setDialog({ kind: 'edit', entry })}>Edit</button>
+                                {entry.submissionId && (
+                                  <button
+                                    type="button"
+                                    className="cc-btn cc-btn--small"
+                                    onClick={() => setDialog({ kind: 'dates', entry, referenceYmd: localToday() })}
+                                    title="Track the dates in its request"
+                                  >
+                                    Dates
+                                  </button>
+                                )}
                                 <button type="button" className="cc-btn cc-btn--ghost cc-btn--small" onClick={() => setConfirmDeleteId(entry.id)} aria-label={`Delete ${entry.subject}`}>Delete</button>
                               </>
                             )}
@@ -408,7 +430,25 @@ export const CommsCalendar: React.FC = () => {
         <NudgeModal entry={dialog.entry} anniversary={dialog.anniversary} onClose={() => setDialog(null)} onSent={closeAndReload} />
       )}
       {dialog?.kind === 'import' && (
-        <CsvImportModal entries={entries} onClose={() => setDialog(null)} onImported={load} />
+        <CsvImportModal
+          entries={entries}
+          onClose={() => setDialog(null)}
+          onImported={(startYear) => {
+            load();
+            // Show what was just imported, whichever cycle it went into
+            chooseTab('all');
+            setCycle(startYear);
+          }}
+        />
+      )}
+      {dialog?.kind === 'dates' && dialog.entry.submissionId && (
+        <RequestDatesModal
+          submissionId={dialog.entry.submissionId}
+          subject={dialog.entry.subject}
+          referenceYmd={dialog.referenceYmd}
+          canEdit={canEdit}
+          onClose={() => setDialog(null)}
+        />
       )}
       {dialog?.kind === 'fromRequest' && (
         <AddFromRequestModal

@@ -17,7 +17,7 @@ import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } f
 import { getEdition } from '../services/newsletterService';
 import { AnnualDateInputError, cleanDateLinks } from '../services/annualDatesService';
 import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
-import { syncCalendarFromSubmission } from '../services/commsCalendarService';
+import { canEditCalendar, syncCalendarFromSubmission } from '../services/commsCalendarService';
 
 export const router = AutoRouter({ base: '/api/content' });
 
@@ -900,6 +900,7 @@ function canEditDirectFields(user: User, submission: ContentSubmission, env: any
 
 // The dates in the body and blurb linked to annual dates. Links only: the text itself changes
 // through tracked changes (body) or the newsletter PATCH (blurb), so status and approvals stay.
+// Comms Calendar editors may link them too (from the calendar's tracked announcements).
 router.put('/submissions/:id/date-links', withAuth, async (request: Request, env: any) => {
   const { id } = (request as any).params;
   const user = (request as any).user as User;
@@ -909,7 +910,7 @@ router.put('/submissions/:id/date-links', withAuth, async (request: Request, env
   if (!submission) {
     return json({ error: 'Submission not found' }, { status: 404 });
   }
-  if (!canEditDirectFields(user, submission, env)) {
+  if (!canEditDirectFields(user, submission, env) && !(await canEditCalendar(user, env))) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
   try {

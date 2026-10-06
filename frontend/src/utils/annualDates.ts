@@ -197,10 +197,3 @@ export function formatOccurrence(occurrence: Pick<Occurrence, 'date' | 'endDate'
   const times = formatTimes(occurrence.startTime, occurrence.endTime);
   return times ? `${dates}, ${times}` : dates;
 }
-
-/** A Labor Day rule is the better guess for dates within this many days of Labor Day. */
-export const NEAR_LABOR_DAY_DAYS = 45;
-
-export function nearLaborDay(dateYmd: string): boolean {
-  return Math.abs(daysBetween(laborDay(Number(dateYmd.slice(0, 4))), dateYmd)) <= NEAR_LABOR_DAY_DAYS;
-}

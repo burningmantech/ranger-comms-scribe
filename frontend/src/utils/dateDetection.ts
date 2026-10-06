@@ -171,9 +171,11 @@ const CONNECTOR = '(?:by|on|at|from|until|till|through|thru|before|after|startin
 const TRAILING = new RegExp(`(?:[\\s,:;(\\-–—]+|\\s+${CONNECTOR})+$`, 'i');
 const LEADING = new RegExp(`^(?:[\\s,:;)\\-–—]+|${CONNECTOR}\\s+)+`, 'i');
 const MAX_NAME = 80;
+const MAX_NAME_WORDS = 8;
 
 function tidy(phrase: string): string {
-  let out = phrase.replace(/\s+/g, ' ');
+  // Asides in parentheses aren't part of a name (an unclosed one runs to the end)
+  let out = phrase.replace(/\s*\([^)]*(\)|$)/g, '').replace(/\s+/g, ' ');
   for (let previous = ''; previous !== out;) {
     previous = out;
     out = out.replace(TRAILING, '').replace(LEADING, '');
@@ -198,6 +200,9 @@ export function suggestDateName(text: string, found: Pick<DetectedDate, 'index' 
   const lead = tidy(before.slice(start));
   const trail = tidy(stop === -1 ? afterText : afterText.slice(0, stop));
   let name = words(lead) >= 2 || !trail ? lead : trail;
+  // A name, not the sentence: its first few words
+  const parts = name.split(' ');
+  if (parts.length > MAX_NAME_WORDS) name = tidy(parts.slice(0, MAX_NAME_WORDS).join(' '));
   if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME).replace(/\s+\S*$/, '');
   return name ? name[0].toUpperCase() + name.slice(1) : '';
 }

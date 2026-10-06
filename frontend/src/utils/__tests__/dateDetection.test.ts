@@ -126,3 +126,14 @@ describe('blockTextFromLexical', () => {
     expect(blockTextFromLexical(json)).toBe('Intro link.\nNoon on Monday, August 24th.\nOnly Staff');
   });
 });
+
+describe('suggestDateName on long sentences', () => {
+  const name = (text: string) => suggestDateName(text, detectDates(text, REF)[0]);
+
+  it('keeps the first few words, without asides', () => {
+    expect(name('You must claim in the Clubhouse all items (Staff Credentials, Special Price Tickets, etc.) that you want to use by 23:59 PT on Sunday, July 12th!!'))
+      .toBe('You must claim in the Clubhouse all items');
+    expect(name('If you need to receive your Special Price Ticket in the mail, you must pay for it by July 31st.'))
+      .toBe('If you need to receive your Special Price');
+  });
+});

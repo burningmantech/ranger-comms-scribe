@@ -4,7 +4,7 @@ import { annualDatesService } from '../../services/annualDatesService';
 import { AnnualDate, AnnualDateRule } from '../../types/annualDates';
 import { DetectedDate } from '../../utils/dateDetection';
 import {
-  daysBetween, describeRule, formatOccurrence, nearLaborDay, resolveAnnualDate, ruleFromDate,
+  daysBetween, describeRule, formatOccurrence, resolveAnnualDate, ruleFromDate,
 } from '../../utils/annualDates';
 import '../../pages/CommsCalendar.css';
 import './Dates.css';
@@ -26,7 +26,7 @@ export const TrackDateModal: React.FC<TrackDateModalProps> = ({ found, defaultNa
   const initialUnit: Unit = initialOffset !== 0 && initialOffset % 7 === 0 ? 'weeks' : 'days';
 
   const [name, setName] = useState(defaultName);
-  const [kind, setKind] = useState<AnnualDateRule['kind']>(nearLaborDay(found.date) ? 'laborDay' : 'fixed');
+  const [kind, setKind] = useState<AnnualDateRule['kind']>('laborDay');
   const [amount, setAmount] = useState(String(Math.abs(initialUnit === 'weeks' ? initialOffset / 7 : initialOffset)));
   const [unit, setUnit] = useState<Unit>(initialUnit);
   const [direction, setDirection] = useState<'before' | 'after'>(initialOffset < 0 ? 'before' : 'after');
