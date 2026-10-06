@@ -29,7 +29,14 @@ node legacy.js            # COLLAB_MODE unset: old behaviour unchanged (restart 
 node review-topbar.js     # review header: Finish review menu, conditions popover, view switch, Send, save
                           # status (incl. error + Retry), saving on unmount / page hide, queue pager, author
                           # view; works in both modes. STRICT=1 adds a reload after the Yjs room is dropped
+node review-ui.js         # review sidebar: one "Moved" card for a cut + paste, reject (live for both users),
+                          # Undo from the toast, accept, History, clicking a card scrolls to its text
 ```
 
-To run against a second stack on other ports, set `E2E_APP_URL` and `E2E_API_URL` (defaults
-`http://localhost:3000` and `http://localhost:8080/api`); `CHROME` overrides the browser path.
+To run against a second stack on other ports (e.g. a second checkout running in parallel), set
+`E2E_APP_URL` and `E2E_API_URL` (defaults `http://localhost:3000` and `http://localhost:8080/api`);
+`CHROME` overrides the browser path. `E2E_APP` / `E2E_API` still work as aliases.
+
+```bash
+E2E_APP_URL=http://localhost:3002 E2E_API_URL=http://localhost:8082/api node review-ui.js
+```

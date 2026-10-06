@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { deleteChangeHandler, batchCreateHandler, batchUpdateStatusHandler } from '../../src/handlers/trackedChanges';
+import { deleteChangeHandler, batchCreateHandler, batchUpdateStatusHandler, undoChangeHandler } from '../../src/handlers/trackedChanges';
 import { CustomRequest } from '../../src/types';
 import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
 import { createMockObjectStore } from '../helpers/mockObjectStore';
@@ -313,6 +313,73 @@ describe('trackedChanges handlers', () => {
       const { submission } = await batchReject(env, submissionId, { revertedRichText: 'plain text' });
 
       expect(submission.richTextContent).toBe(original);
+    });
+  });
+
+  describe('undoChangeHandler', () => {
+    const lexical = (text: string) => JSON.stringify({
+      root: { type: 'root', version: 1, children: [{ type: 'paragraph', version: 1, children: [{ type: 'text', version: 1, text }] }] },
+    });
+    let counter = 0;
+
+    async function setup(status: 'approved' | 'rejected', submittedBy = 'author-id') {
+      const env: any = { STORE: createMockObjectStore() };
+      const submissionId = `undo-sub-${++counter}`;
+      await putObject(`content_submissions/${submissionId}`, { id: submissionId, submittedBy }, env);
+      await putObject(`tracked-changes/submission/${submissionId}/c1`, {
+        id: 'c1', submissionId, field: 'content', oldValue: 'a', newValue: 'ab', changedBy: 'author-id',
+        timestamp: '2026-10-05T10:00:00Z', status, rejectedBy: 'reviewer', rejectedByName: 'Reviewer',
+      }, env);
+      await putObject(`proposed_versions/${submissionId}`, { proposedVersionsRichText: lexical('a') }, env);
+      return { env, submissionId };
+    }
+
+    async function undo(env: any, user: any, body: Record<string, unknown>) {
+      const request = createMockRequest({ params: { changeId: 'c1' }, user, body });
+      const response = await undoChangeHandler(request, env);
+      clearMemoryCache();
+      return response;
+    }
+
+    it('sets the change back to pending and stores the document sent with it', async () => {
+      const { env, submissionId } = await setup('rejected');
+      const doc = lexical('ab');
+
+      const response = await undo(env, { id: 'reviewer', userType: 'CommsCadre' }, { submissionId, proposedVersionsRichText: doc });
+
+      expect(response.status).toBe(200);
+      const change = await getObject<any>(`tracked-changes/submission/${submissionId}/c1`, env);
+      expect(change.status).toBe('pending');
+      expect(change.rejectedBy).toBeUndefined();
+      const proposed = await getObject<any>(`proposed_versions/${submissionId}`, env);
+      expect(proposed.proposedVersionsRichText).toBe(doc);
+    });
+
+    it("drops the stored proposed version when no document is sent (as before)", async () => {
+      const { env, submissionId } = await setup('approved');
+
+      const response = await undo(env, { id: 'reviewer', userType: 'Admin' }, { submissionId });
+
+      expect(response.status).toBe(200);
+      expect(await getObject<any>(`proposed_versions/${submissionId}`, env)).toBeNull();
+    });
+
+    it("lets the submission's author undo, like accept and reject", async () => {
+      const { env, submissionId } = await setup('rejected', 'author-id');
+      const response = await undo(env, { id: 'author-id', userType: 'Member' }, { submissionId });
+      expect(response.status).toBe(200);
+    });
+
+    it('refuses other members', async () => {
+      const { env, submissionId } = await setup('rejected', 'author-id');
+      const response = await undo(env, { id: 'someone-else', userType: 'Member' }, { submissionId });
+      expect(response.status).toBe(403);
+    });
+
+    it('requires the submission id', async () => {
+      const { env } = await setup('rejected');
+      const response = await undo(env, { id: 'reviewer', userType: 'Admin' }, {});
+      expect(response.status).toBe(400);
     });
   });
 });

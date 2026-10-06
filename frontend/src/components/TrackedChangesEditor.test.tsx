@@ -5,18 +5,18 @@ import { ContentSubmission, User, Comment, UserRole } from '../types/content';
 
 // Mock the dependencies
 jest.mock('./CollaborativeEditor', () => {
-  return function MockCollaborativeEditor({ onContentChange, onSave }: any) {
-    return (
-      <div data-testid="collaborative-editor">
-        <button onClick={() => onContentChange('test content', { x: 0, y: 0 })}>
-          Change Content
-        </button>
-        <button onClick={() => onSave('saved content')}>
-          Save
-        </button>
-      </div>
-    );
-  };
+  // TrackedChangesEditor imports the named export
+  const MockCollaborativeEditor = ({ onContentChange, onSave }: any) => (
+    <div data-testid="collaborative-editor">
+      <button onClick={() => onContentChange('test content', { x: 0, y: 0 })}>
+        Change Content
+      </button>
+      <button onClick={() => onSave('saved content')}>
+        Save
+      </button>
+    </div>
+  );
+  return { __esModule: true, CollaborativeEditor: MockCollaborativeEditor, default: MockCollaborativeEditor };
 });
 
 jest.mock('./editor/LexicalEditor', () => {
@@ -186,8 +186,8 @@ describe('TrackedChangesEditor - Collapsible Sidebar', () => {
       fireEvent.click(toggleButton);
       
       // Should show the change item
-      expect(screen.getByText('test-user')).toBeInTheDocument();
-      expect(screen.getByText('Incremental Change')).toBeInTheDocument();
+      expect(screen.getAllByText('test-user').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Replaced').length).toBeGreaterThan(0);
     });
   });
 
@@ -220,23 +220,61 @@ describe('TrackedChangesEditor - Collapsible Sidebar', () => {
   });
 
   describe('Sidebar Content', () => {
-    it('should display tracked changes in sidebar', () => {
+    it('should display tracked changes in sidebar, in plain language', () => {
       mockResizeWindow(1200);
       render(<TrackedChangesEditor {...mockProps} />);
-      
-      expect(screen.getByText('test-user')).toBeInTheDocument();
-      expect(screen.getByText('Incremental Change')).toBeInTheDocument();
-      expect(screen.getByText(/Removed:/)).toBeInTheDocument();
-      expect(screen.getByText(/Added:/)).toBeInTheDocument();
+
+      expect(screen.getAllByText('test-user').length).toBeGreaterThan(0);
+      expect(screen.queryByText(/Incremental Change/i)).not.toBeInTheDocument();
+      expect(screen.getByText('Replaced')).toBeInTheDocument();
+      expect(screen.getByText('old')).toBeInTheDocument();
+      expect(screen.getByText('new')).toBeInTheDocument();
     });
 
     it('should show action buttons for changes', () => {
       mockResizeWindow(1200);
       render(<TrackedChangesEditor {...mockProps} />);
-      
-      expect(screen.getByTitle('Approve this change')).toBeInTheDocument();
-      expect(screen.getByTitle('Reject this change')).toBeInTheDocument();
+
+      expect(screen.getByTitle('Accept')).toBeInTheDocument();
+      expect(screen.getByTitle('Reject')).toBeInTheDocument();
       expect(screen.getByTitle('Add comment')).toBeInTheDocument();
+      // No per-card checkboxes or "Select all"
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Select all/i)).not.toBeInTheDocument();
+    });
+
+    it('shows only pending changes; resolved ones are in History with who decided', () => {
+      mockResizeWindow(1200);
+      const lexical = (text: string) => JSON.stringify({ root: { type: 'root', children: [{ type: 'paragraph', children: [{ type: 'text', text }] }] } });
+      const submission = {
+        ...mockSubmission,
+        changes: [
+          {
+            id: 'change-2', field: 'content', oldValue: 'a b', newValue: 'a big b', changedBy: 'test-user', timestamp: new Date(),
+            status: 'rejected' as const, rejectedBy: 'helpdesk@x', rejectedByName: 'HelpDesk', rejectedAt: new Date(),
+            richTextOldValue: lexical('a b'), richTextNewValue: lexical('a big b'),
+          },
+        ],
+      };
+      render(<TrackedChangesEditor {...mockProps} submission={submission} />);
+
+      expect(screen.getByText('All caught up')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('tab', { name: /History/ }));
+      expect(screen.getByText(/Rejected by/)).toBeInTheDocument();
+      expect(screen.getByText('HelpDesk')).toBeInTheDocument();
+      expect(screen.getByText('big')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Undo/ })).toBeInTheDocument();
+    });
+
+    it('puts Accept all / Reject all in the menu', () => {
+      mockResizeWindow(1200);
+      render(<TrackedChangesEditor {...mockProps} />);
+
+      expect(screen.queryByText('Accept all')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTitle('More actions'));
+      expect(screen.getByText('Accept all')).toBeInTheDocument();
+      expect(screen.getByText('Reject all')).toBeInTheDocument();
+      expect(screen.getByText('Keyboard shortcuts')).toBeInTheDocument();
     });
   });
-}); 
+});

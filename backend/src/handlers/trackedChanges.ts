@@ -744,17 +744,25 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
   }
 
   try {
-    // Check permissions - same as approve/reject
-    const hasPermission = request.user.userType === 'Admin' ||
+    // Get submissionId (and, optionally, the editor's document after the undo) from the body
+    const body = await request.json().catch(() => ({}));
+    const { submissionId, proposedVersionsRichText } = body || {};
+
+    // Check permissions - same as approve/reject: privileged roles, or the submission's author
+    let hasPermission = request.user.userType === 'Admin' ||
       request.user.userType === 'CommsCadre' ||
       request.user.userType === 'CouncilManager';
+    if (!hasPermission && submissionId) {
+      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+      if (submission && submission.submittedBy === request.user.id) {
+        hasPermission = true;
+      }
+    }
 
     if (!hasPermission) {
       return new Response('Forbidden', { status: 403 });
     }
 
-    // Get submissionId from request body
-    const { submissionId } = await request.json();
     if (!submissionId) {
       return new Response('submissionId is required', { status: 400 });
     }
@@ -770,6 +778,18 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
     // will display it as a tracked change on top of submission.content.
     // We don't update submission.content here because the change is no
     // longer resolved — it needs to be re-accepted or rejected.
+
+    // undoChange drops the stored proposed version (to be recomputed). The editor sends
+    // its document after the undo (an undone reject re-applies the change's text), so
+    // store that instead: in collaborative mode the document is the source of truth.
+    if (typeof proposedVersionsRichText === 'string' && proposedVersionsRichText.includes('"root"')) {
+      await putObject(`proposed_versions/${submissionId}`, {
+        submissionId,
+        proposedVersionsRichText,
+        lastUpdatedBy: request.user.id,
+        lastUpdatedAt: new Date().toISOString(),
+      }, env);
+    }
 
     return new Response(JSON.stringify({ success: true, change: updatedChange }), {
       headers: { 'Content-Type': 'application/json' }
