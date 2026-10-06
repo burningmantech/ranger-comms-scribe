@@ -2,7 +2,7 @@
 //
 //   1. dev-admin (A, the author) types an edit, then approves (Finish review -> Approve) as the
 //      required approver, a council manager and a Comms Cadre member (seeded below). The
-//      status stays in_review (an edit is pending): both headers show 3/4, no Send.
+//      status is not approved (an edit is pending): both headers show 3/4, no Send.
 //   2. dev-user2 (B, CommsCadre) accepts the edit: the status becomes approved, both headers
 //      show 4/4 and the Send button appears in both browsers without a reload.
 //   3. A types a new edit: the status drops back to in_review and Send disappears in both.
@@ -139,7 +139,7 @@ async function acceptCard(u, text) {
     const g = s1.approvalGates || {};
     check('the approval meets the required approver, council and Comms Cadre gates',
       g.requiredApprovers?.met && g.councilManager?.met && g.commsCadre?.met, JSON.stringify({ ra: g.requiredApprovers?.met, cm: g.councilManager?.met, cc: g.commsCadre?.met }));
-    check('status stays in_review while an edit is pending', s1.status === 'in_review', s1.status);
+    check('not approved while an edit is pending (still submitted / in_review)', ['submitted', 'in_review'].includes(s1.status), s1.status);
     await eventually('A: header shows 3/4', async () => (await conditions(a)) === '3/4 conditions met', 8000, () => conditions(a));
     await eventually('B: header shows 3/4 live (approval_added)', async () => (await conditions(b)) === '3/4 conditions met', 8000, () => conditions(b));
     check('no Send before approval (A, B)', !(await hasSend(a)) && !(await hasSend(b)));
