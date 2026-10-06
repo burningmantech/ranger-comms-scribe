@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { AnnualDate, DateLink } from '../../types/annualDates';
-import { DetectedDate, detectDates, rewriteDate } from '../../utils/dateDetection';
+import { DetectedDate, detectDates, rewriteDate, suggestDateName } from '../../utils/dateDetection';
 import {
   describeRule, formatOccurrence, formatTimes, nextOccurrence, occurrenceOn,
 } from '../../utils/annualDates';
@@ -25,8 +25,6 @@ interface DatesPanelProps {
   onAnnualDateAdded: (entry: AnnualDate) => void;
   /** Replace `search` in a field with `replacement`; false when it isn't there any more. */
   onReplaceText: (field: DateLink['field'], search: string, replacement: string) => Promise<boolean>;
-  /** Name for a new annual date (the request's subject). */
-  defaultName: string;
   submissionId?: string;
   disabled?: boolean;
 }
@@ -53,7 +51,7 @@ function linkFor(links: DateLink[], field: DateLink['field'], found: DetectedDat
  * without a click.
  */
 export const DatesPanel: React.FC<DatesPanelProps> = ({
-  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, defaultName, submissionId, disabled,
+  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, submissionId, disabled,
 }) => {
   const [tracking, setTracking] = useState<Row | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -195,7 +193,7 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
       {tracking && (
         <TrackDateModal
           found={tracking.found}
-          defaultName={defaultName}
+          defaultName={suggestDateName(tracking.source.text, tracking.found)}
           submissionId={submissionId}
           onClose={() => setTracking(null)}
           onSaved={(entry) => {

@@ -3822,7 +3822,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     if (field === 'blurb') return blurbReplacerRef.current ? blurbReplacerRef.current(search, replacement) : false;
                     return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement) : false;
                   }}
-                  defaultName={submission.title || ''}
                   submissionId={submission.id}
                   disabled={!canLinkDates}
                 />

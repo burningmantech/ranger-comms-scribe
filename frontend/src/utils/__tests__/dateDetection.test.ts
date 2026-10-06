@@ -1,4 +1,4 @@
-import { detectDates, rewriteDate } from '../dateDetection';
+import { detectDates, rewriteDate, suggestDateName } from '../dateDetection';
 
 const REF = '2026-10-06';
 const one = (text: string, ref = REF) => {
@@ -54,5 +54,30 @@ describe('rewriteDate', () => {
 
   it('flags times that moved', () => {
     expect(rewriteDate(one('6pm - 10pm on Sept. 1 2026'), { ...next, endTime: '23:00' })?.timesDiffer).toBe(true);
+  });
+});
+
+describe('suggestDateName', () => {
+  const name = (text: string) => suggestDateName(text, detectDates(text, REF)[0]);
+
+  it('uses the words before the date in its sentence', () => {
+    expect(name('Hello Rangers! Claim your Ranger tickets by July 31st. See you soon.')).toBe('Claim your Ranger tickets');
+    expect(name('Come to the Ranger Social, 6pm - 10pm on Sept. 1 2026 at HQ.')).toBe('Come to the Ranger Social');
+    expect(name('The deadline is 8/16/2026')).toBe('The deadline');
+  });
+
+  it('uses the words after the date when there are none before it', () => {
+    expect(name('July 31st: ticket deadline.')).toBe('Ticket deadline');
+    expect(name('On Sept. 1 2026 the Ranger Social starts at 6pm')).toBe('The Ranger Social starts at 6pm');
+  });
+
+  it('is empty when the date stands alone', () => {
+    expect(name('July 31st')).toBe('');
+  });
+
+  it('keeps each date to its own sentence', () => {
+    const text = 'Tickets by July 12th. Vehicle passes by July 31st.';
+    const second = detectDates(text, REF)[1];
+    expect(suggestDateName(text, second)).toBe('Vehicle passes');
   });
 });

@@ -159,3 +159,43 @@ export function rewriteDate(found: DetectedDate, next: Occurrence): Rewrite | nu
     || (!!found.endTime && !!next.endTime && found.endTime !== next.endTime);
   return { text, timesDiffer };
 }
+
+// ---------------------------------------------------------------------------
+// A name for a date, from the sentence it was written in
+// ---------------------------------------------------------------------------
+
+/** Words that tie a phrase to its date ("register by", "at HQ on", "is due"), trimmed from the ends. */
+const CONNECTOR = '(?:by|on|at|from|until|till|through|thru|before|after|starting|starts|begins|is|are|was|will be|be|due|of|for|and|to|in)';
+const TRAILING = new RegExp(`(?:[\\s,:;(\\-–—]+|\\s+${CONNECTOR})+$`, 'i');
+const LEADING = new RegExp(`^(?:[\\s,:;)\\-–—]+|${CONNECTOR}\\s+)+`, 'i');
+const MAX_NAME = 80;
+
+function tidy(phrase: string): string {
+  let out = phrase.replace(/\s+/g, ' ');
+  for (let previous = ''; previous !== out;) {
+    previous = out;
+    out = out.replace(TRAILING, '').replace(LEADING, '');
+  }
+  return out.trim();
+}
+
+/**
+ * What a date is for, from the words around it in its sentence: the words before it ("Claim your
+ * Ranger tickets by July 31st" → "Claim your Ranger tickets"), else the words after ("July 31st:
+ * ticket deadline" → "Ticket deadline"). Empty when the sentence has nothing else in it.
+ */
+export function suggestDateName(text: string, found: Pick<DetectedDate, 'index' | 'text'>): string {
+  const end = found.index + found.text.length;
+  const before = text.slice(0, found.index);
+  const boundary = /[.!?](?=\s)|\n/g;
+  let start = 0;
+  for (let match = boundary.exec(before); match; match = boundary.exec(before)) start = match.index + 1;
+  const afterText = text.slice(end);
+  const stop = afterText.search(/[.!?](?=\s|$)|\n/);
+  const words = (phrase: string) => phrase.split(' ').filter(Boolean).length;
+  const lead = tidy(before.slice(start));
+  const trail = tidy(stop === -1 ? afterText : afterText.slice(0, stop));
+  let name = words(lead) >= 2 || !trail ? lead : trail;
+  if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME).replace(/\s+\S*$/, '');
+  return name ? name[0].toUpperCase() + name.slice(1) : '';
+}

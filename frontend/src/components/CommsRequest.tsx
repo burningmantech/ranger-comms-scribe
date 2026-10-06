@@ -839,7 +839,6 @@ export const CommsRequest: React.FC = () => {
           annualDates={annualDates.entries}
           onAnnualDateAdded={annualDates.added}
           onReplaceText={replaceDateText}
-          defaultName={watch('suggestedSubjectLine') || ''}
         />
 
         <div className="form-row">

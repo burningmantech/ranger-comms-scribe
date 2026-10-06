@@ -28,7 +28,6 @@ function setup(props: Partial<React.ComponentProps<typeof DatesPanel>> = {}) {
       annualDates={[]}
       onAnnualDateAdded={jest.fn()}
       onReplaceText={onReplaceText}
-      defaultName="Social"
       {...props}
     />,
   );
@@ -52,7 +51,6 @@ describe('DatesPanel', () => {
         annualDates={[]}
         onAnnualDateAdded={jest.fn()}
         onReplaceText={jest.fn()}
-        defaultName=""
       />,
     );
     expect(container).toBeEmptyDOMElement();
