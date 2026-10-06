@@ -31,7 +31,9 @@ export function buildGateRows(gates: ApprovalGates, pendingEdits?: number): Gate
   const cc = gates.commsCadre;
   const ra = gates.requiredApprovers;
   const tc = gates.trackedChanges;
-  const pending = tc.met ? 0 : (pendingEdits ?? tc.pending);
+  // The page's count can lag the server's (edits made in the editor since the page loaded
+  // are not in its change list yet): 0 there while the gate has pending edits uses the gate's.
+  const pending = tc.met ? 0 : (pendingEdits || tc.pending);
 
   const waitingFor = ra.details.filter((d) => d.status !== 'approved');
   const declined = ra.details.filter((d) => d.status === 'rejected');

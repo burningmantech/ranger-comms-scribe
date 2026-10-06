@@ -211,6 +211,20 @@ describe('an approved submission whose content changes', () => {
   });
 });
 
+describe('the approval_state broadcast', () => {
+  it('carries the gates after a change op that leaves the status alone', async () => {
+    await seed({ approvals: [] });
+    await createChange();
+    const calls = (broadcastToSubmissionRoom as jest.Mock).mock.calls.filter(([, m]) => m.type === 'approval_state');
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe(SUB);
+    expect(calls[0][1].data.status).toBe('in_review');
+    expect(calls[0][1].data.approvalGates.trackedChanges).toMatchObject({ met: false, pending: 1, total: 1 });
+    expect(calls[0][1].data.approvalGates.commsCadre.met).toBe(false);
+    expect(statusBroadcasts()).toHaveLength(0);
+  });
+});
+
 describe('a sent submission', () => {
   it('stays sent when a change is created, resolved or undone', async () => {
     await seed({ status: 'sent' });
@@ -220,7 +234,7 @@ describe('a sent submission', () => {
     expect((await stored()).status).toBe('sent');
     await undoChangeHandler(req(reviewer, { changeId }, { submissionId: SUB }), env);
     expect((await stored()).status).toBe('sent');
-    expect(statusBroadcasts()).toHaveLength(0);
+    expect(broadcastToSubmissionRoom).not.toHaveBeenCalled();
   });
 
   it('is not turned back into approved by recomputeApprovalStatus', async () => {

@@ -102,9 +102,10 @@ export async function recomputeApprovalStatus(submission: ContentSubmission, env
  *  - Only pending changes demote. An approver changing their vote does not (as before), so
  *    an override approval survives accepting or rejecting changes.
  *
- * Re-reads the submission (the caller may just have written it). Writes and broadcasts
- * `status_changed` only when the status changes. `onlyDemote` skips the promotion check
- * (a newly created change can only make a change pending).
+ * Re-reads the submission (the caller may just have written it) and writes it only when
+ * the status changes. Always tells the room, with the approval gates: `status_changed` when
+ * the status changed, else `approval_state`. `onlyDemote` skips the promotion check (a newly
+ * created change can only make a change pending).
  */
 export async function syncSubmissionStatus(
   submissionId: string,
@@ -118,27 +119,29 @@ export async function syncSubmissionStatus(
     const before = submission.status;
     if (before === 'approved') {
       const changes = await getTrackedChanges(submissionId, env);
-      if (!changes.some(c => c.status === 'pending')) return submission;
-      submission.status = 'in_review';
-      delete submission.finalApprovalDate;
-      if (submission.approvalOverride) submission.approvalOverride = false;
+      if (changes.some(c => c.status === 'pending')) {
+        submission.status = 'in_review';
+        delete submission.finalApprovalDate;
+        if (submission.approvalOverride) submission.approvalOverride = false;
+      }
     } else if (!options.onlyDemote) {
       await recomputeApprovalStatus(submission, env);
     }
-    if (submission.status === before) return submission;
-
-    await putObject(`content_submissions/${submissionId}`, submission, env);
-    await deleteObject('content_submissions/list', env);
+    const changed = submission.status !== before;
+    if (changed) {
+      await putObject(`content_submissions/${submissionId}`, submission, env);
+      await deleteObject('content_submissions/list', env);
+    }
+    // Open review pages show the gates ("N/4 conditions met") and the status (Send): tell
+    // the room either way, `status_changed` when the status changed, else `approval_state`.
     await broadcastToSubmissionRoom(submissionId, {
-      type: 'status_changed',
+      type: changed ? 'status_changed' : 'approval_state',
       userId: actor?.id || actor?.email || 'system',
       userName: actor?.name || '',
       userEmail: actor?.email || '',
       data: {
         status: submission.status,
-        previousStatus: before,
-        title: submission.title,
-        reason: 'tracked_changes',
+        ...(changed ? { previousStatus: before, title: submission.title, reason: 'tracked_changes' } : {}),
         approvalGates: await computeApprovalGates(submission, env),
       },
     }, env);
@@ -752,7 +755,9 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     data: {
       approval: approval,
       submissionStatus: submission.status,
-      title: submission.title
+      title: submission.title,
+      // Open review pages update their "N/4 conditions met" from this
+      approvalGates: await computeApprovalGates(submission, env),
     }
   }, env);
 

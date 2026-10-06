@@ -22,6 +22,8 @@ export interface ReviewCardProps<T extends ReviewChangeLike> {
   onReject: (card: ChangeCard<T>) => void;
   onComment: (changeId: string) => void;
   onReply: (parentId: string, text: string) => void;
+  /** Resolve a comment thread (moves it to History). */
+  onResolveThread?: (threadId: string) => void;
 }
 
 /** The author's initial in their highlight color (the color of their text in the editor). */
@@ -36,7 +38,7 @@ const Avatar: React.FC<{ value: string; color: string }> = ({ value, color }) =>
 
 /** A pending change (or a move) with Accept / Reject, or a comment thread, in the Open list. */
 export function ReviewCard<T extends ReviewChangeLike>(props: ReviewCardProps<T>): JSX.Element {
-  const { item, canReview, selected, linked, disabled, onSelect, onHover, onReply } = props;
+  const { item, canReview, selected, linked, disabled, onSelect, onHover, onReply, onResolveThread } = props;
   const classes = ['rp-card', 'change-item', selected ? 'selected' : '', linked ? 'rp-card--linked' : ''];
 
   if (item.type === 'comment') {
@@ -50,7 +52,7 @@ export function ReviewCard<T extends ReviewChangeLike>(props: ReviewCardProps<T>
         onMouseLeave={() => onHover?.(null)}
       >
         <div className="rp-card__kind"><i className="far fa-comment" aria-hidden="true" /> Comment{item.changeId ? ' on a resolved change' : ''}</div>
-        <CommentThread thread={item.thread} onReply={onReply} />
+        <CommentThread thread={item.thread} onReply={onReply} onResolve={onResolveThread} />
       </div>
     );
   }
@@ -120,7 +122,7 @@ export function ReviewCard<T extends ReviewChangeLike>(props: ReviewCardProps<T>
       </div>
       {item.threads.length > 0 && (
         <div className="rp-card__threads" onClick={(e) => e.stopPropagation()}>
-          {item.threads.map((t) => <CommentThread key={t.id} thread={t} onReply={onReply} />)}
+          {item.threads.map((t) => <CommentThread key={t.id} thread={t} onReply={onReply} onResolve={onResolveThread} />)}
         </div>
       )}
     </div>

@@ -24,6 +24,7 @@ export function remoteCommentFromMessage(message: { type?: string; data?: any } 
     createdAt: isNaN(created.getTime()) ? new Date() : created,
     type: raw.isSuggestion ? 'SUGGESTION' : 'COMMENT',
     resolved: !!raw.resolved,
+    ...(raw.resolved ? { resolvedBy: raw.resolvedBy, resolvedByName: raw.resolvedByName, resolvedAt: raw.resolvedAt } : {}),
   };
 }
 

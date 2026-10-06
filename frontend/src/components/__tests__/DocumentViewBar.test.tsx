@@ -69,4 +69,7 @@ describe('buildGateRows: pending edits counted like the review sidebar', () => {
   it("falls back to the gate's count", () => {
     expect(buildGateRows(gates)[3].detail).toBe('2 edits still to accept or reject');
   });
+  it("uses the gate's count when the page counts none (its change list lags the server)", () => {
+    expect(buildGateRows(gates, 0)[3].detail).toBe('2 edits still to accept or reject');
+  });
 });

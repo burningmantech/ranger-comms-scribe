@@ -2,8 +2,8 @@
  * The review sidebar's lists, built from the change records and comments:
  *
  *  - Open: pending changes (a deletion and an insertion of the same text by the same
- *    author shown as one "Moved" card) and comment threads, in document order;
- *  - History: who accepted or rejected what, newest first.
+ *    author shown as one "Moved" card) and unresolved comment threads, in document order;
+ *  - History: who accepted or rejected what, newest first, and resolved comment threads.
  *
  * Pure functions; the editor supplies document positions (from the reject locator).
  */
@@ -169,6 +169,9 @@ export function buildCommentThreads(comments: Comment[]): CommentNode[] {
 /** The change a thread is on: its root's @change reference (replies inherit it). */
 export const threadChangeId = (thread: CommentNode): string | undefined => commentChangeId(thread);
 
+/** A thread is resolved when its root comment is (replies follow their root). */
+export const isThreadResolved = (thread: CommentNode): boolean => !!thread.resolved;
+
 /** Number of comments in a thread (root and every reply). */
 export const threadSize = (thread: CommentNode): number =>
   1 + thread.replies.reduce((n, r) => n + threadSize(r), 0);
@@ -225,7 +228,8 @@ export function buildOpenItems<T extends ReviewChangeLike>(
 ): Array<OpenItem<T>> {
   const sorted = [...pendingChanges].sort((x, y) => time(x.timestamp) - time(y.timestamp));
   const cards = pairMoves(sorted, describe);
-  const threads = buildCommentThreads(comments);
+  // Resolved threads leave Open (they are listed in History, see buildResolvedThreads)
+  const threads = buildCommentThreads(comments).filter((t) => !isThreadResolved(t));
   const cardOfChange = new Map<string, OpenItem<T>>();
   const items: Array<OpenItem<T>> = cards.map((card) => {
     const item = { ...card, threads: [] as CommentNode[] };
@@ -290,4 +294,35 @@ export function buildHistory<T extends ReviewChangeLike>(
     }
   }
   return entries.sort((x, y) => y.at - x.at);
+}
+
+// ---------------------------------------------------------------------------
+// Resolved comment threads (History)
+// ---------------------------------------------------------------------------
+
+export interface ResolvedThreadEntry {
+  key: string;
+  thread: CommentNode;
+  /** The change the thread is on, if any. */
+  changeId?: string;
+  /** Stored user reference (email or id) and display name of who resolved it. */
+  resolverId?: string;
+  resolverName?: string;
+  /** When it was resolved (ms); 0 when unknown. */
+  at: number;
+}
+
+/** Resolved comment threads, most recently resolved first (History lists them with Reopen). */
+export function buildResolvedThreads(comments: Comment[]): ResolvedThreadEntry[] {
+  return buildCommentThreads(comments)
+    .filter(isThreadResolved)
+    .map((thread) => ({
+      key: `resolved:${thread.id}`,
+      thread,
+      changeId: threadChangeId(thread),
+      resolverId: thread.resolvedBy,
+      resolverName: thread.resolvedByName,
+      at: time(thread.resolvedAt),
+    }))
+    .sort((x, y) => y.at - x.at);
 }

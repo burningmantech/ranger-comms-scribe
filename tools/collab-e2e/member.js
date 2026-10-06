@@ -124,40 +124,12 @@ async function checkRequests(m) {
   return noLoop && state.path === '/requests' && state.requestsUi;
 }
 
-const TURNSTILE_TEST_TOKEN = 'XXXX.DUMMY.TOKEN.XXXX';
-
-/** A real admin session for the bootstrap admin E2E_ADMIN_EMAIL (see the header). */
-async function adminSession() {
-  const email = process.env.E2E_ADMIN_EMAIL || 'e2e-admin@example.com';
-  const password = 'E2e-Seed-Admin-7!pass';
-  const turnstileToken = TURNSTILE_TEST_TOKEN;
-  const post = (path, body, session) => L.api(path, { method: 'POST', body, session });
-  const debugToken = (res, what) => {
-    const m = /token: (\S+)/.exec(res.debug || '');
-    if (!m) throw new Error(`no ${what} token in ${JSON.stringify(res)} (is DEV_BYPASS_AUTH=true?)`);
-    return m[1];
-  };
-  try {
-    const reg = await post('/auth/register', { name: 'E2E Admin', email, password, turnstileToken }, 'none');
-    const resent = await post('/auth/resend-verification', undefined, reg.sessionId);
-    await post('/auth/verify-email', { token: debugToken(resent, 'verification') }, 'none');
-  } catch (e) {
-    if (!/: 409 /.test(e.message)) throw e; // registered by an earlier run on this store
-  }
-  // Verifying a bootstrap admin clears its password; set one with a reset token.
-  const forgot = await post('/auth/forgot-password', { email, turnstileToken }, 'none');
-  await post('/auth/reset-password', { token: debugToken(forgot, 'reset'), password, turnstileToken }, 'none');
-  const login = await post('/auth/login', { email, password, turnstileToken }, 'none');
-  if (!login.isAdmin) throw new Error(`${email} is not an admin after login; start the backend with BOOTSTRAP_ADMIN_EMAILS=${email}`);
-  return login.sessionId;
-}
-
 /** Makes sure APPROVER is an approved, stored user who is not a council manager. */
 async function seedApprover() {
   const listed = async () => ((await L.api('/user/approvers', { session: MEMBER_SESSION })).users || [])
     .some((u) => u.email === APPROVER.email);
   if (!(await listed())) {
-    const session = await adminSession();
+    const session = await L.adminSession();
     await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [{ ...APPROVER, approved: true }] } });
     if (!(await listed())) throw new Error(`seeded approver ${APPROVER.email} is not listed by /user/approvers`);
   }
