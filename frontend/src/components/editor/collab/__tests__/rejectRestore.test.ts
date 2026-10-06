@@ -1,4 +1,4 @@
-import { applyBlockReplacements, planRejectRestore } from '../rejectRestore';
+import { applyBlockReplacements, locateChange, planReapply, planRejectRestore } from '../rejectRestore';
 
 // ---------------------------------------------------------------------------
 // Fixtures: serialized Lexical JSON
@@ -318,5 +318,138 @@ describe('long documents', () => {
     expectSame(rejectOk(d1, d2, rejectOk(d0, d1, d2)), d0);
     expectSame(rejectOk(d0, d1, rejectOk(d1, d2, d2)), d0);
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Undo of a reject: re-apply (planReapply)
+// ---------------------------------------------------------------------------
+
+function reapply(changes: Array<{ before: Doc; after: Doc; id?: string }>, live: Doc, keepMarkers = false): Doc {
+  const plan = planReapply(changes, live.root.children, { keepMarkers });
+  if (!plan.ok) throw new Error(`re-apply failed: ${plan.reason}`);
+  return doc(...applyBlockReplacements(live.root.children, plan.replacements));
+}
+
+describe('undo of a reject: re-apply the change', () => {
+  const shapes: Array<[string, Doc, Doc]> = [
+    ['cut whole paragraphs, paste mid-paragraph', doc1, pasteMid([W, T])],
+    ['cut leaves an empty paragraph, paste mid-paragraph', doc1Empty, pasteMid([W, EMPTY, T])],
+    ['cut whole paragraphs, paste as paragraphs', doc1, pasteBlocks([W, T])],
+  ];
+  for (const [name, afterCut, afterPaste] of shapes) {
+    it(`${name}: rejecting the move and undoing it gives the moved document back`, () => {
+      const change1 = { id: 'c1', before: doc0, after: afterCut };
+      const change2 = { id: 'c2', before: afterCut, after: afterPaste };
+      // Reject the deletion first, then the insertion (the order the Moved card uses)
+      const restored = rejectOk(change2.before, change2.after, rejectOk(change1.before, change1.after, afterPaste));
+      expectSame(restored, doc0);
+      // Undo both, oldest first
+      expectSame(reapply([change1, change2], restored), afterPaste);
+    });
+  }
+
+  it('re-applies one rejected change and leaves later edits elsewhere alone', () => {
+    const before = doc(p('Alpha beta gamma.'), p('Second line.'));
+    const after = doc(p('Alpha beta NEW gamma.'), p('Second line.'));
+    const rejected = rejectOk(before, after, after);
+    expectSame(rejected, before);
+    const edited = doc(p('Alpha beta gamma.'), p('Second line, edited by someone.'));
+    expectSame(reapply([{ before, after }], edited), doc(p('Alpha beta NEW gamma.'), p('Second line, edited by someone.')));
+  });
+
+  it('re-applies a deletion', () => {
+    const before = doc(p('Keep this. Remove this sentence. Keep that.'));
+    const after = doc(p('Keep this. Keep that.'));
+    expectSame(reapply([{ before, after }], before), after);
+  });
+
+  it('is a no-op for a change whose text is already there', () => {
+    const before = doc(p('Alpha beta gamma.'));
+    const after = doc(p('Alpha beta NEW gamma.'));
+    const plan = planReapply([{ before, after }], after.root.children);
+    expect(plan).toEqual({ ok: true, replacements: [] });
+  });
+
+  it("fails (nothing to change) when the change's region was rewritten", () => {
+    const before = doc(p('The quick brown fox jumps over the lazy dog.'));
+    const after = doc(p('The quick brown fox leaps gracefully over the lazy dog.'));
+    const rewritten = doc(p('Completely different text now.'));
+    expect(planReapply([{ before, after }], rewritten.root.children)).toMatchObject({ ok: false });
+  });
+
+  it('is all or nothing across several changes', () => {
+    const b1 = doc(p('One two three.'), p('Four five six.'));
+    const a1 = doc(p('One two NEW three.'), p('Four five six.'));
+    const unrelated = { before: doc(p('Nothing like this.')), after: doc(p('Nothing like this at all.')) };
+    expect(planReapply([{ before: b1, after: a1 }, unrelated], b1.root.children)).toMatchObject({ ok: false });
+  });
+
+  it("with keepMarkers, puts the change's own deletion marker back, with its id", () => {
+    const marker = { type: 'deleted-text', changeId: '__pending_deletion__', deletedText: 'old ', authorId: 'u1', isBlockLevel: false, version: 1 };
+    const before = doc(p('Keep old text.'));
+    const after = doc(p('Keep ', marker, 'text.'));
+    const rejected = rejectOk(before, after, after);
+    expectSame(rejected, before);
+    const result = reapply([{ id: 'c9', before, after }], rejected, true);
+    expectSame(result, doc(p('Keep ', { ...marker, changeId: 'c9' }, 'text.')));
+    // Without it, the marker isn't restored (legacy mode adds its own)
+    expectSame(reapply([{ before, after }], rejected), doc(p('Keep text.')));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Locating a change in the live document (for scrolling to it and ordering cards)
+// ---------------------------------------------------------------------------
+
+describe('locateChange', () => {
+  it('finds an insertion: block and offsets of the added text', () => {
+    const before = doc(p('First.'), p('Alpha beta gamma.'));
+    const after = doc(p('First.'), p('Alpha beta NEW gamma.'));
+    const loc = locateChange(before, after, after.root.children)!;
+    expect(loc.collapsed).toBe(false);
+    expect(loc.start).toEqual({ block: 1, offset: 'Alpha beta '.length });
+    expect(loc.end).toEqual({ block: 1, offset: 'Alpha beta NEW '.length });
+  });
+
+  it('finds a deletion as a collapsed point where the text was', () => {
+    const before = doc(p('Keep this. Remove this. Keep that.'));
+    const after = doc(p('Keep this. Keep that.'));
+    const loc = locateChange(before, after, after.root.children)!;
+    expect(loc.collapsed).toBe(true);
+    expect(loc.start).toEqual({ block: 0, offset: 'Keep this. '.length });
+  });
+
+  it('finds the change after other edits moved it down the document', () => {
+    const before = doc(p('Alpha beta gamma.'));
+    const after = doc(p('Alpha beta NEW gamma.'));
+    const live = doc(p('An intro paragraph someone added.'), p('Alpha beta NEW gamma.'));
+    const loc = locateChange(before, after, live.root.children)!;
+    expect(loc.start.block).toBe(1);
+  });
+
+  it('orders changes by document position', () => {
+    const live = doc(p('One two three.'), p('Four five six.'), p('Seven eight nine.'));
+    const early = locateChange(doc(p('One three.'), p('Four five six.'), p('Seven eight nine.')), live, live.root.children)!;
+    const late = locateChange(doc(p('One two three.'), p('Four five six.'), p('Seven nine.')), live, live.root.children)!;
+    expect(early.order).toBeLessThan(late.order);
+  });
+
+  it('returns null for a change that is no longer in the document, or without rich text', () => {
+    const before = doc(p('The quick brown fox jumps over the lazy dog.'));
+    const after = doc(p('The quick brown fox leaps gracefully over the lazy dog.'));
+    expect(locateChange(before, after, doc(p('Completely different text now.')).root.children)).toBeNull();
+    expect(locateChange('', '', [])).toBeNull();
+  });
+
+  it('locates both halves of a move (the deletion where the text was, the insertion where it is)', () => {
+    const live = pasteMid([W, T]);
+    const del = locateChange(doc0, doc1, live.root.children)!;
+    const ins = locateChange(doc1, live, live.root.children)!;
+    expect(del.collapsed).toBe(true);
+    expect(del.start.block).toBe(1); // where "New for 2026" was: before "Tickets"
+    expect(ins.collapsed).toBe(false);
+    expect(ins.start).toEqual({ block: 2, offset: 'General admission is $75.'.length });
+    expect(del.order).toBeLessThan(ins.order);
   });
 });

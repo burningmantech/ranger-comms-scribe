@@ -18,7 +18,7 @@ import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
-import { $rejectByContext } from '../collab/rejectRestore';
+import { $reapplyByContext, $rejectByContext, ChangeDocs } from '../collab/rejectRestore';
 import { getUserColorIndex, getUserColor, getChangeColorIndex, getChangeColor } from '../../../utils/userColors';
 
 export interface TrackedChange {
@@ -1087,6 +1087,32 @@ export function resolveTrackedChange(editor: LexicalEditor, detail: ResolveTrack
     return;
   }
   editor.update(() => $resolveWithMarkers(detail), { tag: 'tracked-changes-resolve' });
+}
+
+/** The editor the mounted TrackedChangesPlugin is attached to (the proposed version). */
+export function getActiveTrackedChangesEditor(): LexicalEditor | null {
+  return activeEditorRef;
+}
+
+/**
+ * Undo of a reject: re-apply rejected changes to the document by context (the reject's
+ * locator with the change's two documents swapped), oldest first, in one synced update
+ * tagged like a resolve (bookkeeping: never a tracked edit). All or nothing; the result is
+ * reported synchronously. Collaborative mode also puts back each change's own deletion
+ * markers (only their author's edit creates them, so nothing else would).
+ */
+export function reapplyRejectedChanges(
+  editor: LexicalEditor | null,
+  changes: ChangeDocs[],
+  collab: boolean,
+): { ok: true } | { ok: false; reason: string } {
+  if (!editor) return { ok: false, reason: 'the editor is not ready' };
+  let result: { ok: true } | { ok: false; reason: string } = { ok: false, reason: 'the editor did not run the update' };
+  editor.update(() => {
+    const outcome = $reapplyByContext(changes, { keepMarkers: collab });
+    result = outcome.ok ? { ok: true } : { ok: false, reason: outcome.reason };
+  }, { tag: 'tracked-changes-resolve', discrete: true });
+  return result;
 }
 
 /** Resolve through deletion markers, then the inserted-text and format heuristics. */

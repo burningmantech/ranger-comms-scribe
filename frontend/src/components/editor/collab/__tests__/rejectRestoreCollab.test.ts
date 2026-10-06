@@ -10,6 +10,7 @@ import {
   $createParagraphNode,
   $createRangeSelection,
   $createTextNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $isTextNode,
@@ -29,7 +30,8 @@ import { DeletedTextNode } from '../../nodes/DeletedTextNode';
 import { ImageNode } from '../../nodes/ImageNode';
 import { createLocalEditTracker } from '../localEditTracker';
 import { trackProvenance } from '../provenance';
-import { resolveTrackedChange, ResolveTrackedChangeDetail } from '../../plugins/TrackedChangesPlugin';
+import { reapplyRejectedChanges, resolveTrackedChange, ResolveTrackedChangeDetail } from '../../plugins/TrackedChangesPlugin';
+import { $exportNodeJSON, $resolveUnitPoint, locateChange } from '../rejectRestore';
 
 // The same nodes as CollaborativeEditor ($parseSerializedNode needs every type registered).
 const NODES = [
@@ -266,6 +268,81 @@ describe('reject by context through Yjs (the move from the bug report)', () => {
     expect(detail.result).toMatchObject({ restored: false });
     expect(blocks(b)).toEqual(before);
     expect(blocks(a)).toEqual(before);
+  });
+
+  it('undo of the reject (re-apply, oldest first) brings the move back in both editors', () => {
+    const { change1, change2 } = cutAndPaste(a);
+    const moved = blocks(a);
+    rejectOn(b, change1);
+    rejectOn(b, change2);
+    expect(blocks(a)).toEqual(original);
+
+    // The reviewer clicks Undo: TrackedChangesEditor re-applies the rejected changes.
+    flush(b);
+    const result = reapplyRejectedChanges(b.editor, [change1, change2], true);
+    expect(result).toEqual({ ok: true });
+    expect(blocks(b)).toEqual(moved);
+    expect(blocks(a)).toEqual(moved);
+
+    // ... and the move can be rejected again, back to the original.
+    expect(rejectOn(b, change1).result?.restored).toBe(true);
+    expect(rejectOn(b, change2).result?.restored).toBe(true);
+    expect(blocks(a)).toEqual(original);
+    expect(blocks(b)).toEqual(original);
+  });
+
+  it('undo of one reject re-applies only that change', () => {
+    const { change1, change2 } = cutAndPaste(a);
+    const moved = blocks(a);
+    rejectOn(b, change2); // the paste is gone, the cut stays
+    const afterReject = blocks(a);
+    expect(afterReject.some((x) => x.includes('New for 2026'))).toBe(false);
+    flush(b);
+    expect(reapplyRejectedChanges(b.editor, [change2], true)).toEqual({ ok: true });
+    expect(blocks(a)).toEqual(moved);
+    expect(blocks(b)).toEqual(moved);
+  });
+
+  it("undo changes nothing and reports why when the change's place was rewritten", () => {
+    const { change2 } = cutAndPaste(a);
+    rejectOn(b, change2);
+    edit(a, () => {
+      const root = $getRoot();
+      $setSelection(null);
+      // Rewrite the paragraphs around where the paste was.
+      root.getChildAtIndex(2)!.replace($createParagraphNode().append($createTextNode('Completely different text by someone.')));
+      root.getChildAtIndex(3)!.replace($createParagraphNode().append($createTextNode('Nothing like the original.')));
+    });
+    const before = blocks(a);
+    flush(b);
+    const result = reapplyRejectedChanges(b.editor, [change2], true);
+    expect(result.ok).toBe(false);
+    expect(blocks(a)).toEqual(before);
+    expect(blocks(b)).toEqual(before);
+  });
+
+  it('undo of an accept needs no document change: the accepted text is still there', () => {
+    const { change2 } = cutAndPaste(a);
+    const moved = blocks(a);
+    flush(b);
+    // Re-applying an accepted (never reverted) change is a no-op.
+    expect(reapplyRejectedChanges(b.editor, [change2], true)).toEqual({ ok: true });
+    expect(blocks(a)).toEqual(moved);
+  });
+
+  it('locates both halves of the move in the live document', () => {
+    const { change1, change2 } = cutAndPaste(a);
+    flush(b);
+    const live = b.editor.getEditorState().read(() => $getRoot().getChildren().map($exportNodeJSON));
+    const del = locateChange(change1.before, change1.after, live);
+    const ins = locateChange(change2.before, change2.after, live);
+    expect(del?.collapsed).toBe(true);
+    expect(ins?.collapsed).toBe(false);
+    // The insertion starts right after "$75." and resolves to that text node in the editor.
+    const point = b.editor.getEditorState().read(() => $resolveUnitPoint(ins!.start));
+    expect(point?.type).toBe('text');
+    const text = b.editor.getEditorState().read(() => ($getNodeByKey(point!.key) as TextNode).getTextContent());
+    expect(text.slice(0, (point as any).offset)).toBe('General admission is $75.');
   });
 
   it('runs the legacy path (no result) outside collaborative mode', () => {

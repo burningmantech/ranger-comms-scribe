@@ -445,22 +445,30 @@ function safeParse(s: string): Json {
   }
 }
 
+export interface PlanOptions {
+  /**
+   * Restore deletion markers too (normally they are never restored), with a marker that
+   * still has the placeholder id `__pending_deletion__` given this change id. Used when a
+   * rejected change is re-applied (undo of a reject) in collaborative mode, so its
+   * deletion shows again as a marker that belongs to it.
+   */
+  markerChangeId?: string;
+}
+
+/** Where each hunk of a change maps in the live document (unit indexes), plus the edits. */
+type PatchMapping =
+  | { ok: true; splices: Splice[]; spans: Array<{ ls: number; le: number }> }
+  | { ok: false; reason: string };
+
 /**
- * Plan the reject of a change (before -> after) against the live document's top-level
- * blocks. `before` and `after` are Lexical editor-state JSON (string or object).
+ * Map the patch "after -> before" of a change into the live document: for every hunk, the
+ * live range it occupies (`spans`) and the edit that reverts it (`splices`). This is the
+ * locator shared by the reject (planRejectRestore) and by `locateChange`.
  */
-export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[]): RejectRestorePlan {
-  const oldBlocks = blocksOf(before);
-  const newBlocks = blocksOf(after);
-  if (!oldBlocks || !newBlocks) return { ok: false, reason: 'the change has no rich text' };
-
-  const interner = new Interner();
-  const O = toUnits(oldBlocks, interner);
-  const N = toUnits(newBlocks, interner);
-  const L = toUnits(liveBlocks, interner);
-
+function mapPatch(O: DocUnits, N: DocUnits, L: DocUnits, options: PlanOptions = {}): PatchMapping {
   const patch = hunksOf(diffDocs(N, O));
-  if (patch.length === 0) return { ok: true, replacements: [] };
+  const spans: Array<{ ls: number; le: number }> = [];
+  if (patch.length === 0) return { ok: true, splices: [], spans };
 
   const img = new Int32Array(N.units.length).fill(-1);
   const alignment = diffDocs(N, L);
@@ -492,9 +500,17 @@ export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[])
     return total === 0 ? 1 : aligned / total;
   };
 
+  const restoreUnits = (h: Hunk): Unit[] => {
+    const units = O.units.slice(h.b0, h.b1);
+    if (options.markerChangeId === undefined) return units.filter((u) => !u.marker);
+    return units.map((u) => (u.marker && u.node?.changeId === '__pending_deletion__'
+      ? { ...u, node: { ...u.node, changeId: options.markerChangeId } }
+      : u));
+  };
+
   const splices: Splice[] = [];
   for (const h of patch) {
-    const restore = O.units.slice(h.b0, h.b1).filter((u) => !u.marker);
+    const restore = restoreUnits(h);
     const la = leftAnchor(h.a0);
     const ra = rightAnchor(h.a1);
     const laEnd = la >= 0 ? img[la] + 1 : 0;
@@ -512,8 +528,10 @@ export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[])
       const between = lIds.slice(laEnd, raStart);
       if (between.length > 0 && restore.length > 0 &&
           similarity(between, restore.map((u) => u.id)) >= ALREADY_RESTORED_SIMILARITY) {
+        spans.push({ ls: laEnd, le: raStart });
         continue; // someone has put it back already
       }
+      spans.push({ ls: at, le: at });
       if (restore.length > 0) splices.push({ ls: at, le: at, units: restore });
       continue;
     }
@@ -543,11 +561,13 @@ export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[])
           const movedTo = liveInserts.find((x) => x.b1 - x.b0 >= added.length / 2 && x.b1 - x.b0 <= added.length * 2 &&
             similarity(lIds.slice(x.b0, x.b1), added) >= MIN_CONTENT_SIMILARITY);
           if (movedTo) return { ok: false, reason: 'the changed text has been moved since' };
+          spans.push({ ls: laEnd, le: raStart });
           continue;
         }
         return { ok: false, reason: 'the changed text has been edited or removed since' };
       }
     }
+    spans.push({ ls, le });
     splices.push({ ls, le, units: restore });
   }
 
@@ -556,6 +576,30 @@ export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[])
   for (let i = 1; i < splices.length; i++) {
     if (splices[i].ls < splices[i - 1].le) return { ok: false, reason: 'the change overlaps itself in the document' };
   }
+  return { ok: true, splices, spans };
+}
+
+/**
+ * Plan the reject of a change (before -> after) against the live document's top-level
+ * blocks. `before` and `after` are Lexical editor-state JSON (string or object).
+ *
+ * Swapping `before` and `after` plans the opposite: re-applying a change that was
+ * rejected (see planReapply).
+ */
+export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[], options: PlanOptions = {}): RejectRestorePlan {
+  const oldBlocks = blocksOf(before);
+  const newBlocks = blocksOf(after);
+  if (!oldBlocks || !newBlocks) return { ok: false, reason: 'the change has no rich text' };
+
+  const interner = new Interner();
+  const O = toUnits(oldBlocks, interner);
+  const N = toUnits(newBlocks, interner);
+  const L = toUnits(liveBlocks, interner);
+
+  const mapping = mapPatch(O, N, L, options);
+  if (!mapping.ok) return mapping;
+  const { splices } = mapping;
+  if (splices.length === 0) return { ok: true, replacements: [] };
 
   const result: Unit[] = [];
   let pos = 0;
@@ -598,6 +642,113 @@ export function applyBlockReplacements(liveBlocks: Json[], replacements: BlockRe
   return out;
 }
 
+/** The top-level block replacements that turn `from` into `to` (blocks compared like units). */
+function blockReplacementsBetween(from: Json[], to: Json[]): BlockReplacement[] {
+  const interner = new Interner();
+  const a = from.map((x) => interner.id(canon(x)));
+  const b = to.map((x) => interner.id(canon(x)));
+  const replacements: BlockReplacement[] = [];
+  for (const op of diffRange(a, 0, a.length, b, 0, b.length)) {
+    if (op.type === 'equal') continue;
+    const last = replacements[replacements.length - 1];
+    const nodes = to.slice(op.b0, op.b1).map((n) => clone(n));
+    if (last && last.start + last.deleteCount === op.a0) {
+      last.deleteCount += op.a1 - op.a0;
+      last.nodes.push(...nodes);
+    } else {
+      replacements.push({ start: op.a0, deleteCount: op.a1 - op.a0, nodes });
+    }
+  }
+  return replacements;
+}
+
+// ---------------------------------------------------------------------------
+// Re-applying rejected changes (undo of a reject)
+// ---------------------------------------------------------------------------
+
+/** A change record: its whole document before and after the edit (Lexical JSON). */
+export interface ChangeDocs {
+  id?: string;
+  before: Json;
+  after: Json;
+}
+
+/**
+ * Plan re-applying changes that were rejected (an undo of the reject): each change's patch
+ * "before -> after" is located in the live document with the same locator as a reject
+ * (planRejectRestore with the two documents swapped) and applied, in the order given (pass
+ * them oldest first, the reverse of how a reject cascade reverts them). All or nothing: if
+ * one change can't be located, the plan fails and nothing is to change.
+ *
+ * `keepMarkers` (collaborative mode) also puts back the change's own deletion markers, so
+ * a re-applied deletion shows as one again.
+ */
+export function planReapply(changes: ChangeDocs[], liveBlocks: Json[], options: { keepMarkers?: boolean } = {}): RejectRestorePlan {
+  let blocks = liveBlocks;
+  for (const change of changes) {
+    const plan = planRejectRestore(change.after, change.before, blocks,
+      options.keepMarkers ? { markerChangeId: change.id ?? '__pending_deletion__' } : {});
+    if (!plan.ok) return plan;
+    blocks = applyBlockReplacements(blocks, plan.replacements);
+  }
+  return { ok: true, replacements: blockReplacementsBetween(liveBlocks, blocks) };
+}
+
+// ---------------------------------------------------------------------------
+// Locating a change in the live document
+// ---------------------------------------------------------------------------
+
+/** A point in the live document: a top-level block and a unit offset inside it. */
+export interface UnitPoint {
+  block: number;
+  /** Units after the block's own unit (characters, inline leaves); 0 for an opaque block. */
+  offset: number;
+}
+
+export interface ChangeLocation {
+  /** Global unit index of the start, for ordering changes by document position. */
+  order: number;
+  start: UnitPoint;
+  /** Exclusive end. */
+  end: UnitPoint;
+  /** Nothing of the change is in the document (a pure deletion): start is where it was. */
+  collapsed: boolean;
+}
+
+/**
+ * Where a change is in the live document, found with the same locator as a reject
+ * (mapPatch). For a deletion the location is collapsed at the point the text was removed
+ * from. Null when the change can't be located (or has no rich text).
+ */
+export function locateChange(before: Json, after: Json, liveBlocks: Json[]): ChangeLocation | null {
+  const oldBlocks = blocksOf(before);
+  const newBlocks = blocksOf(after);
+  if (!oldBlocks || !newBlocks || !Array.isArray(liveBlocks) || liveBlocks.length === 0) return null;
+  const interner = new Interner();
+  const O = toUnits(oldBlocks, interner);
+  const N = toUnits(newBlocks, interner);
+  const L = toUnits(liveBlocks, interner);
+  const mapping = mapPatch(O, N, L);
+  if (!mapping.ok || mapping.spans.length === 0) return null;
+  const ls = Math.min(...mapping.spans.map((s) => s.ls));
+  const le = Math.max(...mapping.spans.map((s) => s.le));
+  const blockOf = (pos: number) => {
+    let block = 0;
+    while (block + 1 < liveBlocks.length && L.blockStart[block + 1] <= pos) block++;
+    return block;
+  };
+  const inlineStart = (block: number) => {
+    const first = L.blockStart[block];
+    return L.units[first]?.kind === 'block' ? first + 1 : first;
+  };
+  const startBlock = blockOf(ls);
+  const start = { block: startBlock, offset: Math.max(0, ls - inlineStart(startBlock)) };
+  const collapsed = le <= ls;
+  if (collapsed) return { order: ls, start, end: start, collapsed };
+  const endBlock = blockOf(le - 1);
+  return { order: ls, start, end: { block: endBlock, offset: Math.max(0, le - inlineStart(endBlock)) }, collapsed };
+}
+
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
@@ -611,20 +762,13 @@ export function $exportNodeJSON(node: LexicalNode): Json {
 
 export type RejectByContextResult = { ok: true; changed: boolean } | { ok: false; reason: string };
 
-/**
- * Reject a change by context inside an editor update: plan against the current (pending)
- * tree, then replace only the top-level blocks that differ. Changes nothing on failure.
- */
-export function $rejectByContext(before: Json, after: Json): RejectByContextResult {
+/** Replace top-level blocks per the plan in the current editor update. */
+function $applyReplacements(replacements: BlockReplacement[]): RejectByContextResult {
+  if (replacements.length === 0) return { ok: true, changed: false };
   const root = $getRoot();
-  const live = root.getChildren().map($exportNodeJSON);
-  const plan = planRejectRestore(before, after, live);
-  if (!plan.ok) return plan;
-  if (plan.replacements.length === 0) return { ok: true, changed: false };
-
   let built: Array<{ start: number; deleteCount: number; nodes: LexicalNode[] }>;
   try {
-    built = plan.replacements.map((r) => ({
+    built = replacements.map((r) => ({
       start: r.start,
       deleteCount: r.deleteCount,
       nodes: r.nodes.map((n) => $parseSerializedNode(n)),
@@ -644,4 +788,68 @@ export function $rejectByContext(before: Json, after: Json): RejectByContextResu
     $setSelection(null);
   }
   return { ok: true, changed: true };
+}
+
+/**
+ * Reject a change by context inside an editor update: plan against the current (pending)
+ * tree, then replace only the top-level blocks that differ. Changes nothing on failure.
+ */
+export function $rejectByContext(before: Json, after: Json): RejectByContextResult {
+  const live = $getRoot().getChildren().map($exportNodeJSON);
+  const plan = planRejectRestore(before, after, live);
+  if (!plan.ok) return plan;
+  return $applyReplacements(plan.replacements);
+}
+
+/**
+ * Re-apply rejected changes inside an editor update (undo of a reject), oldest first. Only
+ * the top-level blocks that differ are replaced; nothing changes if any change can't be
+ * located.
+ */
+export function $reapplyByContext(changes: ChangeDocs[], options: { keepMarkers?: boolean } = {}): RejectByContextResult {
+  const live = $getRoot().getChildren().map($exportNodeJSON);
+  const plan = planReapply(changes, live, options);
+  if (!plan.ok) return plan;
+  return $applyReplacements(plan.replacements);
+}
+
+/** A Lexical point for a unit point: a text node and offset, or a node (opaque block, leaf). */
+export type LexicalUnitPoint =
+  | { type: 'text'; key: string; offset: number }
+  | { type: 'node'; key: string };
+
+/**
+ * Resolve a unit point (from locateChange) in the live tree, walking the block the same
+ * way as the unit model: characters of text nodes (code points), inline leaves, and the
+ * children of inline elements (links). Read-only; call inside a read or an update.
+ */
+export function $resolveUnitPoint(point: UnitPoint): LexicalUnitPoint | null {
+  const block = $getRoot().getChildAtIndex(point.block);
+  if (!block) return null;
+  if (!(TEXT_BLOCK_TYPES.has(block.getType()) && $isElementNode(block))) return { type: 'node', key: block.getKey() };
+  let remaining = point.offset;
+  let lastText: LexicalUnitPoint | null = null;
+  const walk = (nodes: LexicalNode[]): LexicalUnitPoint | null => {
+    for (const n of nodes) {
+      if ($isElementNode(n)) {
+        const found = walk(n.getChildren());
+        if (found) return found;
+        continue;
+      }
+      if (n.getType() === 'text') {
+        const text = n.getTextContent();
+        const chars = Array.from(text);
+        if (remaining < chars.length) {
+          return { type: 'text', key: n.getKey(), offset: chars.slice(0, remaining).join('').length };
+        }
+        remaining -= chars.length;
+        lastText = { type: 'text', key: n.getKey(), offset: text.length };
+        continue;
+      }
+      if (remaining === 0) return { type: 'node', key: n.getKey() };
+      remaining -= 1;
+    }
+    return null;
+  };
+  return walk(block.getChildren()) ?? lastText ?? { type: 'node', key: block.getKey() };
 }
