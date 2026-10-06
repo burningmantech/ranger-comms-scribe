@@ -3,7 +3,10 @@
 //
 //   1. /requests loads without a redirect loop (a Member used to bounce between /requests
 //      and / forever) and shows the submitter dashboard, not the reviewer queue.
-//   2. The member creates a request through the New Request form (/comms-request).
+//   2. The member creates a request through the New Request form (/comms-request). Each
+//      Next shows no errors on the step it opens (step 3 used to open with "Please add at
+//      least one approver"); the approver is picked from the suggestions, which must make no
+//      request to /api/admin/ (picking one used to PUT the admin-only /admin/council-managers).
 //   3. On /tracked-changes/:id the editor loads, the member (the author) can type, and the
 //      save status reaches "Saved". The member sees no "Finish review" menu.
 //   4. dev-user2 (CommsCadre reviewer), in a second browser, sees the member's edit as a
@@ -12,9 +15,15 @@
 // Fails on any console error in either browser (they are all printed), and prints every
 // failed (4xx/5xx) API response the pages got.
 //
-// Dev-fixture limit: the form checks the (read-only) Email field with zod's email(), which
-// rejects 'member@localhost' (no TLD). The script puts 'member@example.com' in that one
-// field so the form can go on; the field is not sent with the request.
+// Setup: the dev users aren't stored, so /user/approvers (approved stored users) offers no
+// suggestion on a fresh store. Unless APPROVER is already listed, the script stores it
+// (approved, not a council manager: the case that used to call the admin API) with
+// POST /admin/bulk-create-users. That route checks a real session (no dev bypass), so the
+// script first makes a real admin the way a first admin is made: it registers
+// E2E_ADMIN_EMAIL (default e2e-admin@example.com), verifies it and sets a password with the
+// tokens a DEV_BYPASS_AUTH backend returns when it can't send email, then logs in. For that
+// the backend needs BOOTSTRAP_ADMIN_EMAILS=<that address> and Cloudflare's always-pass
+// Turnstile test secret, TURNSTILESECRET=1x0000000000000000000000000000000AA.
 const L = require('./lib');
 
 const MEMBER_SESSION = 'dev-member-session';
@@ -24,9 +33,9 @@ const TOGGLE = '.finish-review__toggle';
 const SUBJECT = `Member e2e ${new Date().toISOString()}`;
 const DRAFT = 'Member draft paragraph for the e2e test.';
 const TYPED = ' Member edit.';
+const APPROVER = { name: 'E2E Approver', email: 'e2e-approver@example.com' };
 
 const results = [];
-const notes = []; // things worth knowing that don't fail the run
 function check(name, ok, info = '') {
   results.push({ name, ok: !!ok });
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${info ? ` (${info})` : ''}`);
@@ -51,6 +60,9 @@ function watch(user) {
   });
   page.on('request', (req) => {
     if (req.method() === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(req.url())) user.changePosts.push(req.url());
+    // /api/admin/ calls, except GET /admin/user-roles (the signed-in user's own roles, open to
+    // every user and read app-wide by ContentContext) and its CORS preflight.
+    if (req.url().includes('/api/admin/') && !(/\/api\/admin\/user-roles$/.test(req.url()) && ['GET', 'OPTIONS'].includes(req.method()))) user.adminCalls.push(`${req.method()} ${req.url().replace(/^https?:\/\/[^/]+/, '')}`);
   });
 }
 
@@ -62,7 +74,7 @@ async function openMember(browser) {
   }
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
-  const user = { name: 'member', page, context, errors: [], failed: [], changePosts: [], navs: 0 };
+  const user = { name: 'member', page, context, errors: [], failed: [], changePosts: [], adminCalls: [], navs: 0 };
   watch(user);
   // Count client-side navigations (react-router's Navigate uses history.replaceState) and
   // main-frame navigations: a redirect loop shows up as a fast-growing count.
@@ -108,13 +120,45 @@ async function checkRequests(m) {
   return noLoop && state.path === '/requests' && state.requestsUi;
 }
 
-/** Sets an input's value the way React sees a user's typing (for the read-only Email field). */
-async function setReactValue(page, selector, value) {
-  await page.$eval(selector, (el, v) => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    setter.call(el, v);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-  }, value);
+const TURNSTILE_TEST_TOKEN = 'XXXX.DUMMY.TOKEN.XXXX';
+
+/** A real admin session for the bootstrap admin E2E_ADMIN_EMAIL (see the header). */
+async function adminSession() {
+  const email = process.env.E2E_ADMIN_EMAIL || 'e2e-admin@example.com';
+  const password = 'E2e-Seed-Admin-7!pass';
+  const turnstileToken = TURNSTILE_TEST_TOKEN;
+  const post = (path, body, session) => L.api(path, { method: 'POST', body, session });
+  const debugToken = (res, what) => {
+    const m = /token: (\S+)/.exec(res.debug || '');
+    if (!m) throw new Error(`no ${what} token in ${JSON.stringify(res)} (is DEV_BYPASS_AUTH=true?)`);
+    return m[1];
+  };
+  try {
+    const reg = await post('/auth/register', { name: 'E2E Admin', email, password, turnstileToken }, 'none');
+    const resent = await post('/auth/resend-verification', undefined, reg.sessionId);
+    await post('/auth/verify-email', { token: debugToken(resent, 'verification') }, 'none');
+  } catch (e) {
+    if (!/: 409 /.test(e.message)) throw e; // registered by an earlier run on this store
+  }
+  // Verifying a bootstrap admin clears its password; set one with a reset token.
+  const forgot = await post('/auth/forgot-password', { email, turnstileToken }, 'none');
+  await post('/auth/reset-password', { token: debugToken(forgot, 'reset'), password, turnstileToken }, 'none');
+  const login = await post('/auth/login', { email, password, turnstileToken }, 'none');
+  if (!login.isAdmin) throw new Error(`${email} is not an admin after login; start the backend with BOOTSTRAP_ADMIN_EMAILS=${email}`);
+  return login.sessionId;
+}
+
+/** Makes sure APPROVER is an approved, stored user who is not a council manager. */
+async function seedApprover() {
+  const listed = async () => ((await L.api('/user/approvers', { session: MEMBER_SESSION })).users || [])
+    .some((u) => u.email === APPROVER.email);
+  if (!(await listed())) {
+    const session = await adminSession();
+    await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [{ ...APPROVER, approved: true }] } });
+    if (!(await listed())) throw new Error(`seeded approver ${APPROVER.email} is not listed by /user/approvers`);
+  }
+  const council = await L.api('/council/members', { session: MEMBER_SESSION });
+  if (council.some((c) => c.email === APPROVER.email)) throw new Error(`${APPROVER.email} is a council manager; use a fresh store`);
 }
 
 const activeStep = (page) => page.$eval('.step-circle.active', (e) => Number(e.textContent)).catch(() => null);
@@ -126,7 +170,7 @@ async function clickNext(page) {
   const to = await activeStep(page);
   const errors = await page.$$eval('.field-error', (els) => els.filter((e) => e.offsetParent).map((e) => e.textContent));
   if (to !== from + 1) throw new Error(`form did not advance from step ${from}: ${JSON.stringify(errors)}`);
-  if (errors.length) notes.push(`form step ${to} opened showing ${JSON.stringify(errors)}`);
+  check(`New Request: step ${to} opens without errors`, errors.length === 0, errors.length ? JSON.stringify(errors) : '');
 }
 
 /** Step 2: the New Request form. Returns the new submission's id (from the server's reply). */
@@ -149,15 +193,21 @@ async function createRequest(m) {
   await page.click('.audience-card');
   await page.type('input[name="owner"]', 'Test Member');
   await page.type('input[name="replyToAddress"]', 'replies@example.com');
-  const email = await page.$eval('input[name="email"]', (e) => e.value);
-  if (email === 'member@localhost') await setReactValue(page, 'input[name="email"]', 'member@example.com'); // see the header
   await clickNext(page);
+  // Nothing may have been submitted by the Next clicks.
+  check('New Request: Next did not submit the form', !(await page.$('.modal-content')));
 
-  // Step 3: approvers. Type the address; never pick a suggestion (that calls an admin API).
+  // Step 3: approvers. Type part of the name and pick the suggestion.
   await page.waitForSelector('.approver-input-wrap input', { visible: true });
-  await page.type('.approver-input-wrap input', 'user2@localhost');
-  await page.$eval('.approver-input-wrap input', (e) => e.blur()); // closes any suggestions
-  await L.sleep(300);
+  await page.type('.approver-input-wrap input', 'E2E Appr');
+  const item = await page.waitForFunction((email) => [...document.querySelectorAll('.approver-dropdown-item')]
+    .find((e) => e.textContent.includes(email)), { timeout: 5000 }, APPROVER.email).catch(() => null);
+  if (!item) throw new Error('no suggestion for the seeded approver');
+  await item.asElement().click();
+  await L.sleep(500);
+  const picked = await page.$eval('.approver-input-wrap input', (e) => e.value);
+  check('New Request: picking a suggestion fills in the approver', picked === APPROVER.email, picked);
+  check('New Request: picking a suggestion makes no /api/admin/ request', m.adminCalls.length === 0, m.adminCalls.join(', '));
   const created = page.waitForResponse((r) => r.request().method() === 'POST' && /\/api\/content\/submissions$/.test(r.url()), { timeout: 15000 });
   await page.click('.wizard-nav .btn-submit');
   const res = await created;
@@ -172,6 +222,8 @@ async function createRequest(m) {
     [stored.submittedBy, stored.submitterEmail, stored.submittedByEmail].some((v) => v === 'dev-member' || v === 'member@localhost'),
     `submittedBy=${stored.submittedBy}`);
   check('New Request: stored with the typed text', JSON.stringify(stored.richTextContent || stored.content || '').includes(DRAFT));
+  check('New Request: stored with the picked approver', JSON.stringify(stored.requiredApprovers) === JSON.stringify([APPROVER.email]),
+    JSON.stringify(stored.requiredApprovers));
 
   // "View Submissions" goes back to /requests, which lists it.
   await page.evaluate(() => [...document.querySelectorAll('.modal-footer button')].find((b) => b.textContent === 'View Submissions').click());
@@ -206,6 +258,7 @@ const memberCards = async (u) => (await cards(u)).filter((c) => c.includes(TYPED
   let m;
   let r;
   try {
+    await seedApprover();
     m = await openMember(browser);
 
     // ---- 1. /requests ----
@@ -283,6 +336,7 @@ const memberCards = async (u) => (await cards(u)).filter((c) => c.includes(TYPED
     if (m) await m.page.screenshot({ path: 'fail-member.png' }).catch(() => {});
     console.error(e.stack || e);
   } finally {
+    if (m) check('no /api/admin/ requests from the member page', m.adminCalls.length === 0, m.adminCalls.join(', '));
     for (const [label, u] of [['member', m], ['reviewer', r]]) {
       if (!u) continue;
       if (u.failed && u.failed.length) console.log(`${label}: failed API responses:\n  ${[...new Set(u.failed)].join('\n  ')}`);
@@ -291,7 +345,6 @@ const memberCards = async (u) => (await cards(u)).filter((c) => c.includes(TYPED
     }
     await within(browser.close(), 10000);
   }
-  if (notes.length) console.log(`\nnotes:\n  ${notes.join('\n  ')}`);
   const failed = results.filter((x) => !x.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
   process.exit(failed.length ? 1 : 0);
