@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { TrackedChangesEditor } from '../components/TrackedChangesEditor';
 import ReviewTopBar from '../components/ReviewTopBar';
@@ -745,6 +745,14 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   const userName = useUserDirectory();
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
+  const requestChangesInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus the comment box when the dialog opens. autoFocus alone loses: the dialog opens
+  // from the Finish review menu, which returns focus to its button as it closes (in an
+  // effect inside ReviewTopBar, which runs before this one).
+  useEffect(() => {
+    if (showRequestChanges) requestChangesInputRef.current?.focus();
+  }, [showRequestChanges]);
 
   const handleSubmitRequestChanges = () => {
     if (!requestChangesComment.trim()) return;
@@ -781,6 +789,7 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
               The submitter will be notified and can revise their submission. This does not reject the submission.
             </p>
             <textarea
+              ref={requestChangesInputRef}
               value={requestChangesComment}
               onChange={e => setRequestChangesComment(e.target.value)}
               placeholder="Describe the changes needed..."
