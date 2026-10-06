@@ -18,6 +18,8 @@ interface ReviewTopBarProps {
   canApprove: boolean;
   /** Shows the queue pager (see QueueNavigator). */
   isReviewer: boolean;
+  /** The reviewer's current vote on the request, shown on the Finish review button. */
+  myDecision?: 'approved' | 'rejected' | null;
   onBack: () => void;
   onApprove: () => void;
   onRequestChanges: () => void;
@@ -36,6 +38,7 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
   pendingEdits,
   canApprove,
   isReviewer,
+  myDecision = null,
   onBack,
   onApprove,
   onRequestChanges,
@@ -81,6 +84,7 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
         />
         {canApprove && (
           <FinishReviewMenu
+            decision={myDecision}
             onApprove={onApprove}
             onRequestChanges={onRequestChanges}
             onDecline={onReject}

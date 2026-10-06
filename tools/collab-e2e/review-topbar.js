@@ -1,6 +1,7 @@
 // Review page header and controls (feat/review-ui-topbar):
-// - no Reset button; one "Finish review" menu with Approve / Request changes (modal) / Decline,
-//   each checked on its own submission against the server
+// - no Reset button; one "Finish review" menu with Approve / Request changes (modal) / Decline
+//   (after a confirmation), each checked on its own submission against the server, with the
+//   "You approved / declined this request" toast and the decision shown on the button
 // - the conditions popover opens and lists the four gates
 // - the Compare view shows the comparison
 // - Send is offered only once the request is approved, and opens the send preview
@@ -175,6 +176,10 @@ async function saveState(u) {
       const s = await L.api(`/content/submissions/${subB.id}`);
       return (s.approvals || []).some((x) => x.status === 'approved' && (x.approverEmail === 'dev@localhost' || x.approverId === 'dev-admin'));
     }, 'approval stored', 8000).then(() => check('Finish review -> Approve stores an approval', true)).catch(() => check('Finish review -> Approve stores an approval', false));
+    await L.waitFor(() => b.page.$('.review-decision-toast'), 'approve toast', 5000).catch(() => null);
+    check('Approve shows "You approved this request"',
+      (await b.page.$eval('.review-decision-toast', (el) => el.textContent).catch(() => '')).includes('You approved this request'));
+    check('Finish review button shows Approved ✓', (await b.page.$eval(TOGGLE, (el) => el.textContent.trim())) === 'Approved ✓');
     await b.context.close();
 
     // ---- 3. Request changes (submission C) ----
@@ -197,10 +202,23 @@ async function saveState(u) {
     const subD = await L.createSubmission(['Delta text.']);
     const d = await openReview(browser, 'decliner', 'dev-admin-session', subD.id);
     await chooseFinish(d, 'Decline');
+    // A confirmation first; nothing is recorded until it is confirmed
+    const confirmText = await L.waitFor(() => d.page.$('.request-changes-dialog[aria-labelledby="decline-confirm-title"]'), 'decline confirmation', 5000)
+      .then(() => d.page.$eval('.request-changes-dialog[aria-labelledby="decline-confirm-title"]', (el) => el.textContent))
+      .catch(() => '');
+    check('Decline asks for confirmation', /Decline this request\?/.test(confirmText) && /The submitter will be notified\./.test(confirmText), confirmText);
+    await L.sleep(500);
+    const early = await L.api(`/content/submissions/${subD.id}`);
+    check('nothing recorded before the confirmation', !(early.approvals || []).some((x) => x.status === 'rejected'));
+    await d.page.evaluate(() => [...document.querySelectorAll('.request-changes-dialog button')].find((x) => x.textContent.trim() === 'Decline').click());
     await L.waitFor(async () => {
       const s = await L.api(`/content/submissions/${subD.id}`);
       return (s.approvals || []).some((x) => x.status === 'rejected');
     }, 'decline stored', 8000).then(() => check('Finish review -> Decline stores a rejection', true)).catch(() => check('Finish review -> Decline stores a rejection', false));
+    await L.waitFor(() => d.page.$('.review-decision-toast'), 'decline toast', 5000).catch(() => null);
+    check('Decline shows "You declined this request"',
+      (await d.page.$eval('.review-decision-toast', (el) => el.textContent).catch(() => '')).includes('You declined this request'));
+    check('Finish review button shows Declined', (await d.page.$eval(TOGGLE, (el) => el.textContent.trim())) === 'Declined');
     // Keyboard: open with Enter, Escape closes, focus back on the button
     await d.page.focus(TOGGLE);
     await d.page.keyboard.press('Enter');

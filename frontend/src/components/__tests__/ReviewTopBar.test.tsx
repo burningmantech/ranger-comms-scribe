@@ -91,6 +91,19 @@ describe('ReviewTopBar: Finish review menu', () => {
     expect(document.activeElement).toBe(toggle);
   });
 
+  it.each([
+    ['approved', 'Approved ✓', /finish review: approved/i],
+    ['rejected', 'Declined', /finish review: declined/i],
+  ] as const)('shows the reviewer\'s %s decision on the button', async (decision, text, name) => {
+    setup({ myDecision: decision });
+    const toggle = screen.getByRole('button', { name });
+    expect(toggle).toHaveTextContent(text);
+    // The menu still opens, to change the decision
+    await act(async () => { fireEvent.click(toggle); });
+    expect(screen.getByRole('button', { name: /^decline/i })).toBeInTheDocument();
+    expect(screen.getAllByText('Your current decision')).toHaveLength(1);
+  });
+
   it('is hidden for users who cannot approve (e.g. the author)', () => {
     setup({ canApprove: false });
     expect(screen.queryByRole('button', { name: /finish review/i })).not.toBeInTheDocument();
