@@ -6,7 +6,7 @@ import { router } from '../../src/handlers/contentSubmission';
 import { updateChangeStatusHandler, batchUpdateStatusHandler, createTrackedChangeHandler, getTrackedChangesHandler } from '../../src/handlers/trackedChanges';
 import { CustomRequest } from '../../src/types';
 import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
-import { approvedFieldValue, validReplyTo } from '../../src/services/announcementEmail';
+import { approvedFieldValue, validReplyTo, embedGalleryImages } from '../../src/services/announcementEmail';
 import { createMockObjectStore } from '../helpers/mockObjectStore';
 
 /**
@@ -161,6 +161,36 @@ describe('announcement email', () => {
     expect(input.Content?.Simple?.Body?.Text?.Data).toBe(preview.text);
     expect(input.ReplyToAddresses).toEqual([preview.replyTo]);
     expect(input.Destination?.ToAddresses).toEqual([preview.to]);
+  });
+
+  it('attaches gallery images inline so mail apps that block remote images still show them', async () => {
+    await putObject('content_submissions/sub-1', submissionRecord(), env);
+    const png = (n: number) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, n]);
+    await env.STORE.put('gallery/1791242299248_pasted-image-1791242298889.png', png(1));
+    await env.STORE.put('gallery/1791242299134_pasted-image-1791242298889.png', png(2));
+    // The third image's file is missing: it stays linked
+
+    const preview: any = await (await call(env, 'GET', '/submissions/sub-1/email-preview')).json();
+    expect(preview.html).not.toContain('cid:'); // the preview page can't show cid: images
+
+    expect((await call(env, 'POST', '/submissions/sub-1/send-email')).status).toBe(200);
+    const simple = sentInput().Content?.Simple;
+    const html = simple?.Body?.Html?.Data || '';
+    expect(html).toContain('<img src="cid:image1@scrivenly.com"');
+    expect(html).toContain('<img src="cid:image2@scrivenly.com"');
+    expect(html).toContain('<img src="https://dev.scrivenly.com/api/gallery/1791242299143_pasted-image-1791242298890.png"');
+    // Everything else is what the preview shows
+    expect(html.replace('cid:image1@scrivenly.com', 'https://dev.scrivenly.com/api/gallery/1791242299248_pasted-image-1791242298889.png')
+      .replace('cid:image2@scrivenly.com', 'https://dev.scrivenly.com/api/gallery/1791242299134_pasted-image-1791242298889.png'))
+      .toBe(preview.html);
+    expect(simple?.Attachments).toEqual([
+      expect.objectContaining({
+        FileName: '1791242299248_pasted-image-1791242298889.png', ContentType: 'image/png', ContentDisposition: 'INLINE',
+        ContentId: 'image1@scrivenly.com', ContentTransferEncoding: 'BASE64',
+      }),
+      expect.objectContaining({ FileName: '1791242299134_pasted-image-1791242298889.png', ContentId: 'image2@scrivenly.com' }),
+    ]);
+    expect(Array.from(simple!.Attachments![0].RawContent!)).toEqual(Array.from(png(1)));
   });
 
   it('uses the approved document: the fresh proposed document, then richTextContent, never originalContent', async () => {
@@ -363,5 +393,36 @@ describe('resolving a form-field change leaves the document alone', () => {
     expect(after.richTextContent).toBe(edited);
     const preview: any = await (await call(env, 'GET', '/submissions/sub-2/email-preview')).json();
     expect(preview.subject).toBe('Batch subject');
+  });
+});
+
+describe('embedGalleryImages', () => {
+  const env = () => ({ STORE: createMockObjectStore(), PUBLIC_URL } as any);
+  const img = (src: string) => `<p><img src="${src}" alt="" width="10" style="display:block;"></p>`;
+
+  it('embeds each gallery file once, using the variant asked for or the original', async () => {
+    const e = env();
+    await e.STORE.put('gallery/a.png', new Uint8Array([1]));
+    await e.STORE.put('gallery/medium/b.jpg', new Uint8Array([2]));
+    const html = img('https://dev.scrivenly.com/api/gallery/a.png') + img('https://dev.scrivenly.com/api/gallery/a.png/thumbnail')
+      + img('https://dev.scrivenly.com/api/gallery/b.jpg/medium') + img('https://dev.scrivenly.com/api/gallery/a.png');
+    const result = await embedGalleryImages(html, e);
+    expect(result.attachments.map((a) => [a.fileName, a.contentType, a.contentId])).toEqual([
+      ['a.png', 'image/png', 'image1@scrivenly.com'],
+      ['a.png', 'image/png', 'image2@scrivenly.com'], // the thumbnail falls back to the original
+      ['b.jpg', 'image/jpeg', 'image3@scrivenly.com'],
+    ]);
+    expect(result.html.match(/cid:image1@scrivenly\.com/g)).toHaveLength(2);
+  });
+
+  it('leaves other sites, SVG, query strings and path tricks linked', async () => {
+    const e = env();
+    await e.STORE.put('gallery/a.svg', new Uint8Array([1]));
+    await e.STORE.put('gallery/a.png', new Uint8Array([1]));
+    const html = img('https://example.org/api/gallery/a.png') + img('https://dev.scrivenly.com/api/gallery/a.svg')
+      + img('https://dev.scrivenly.com/api/gallery/a.png?x=1') + img('https://dev.scrivenly.com/api/gallery/..%2Fsession%2Fx.png');
+    const result = await embedGalleryImages(html, e);
+    expect(result.attachments).toEqual([]);
+    expect(result.html).toBe(html);
   });
 });

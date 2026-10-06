@@ -46,6 +46,16 @@ export interface SendEmailOptions {
 	html?: string;
 	/** A complete plain-text body, sent as is (defaults to `message` with <br> as newlines). */
 	text?: string;
+	/** Files sent with the email. Inline ones are shown where the HTML says `cid:<contentId>`. */
+	attachments?: EmailAttachment[];
+}
+
+export interface EmailAttachment {
+	fileName: string;
+	contentType: string;
+	content: Uint8Array;
+	/** Set for an inline image: the HTML refers to it as `cid:<contentId>`. */
+	contentId?: string;
 }
 
 /**
@@ -74,6 +84,17 @@ export async function sendEmail(
 					Text: { Data: options.text ?? renderEmailText(message), Charset: 'UTF-8' },
 					Html: { Data: options.html ?? renderEmailHtml(message), Charset: 'UTF-8' },
 				},
+				...(options.attachments && options.attachments.length > 0 ? {
+					Attachments: options.attachments.map((attachment) => ({
+						FileName: attachment.fileName,
+						ContentType: attachment.contentType,
+						RawContent: attachment.content,
+						ContentTransferEncoding: 'BASE64' as const,
+						...(attachment.contentId
+							? { ContentDisposition: 'INLINE' as const, ContentId: attachment.contentId }
+							: { ContentDisposition: 'ATTACHMENT' as const }),
+					})),
+				} : {}),
 			},
 		},
 	});

@@ -3,6 +3,7 @@ import { Env } from '../utils/sessionManager';
 import { getObject } from './cacheService';
 import { getTrackedChanges, freshProposedVersions, TrackedChange } from './trackedChangesService';
 import { renderContentForEmail, parseLexical, escapeHtml, EMAIL_FONT_FAMILY } from '../utils/lexicalEmail';
+import type { EmailAttachment } from '../utils/email';
 
 /**
  * The announcement email for an approved submission. One builder for both
@@ -143,5 +144,97 @@ export async function buildAnnouncementEmail(submission: ContentSubmission, env:
     signature: signatureText,
     html: wrapAnnouncementHtml(subject, body.html, signatureText),
     text,
+  };
+}
+
+/** Image types mail apps show inline (not SVG: Gmail and Outlook don't render it). */
+const EMBEDDABLE_IMAGE_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+const GALLERY_PREFIXES = { original: 'gallery/', medium: 'gallery/medium/', thumbnail: 'gallery/thumbnails/' } as const;
+/** Larger images stay linked; so do the rest once the email holds this much. */
+const MAX_EMBEDDED_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_EMBEDDED_TOTAL_BYTES = 15 * 1024 * 1024;
+
+/**
+ * Attach the email's gallery images and point the HTML at them (`cid:`), so they show without
+ * loading anything: mail apps that block remote content (iPhone Mail without Mail Privacy
+ * Protection, many work accounts) showed them as broken. Images from elsewhere, missing
+ * files and anything over the size limits stay linked. Only for sending: the preview page
+ * can't show `cid:` images, so it keeps the links.
+ */
+export async function embedGalleryImages(
+  html: string,
+  env: Env,
+): Promise<{ html: string; attachments: EmailAttachment[] }> {
+  let origin: string | null = null;
+  try {
+    origin = env.PUBLIC_URL ? new URL(env.PUBLIC_URL).origin : null;
+  } catch {
+    origin = null;
+  }
+  if (!origin) return { html, attachments: [] };
+
+  const attachments: EmailAttachment[] = [];
+  const contentIds = new Map<string, string | null>(); // src -> content id (null: keep the link)
+  let total = 0;
+
+  const load = async (src: string): Promise<string | null> => {
+    let url: URL;
+    try {
+      url = new URL(src.replace(/&amp;/g, '&'));
+    } catch {
+      return null;
+    }
+    if (url.origin !== origin || url.search) return null;
+    const match = url.pathname.match(/^\/api\/gallery\/([^/]+?)(?:\/(medium|thumbnail))?$/);
+    if (!match) return null;
+    let fileName: string;
+    try {
+      fileName = decodeURIComponent(match[1]);
+    } catch {
+      return null;
+    }
+    if (fileName.includes('/') || fileName.includes('..')) return null;
+    const contentType = EMBEDDABLE_IMAGE_TYPES[fileName.split('.').pop()?.toLowerCase() || ''];
+    if (!contentType) return null;
+
+    const variant = (match[2] || 'original') as keyof typeof GALLERY_PREFIXES;
+    let object = await env.STORE.get(`${GALLERY_PREFIXES[variant]}${fileName}`);
+    if (!object && variant !== 'original') object = await env.STORE.get(`${GALLERY_PREFIXES.original}${fileName}`);
+    if (!object) return null;
+    const content = new Uint8Array(await object.arrayBuffer());
+    if (content.byteLength > MAX_EMBEDDED_IMAGE_BYTES || total + content.byteLength > MAX_EMBEDDED_TOTAL_BYTES) {
+      return null;
+    }
+    total += content.byteLength;
+    const contentId = `image${attachments.length + 1}@scrivenly.com`;
+    attachments.push({ fileName, contentType, content, contentId });
+    return contentId;
+  };
+
+  // Sources in document order, each loaded once
+  const srcPattern = /(<img\b[^>]*?\ssrc=")([^"]*)(")/g;
+  for (const match of html.matchAll(srcPattern)) {
+    const src = match[2];
+    if (contentIds.has(src)) continue;
+    try {
+      contentIds.set(src, await load(src));
+    } catch (error) {
+      console.warn('Could not embed an email image; it stays linked:', src, error);
+      contentIds.set(src, null);
+    }
+  }
+
+  return {
+    html: html.replace(srcPattern, (whole, before: string, src: string, after: string) => {
+      const contentId = contentIds.get(src);
+      return contentId ? `${before}cid:${contentId}${after}` : whole;
+    }),
+    attachments,
   };
 }

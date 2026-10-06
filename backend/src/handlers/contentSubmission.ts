@@ -6,7 +6,7 @@ import { getObject, putObject, deleteObject, listObjects } from '../services/cac
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
 import { uploadMedia } from '../services/mediaService';
-import { buildAnnouncementEmail } from '../services/announcementEmail';
+import { buildAnnouncementEmail, embedGalleryImages } from '../services/announcementEmail';
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
@@ -966,9 +966,12 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
     // The approved document rendered for email (absolute image URLs), with the approved
     // Subject, Reply-To and signature: the same build as the email-preview endpoint.
     const email = await buildAnnouncementEmail(submission, env);
+    // Gallery images go inside the email, so mail apps that block remote images show them
+    const embedded = await embedGalleryImages(email.html, env);
     await sendEmail(toAddress, email.subject, email.text, env, {
-      html: email.html,
+      html: embedded.html,
       text: email.text,
+      attachments: embedded.attachments,
       ...(email.replyTo ? { replyTo: email.replyTo } : {}),
     });
 
