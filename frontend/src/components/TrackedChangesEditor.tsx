@@ -78,7 +78,6 @@ interface TrackedChangesEditorProps {
   onApprove: (changeId: string) => void;
   onReject: (changeId: string) => void;
   onSuggestion: (suggestion: Change) => void;
-  onUndo: (changeId: string) => void;
   onRefreshNeeded?: () => void;
   onRemoteChangeResolved?: (changeId: string, status: string, resolver?: ChangeResolver) => void;
   onBack?: () => void;
@@ -173,7 +172,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onApprove,
   onReject,
   onSuggestion,
-  onUndo,
   onRefreshNeeded,
   onRemoteChangeResolved,
   onBack,

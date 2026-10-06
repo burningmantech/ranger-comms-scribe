@@ -523,32 +523,6 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  const handleUndo = async (changeId: string) => {
-    try {
-
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      const response = await fetch(`${API_URL}/tracked-changes/${changeId}/undo`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to undo change: ${response.status} - ${errorText}`);
-      }
-
-      // Refresh the data after undo by refetching
-      window.location.reload();
-    } catch (err) {
-      console.error('Error undoing change:', err);
-    }
-  };
-
   const handleSendEmail = async () => {
     if (!submission) return;
     await sendAnnouncementEmail(submission);
@@ -698,7 +672,6 @@ export const TrackedChangesView: React.FC = () => {
         onApprove={handleApprove}
         onReject={handleReject}
         onSuggestion={handleSuggestion}
-        onUndo={handleUndo}
         onRefreshNeeded={handleRefreshNeeded}
         onRemoteChangeResolved={handleRemoteChangeResolved}
         onBack={() => navigate('/requests')}
