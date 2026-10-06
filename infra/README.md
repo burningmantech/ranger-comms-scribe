@@ -183,7 +183,8 @@ Backend settings for alex-dev are in `config/alex-dev.ts`. Some can be overridde
 ## Waking, sleeping and deploying dev
 
 All scripts need `SCRIBE_ALEX_DEV_ACCOUNT`, and `AWS_PROFILE` if you use one. They refuse to run when the credentials belong
-to a different account, and each prints its plan before acting.
+to a different account, and each prints its plan before acting. To skip setting them each time, put them in
+`~/.config/comms-scribe/dev.env` as `KEY=value` lines (e.g. `AWS_PROFILE=mybestday`); the environment wins over the file.
 
 | Command | What it does |
 |---|---|
