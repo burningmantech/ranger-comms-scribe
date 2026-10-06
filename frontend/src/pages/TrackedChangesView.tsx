@@ -274,7 +274,19 @@ export const TrackedChangesView: React.FC = () => {
         proposedVersions: updatedSubmission.proposedVersions
       };
 
-
+      // Send only the fields this save changed. The rest of the loaded copy may be stale
+      // (another user accepted a change, approved, ...) and the backend merges the body
+      // over the stored submission, so sending it would undo their work. In particular an
+      // unchanged proposedVersions would overwrite the proposed document with the one
+      // loaded with the page, hiding every edit made since.
+      const loaded = submission;
+      const changed = (key: keyof ContentSubmission) =>
+        !loaded || JSON.stringify(updatedSubmission[key]) !== JSON.stringify(loaded[key]);
+      const body: Record<string, unknown> = { id: backendSubmission.id };
+      for (const key of Object.keys(backendSubmission) as Array<keyof typeof backendSubmission>) {
+        if (key !== 'id' && changed(key as keyof ContentSubmission)) body[key] = backendSubmission[key];
+      }
+      const proposedVersionsChanged = !!updatedSubmission.proposedVersions && changed('proposedVersions');
 
       // Save to both submission and tracked changes APIs
       const [submissionResponse, trackedChangesResponse] = await Promise.all([
@@ -284,10 +296,10 @@ export const TrackedChangesView: React.FC = () => {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${sessionId}`,
           },
-          body: JSON.stringify(backendSubmission),
+          body: JSON.stringify(body),
         }),
         // Save proposed versions to tracked changes API
-        updatedSubmission.proposedVersions ? (() => {
+        proposedVersionsChanged && updatedSubmission.proposedVersions ? (() => {
           const trackedChangesPayload = {
             proposedVersionsRichText: updatedSubmission.proposedVersions.richTextContent,
             proposedVersionsContent: updatedSubmission.proposedVersions.content
@@ -314,8 +326,11 @@ export const TrackedChangesView: React.FC = () => {
         console.warn('Failed to save tracked changes, but submission was saved');
       }
 
-      const savedSubmission = await submissionResponse.json();
-      setSubmission(savedSubmission);
+      // Keep the frontend-shaped copy with this save applied. The response is the raw
+      // backend record (other shapes, no approvalGates, and a proposedVersions that is
+      // stale when this save didn't send one).
+      await submissionResponse.json().catch(() => null);
+      setSubmission(updatedSubmission);
 
 
     } catch (err) {
