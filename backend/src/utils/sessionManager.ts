@@ -24,6 +24,8 @@ export interface Env {
     ANNOUNCE_EMAIL_TO?: string;
     /** A sent announcement can be sent again (dev, for testing email rendering). */
     ALLOW_ANNOUNCEMENT_RESEND?: boolean;
+    /** Comms Calendar nudges all go here instead of to the team contacts (dev and staging). */
+    NUDGE_EMAIL_OVERRIDE?: string;
     /** Emails (lowercased) that are promoted to Admin on register/login. */
     BOOTSTRAP_ADMIN_EMAILS?: string[];
     /**

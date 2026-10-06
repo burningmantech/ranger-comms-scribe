@@ -21,7 +21,8 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { NewsletterEditions } from './pages/NewsletterEditions';
 import { NewsletterEditor } from './pages/NewsletterEditor';
 import { NewsletterArchive, PublicEdition, PublicDocument } from './pages/PublicNewsletter';
-import { canUseNewsletter } from './utils/access';
+import { canUseNewsletter, isReviewer } from './utils/access';
+import { CommsCalendar } from './pages/CommsCalendar';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -85,6 +86,11 @@ const App: React.FC = () => {
                 <Route path="/newsletter" element={<NewsletterArchive />} />
                 <Route path="/newsletter/:number" element={<PublicEdition />} />
                 <Route path="/news/:slug" element={<PublicDocument />} />
+                {/* Comms Cadre and Council; the backend decides who can edit */}
+                <Route
+                  path="/comms-calendar"
+                  element={<ProtectedRoute element={<CommsCalendar />} allow={isReviewer} />}
+                />
 
                 {/* Final catch-all if nothing else matches */}
                 <Route path="*" element={<Navigate to="/" replace />} />

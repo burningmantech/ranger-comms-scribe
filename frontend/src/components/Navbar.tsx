@@ -5,7 +5,13 @@ import { LogoutUserReact, USER_LOGIN_EVENT } from '../utils/userActions';
 import { User } from '../types';
 import NotificationBell from './NotificationBell';
 import { canUseNewsletter } from '../utils/newsletterAccess';
-import { isAdmin as accessIsAdmin } from '../utils/access';
+import { isAdmin as accessIsAdmin, isReviewer } from '../utils/access';
+
+// Comms Cadre and Council see the Comms Calendar (Admins see everything)
+/** The Comms Calendar: Admins, the Comms Cadre and the Council (utils/access.ts). */
+function seesCommsCalendar(user: Partial<User>): boolean {
+    return isReviewer(user);
+}
 
 interface NavbarProps {
     skipNavbar?: boolean;
@@ -15,6 +21,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
     const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
     const [isAdmin, setIsAdmin] = useState<boolean>(false);
     const [isNewsletterEditor, setIsNewsletterEditor] = useState<boolean>(false);
+    const [canSeeCalendar, setCanSeeCalendar] = useState<boolean>(false);
     const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
     const navigate = useNavigate();
     const location = useLocation();
@@ -29,6 +36,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                 const user = JSON.parse(userJson);
                 setIsAdmin(accessIsAdmin(user));
                 setIsNewsletterEditor(canUseNewsletter(user));
+                setCanSeeCalendar(seesCommsCalendar(user));
             } catch (err) {
                 console.error('Error parsing user data:', err);
             }
@@ -36,6 +44,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
             setIsLoggedIn(false);
             setIsAdmin(false);
             setIsNewsletterEditor(false);
+            setCanSeeCalendar(false);
         }
     };
 
@@ -67,6 +76,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
         setIsLoggedIn(!!userData);
         setIsAdmin(accessIsAdmin(userData));
         setIsNewsletterEditor(canUseNewsletter(userData));
+        setCanSeeCalendar(!!userData && seesCommsCalendar(userData));
     };
 
     const checkAdminStatus = async (sessionId: string) => {
@@ -92,6 +102,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
         setIsLoggedIn(false);
         setIsAdmin(false);
         setIsNewsletterEditor(false);
+        setCanSeeCalendar(false);
     };
 
     const toggleMobileMenu = () => {
@@ -123,6 +134,9 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                         <Link to="/comms-request" className={`navbar-item ${currentPageSlug === 'comms-request' ? 'active' : ''}`} onClick={handleMenuItemClick}>New Request</Link>
                         {isNewsletterEditor && (
                             <Link to="/newsletter/editions" className={`navbar-item ${currentPageSlug === 'newsletter' ? 'active' : ''}`} onClick={handleMenuItemClick}>Newsletter</Link>
+                        )}
+                        {canSeeCalendar && (
+                            <Link to="/comms-calendar" className={`navbar-item ${currentPageSlug === 'comms-calendar' ? 'active' : ''}`} onClick={handleMenuItemClick}>Comms Calendar</Link>
                         )}
                     </>
                 )}

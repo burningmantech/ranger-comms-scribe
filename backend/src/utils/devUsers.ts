@@ -5,10 +5,10 @@ import { CouncilRole, UserType } from '../types';
  * check `env.DEV_BYPASS_AUTH === 'true'` before using them; nothing here does.
  *
  * Which one a request gets: the `X-Dev-User` header (REST) or `testUser` query parameter
- * (WebSocket) when it names one ('user2', 'member'), else a session ID containing that
- * name ('dev-user2-session', 'dev-member-session'), else the admin.
+ * (WebSocket) when it names one ('user2', 'member', 'council'), else a session ID containing
+ * that name ('dev-user2-session', 'dev-member-session', 'dev-council-session'), else the admin.
  */
-export type DevUserKey = 'admin' | 'user2' | 'member';
+export type DevUserKey = 'admin' | 'user2' | 'member' | 'council';
 
 export interface DevUser {
   id: string;
@@ -28,12 +28,14 @@ export const DEV_USERS: Record<DevUserKey, DevUser> = {
   admin: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: UserType.Admin, isAdmin: true, roles: ['Admin'], groups: [], approved: true, commsCadre: false, councilRoles: [], accessVersion: 1 },
   user2: { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: UserType.CommsCadre, isAdmin: false, roles: ['CommsCadre'], groups: [], approved: true, commsCadre: true, councilRoles: [], accessVersion: 1 },
   member: { id: 'dev-member', email: 'member@localhost', name: 'Test Member', userType: UserType.Member, isAdmin: false, roles: ['Member'], groups: [], approved: true, commsCadre: false, councilRoles: [], accessVersion: 1 },
+  council: { id: 'dev-council', email: 'council@localhost', name: 'Test Council', userType: UserType.CouncilManager, isAdmin: false, roles: ['CouncilManager'], groups: [], approved: true, commsCadre: false, councilRoles: [CouncilRole.IntakeManager], accessVersion: 1 },
 };
 
 export function devUserKey(sessionId?: string | null, hint?: string | null): DevUserKey {
-  if (hint === 'member' || hint === 'user2') return hint;
+  if (hint === 'member' || hint === 'user2' || hint === 'council') return hint;
   const session = sessionId || '';
   if (session.includes('member')) return 'member';
+  if (session.includes('council')) return 'council';
   if (session.includes('user2')) return 'user2';
   return 'admin';
 }

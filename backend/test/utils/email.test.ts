@@ -79,6 +79,11 @@ describe('Email Utility', () => {
       expect(input.Content?.Simple?.Body?.Text?.Data).toBe('Prebuilt\n');
     });
 
+    it('sends to several recipients', async () => {
+      await sendEmail(['a@example.org', 'b@example.org'], 'Subject', 'Body', {});
+      expect(lastInput().Destination?.ToAddresses).toEqual(['a@example.org', 'b@example.org']);
+    });
+
     it('sends no Reply-To unless one is given', async () => {
       await sendEmail('test@example.com', 'Subject', 'Body', {});
       expect(lastInput()).not.toHaveProperty('ReplyToAddresses');

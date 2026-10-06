@@ -576,6 +576,56 @@ export interface SubmissionTemplate {
   updatedAt: string;
 }
 
+/** How a communication went out: the Announce list, the Ranger Newsletter, both, or neither. */
+export type CommsMethod = 'Announce' | 'Newsletter' | 'Both' | 'N/A';
+
+/** One "would you like to send this again?" email to a team. */
+export interface CommsCalendarNudge {
+  at: string;
+  /** Email of the person who sent the nudge. */
+  by: string;
+  byName: string;
+  /** Who it was meant for (the team contacts), even when NUDGE_EMAIL_OVERRIDE redirected it. */
+  to: string[];
+  note?: string;
+}
+
+/**
+ * A communication sent (or planned) in one Sep→Aug cycle, stored at comms_calendar/<id>.
+ * Next year's version of it is a new entry whose carriedFromId points here.
+ */
+export interface CommsCalendarEntry {
+  id: string;
+  subject: string;
+  /** Last year's message (http/https only). */
+  link?: string;
+  /** YYYY-MM-DD */
+  targetDate?: string;
+  /** YYYY-MM-DD (Pacific date) */
+  dateSent?: string;
+  /** The cycle (its start year) of an entry with neither date, e.g. an undated row imported from last year's sheet. */
+  cycleYear?: number;
+  method: CommsMethod;
+  /** Free text: Council, Volunteer Coordinators, Camp Hosts, ... */
+  team: string;
+  contactEmails: string[];
+  comments: string;
+  /** The Scribe request this was sent from. Subject and dates are copied from it on send. */
+  submissionId?: string;
+  /** The Ranger News edition the request's newsletter item went out in. */
+  newsletterSentIn?: number;
+  /** Last year's entry that this one continues. */
+  carriedFromId?: string;
+  /** The team won't send it again: it leaves the Upcoming list. */
+  notRepeating?: boolean;
+  nudges: CommsCalendarNudge[];
+  source: 'manual' | 'import' | 'submission';
+  createdBy: string;
+  createdAt: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
 export type NotificationType =
   | 'approval_received'
   | 'rejection_received'

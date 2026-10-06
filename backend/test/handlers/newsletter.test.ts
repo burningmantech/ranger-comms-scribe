@@ -273,6 +273,21 @@ describe('newsletter editions', () => {
     const legacy = await getObject<any>('content_submissions/legacy', env);
     expect(legacy.newsletterSentIn).toBe(11);
     expect(legacy.status).toBe('sent'); // newsletter only: done
+    // Both requests are in the Comms Calendar with the edition; the custom section isn't
+    const ticketEntry = await getObject<any>('comms_calendar/sub-ticket', env);
+    expect(ticketEntry).toMatchObject({
+      subject: 'Claim your Ranger Tickets & Stuff by July 12th!', method: 'Both', newsletterSentIn: 11, submissionId: 'ticket',
+    });
+    expect(ticketEntry.dateSent).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(await getObject<any>('comms_calendar/sub-legacy', env)).toMatchObject({ method: 'Newsletter', newsletterSentIn: 11 });
+    // Its own announcement later updates the same entry and keeps the first date it went out
+    expect((await call(contentRouter, env, 'POST', '/api/content/submissions/ticket/send-email', ADMIN)).status).toBe(200);
+    clearMemoryCache();
+    expect(await getObject<any>('comms_calendar/sub-ticket', env)).toMatchObject({
+      method: 'Both', newsletterSentIn: 11, dateSent: ticketEntry.dateSent,
+    });
+    expect((await env.STORE.list('comms_calendar/')).objects).toHaveLength(2);
+
     // The next edition is #12 and the sent items aren't in the tray
     expect((await nl(env, 'GET', '/editions')).body.nextNumber).toBe(12);
     expect((await nl(env, 'GET', '/tray')).body.ready).toEqual([]);

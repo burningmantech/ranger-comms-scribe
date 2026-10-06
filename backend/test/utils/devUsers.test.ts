@@ -49,6 +49,8 @@ describe('dev bypass users', () => {
     it.each([
       ['dev-member-session', null, 'member'],
       ['dev-user2-session', null, 'user2'],
+      ['dev-council-session', null, 'council'],
+      ['x', 'council', 'council'],
       ['dev-admin-session', null, 'admin'],
       ['whatever', null, 'admin'],
       ['', null, 'admin'],

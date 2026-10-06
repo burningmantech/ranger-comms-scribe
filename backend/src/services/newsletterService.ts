@@ -30,6 +30,7 @@ import {
   cleanText,
 } from '../utils/newsletterInput';
 import { getActiveCommsCadreEmails, getCommsManagerEmails, isAdminUser, isCommsCadre, isCommsManager } from './commsCadreService';
+import { syncCalendarFromSubmission } from './commsCalendarService';
 
 /**
  * Newsletter editions ("Black Rock Ranger News"): built by the Comms Cadre from approved
@@ -952,6 +953,22 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
         }
         return true;
       });
+    }
+
+    // Each request's item goes in the Comms Calendar. Never fails the send: it has gone out.
+    for (const section of edition.sections) {
+      if (!section.sourceSubmissionId) continue;
+      try {
+        const submission = await getObject<ContentSubmission>(submissionKey(section.sourceSubmissionId), env);
+        if (submission) {
+          await syncCalendarFromSubmission(submission, env, {
+            by: user.email,
+            newsletter: { number: edition.number, sentAt },
+          });
+        }
+      } catch (error) {
+        console.error(`Comms Calendar: could not record ${section.sourceSubmissionId} from edition ${edition.number}:`, error);
+      }
     }
     return edition;
   });

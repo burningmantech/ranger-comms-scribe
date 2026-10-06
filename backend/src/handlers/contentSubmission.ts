@@ -14,8 +14,19 @@ import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
 import { getEdition } from '../services/newsletterService';
 import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
+import { syncCalendarFromSubmission } from '../services/commsCalendarService';
 
 export const router = AutoRouter({ base: '/api/content' });
+
+// Record a sent submission in the Comms Calendar. Never fails the caller: the email has
+// already gone, and an error here would invite sending it again.
+async function recordInCommsCalendar(submission: ContentSubmission, env: Env, options: Parameters<typeof syncCalendarFromSubmission>[2]) {
+  try {
+    await syncCalendarFromSubmission(submission, env, options);
+  } catch (error) {
+    console.error(`Comms Calendar: could not record submission ${submission.id}:`, error);
+  }
+}
 
 // Who each approval counts for: the roles the approver held when approving (the snapshot on
 // the approval) or holds now (their record; services/access.ts). One store read per approver.
@@ -491,6 +502,9 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
 
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);
+  if (updatedSubmission.status === 'sent' && submission.status !== 'sent') {
+    await recordInCommsCalendar(updatedSubmission, env, { by: user.email });
+  }
   
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
@@ -1020,6 +1034,8 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
 
     await putObject(`content_submissions/${id}`, submission, env);
     await deleteObject('content_submissions/list', env);
+    // Announce, unless the request asked for the Newsletter too (the calendar shows Both)
+    await recordInCommsCalendar(submission, env, { subject: email.subject, fallbackMethod: 'Announce', by: user.email });
 
     await broadcastToSubmissionRoom(id, {
       type: 'status_changed',
