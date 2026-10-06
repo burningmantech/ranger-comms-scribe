@@ -1127,6 +1127,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   const hasPendingTrackedChanges = trackedChanges.filter(c => c.status === 'pending').length > 0;
 
+  // The Compare view diffs the original (as submitted) against the proposed document, so
+  // its differences are the accepted and the pending content changes; a rejected change
+  // was reverted in the document and has nothing to point at. These are the changes its
+  // diff segments are mapped to (for scrolling to a change's text there).
+  const comparisonChanges: TrackedChange[] = useMemo(
+    () => allTrackedChanges.filter(c => c.status !== 'rejected' && (!c.field || c.field === 'content')),
+    [allTrackedChanges],
+  );
+
   // Check if user can make editorial decisions
   const canMakeEditorialDecisions = useCallback(() => {
     // Check if user has admin, comms cadre, or council manager roles
@@ -3857,7 +3866,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   };
                   const origNormMap = buildNormMap(originalText);
                   const propNormMap = buildNormMap(proposedText);
-                  for (const change of trackedChanges) {
+                  for (const change of comparisonChanges) {
                     const oldDisplayText = change.oldValue ? getChangeDisplayText(change.oldValue) : '';
                     const newDisplayText = change.newValue ? getChangeDisplayText(change.newValue) : '';
                     if (oldDisplayText) {
