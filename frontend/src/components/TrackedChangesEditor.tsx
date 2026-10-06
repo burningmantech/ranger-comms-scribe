@@ -2904,6 +2904,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       const forwardReviewState = (message: WebSocketMessage) => onReviewStateMessageRef.current?.(message);
       for (const type of REVIEW_STATE_MESSAGE_TYPES) client.on(type, forwardReviewState);
 
+      // Another reviewer suggested a Subject, Audience, Reply-To or Signature (not in the
+      // shared document): refetch the change list for its card and the field's value
+      client.on('field_change_created', (message: WebSocketMessage) => {
+        if (message.userId === effectiveUserId) return;
+        scheduleStatusRefresh();
+      });
+
       // Listen for change status updates (accept/reject) from remote users
       client.on('change_status_updated', (message: WebSocketMessage) => {
         console.log(`[WS-STATUS] change_status_updated: userId=${message.userId}, effectiveUserId=${effectiveUserId}, changeId=${message.data?.changeId}, status=${message.data?.status}`);

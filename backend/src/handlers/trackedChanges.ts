@@ -415,6 +415,18 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
     // A new pending change: an approved submission goes back to review
     await syncSubmissionStatus(submissionId, env, request.user, { onlyDemote: true });
 
+    // A Subject, Audience, Reply-To or Signature change isn't in the shared document, so
+    // tell the room: the other reviewers' pages refetch their change lists
+    if (FORM_FIELD_CHANGE_FIELDS.has(field)) {
+      await broadcastToSubmissionRoom(submissionId, {
+        type: 'field_change_created',
+        userId: request.user.id || request.user.email,
+        userName: request.user.name,
+        userEmail: request.user.email,
+        data: { changeId: newChange.id, field },
+      }, env);
+    }
+
     return new Response(JSON.stringify(newChange), {
       headers: { 'Content-Type': 'application/json' }
     });

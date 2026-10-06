@@ -32,7 +32,7 @@ export type WebSocketMessageType =
   | 'comment_added' | 'comment_resolved' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected'
   | 'heartbeat' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation'
   | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update'
-  | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated'
+  | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated' | 'field_change_created'
   | 'approval_state';
 
 export interface RoomUser {
