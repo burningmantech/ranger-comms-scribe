@@ -16,6 +16,23 @@ export const router = AutoRouter({ base: '/api/content' });
 // Helper: recompute approval status using unique latest decisions and membership lists.
 // Promotes to 'approved' only; never demotes (syncSubmissionStatus does that) and never
 // touches a 'sent' submission.
+// Every council manager's email (lowercased), across all roles. The roles are read in
+// parallel: this runs on every tracked-change operation, and each read is a store round trip.
+async function loadCouncilEmails(env: any): Promise<Set<string>> {
+  const lists = await Promise.all(
+    Object.values(CouncilRole).map((role) =>
+      getCouncilManagersForRole(role as CouncilRole, env).catch(() => [])
+    )
+  );
+  const emails = new Set<string>();
+  for (const members of lists) {
+    for (const m of members || []) {
+      if (m && m.email) emails.add(m.email.trim().toLowerCase());
+    }
+  }
+  return emails;
+}
+
 export async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
   if (submission.status === 'sent') return submission;
   // Deduplicate by latest decision per approver
@@ -46,15 +63,7 @@ export async function recomputeApprovalStatus(submission: ContentSubmission, env
   const commsCadreEmails = new Set((commsCadreList.filter(m => m.active).map(m => (m.email || '').trim().toLowerCase())));
 
   // Load all council manager emails across roles
-  const councilEmails = new Set<string>();
-  for (const role of Object.values(CouncilRole)) {
-    try {
-      const members = await getCouncilManagersForRole(role as CouncilRole, env);
-      for (const m of members || []) {
-        if (m && m.email) councilEmails.add(m.email.trim().toLowerCase());
-      }
-    } catch {}
-  }
+  const councilEmails = await loadCouncilEmails(env);
 
   // Check that a council manager specifically approved (not just that they exist AND someone approved)
   const hasCouncilApproval = uniqueApprovals.some(a => {
@@ -204,15 +213,7 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
   const approvedCount = requiredDetails.filter(d => d.status === 'approved').length;
 
   // --- Council manager gate ---
-  const councilEmails = new Set<string>();
-  for (const role of Object.values(CouncilRole)) {
-    try {
-      const members = await getCouncilManagersForRole(role as CouncilRole, env);
-      for (const m of members || []) {
-        if (m && m.email) councilEmails.add(m.email.trim().toLowerCase());
-      }
-    } catch {}
-  }
+  const councilEmails = await loadCouncilEmails(env);
 
   const councilApproval = uniqueApprovals.find(a => {
     const email = (a.approverEmail || '').trim().toLowerCase();
