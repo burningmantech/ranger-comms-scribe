@@ -253,7 +253,7 @@ export class SubmissionWebSocketClient {
           this.reconnectAttempts++;
           const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
           console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-          setTimeout(() => this.connect(), delay);
+          setTimeout(() => this.connect().catch((err) => console.warn('Reconnect attempt failed:', err)), delay);
         } else if (!this.isIntentionallyClosed && this.reconnectAttempts >= this.maxReconnectAttempts) {
           // Switch to slow-poll reconnection instead of giving up permanently
           console.log('⏳ Rapid reconnection exhausted — switching to slow poll every 30s');
@@ -321,8 +321,10 @@ export class SubmissionWebSocketClient {
       });
       return response.ok;
     } catch (error) {
-      console.error('Session validation failed:', error);
-      return false;
+      // A network failure (offline, DNS) says nothing about the session: report it as such,
+      // so the caller doesn't announce an expired session and the reconnect logic keeps trying.
+      console.warn('Session check failed (network):', error);
+      throw new Error('Network unavailable');
     }
   }
 
@@ -479,7 +481,7 @@ export class SubmissionWebSocketClient {
     const jitter = Math.random() * 1000;
     setTimeout(() => {
       if (!this.isIntentionallyClosed) {
-        this.connect();
+        this.connect().catch((err) => console.warn('Reconnect attempt failed:', err));
       }
     }, 1000 + jitter);
   }
@@ -882,7 +884,7 @@ export class CollaborativeWebSocketClient {
           this.reconnectAttempts++;
           const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
           console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-          setTimeout(() => this.connect(), delay);
+          setTimeout(() => this.connect().catch((err) => console.warn('Reconnect attempt failed:', err)), delay);
         } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
           console.error('❌ Max reconnection attempts reached. WebSocket connection failed permanently.');
         }
@@ -911,8 +913,10 @@ export class CollaborativeWebSocketClient {
       });
       return response.ok;
     } catch (error) {
-      console.error('Session validation failed:', error);
-      return false;
+      // A network failure (offline, DNS) says nothing about the session: report it as such,
+      // so the caller doesn't announce an expired session and the reconnect logic keeps trying.
+      console.warn('Session check failed (network):', error);
+      throw new Error('Network unavailable');
     }
   }
 
@@ -1068,7 +1072,7 @@ export class CollaborativeWebSocketClient {
     const jitter = Math.random() * 1000;
     setTimeout(() => {
       if (!this.isIntentionallyClosed) {
-        this.connect();
+        this.connect().catch((err) => console.warn('Reconnect attempt failed:', err));
       }
     }, 1000 + jitter);
   }
