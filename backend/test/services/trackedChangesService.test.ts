@@ -788,8 +788,8 @@ describe('trackedChangesService', () => {
       let putCallCount = 0;
       mockEnv.STORE.put = jest.fn().mockImplementation(() => {
         putCallCount++;
-        // Fail on the third put call (second change's store write, after the first change's store + cache writes)
-        if (putCallCount >= 3) {
+        // Fail on the second put call (the second change's store write)
+        if (putCallCount >= 2) {
           return Promise.reject(new Error('store write failed'));
         }
         return Promise.resolve(undefined);

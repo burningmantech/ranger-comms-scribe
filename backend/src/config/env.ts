@@ -2,6 +2,7 @@ import { CollabMode, Env } from '../utils/sessionManager';
 import { ObjectStore } from '../storage/objectStore';
 import { S3ObjectStore } from '../storage/s3ObjectStore';
 import { MemoryObjectStore } from '../storage/memoryObjectStore';
+import { LatencyObjectStore } from '../storage/latencyObjectStore';
 
 /**
  * Builds the runtime `Env` from process environment variables.
@@ -29,6 +30,9 @@ import { MemoryObjectStore } from '../storage/memoryObjectStore';
  * Local/test only:
  *   STORE_DRIVER            "memory" uses an in-process MemoryObjectStore instead of S3.
  *                           Data is lost on restart. Default "s3".
+ *   STORE_LATENCY_MS        with STORE_DRIVER=memory: delay every store call by a random
+ *                           0..N ms, like S3 round trips (exposes races the instant in-memory
+ *                           store hides). Ignored for S3. Default 0.
  *
  * AWS credentials always come from the default credential chain.
  */
@@ -138,7 +142,11 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
   if (options.store) {
     store = options.store;
   } else if (storeDriver === 'memory') {
-    store = new MemoryObjectStore();
+    const latencyMs = Number(nonEmpty(source.STORE_LATENCY_MS) || 0);
+    if (!Number.isFinite(latencyMs) || latencyMs < 0) {
+      throw new Error(`Invalid STORE_LATENCY_MS: ${source.STORE_LATENCY_MS} (expected a number of milliseconds)`);
+    }
+    store = latencyMs > 0 ? new LatencyObjectStore(new MemoryObjectStore(), latencyMs) : new MemoryObjectStore();
   } else {
     store = new S3ObjectStore({
       bucket: nonEmpty(source.DATA_BUCKET)!,

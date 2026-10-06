@@ -127,6 +127,25 @@ export function pairMoves<T extends ReviewChangeLike>(
   return cards;
 }
 
+/**
+ * The other half of the move `id` belongs to, whatever the two statuses (a move's halves
+ * can disagree: the deletion rejected while the insertion is still pending). Pairs among
+ * the pending changes first (as the Open list does), then among all of them. Undefined when
+ * the change is not half of a move.
+ */
+export function findMovePartner<T extends ReviewChangeLike>(
+  changes: T[],
+  id: string,
+  describe: (c: T) => ChangeDescription = describeChange,
+): T | undefined {
+  for (const pool of [pendingOnly(changes), changes]) {
+    if (!pool.some((c) => c.id === id)) continue;
+    const card = pairMoves(pool, describe).find((c) => c.ids.includes(id));
+    if (card?.type === 'move') return card.deletion.id === id ? card.insertion : card.deletion;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Comment threads
 // ---------------------------------------------------------------------------

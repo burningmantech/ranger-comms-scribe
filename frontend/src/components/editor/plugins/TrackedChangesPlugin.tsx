@@ -1067,6 +1067,11 @@ export interface ResolveTrackedChangeDetail {
   richTextOldValue?: string;
   richTextNewValue?: string;
   /**
+   * The other half of the change's move, if it is one (its two documents). Its restored
+   * text is not taken for this change's (rejectRestore's movePartner).
+   */
+  movePartner?: { before: string; after: string };
+  /**
    * Set synchronously by the handler for a collaborative reject: whether the document was
    * reverted, and how. `restored: false` means nothing in the document was changed.
    */
@@ -1181,7 +1186,7 @@ export function resolveTrackedChange(editor: LexicalEditor, detail: ResolveTrack
         return;
       }
       if (before && after) {
-        const outcome = $rejectByContext(before, after);
+        const outcome = $rejectByContext(before, after, detail.movePartner ? { movePartner: detail.movePartner } : {});
         if (outcome.ok) {
           $removeMarkersOf(changeId);
           detail.result = { restored: true, method: 'context' };
@@ -1207,7 +1212,10 @@ export function resolveTrackedChange(editor: LexicalEditor, detail: ResolveTrack
  * before the next is planned, like a real sequence of rejects. Used to reject a move (two
  * changes) all or nothing, and to leave out cascaded changes that can't be reverted.
  */
-export function dryRunRejects(editor: LexicalEditor | null, changes: Array<{ id: string; before?: string; after?: string }>): Map<string, boolean> {
+export function dryRunRejects(
+  editor: LexicalEditor | null,
+  changes: Array<{ id: string; before?: string; after?: string; movePartner?: { before: string; after: string } }>,
+): Map<string, boolean> {
   const result = new Map<string, boolean>();
   if (!editor) return result;
   let blocks: any[] = editor.getEditorState().read(() => $getRoot().getChildren().map($exportNodeJSON));
@@ -1216,7 +1224,7 @@ export function dryRunRejects(editor: LexicalEditor | null, changes: Array<{ id:
       result.set(c.id, false);
       continue;
     }
-    const plan = planRejectRestore(c.before, c.after, blocks);
+    const plan = planRejectRestore(c.before, c.after, blocks, c.movePartner ? { movePartner: c.movePartner } : {});
     result.set(c.id, plan.ok);
     if (plan.ok) blocks = applyBlockReplacements(blocks, plan.replacements);
   }

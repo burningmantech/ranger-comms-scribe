@@ -453,11 +453,26 @@ export interface PlanOptions {
    * deletion shows again as a marker that belongs to it.
    */
   markerChangeId?: string;
+  /**
+   * The other half of a move (its whole document before and after). Once that half is
+   * rejected its text is back where it was cut, and that live text is the partner's, not
+   * this change's text moved elsewhere: it is left out of the alignment. So an insertion
+   * whose own text is gone is found already reverted (rejecting it changes nothing), and
+   * is never matched to the partner's restored copy (which the reject would then remove).
+   */
+  movePartner?: { before: Json; after: Json };
+}
+
+/** A live range [ls, le) a hunk maps to; `restored`: removed text someone has put back. */
+interface Span {
+  ls: number;
+  le: number;
+  restored?: boolean;
 }
 
 /** Where each hunk of a change maps in the live document (unit indexes), plus the edits. */
 type PatchMapping =
-  | { ok: true; splices: Splice[]; spans: Array<{ ls: number; le: number }> }
+  | { ok: true; splices: Splice[]; spans: Span[] }
   | { ok: false; reason: string };
 
 /**
@@ -465,9 +480,9 @@ type PatchMapping =
  * live range it occupies (`spans`) and the edit that reverts it (`splices`). This is the
  * locator shared by the reject (planRejectRestore) and by `locateChange`.
  */
-function mapPatch(O: DocUnits, N: DocUnits, L: DocUnits, options: PlanOptions = {}): PatchMapping {
+function mapPatch(O: DocUnits, N: DocUnits, L: DocUnits, options: PlanOptions = {}, masked: Span[] = []): PatchMapping {
   const patch = hunksOf(diffDocs(N, O));
-  const spans: Array<{ ls: number; le: number }> = [];
+  const spans: Span[] = [];
   if (patch.length === 0) return { ok: true, splices: [], spans };
 
   const img = new Int32Array(N.units.length).fill(-1);
@@ -476,8 +491,10 @@ function mapPatch(O: DocUnits, N: DocUnits, L: DocUnits, options: PlanOptions = 
     if (op.type !== 'equal') continue;
     for (let k = 0; k < op.a1 - op.a0; k++) img[op.a0 + k] = op.b0 + k;
   }
-  // Live text that isn't in the change's after-state (others' edits, moved text).
-  const liveInserts = hunksOf(alignment).filter((x) => x.b1 > x.b0);
+  // Live text that isn't in the change's after-state (others' edits, moved text), except
+  // a move partner's restored text (masked: never aligned, never this change's text).
+  const liveInserts = hunksOf(alignment).filter((x) => x.b1 > x.b0 &&
+    !masked.some((m) => x.b0 < m.le && m.ls < x.b1));
 
   const nIds = N.units.map((u) => u.id);
   const lIds = L.units.map((u) => u.id);
@@ -528,7 +545,7 @@ function mapPatch(O: DocUnits, N: DocUnits, L: DocUnits, options: PlanOptions = 
       const between = lIds.slice(laEnd, raStart);
       if (between.length > 0 && restore.length > 0 &&
           similarity(between, restore.map((u) => u.id)) >= ALREADY_RESTORED_SIMILARITY) {
-        spans.push({ ls: laEnd, le: raStart });
+        spans.push({ ls: laEnd, le: raStart, restored: true });
         continue; // someone has put it back already
       }
       spans.push({ ls: at, le: at });
@@ -596,7 +613,9 @@ export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[],
   const N = toUnits(newBlocks, interner);
   const L = toUnits(liveBlocks, interner);
 
-  const mapping = mapPatch(O, N, L, options);
+  // A move partner's restored text is left out of the alignment (same unit indexes).
+  const masked = options.movePartner ? partnerRestoredSpans(options.movePartner, L, interner) : [];
+  const mapping = mapPatch(O, N, masked.length > 0 ? maskUnits(L, masked, interner) : L, options, masked);
   if (!mapping.ok) return mapping;
   const { splices } = mapping;
   if (splices.length === 0) return { ok: true, replacements: [] };
@@ -630,6 +649,30 @@ export function planRejectRestore(before: Json, after: Json, liveBlocks: Json[],
     }
   }
   return { ok: true, replacements };
+}
+
+/**
+ * Where a move partner (the other half of a move) has had its removed text put back in
+ * the live document: the live ranges of its removal hunks found already restored. Empty
+ * when the partner is pending (its text is still cut) or can't be located.
+ */
+function partnerRestoredSpans(partner: { before: Json; after: Json }, L: DocUnits, interner: Interner): Span[] {
+  const oldBlocks = blocksOf(partner.before);
+  const newBlocks = blocksOf(partner.after);
+  if (!oldBlocks || !newBlocks) return [];
+  const mapping = mapPatch(toUnits(oldBlocks, interner), toUnits(newBlocks, interner), L);
+  if (!mapping.ok) return [];
+  return mapping.spans.filter((x) => x.restored && x.le > x.ls);
+}
+
+/** A copy of `L` whose units in `spans` match nothing (unique ids), for the alignment. */
+function maskUnits(L: DocUnits, spans: Span[], interner: Interner): DocUnits {
+  const units = L.units.map((u, i) => (spans.some((x) => i >= x.ls && i < x.le)
+    ? { ...u, id: interner.id(`\u0002masked\u0000${i}`) }
+    : u));
+  const blockIds = L.blockIds.map((_, b) =>
+    interner.id(units.slice(L.blockStart[b], L.blockStart[b + 1]).map((u) => u.id).join(',')));
+  return { units, blockStart: L.blockStart, blockIds };
 }
 
 /** Apply a plan to serialized top-level blocks (pure; mirrors `$rejectByContext`). */
@@ -794,9 +837,9 @@ function $applyReplacements(replacements: BlockReplacement[]): RejectByContextRe
  * Reject a change by context inside an editor update: plan against the current (pending)
  * tree, then replace only the top-level blocks that differ. Changes nothing on failure.
  */
-export function $rejectByContext(before: Json, after: Json): RejectByContextResult {
+export function $rejectByContext(before: Json, after: Json, options: PlanOptions = {}): RejectByContextResult {
   const live = $getRoot().getChildren().map($exportNodeJSON);
-  const plan = planRejectRestore(before, after, live);
+  const plan = planRejectRestore(before, after, live, options);
   if (!plan.ok) return plan;
   return $applyReplacements(plan.replacements);
 }
