@@ -132,6 +132,29 @@ async function run(browser, n) {
   }, 'History lists the decision');
   if (!/Accepted by .*Moved:/.test(history[0])) throw new Error(`History: ${JSON.stringify(history)}`);
   step(`History: ${history[0].slice(0, 90)}`);
+
+  // 6b. Undo the accept from History: only the status flips (the text is already there).
+  const historyUndo = await b.page.$(`${SIDEBAR} .rp-history__item .rp-history__undo`);
+  if (!historyUndo) throw new Error('no Undo in History');
+  await historyUndo.click();
+  await L.waitFor(async () => (await serverStatus(sub.id)).filter((c) => move.ids.includes(c.id)).every((c) => c.status === 'pending'), 'server: pending after undoing the accept');
+  await (await b.page.$(`${SIDEBAR} .rp-tab:nth-child(1)`)).click();
+  await L.waitFor(async () => (await movedCards(b)).length === 1, "B's Moved card is back after undoing the accept", 10000);
+  await L.waitFor(async () => (await movedCards(a)).length === 1, "A's Moved card is back after undoing the accept", 10000);
+  const afterUndoAccept = await L.converged(a, b);
+  if (JSON.stringify(afterUndoAccept) !== JSON.stringify(moved)) throw new Error(`undoing the accept changed the document: ${JSON.stringify(afterUndoAccept)}`);
+  const original = (await L.api(`/content/submissions/${sub.id}`)).richTextContent || '';
+  step(`undid the accept from History: card back for both, documents unchanged, server pending; stored original ${original.includes(MOVED) ? 'still has' : 'lacks'} the moved text`);
+
+  // 6c. Accept again: History shows the decision once.
+  await (await (await cardHandle(b, 'Moved:')).$('button[title="Accept"]')).click();
+  await L.waitFor(async () => (await movedCards(b)).length === 0 && (await movedCards(a)).length === 0, 'Moved card gone again', 10000);
+  await L.waitFor(async () => (await serverStatus(sub.id)).filter((c) => move.ids.includes(c.id)).every((c) => c.status === 'approved'), 'server: approved again');
+  await (await b.page.$(`${SIDEBAR} .rp-tab:nth-child(2)`)).click();
+  const history2 = await b.page.$$eval(`${SIDEBAR} .rp-history__item`, (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+  const moveEntries = history2.filter((h) => h.includes('Moved:'));
+  if (moveEntries.length !== 1 || !/Accepted by/.test(moveEntries[0])) throw new Error(`History after re-accept: ${JSON.stringify(history2)}`);
+  step('accepted again: History shows the move once');
   await (await b.page.$(`${SIDEBAR} .rp-tab:nth-child(1)`)).click();
 
   // 7. Clicking a card scrolls the editor to its text (A's typing, at the end of a long document).
