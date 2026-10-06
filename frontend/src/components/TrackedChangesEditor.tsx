@@ -1262,6 +1262,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return;
     }
 
+    // Collaborative mode: the shared Yjs document and the tracked changes (saved when the
+    // transaction settles) are the record. Writing this client's snapshot as the proposed
+    // version could land after a newer change and hide it when the room is reseeded.
+    if (isCollab) {
+      setLastSavedProposedContent(editedProposedContent);
+      return;
+    }
+
     try {
       // Update the submission with the changes
       const updatedSubmission = {
@@ -1281,7 +1289,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     } catch (error) {
       console.error('❌ Save failed:', error);
     }
-  }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email]);
+  }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email, isCollab]);
 
   // Helper function to revert a change in the content
   const revertChangeInContent = useCallback((change: TrackedChange) => {

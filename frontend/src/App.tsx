@@ -18,27 +18,7 @@ import { TrackedChangesView } from './pages/TrackedChangesView';
 import { TrackedChangesDemo } from './pages/TrackedChangesDemo';
 import { ContentProvider } from './contexts/ContentContext';
 import CommsRequest from './components/CommsRequest';
-
-// Protected Route component
-const ProtectedRoute: React.FC<{
-  element: React.ReactElement;
-  allowedRoles: string[];
-}> = ({ element, allowedRoles }) => {
-  const userJson = localStorage.getItem('user');
-  if (!userJson) {
-    return <Navigate to="/login" replace />;
-  }
-
-  try {
-    const user = JSON.parse(userJson);
-    // Check if user is admin or has an allowed user type
-    const hasAllowedRole = user.isAdmin || allowedRoles.includes(user.userType);
-    return hasAllowedRole ? element : <Navigate to="/" replace />;
-  } catch (err) {
-    console.error('Error parsing user data:', err);
-    return <Navigate to="/login" replace />;
-  }
-};
+import { ProtectedRoute } from './components/ProtectedRoute';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -93,43 +73,12 @@ const App: React.FC = () => {
                 <Route path="/test-indentation" element={<IndentationTest />} />
                 <Route path="/checkbox-test" element={<CheckboxTest />} />
                 <Route path="/lexical-extraction-test" element={<LexicalExtractionTest />} />
-                <Route 
-                  path="/requests" 
-                  element={
-                    <ProtectedRoute 
-                      element={<MySubmissions />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
-                />
-                <Route 
-                  path="/comms-request" 
-                  element={
-                    <ProtectedRoute 
-                      element={<CommsRequest />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
-                />
-                <Route 
-                  path="/tracked-changes/:submissionId" 
-                  element={
-                    <ProtectedRoute 
-                      element={<TrackedChangesView />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
-                />
-                <Route 
-                  path="/tracked-changes-demo" 
-                  element={
-                    <ProtectedRoute 
-                      element={<TrackedChangesDemo />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
-                />
-                
+                {/* Any signed-in user (Members and Leads included): the backend authorizes each request */}
+                <Route path="/requests" element={<ProtectedRoute element={<MySubmissions />} />} />
+                <Route path="/comms-request" element={<ProtectedRoute element={<CommsRequest />} />} />
+                <Route path="/tracked-changes/:submissionId" element={<ProtectedRoute element={<TrackedChangesView />} />} />
+                <Route path="/tracked-changes-demo" element={<ProtectedRoute element={<TrackedChangesDemo />} />} />
+
                 {/* Final catch-all if nothing else matches */}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

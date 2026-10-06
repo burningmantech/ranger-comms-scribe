@@ -245,6 +245,34 @@ async function recomputeContentAfterResolution(
   return { content: result, richText };
 }
 
+/**
+ * True when no non-rejected change in the field is newer than `change`. Only then is the
+ * change's own snapshot (richTextNewValue) the whole proposed document; otherwise it lacks
+ * the newer edits.
+ */
+function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]): boolean {
+  const at = new Date(change.timestamp).getTime();
+  return !allChanges.some(c =>
+    c.id !== change.id &&
+    c.field === change.field &&
+    c.status !== 'rejected' &&
+    new Date(c.timestamp).getTime() > at
+  );
+}
+
+/**
+ * The cached proposed document, unless a change was made after it was written (an older
+ * server didn't invalidate it on create, or the write raced a create). Such a copy lacks
+ * that change's edit, so the caller recomputes from the changes instead.
+ */
+function freshProposedVersions(saved: any, changes: TrackedChange[]): any | null {
+  if (!saved) return null;
+  const savedAt = saved.lastUpdatedAt ? new Date(saved.lastUpdatedAt).getTime() : NaN;
+  if (Number.isNaN(savedAt)) return saved; // undated: keep the old behaviour
+  const newerChange = changes.some(c => new Date(c.timestamp).getTime() > savedAt);
+  return newerChange ? null : saved;
+}
+
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
@@ -289,8 +317,11 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     const proposedVersions: Record<string, string> = {};
     const proposedVersionsRichText: Record<string, string> = {};
 
-    // First, try to get saved proposed versions from cache
-    const savedProposedVersions = await getObject(`proposed_versions/${submissionId}`, env) as any;
+    // First, try the saved proposed versions (unless a change is newer than them)
+    const savedProposedVersions = freshProposedVersions(
+      await getObject(`proposed_versions/${submissionId}`, env),
+      changes
+    );
 
     if (savedProposedVersions) {
       if (savedProposedVersions.proposedVersionsRichText) {
@@ -392,6 +423,9 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
 
 // Approve or reject a tracked change
 export async function updateChangeStatusHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { changeId } = request.params!;
 
   if (!request.user) {
@@ -454,52 +488,9 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
       );
     }
 
-    // After accepting or rejecting, recompute the submission content from the
-    // stored original + non-rejected changes so the persisted state is correct.
-    try {
-      const recomputed = await recomputeContentAfterResolution(submissionId, updatedChange.field, env);
-      if (recomputed) {
-        const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
-        if (submission) {
-          // For accepts with richTextNewValue, prefer it over mergeTextIntoLexicalJson
-          // because it preserves formatting.  Only use it when there are no rejections
-          // (otherwise the recomputed plain text is authoritative).
-          const allChanges = await getTrackedChanges(submissionId, env);
-          const hasRejections = allChanges.some((c: any) => c.field === updatedChange.field && c.status === 'rejected');
-
-          if (!hasRejections && status === 'approved' && updatedChange.richTextNewValue) {
-            submission.content = recomputed.content;
-            submission.richTextContent = cleanLexicalJson(updatedChange.richTextNewValue);
-          } else {
-            submission.content = recomputed.content;
-            // If the client provided the reverted rich text (from the Lexical editor
-            // after format revert), use it directly. The server-side recomputation
-            // can't preserve inline format changes (bold/italic) that were reverted
-            // client-side via Lexical node.setFormat().
-            if (revertedRichText && typeof revertedRichText === 'string' && revertedRichText.includes('"root"')) {
-              submission.richTextContent = revertedRichText;
-            } else {
-              submission.richTextContent = recomputed.richText;
-            }
-          }
-          await putObject(`content_submissions/${submissionId}`, submission, env);
-
-          // Update proposed_versions cache
-          await putObject(`proposed_versions/${submissionId}`, {
-            proposedVersionsContent: submission.content,
-            proposedVersionsRichText: submission.richTextContent,
-            proposedVersionsFields: [updatedChange.field],
-            lastUpdatedAt: new Date().toISOString(),
-            lastUpdatedBy: request.user.id,
-          }, env);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to update submission content after change resolution:', err);
-    }
-
     // Server-side cascade rejection: when a change is rejected, also reject
-    // all dependent changes whose regions overlap with this change.
+    // all dependent changes whose regions overlap with this change. Done before the
+    // recompute below, so the stored content leaves the dependents out too.
     let cascadeRejectedIds: string[] = [];
     if (status === 'rejected') {
       const dependentIds = await getCascadeDependencies(
@@ -529,6 +520,55 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
       }
     }
 
+    // After accepting or rejecting, recompute the submission content from the
+    // stored original + non-rejected changes so the persisted state is correct.
+    try {
+      const recomputed = await recomputeContentAfterResolution(submissionId, updatedChange.field, env);
+      if (recomputed) {
+        const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+        if (submission) {
+          // For accepts with richTextNewValue, prefer it over mergeTextIntoLexicalJson
+          // because it preserves formatting.  Only use it when there are no rejections
+          // (otherwise the recomputed plain text is authoritative).
+          const allChanges = await getTrackedChanges(submissionId, env);
+          const hasRejections = allChanges.some((c: any) => c.field === updatedChange.field && c.status === 'rejected');
+
+          // The accepted change's snapshot is the whole document only if no newer change
+          // exists; otherwise it would drop the newer changes' edits.
+          if (!hasRejections && status === 'approved' && updatedChange.richTextNewValue &&
+              isNewestActiveChange(updatedChange, allChanges)) {
+            submission.content = recomputed.content;
+            submission.richTextContent = cleanLexicalJson(updatedChange.richTextNewValue);
+          } else {
+            submission.content = recomputed.content;
+            // If the client provided the reverted rich text (from the Lexical editor
+            // after format revert), use it directly. The server-side recomputation
+            // can't preserve inline format changes (bold/italic) that were reverted
+            // client-side via Lexical node.setFormat(). Not after a cascade: the
+            // client's state was read before it and still has the dependents' text
+            // (a collaborative client sends its state again once it has reverted them).
+            if (cascadeRejectedIds.length === 0 && revertedRichText && typeof revertedRichText === 'string' && revertedRichText.includes('"root"')) {
+              submission.richTextContent = revertedRichText;
+            } else {
+              submission.richTextContent = recomputed.richText;
+            }
+          }
+          await putObject(`content_submissions/${submissionId}`, submission, env);
+
+          // Update proposed_versions cache
+          await putObject(`proposed_versions/${submissionId}`, {
+            proposedVersionsContent: submission.content,
+            proposedVersionsRichText: submission.richTextContent,
+            proposedVersionsFields: [updatedChange.field],
+            lastUpdatedAt: requestStartedAt,
+            lastUpdatedBy: request.user.id,
+          }, env);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update submission content after change resolution:', err);
+    }
+
     return new Response(JSON.stringify({ success: true, cascadeRejectedIds }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -542,6 +582,9 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
 // editor's Lexical state after all the reverts; like the single-change handler, it is
 // stored instead of the server's recomputed rich text when the batch isn't a plain accept.
 export async function batchUpdateStatusHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -636,7 +679,8 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
                 .filter((c: any) => changeIds.includes(c.id) && c.status === 'approved' && c.field === field)
                 .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
               const latestApproved = justApproved[0];
-              if (latestApproved?.richTextNewValue) {
+              // Only when it's the newest change: an older snapshot lacks newer edits
+              if (latestApproved?.richTextNewValue && isNewestActiveChange(latestApproved, allChanges)) {
                 submission.content = recomputed.content;
                 submission.richTextContent = cleanLexicalJson(latestApproved.richTextNewValue);
               } else {
@@ -654,7 +698,7 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
               proposedVersionsContent: submission.content,
               proposedVersionsRichText: submission.richTextContent,
               proposedVersionsFields: affectedFields,
-              lastUpdatedAt: new Date().toISOString(),
+              lastUpdatedAt: requestStartedAt,
               lastUpdatedBy: 'batch',
             }, env);
           }
@@ -802,6 +846,9 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
 
 // Update proposed versions for a submission
 export async function updateProposedVersionsHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { submissionId } = request.params!;
 
   if (!request.user) {
@@ -837,7 +884,7 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
       proposedVersionsRichText,
       proposedVersionsContent,
       lastUpdatedBy: request.user.id,
-      lastUpdatedAt: new Date().toISOString()
+      lastUpdatedAt: requestStartedAt
     };
 
     console.log('🔍 updateProposedVersionsHandler - saving data:', {

@@ -323,7 +323,11 @@ export const createTrackedChange = async (
     
     // Invalidate the submission's tracked changes cache
     await deleteObject(`tracked_changes:submission:${submissionId}`, env);
-    
+
+    // The cached proposed document predates this change, so drop it and let the next
+    // read recompute it (a stale copy reseeds the editor without this edit).
+    await deleteObject(`proposed_versions/${submissionId}`, env);
+
     return newChange;
   } catch (error) {
     console.error('Error creating tracked change:', error);
@@ -673,6 +677,33 @@ function extractPlainText(content: string): string {
   return content;
 }
 
+const timeOf = (iso?: string): number => (iso ? new Date(iso).getTime() : NaN);
+
+/**
+ * The change whose saved snapshot (completeProposedVersion / richTextNewValue, the whole
+ * document after the edit) is the current proposed document, or null when none is.
+ *
+ * That is the newest non-rejected change, pending or approved, provided it was made after
+ * every rejection in the field: its author's document already had those rejections
+ * reverted, and approvals don't change the text. A change made before a later rejection
+ * still holds the rejected text, so the caller has to replay the changes instead.
+ * `fieldChanges` must be sorted oldest first.
+ */
+export function getCurrentSnapshotChange(fieldChanges: TrackedChange[]): TrackedChange | null {
+  const active = fieldChanges.filter(c => c.status !== 'rejected');
+  const newest = active[active.length - 1];
+  if (!newest) return null;
+  const newestAt = timeOf(newest.timestamp);
+  const madeAfterEveryRejection = fieldChanges
+    .filter(c => c.status === 'rejected')
+    // No rejectedAt (older data): the rejection can't be dated, so don't trust the snapshot
+    .every(c => timeOf(c.rejectedAt) < newestAt);
+  return madeAfterEveryRejection ? newest : null;
+}
+
+const snapshotText = (change: TrackedChange): string =>
+  (change.isIncremental && change.completeProposedVersion) ? change.completeProposedVersion : change.newValue;
+
 // Get the complete proposed version for a field by applying all incremental changes
 export const getCompleteProposedVersion = async (
   submissionId: string,
@@ -695,17 +726,13 @@ export const getCompleteProposedVersion = async (
       return null;
     }
 
-    // Fast path: no rejections exist → the last pending change's cpv is correct
-    const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
-    if (!hasRejections) {
-      const latestChange = pendingChanges[pendingChanges.length - 1];
-      if (latestChange.isIncremental && latestChange.completeProposedVersion) {
-        return latestChange.completeProposedVersion;
-      }
-      return latestChange.newValue;
+    // Fast path: the newest change's snapshot already is the whole proposed document
+    const snapshot = getCurrentSnapshotChange(allFieldChanges);
+    if (snapshot) {
+      return snapshotText(snapshot);
     }
 
-    // Slow path: rejections exist → recompute by replaying only pending changes
+    // Slow path: a rejection came after the newest change → replay only pending changes
     const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
     const originalContent = submission ? extractPlainText(submission.content || '') : '';
 
@@ -757,14 +784,12 @@ export const getCompleteRichTextProposedVersion = async (
       return null;
     }
 
-    // Fast path: no rejections → use last pending change's rich text directly
-    const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
-    if (!hasRejections) {
-      const latestChange = pendingChanges[pendingChanges.length - 1];
-      if (latestChange.richTextNewValue) {
-        return latestChange.richTextNewValue;
-      }
-      return latestChange.newValue;
+    // Fast path: the newest change's snapshot is the whole proposed document. Without
+    // rich text (e.g. recovered orphaned transactions) return null, so the caller merges
+    // the plain text into the submission's Lexical structure.
+    const snapshot = getCurrentSnapshotChange(allFieldChanges);
+    if (snapshot) {
+      return snapshot.richTextNewValue || null;
     }
 
     // Slow path: compute correct plain text first
@@ -1255,8 +1280,9 @@ export const batchCreateTrackedChanges = async (
       createdKeys.push(changeKey);
     }
 
-    // Invalidate the submission's tracked changes cache
+    // Invalidate the submission's tracked changes cache and the cached proposed document
     await deleteObject(`tracked_changes:submission:${submissionId}`, env);
+    await deleteObject(`proposed_versions/${submissionId}`, env);
 
     return createdChanges;
   } catch (error) {
