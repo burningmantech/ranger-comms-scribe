@@ -20,6 +20,7 @@ import { LatencyObjectStore } from '../storage/latencyObjectStore';
  *   EMAIL_BCC               CSV; default empty (no BCC)
  *   ANNOUNCE_EMAIL_TO       recipient for approved-submission announcements; unset disables sending
  *   ALLOW_ANNOUNCEMENT_RESEND "true" lets a sent announcement be sent again (dev only)
+ *   COMMS_EMAIL_OVERRIDE    list sends and approval reminders all go to this address instead (dev)
  *   NUDGE_EMAIL_OVERRIDE    Comms Calendar nudges go only to this address (dev and staging)
  *   BOOTSTRAP_ADMIN_EMAILS  CSV, case-insensitive
  *   GOOGLE_CLIENT_ID        required
@@ -171,6 +172,7 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
     ANNOUNCE_EMAIL_TO: nonEmpty(source.ANNOUNCE_EMAIL_TO),
     ALLOW_ANNOUNCEMENT_RESEND: source.ALLOW_ANNOUNCEMENT_RESEND === 'true',
     NUDGE_EMAIL_OVERRIDE: nonEmpty(source.NUDGE_EMAIL_OVERRIDE),
+    COMMS_EMAIL_OVERRIDE: nonEmpty(source.COMMS_EMAIL_OVERRIDE),
     BOOTSTRAP_ADMIN_EMAILS: parseCsv(source.BOOTSTRAP_ADMIN_EMAILS).map((email) => email.toLowerCase()),
     COLLAB_MODE: collabMode,
   };

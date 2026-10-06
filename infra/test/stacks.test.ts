@@ -111,6 +111,13 @@ describe('alex-dev (dev profile)', () => {
     );
   });
 
+  test('sends list emails and reminders only to Alex (COMMS_EMAIL_OVERRIDE)', () => {
+    const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'COMMS_EMAIL_OVERRIDE', Value: 'alexander.young@gmail.com' }]),
+    );
+  });
+
   test('sends Comms Calendar nudges only to Alex (NUDGE_EMAIL_OVERRIDE)', () => {
     const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
@@ -276,12 +283,14 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ Name: 'ALLOW_ANNOUNCEMENT_RESEND' })]),
     );
-    // Nudges reach the real teams only in production
-    const nudgeOverride = expect.arrayContaining([expect.objectContaining({ Name: 'NUDGE_EMAIL_OVERRIDE' })]);
-    if (configName === 'rangers-production') {
-      expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(nudgeOverride);
-    } else {
-      expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(nudgeOverride);
+    // Nudges, list sends and reminders reach real people only in production
+    for (const name of ['NUDGE_EMAIL_OVERRIDE', 'COMMS_EMAIL_OVERRIDE']) {
+      const override = expect.arrayContaining([expect.objectContaining({ Name: name })]);
+      if (configName === 'rangers-production') {
+        expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(override);
+      } else {
+        expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(override);
+      }
     }
   });
 

@@ -16,6 +16,7 @@ import { router as notificationsRouter } from './handlers/notifications';
 import { router as commsCalendarRouter } from './handlers/commsCalendar';
 import { router as websocketRouter } from './handlers/websocket';
 import { router as newsletterRouter } from './handlers/newsletter';
+import { router as mailingListsRouter } from './handlers/mailingLists';
 import { router as publicNewsRouter } from './handlers/publicNews';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
@@ -163,6 +164,8 @@ router
     .all('/api/templates/*', templatesRouter.fetch) // Handle all template routes
     .all('/api/notifications/*', withValidSession) // Middleware to check session for notification routes
     .all('/api/notifications/*', notificationsRouter.fetch) // Handle all notification routes
+    .all('/api/mailing-lists/*', withValidSession) // Mailing lists (Requests → Settings)
+    .all('/api/mailing-lists/*', mailingListsRouter.fetch)
     .all('/api/newsletter/*', withValidSession) // Middleware to check session for newsletter routes
     .all('/api/newsletter/*', newsletterRouter.fetch) // Newsletter editions (Comms Cadre)
     .all('/api/public/*', publicNewsRouter.fetch) // Public pages: sent editions and published documents (no session)

@@ -67,6 +67,8 @@ const config: ScribeConfig = {
     ALLOW_ANNOUNCEMENT_RESEND: 'true',
     // Comms Calendar nudges go to Alex, never to the team contacts on imported entries
     NUDGE_EMAIL_OVERRIDE: process.env.SCRIBE_ALEX_DEV_NUDGE_EMAIL_OVERRIDE || 'alexander.young@gmail.com',
+    // Sends to mailing lists (e.g. a cadre's list) and approval reminders go to Alex, never the real list or person
+    COMMS_EMAIL_OVERRIDE: process.env.SCRIBE_ALEX_DEV_COMMS_EMAIL_OVERRIDE || 'alexander.young@gmail.com',
   },
 
   // SSM SecureString you create by hand (infra/README.md, first-time setup).

@@ -26,6 +26,8 @@ export interface Env {
     ALLOW_ANNOUNCEMENT_RESEND?: boolean;
     /** Comms Calendar nudges all go here instead of to the team contacts (dev and staging). */
     NUDGE_EMAIL_OVERRIDE?: string;
+    /** Sends to mailing lists and approval reminders all go here instead (dev); see utils/email.ts commsRecipients. */
+    COMMS_EMAIL_OVERRIDE?: string;
     /** Emails (lowercased) that are promoted to Admin on register/login. */
     BOOTSTRAP_ADMIN_EMAILS?: string[];
     /**

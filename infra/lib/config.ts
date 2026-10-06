@@ -33,6 +33,8 @@ export interface BackendEnv {
   ALLOW_ANNOUNCEMENT_RESEND?: 'true';
   /** Comms Calendar nudges go only to this address instead of the team contacts. Outside production. */
   NUDGE_EMAIL_OVERRIDE?: string;
+  /** Sends to mailing lists and approval reminders go only to this address. Outside production. */
+  COMMS_EMAIL_OVERRIDE?: string;
 }
 
 export interface UseExisting {

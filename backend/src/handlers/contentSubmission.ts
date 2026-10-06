@@ -9,7 +9,9 @@ import { buildAnnouncementEmail, embedGalleryImages } from '../services/announce
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { Access, accessOf, approverCounts, derivedRoles, derivedUserType, isAdmin, isCommsCadre, isCommsManager, isReviewer, normalizeEmail } from '../services/access';
-import { accessByEmail } from '../services/peopleService';
+import { accessByEmail, peopleWhere } from '../services/peopleService';
+import { listMailingLists, suggestedListIds } from '../services/mailingListService';
+import { getUser } from '../services/userService';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
 import { getEdition } from '../services/newsletterService';
@@ -261,6 +263,7 @@ function cleanNewsletterFields(input: any): Pick<ContentSubmission, 'audiences' 
 const PUT_IGNORED_FIELDS = [
   'newsletter', 'keyDates', 'writingHelp',
   'newsletterEditionId', 'newsletterSentIn', 'publicSlug', 'publicPublishedAt',
+  'sentTo', 'reminders',
 ] as const;
 
 // Create a new content submission
@@ -974,10 +977,16 @@ router.get('/submissions/:id/email-preview', withAuth, async (request: Request, 
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
+  // The lists it can go to, with the ones its audience suggests ticked
+  const allLists = await listMailingLists(env);
   return json({
     ...(await buildAnnouncementEmail(submission, env)),
     // Dev: a sent announcement can be sent again (Resend Email)
     resendAllowed: env.ALLOW_ANNOUNCEMENT_RESEND === true,
+    lists: allLists.map((l) => ({ id: l.id, name: l.name, address: l.address, builtIn: !!l.builtIn })),
+    suggestedListIds: suggestedListIds(allLists, audienceKeys(submission, await getTrackedChanges(id, env))),
+    sentTo: submission.sentTo || [],
+    redirectedTo: env.COMMS_EMAIL_OVERRIDE || null,
   });
 });
 
@@ -1008,25 +1017,37 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
     return json({ error: 'This request goes out in the newsletter. Add it to an edition instead.' }, { status: 409 });
   }
 
-  // The list comes from config so dev and staging can't email the real announcement list
-  const toAddress = env.ANNOUNCE_EMAIL_TO;
-  if (!toAddress) {
-    return json({ error: 'Announcement email address is not configured (ANNOUNCE_EMAIL_TO)' }, { status: 503 });
+  // Sending is switched on by ANNOUNCE_EMAIL_TO (unset in staging); the lists come from
+  // Requests → Settings, Ranger Announce from that address
+  if (!env.ANNOUNCE_EMAIL_TO) {
+    return json({ error: 'Sending is not configured here (ANNOUNCE_EMAIL_TO)' }, { status: 503 });
+  }
+  const body = await request.json().catch(() => ({})) as { listIds?: unknown };
+  const allLists = await listMailingLists(env);
+  const chosenIds = Array.isArray(body.listIds)
+    ? body.listIds.filter((x): x is string => typeof x === 'string')
+    : suggestedListIds(allLists, audiences);
+  const chosen = allLists.filter((l) => chosenIds.includes(l.id));
+  if (chosen.length === 0) {
+    return json({ error: 'Choose at least one mailing list to send to' }, { status: 400 });
   }
   try {
-    const { sendEmail } = await import('../utils/email');
+    const { sendEmail, commsRecipients } = await import('../utils/email');
     // The approved document rendered for email (absolute image URLs), with the approved
     // Subject, Reply-To and signature: the same build as the email-preview endpoint.
     const email = await buildAnnouncementEmail(submission, env);
     // Gallery images go inside the email, so mail apps that block remote images show them
     const embedded = await embedGalleryImages(email.html, env);
-    await sendEmail(toAddress, email.subject, email.text, env, {
+    // On dev and staging (COMMS_EMAIL_OVERRIDE) the email goes to the override, not the lists
+    const delivery = commsRecipients(chosen.map((l) => l.address), email.subject, env);
+    await sendEmail(delivery.to, delivery.subject, email.text, env, {
       html: embedded.html,
       text: email.text,
       attachments: embedded.attachments,
       ...(email.replyTo ? { replyTo: email.replyTo } : {}),
     });
 
+    submission.sentTo = chosen.map((l) => ({ id: l.id, name: l.name, address: l.address }));
     submission.status = 'sent';
     submission.sentBy = user.id || user.email;
     submission.sentAt = new Date().toISOString();
@@ -1045,10 +1066,98 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
       data: { status: submission.status, title: submission.title }
     }, env);
 
-    return json({ success: true });
+    return json({ success: true, sentTo: submission.sentTo });
   } catch (e: any) {
     return json({ error: e.message || 'Failed to send email' }, { status: 500 });
   }
+});
+
+// Remind approvers: one required approver (target = their email) or everyone who can meet a
+// gate ('council' or 'commsCadre'). Email plus an in-app notification, at most once a day per
+// target on a request. Reviewers and the submitter may remind.
+const REMIND_INTERVAL_MS = 20 * 60 * 60 * 1000;
+router.post('/submissions/:id/remind', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const { target } = await request.json().catch(() => ({})) as { target?: unknown };
+  if (typeof target !== 'string' || !target.trim()) return json({ error: 'Say who to remind' }, { status: 400 });
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) return json({ error: 'Submission not found' }, { status: 404 });
+  if (!(isReviewer(user, env) || submission.submittedBy === user.id || submission.submittedBy === user.email)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+  if (submission.status !== 'in_review' && submission.status !== 'submitted') {
+    return json({ error: 'Only a request waiting for approval needs reminders' }, { status: 409 });
+  }
+
+  const gates = await computeApprovalGates(submission, env);
+  const key = target.trim() === 'commsCadre' ? 'commsCadre' : target.trim().toLowerCase();
+  let recipients: Array<{ email: string; name: string }>;
+  let who: string;
+  if (key === 'council') {
+    if (gates.councilManager.met) return json({ error: 'A council member has already approved' }, { status: 409 });
+    recipients = await peopleWhere(env, (a) => a.council);
+    who = 'the Council';
+  } else if (key === 'commsCadre') {
+    if (gates.commsCadre.met) return json({ error: 'A Comms Cadre member has already approved' }, { status: 409 });
+    recipients = await peopleWhere(env, (a) => a.commsCadre);
+    who = 'the Comms Cadre';
+  } else {
+    const waiting = gates.requiredApprovers.details.find((d) => d.email === key && d.status !== 'approved');
+    if (!waiting) return json({ error: `${target} isn't a required approver still to approve` }, { status: 409 });
+    recipients = [{ email: waiting.email, name: waiting.name || waiting.email }];
+    who = waiting.name || waiting.email;
+  }
+  recipients = recipients.filter((r) => normalizeEmail(r.email) !== normalizeEmail(user.email));
+  if (recipients.length === 0) return json({ error: `Nobody else to remind for ${who}` }, { status: 409 });
+
+  const last = [...(submission.reminders || [])].reverse().find((r) => r.target === key);
+  if (last && Date.now() - new Date(last.at).getTime() < REMIND_INTERVAL_MS) {
+    const when = new Date(last.at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', dateStyle: 'medium', timeStyle: 'short' });
+    return json({ error: `${who} was reminded ${when}; try again tomorrow`, lastReminder: last }, { status: 429 });
+  }
+
+  let origin = '';
+  try {
+    origin = new URL(env.FRONTEND_URL || env.PUBLIC_URL).origin;
+  } catch {
+    origin = '';
+  }
+  const link = `${origin}/tracked-changes/${id}`;
+  const subject = `Reminder: your approval is needed for "${submission.title}"`;
+  const message = `${user.name || user.email} asked for your approval of "${submission.title}".\n\nOpen it here: ${link}\n\nThanks!`;
+  try {
+    const { sendEmail, commsRecipients } = await import('../utils/email');
+    const delivery = commsRecipients(recipients.map((r) => r.email), subject, env);
+    await sendEmail(delivery.to, delivery.subject, message, env);
+  } catch (e: any) {
+    return json({ error: e.message || 'Could not send the reminder' }, { status: 502 });
+  }
+  try {
+    const { createInAppNotification } = await import('../services/notificationService');
+    for (const r of recipients) {
+      const person = await getUser(r.email, env).catch(() => null);
+      if (!person) continue;
+      await createInAppNotification({
+        userId: person.id,
+        type: 'submission_waiting',
+        title: 'Your approval is needed',
+        message: `${user.name || user.email} asked for your approval of "${submission.title}".`,
+        submissionId: id,
+        submissionTitle: submission.title,
+        actorName: user.name || user.email,
+      }, env);
+    }
+  } catch (err) {
+    console.error('Could not add reminder notifications:', err);
+  }
+
+  const reminder = { target: key, to: recipients.map((r) => r.email), by: user.email, byName: user.name || user.email, at: new Date().toISOString() };
+  const fresh = (await getObject<ContentSubmission>(`content_submissions/${id}`, env)) || submission;
+  fresh.reminders = [...(fresh.reminders || []), reminder].slice(-50);
+  await putObject(`content_submissions/${id}`, fresh, env);
+  return json({ reminder, reminders: fresh.reminders });
 });
 
 // Track changes to a submission

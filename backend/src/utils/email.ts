@@ -188,3 +188,18 @@ Comms Scribe Team
 	
 	return await sendEmail(toEmail, subject, message, config);
 }
+
+/**
+ * Where a comms email (to mailing lists, or an approval reminder) actually goes: the real
+ * recipients, or only COMMS_EMAIL_OVERRIDE (dev and staging), with the real recipients named in
+ * the subject so the test copy says who it was for.
+ */
+export function commsRecipients(
+	to: string[],
+	subject: string,
+	config: { COMMS_EMAIL_OVERRIDE?: string },
+): { to: string[]; subject: string; redirected: boolean } {
+	const override = (config.COMMS_EMAIL_OVERRIDE || '').trim();
+	if (!override) return { to, subject, redirected: false };
+	return { to: [override], subject: `[for ${to.join(', ')}] ${subject}`, redirected: true };
+}

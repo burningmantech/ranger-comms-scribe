@@ -146,6 +146,7 @@ export function backendEnvironment(config: ScribeConfig): Record<string, string>
   if (config.backendEnv.COLLAB_MODE) env.COLLAB_MODE = config.backendEnv.COLLAB_MODE;
   if (config.backendEnv.ALLOW_ANNOUNCEMENT_RESEND) env.ALLOW_ANNOUNCEMENT_RESEND = config.backendEnv.ALLOW_ANNOUNCEMENT_RESEND;
   if (config.backendEnv.NUDGE_EMAIL_OVERRIDE) env.NUDGE_EMAIL_OVERRIDE = config.backendEnv.NUDGE_EMAIL_OVERRIDE;
+  if (config.backendEnv.COMMS_EMAIL_OVERRIDE) env.COMMS_EMAIL_OVERRIDE = config.backendEnv.COMMS_EMAIL_OVERRIDE;
   return env;
 }
 

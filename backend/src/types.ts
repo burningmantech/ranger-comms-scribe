@@ -196,7 +196,37 @@ export interface ContentSubmission {
   newsletterEditionId?: string;
   /** The number of the edition this item went out in. */
   newsletterSentIn?: number;
+  /** The mailing lists the announcement was sent to (send-email). */
+  sentTo?: Array<{ id: string; name: string; address: string }>;
+  /** Approval reminders sent (POST /submissions/:id/remind), newest last. */
+  reminders?: SubmissionReminder[];
   updatedAt?: string;
+}
+
+/** A reminder to approve: to one required approver (target = their email), or to everyone
+ *  who can meet a gate (target 'council' or 'commsCadre'). */
+export interface SubmissionReminder {
+  target: string;
+  to: string[];
+  by: string;
+  byName: string;
+  at: string;
+}
+
+/** A mailing list approved announcements can be sent to (Requests → Settings). */
+export interface MailingList {
+  id: string;
+  name: string;
+  address: string;
+  description?: string;
+  /** Request audiences (keys) that suggest this list when sending. */
+  audiences: string[];
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Ranger Announce: from ANNOUNCE_EMAIL_TO, not editable. */
+  builtIn?: boolean;
 }
 
 export interface WritingHelp {
