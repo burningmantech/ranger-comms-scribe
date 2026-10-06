@@ -3312,3 +3312,28 @@ span.tracked-deletion-wrapper {
   font-size: 13px;
   color: var(--danger, #dc3545);
 }
+/* Send view: the mailing lists to send to */
+.send-mode-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.send-mode-list {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.send-mode-list input {
+  margin-top: 3px;
+  accent-color: var(--accent-teal, #3d6869);
+}
+
+.send-mode-list-address {
+  color: var(--text-medium, #5c4f4b);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}

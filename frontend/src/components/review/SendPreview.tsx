@@ -19,6 +19,14 @@ export interface EmailPreview {
   text: string;
   /** A sent announcement can be sent again here (dev only). */
   resendAllowed?: boolean;
+  /** The mailing lists it can go to (Requests → Settings), Ranger Announce first. */
+  lists?: Array<{ id: string; name: string; address: string; builtIn?: boolean }>;
+  /** The lists its audience suggests (ticked to start with). */
+  suggestedListIds?: string[];
+  /** Where it went, once sent. */
+  sentTo?: Array<{ id: string; name: string; address: string }>;
+  /** On dev and staging every list send goes to this address instead. */
+  redirectedTo?: string | null;
 }
 
 export async function fetchEmailPreview(submissionId: string, signal?: AbortSignal): Promise<EmailPreview> {
@@ -107,7 +115,7 @@ export interface SendPreviewProps {
   /** Changes when the submission changes, to refetch the preview. */
   refreshKey?: string;
   /** Actions next to Copy to Clipboard (Send, sent state, errors), given the loaded preview. */
-  renderActions?: (preview: EmailPreview | null) => React.ReactNode;
+  renderActions?: (preview: EmailPreview | null, listIds: string[]) => React.ReactNode;
 }
 
 /**
@@ -121,6 +129,7 @@ export function SendPreview({ submissionId, refreshKey, renderActions }: SendPre
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [frameHeight, setFrameHeight] = useState(480);
+  const [listIds, setListIds] = useState<string[]>([]);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -131,6 +140,7 @@ export function SendPreview({ submissionId, refreshKey, renderActions }: SendPre
     fetchEmailPreview(submissionId, controller.signal)
       .then((loaded) => {
         setPreview(loaded);
+        setListIds(loaded.suggestedListIds || []);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -177,7 +187,29 @@ export function SendPreview({ submissionId, refreshKey, renderActions }: SendPre
             <div className="send-mode-field">
               <span className="send-mode-label">To:</span>
               <span className="send-mode-value" data-testid="send-preview-to">
-                {preview.to || 'Not configured (ANNOUNCE_EMAIL_TO is not set)'}
+                {!preview.to
+                  ? 'Not configured (ANNOUNCE_EMAIL_TO is not set)'
+                  : preview.sentTo && preview.sentTo.length > 0 && !preview.resendAllowed
+                    ? preview.sentTo.map((l) => `${l.name} <${l.address}>`).join(', ')
+                    : !preview.lists || preview.lists.length === 0
+                      ? preview.to
+                      : (
+                      <span className="send-mode-lists" role="group" aria-label="Send to">
+                        {(preview.lists || []).map((l) => (
+                          <label key={l.id} className="send-mode-list">
+                            <input
+                              type="checkbox"
+                              checked={listIds.includes(l.id)}
+                              onChange={(e) => setListIds((ids) => (e.target.checked ? [...ids, l.id] : ids.filter((x) => x !== l.id)))}
+                            />
+                            <span><strong>{l.name}</strong> <span className="send-mode-list-address">{l.address}</span></span>
+                          </label>
+                        ))}
+                        {preview.redirectedTo && (
+                          <span className="send-mode-note">On this site, list emails go to {preview.redirectedTo} instead.</span>
+                        )}
+                      </span>
+                    )}
               </span>
             </div>
             {preview.audience && (
@@ -229,7 +261,7 @@ export function SendPreview({ submissionId, refreshKey, renderActions }: SendPre
           <i className={`fas ${copied ? 'fa-check' : 'fa-copy'}`} style={{ marginRight: '6px' }} />
           {copied ? 'Copied!' : 'Copy to Clipboard'}
         </button>
-        {renderActions && renderActions(preview)}
+        {renderActions && renderActions(preview, listIds)}
       </div>
     </div>
   );

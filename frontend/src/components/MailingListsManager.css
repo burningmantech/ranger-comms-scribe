@@ -1,0 +1,140 @@
+.ml-intro {
+  color: var(--text-medium);
+  margin: 0 0 16px 0;
+  max-width: 760px;
+}
+
+.ml-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ml-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: white;
+}
+
+.ml-inactive {
+  opacity: 0.6;
+}
+
+.ml-main {
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.ml-name {
+  font-weight: 700;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ml-tag {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--primary-light);
+  color: var(--text-medium);
+  border: 1px solid var(--border-color);
+}
+
+.ml-address {
+  color: var(--accent-teal);
+  overflow-wrap: anywhere;
+}
+
+.ml-description,
+.ml-audiences-line {
+  font-size: 0.875rem;
+  color: var(--text-medium);
+}
+
+.ml-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ml-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.ml-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-dark);
+}
+
+.ml-form input[type='text'],
+.ml-form input[type='email'],
+.ml-form input:not([type]) {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-weight: 400;
+}
+
+.ml-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ml-audiences {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.ml-audiences legend {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  width: 100%;
+}
+
+.ml-form .ml-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+}
+
+.ml-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ml-error {
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 600px) {
+  .ml-form-row {
+    grid-template-columns: 1fr;
+  }
+}

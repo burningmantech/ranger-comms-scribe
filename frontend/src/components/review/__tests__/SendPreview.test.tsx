@@ -82,6 +82,26 @@ describe('SendPreview', () => {
     expect(await screen.findByText('send to announce-test@example.org')).toBeInTheDocument();
   });
 
+  it('lets the sender choose mailing lists, starting from the suggested ones', async () => {
+    mockFetch({
+      ...PREVIEW,
+      lists: [
+        { id: 'announce', name: 'Ranger Announce', address: 'announce-test@example.org', builtIn: true },
+        { id: 'l1', name: 'Allcom', address: 'allcom@example.org' },
+        { id: 'l2', name: 'Intake Cadre', address: 'ranger-intake-cadre@example.org' },
+      ],
+      suggestedListIds: ['l1'],
+      redirectedTo: 'alex@example.org',
+    });
+    render(<SendPreview submissionId="sub-1" renderActions={(_p, ids) => <span data-testid="ids">{ids.join(',')}</span>} />);
+    expect(await screen.findByText('Intake Cadre')).toBeInTheDocument();
+    expect(screen.getByTestId('ids')).toHaveTextContent('l1');
+    expect(screen.getByText(/list emails go to alex@example.org instead/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Intake Cadre/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Allcom/ }));
+    expect(screen.getByTestId('ids')).toHaveTextContent(/^l2$/);
+  });
+
   it('copies HTML and plain text with Copy to Clipboard', async () => {
     mockFetch(PREVIEW);
     const write = jest.fn().mockResolvedValue(undefined);

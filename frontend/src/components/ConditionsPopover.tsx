@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { ApprovalGates } from '../types/content';
+import { ApprovalGates, SubmissionReminder } from '../types/content';
 import './ConditionsPopover.css';
 
 /**
@@ -98,10 +98,58 @@ interface ConditionsPopoverProps {
   gates: ApprovalGates;
   /** Edits still to accept or reject, counted like the review sidebar (see buildGateRows). */
   pendingEdits?: number;
+  /** Reminders already sent on this request (shown as "Reminded …"). */
+  reminders?: SubmissionReminder[];
+  /**
+   * Sends a reminder (target: a required approver's email, 'council' or 'commsCadre') and
+   * resolves to the request's reminders; rejects with the reason. Omit to hide Remind.
+   */
+  onRemind?: (target: string) => Promise<SubmissionReminder[]>;
 }
 
-const ConditionsPopover: React.FC<ConditionsPopoverProps> = ({ gates, pendingEdits }) => {
+/** Remind buttons for an unmet gate: one for the whole gate, or one per waiting approver. */
+function remindTargets(row: GateRow, gates: ApprovalGates): Array<{ target: string; label: string }> {
+  if (row.met) return [];
+  if (row.key === 'councilManager') return [{ target: 'council', label: 'Remind the Council' }];
+  if (row.key === 'commsCadre') return [{ target: 'commsCadre', label: 'Remind the Comms Cadre' }];
+  if (row.key === 'requiredApprovers') {
+    return gates.requiredApprovers.details
+      .filter((d) => d.status !== 'approved')
+      .map((d) => ({ target: d.email.toLowerCase(), label: `Remind ${personName(d)}` }));
+  }
+  return [];
+}
+
+const REMIND_AGAIN_MS = 20 * 60 * 60 * 1000;
+
+function reminderNote(reminders: SubmissionReminder[], target: string): { recent: boolean; text: string } | null {
+  const last = [...reminders].reverse().find((r) => r.target === target);
+  if (!last) return null;
+  const at = new Date(last.at);
+  const recent = Date.now() - at.getTime() < REMIND_AGAIN_MS;
+  const when = at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return { recent, text: `Reminded ${when} by ${last.byName}` };
+}
+
+const ConditionsPopover: React.FC<ConditionsPopoverProps> = ({ gates, pendingEdits, reminders: initialReminders, onRemind }) => {
   const [open, setOpen] = useState(false);
+  const [reminders, setReminders] = useState<SubmissionReminder[]>(initialReminders || []);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [remindError, setRemindError] = useState<{ target: string; text: string } | null>(null);
+  useEffect(() => setReminders(initialReminders || []), [initialReminders]);
+
+  const remind = async (target: string) => {
+    if (!onRemind) return;
+    setBusy(target);
+    setRemindError(null);
+    try {
+      setReminders(await onRemind(target));
+    } catch (err) {
+      setRemindError({ target, text: err instanceof Error ? err.message : 'Could not send the reminder' });
+    } finally {
+      setBusy(null);
+    }
+  };
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const popoverId = useId();
@@ -173,6 +221,24 @@ const ConditionsPopover: React.FC<ConditionsPopoverProps> = ({ gates, pendingEdi
                     <span className="conditions-popover__state">{r.met ? 'Done' : 'Not done'}</span>
                   </div>
                   <div className="conditions-popover__detail">{r.detail}</div>
+                  {onRemind && remindTargets(r, gates).map(({ target, label }) => {
+                    const note = reminderNote(reminders, target);
+                    return (
+                      <div key={target} className="conditions-popover__remind">
+                        <button
+                          type="button"
+                          className="conditions-popover__remind-btn"
+                          disabled={busy !== null || !!note?.recent}
+                          onClick={() => remind(target)}
+                          title={note?.recent ? 'Reminded in the last day' : 'Email them, and add a notification'}
+                        >
+                          <i className="fas fa-bell" aria-hidden="true" /> {busy === target ? 'Sending…' : label}
+                        </button>
+                        {note && <span className="conditions-popover__reminded">{note.text}</span>}
+                        {remindError?.target === target && <span className="conditions-popover__remind-error" role="alert">{remindError.text}</span>}
+                      </div>
+                    );
+                  })}
                 </div>
               </li>
             ))}

@@ -101,7 +101,8 @@ interface TrackedChangesEditorProps {
   onResolveComment?: (commentId: string, resolved: boolean) => Promise<boolean>;
   onBack?: () => void;
   onDelete?: () => void;
-  onSendEmail?: () => Promise<void>;
+  /** Sends to the chosen mailing lists (ids from the Send view). */
+  onSendEmail?: (listIds: string[]) => Promise<void>;
   reviewMode?: boolean;
   /**
    * 'yjs': merged real-time editing (PRD §14). The editor syncs through Yjs, only the
@@ -4139,12 +4140,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
                 const alreadySent = submission.status === 'sent';
 
-                const handleSend = async () => {
+                const handleSend = async (listIds: string[]) => {
                   if (!onSendEmail) return;
                   setSending(true);
                   setSendError(null);
                   try {
-                    await onSendEmail();
+                    await onSendEmail(listIds);
                     setShowSendConfirm(false);
                   } catch (err: any) {
                     setSendError(err?.message || 'Failed to send email');
@@ -4166,12 +4167,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   <SendPreview
                     submissionId={submission.id}
                     refreshKey={previewKey}
-                    renderActions={(preview) => {
+                    renderActions={(preview, listIds) => {
                       // The approved Audience once the preview has loaded, else as submitted
                       const audienceValue = preview ? preview.audience : audienceAsSubmitted;
                       const audienceKeys = audienceValue ? parseAudienceToKeys(audienceValue) : [];
                       const hasEmailAudience = audienceKeys.some((k) => emailAudiences.includes(k));
-                      const recipient = preview?.to || audienceKeys.map((k) => AUDIENCE_LABELS[k] || k).join(', ');
+                      const chosenLists = (preview?.lists || []).filter((l) => listIds.includes(l.id));
+                      const recipient = chosenLists.length
+                        ? chosenLists.map((l) => l.name).join(', ')
+                        : preview?.to || audienceKeys.map((k) => AUDIENCE_LABELS[k] || k).join(', ');
+                      const noListChosen = !!preview && chosenLists.length === 0;
                       const notConfigured = !!preview && !preview.to;
 
                       return (
@@ -4205,7 +4210,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                             <button
                               className="btn btn-primary"
                               onClick={() => setShowSendConfirm(true)}
-                              disabled={sending || !preview}
+                              disabled={sending || !preview || noListChosen}
+                              title={noListChosen ? 'Choose at least one list to send to' : undefined}
                             >
                               <i className="fas fa-paper-plane" style={{ marginRight: '6px' }} />
                               {sending ? 'Sending...' : 'Send Email'}
@@ -4216,7 +4222,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                             <button
                               className="btn btn-neutral"
                               onClick={() => setShowSendConfirm(true)}
-                              disabled={sending}
+                              disabled={sending || noListChosen}
                               title="Resending is turned on in this environment only"
                             >
                               <i className="fas fa-redo" style={{ marginRight: '6px' }} />
@@ -4255,8 +4261,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                                   </button>
                                   <button
                                     className="btn btn-primary"
-                                    onClick={handleSend}
-                                    disabled={sending}
+                                    onClick={() => handleSend(listIds)}
+                                    disabled={sending || noListChosen}
                                   >
                                     {sending ? 'Sending...' : 'Confirm Send'}
                                   </button>

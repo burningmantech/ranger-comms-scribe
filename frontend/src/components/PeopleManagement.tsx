@@ -60,6 +60,109 @@ function RoleGuide() {
   );
 }
 
+/** One person per line: "Name <email>", "Name, email" or just an email. Bad lines are returned. */
+export function parsePeople(text: string): { people: Array<{ name: string; email: string }>; bad: string[] } {
+  const people: Array<{ name: string; email: string }> = [];
+  const bad: string[] = [];
+  for (const raw of text.split(/\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const match = line.match(/[^\s<>,;"]+@[^\s<>,;"]+\.[^\s<>,;"]+/);
+    if (!match) {
+      bad.push(line);
+      continue;
+    }
+    const email = match[0].toLowerCase();
+    const name = line.replace(match[0], '').replace(/[<>,;"()]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!people.some((p) => p.email === email)) people.push({ name: name || email.split('@')[0], email });
+  }
+  return { people, bad };
+}
+
+/** Add people before they sign in: approved (or not), optionally with a role. */
+function AddPeople({ onAdded }: { onAdded: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [approved, setApproved] = useState(true);
+  const [role, setRole] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const parsed = parsePeople(text);
+
+  const submit = async () => {
+    if (parsed.people.length === 0) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const response = await fetch(`${API_URL}/admin/bulk-create-users`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ users: parsed.people.map((p) => ({ ...p, approved })) }),
+      });
+      if (!response.ok) throw new Error(await errorText(response, 'Could not add them'));
+      const body = await response.json();
+      const created: Person[] = body.users || [];
+      const noRole: string[] = [];
+      if (role) {
+        const patch = role === 'commsCadre' ? { commsCadre: true } : role === 'admin' ? { isAdmin: true } : null;
+        for (const person of created) {
+          const access = patch || { councilRoles: Array.from(new Set([...(person.councilRoles || []), role])) };
+          const res = await fetch(`${API_URL}/admin/people/${encodeURIComponent(person.id)}/access`, { method: 'PUT', headers: authHeaders(true), body: JSON.stringify(access) });
+          if (!res.ok) noRole.push(`${person.email} (${await errorText(res, 'role not set')})`);
+        }
+      }
+      const failed = (body.errors || []).length;
+      const problems = [failed ? `${failed} could not be added` : '', noRole.length ? `no role for ${noRole.join(', ')}` : ''].filter(Boolean).join('; ');
+      setMessage({ kind: problems ? 'error' : 'ok', text: `Added ${created.length}${problems ? `; ${problems}` : ''}. They can sign in with Google or reset a password with that address.` });
+      setText('');
+      await onAdded();
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Could not add them' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return <button type="button" className="btn btn-primary" onClick={() => setOpen(true)}><i className="fas fa-user-plus" aria-hidden="true" /> Add people</button>;
+  }
+  return (
+    <div className="people-add">
+      <label htmlFor="people-add-text"><strong>Add people</strong> (one per line: a name and an email address)</label>
+      <textarea
+        id="people-add-text"
+        rows={4}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={'Pat Ranger <pat@example.org>\nsam@example.org'}
+      />
+      <div className="people-add-options">
+        <label className="people-switch">
+          <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
+          <span>Approved</span>
+        </label>
+        <label>
+          Role{' '}
+          <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Role for the people added">
+            <option value="">None</option>
+            <option value="commsCadre">Comms Cadre</option>
+            {COUNCIL_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+      </div>
+      {parsed.bad.length > 0 && <div className="people-row-error">No email address in: {parsed.bad.join('; ')}</div>}
+      {message && <div className={message.kind === 'error' ? 'people-row-error' : 'people-added'} role="status">{message.text}</div>}
+      <div className="people-add-actions">
+        <button type="button" className="btn btn-primary btn-sm" disabled={busy || parsed.people.length === 0} onClick={submit}>
+          {busy ? 'Adding…' : `Add ${parsed.people.length || ''} ${parsed.people.length === 1 ? 'person' : 'people'}`.replace('  ', ' ')}
+        </button>
+        <button type="button" className="btn btn-neutral btn-sm" onClick={() => { setOpen(false); setMessage(null); }}>Close</button>
+      </div>
+    </div>
+  );
+}
+
 /** Admin → People: everyone's access in one place. */
 export const PeopleManagement: React.FC = () => {
   const [people, setPeople] = useState<Person[] | null>(null);
@@ -146,6 +249,7 @@ export const PeopleManagement: React.FC = () => {
         <h2>People</h2>
         <p className="admin-hint">Everyone who has signed up, and what they can do. Changes save as you make them.</p>
         <RoleGuide />
+        <AddPeople onAdded={load} />
       </div>
 
       <div className="people-toolbar">

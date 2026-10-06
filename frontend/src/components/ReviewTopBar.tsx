@@ -2,7 +2,7 @@ import React from 'react';
 import ConditionsPopover from './ConditionsPopover';
 import FinishReviewMenu from './FinishReviewMenu';
 import QueueNavigator from './QueueNavigator';
-import { ApprovalGates } from '../types/content';
+import { ApprovalGates, SubmissionReminder } from '../types/content';
 import './ReviewTopBar.css';
 
 interface ReviewTopBarProps {
@@ -14,6 +14,9 @@ interface ReviewTopBarProps {
   approvalGates?: ApprovalGates;
   /** Edits still to accept or reject, one per review card (the conditions popover's count). */
   pendingEdits?: number;
+  /** Approval reminders sent, and how to send one (omit to hide Remind). */
+  reminders?: SubmissionReminder[];
+  onRemind?: (target: string) => Promise<SubmissionReminder[]>;
   /** Shows "Finish review" (Approve / Request changes / Decline). */
   canApprove: boolean;
   /** Shows the queue pager (see QueueNavigator). */
@@ -36,6 +39,8 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
   isUrgent,
   approvalGates,
   pendingEdits,
+  reminders,
+  onRemind,
   canApprove,
   isReviewer,
   myDecision = null,
@@ -73,7 +78,7 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
       </div>
 
       <div className="review-top-bar__center">
-        {approvalGates && <ConditionsPopover gates={approvalGates} pendingEdits={pendingEdits} />}
+        {approvalGates && <ConditionsPopover gates={approvalGates} pendingEdits={pendingEdits} reminders={reminders} onRemind={onRemind} />}
       </div>
 
       <div className="review-top-bar__right">

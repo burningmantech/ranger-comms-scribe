@@ -21,8 +21,9 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { NewsletterEditions } from './pages/NewsletterEditions';
 import { NewsletterEditor } from './pages/NewsletterEditor';
 import { NewsletterArchive, PublicEdition, PublicDocument } from './pages/PublicNewsletter';
-import { canUseNewsletter, isReviewer } from './utils/access';
+import { canSendAnnouncements, canUseNewsletter, isReviewer } from './utils/access';
 import { CommsCalendar } from './pages/CommsCalendar';
+import { RequestSettings } from './pages/RequestSettings';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -76,6 +77,7 @@ const App: React.FC = () => {
                 <Route path="/lexical-extraction-test" element={<LexicalExtractionTest />} />
                 {/* Any signed-in user (Members and Leads included): the backend authorizes each request */}
                 <Route path="/requests" element={<ProtectedRoute element={<MySubmissions />} />} />
+                <Route path="/requests/settings" element={<ProtectedRoute element={<RequestSettings />} allow={canSendAnnouncements} />} />
                 <Route path="/comms-request" element={<ProtectedRoute element={<CommsRequest />} />} />
                 <Route path="/tracked-changes/:submissionId" element={<ProtectedRoute element={<TrackedChangesView />} />} />
                 <Route path="/tracked-changes-demo" element={<ProtectedRoute element={<TrackedChangesDemo />} />} />

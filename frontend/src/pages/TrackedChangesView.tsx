@@ -209,6 +209,8 @@ export const TrackedChangesView: React.FC = () => {
         newsletterEditionId: data.newsletterEditionId,
         newsletterSentIn: data.newsletterSentIn,
         newsletterPlacement: data.newsletterPlacement,
+        sentTo: data.sentTo,
+        reminders: data.reminders,
         // Add proposed versions with rich text support
         proposedVersions: {
           // Start with base proposed versions (plain text)
@@ -666,9 +668,9 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
-  const handleSendEmail = async () => {
+  const handleSendEmail = async (listIds: string[]) => {
     if (!submission) return;
-    await sendAnnouncementEmail(submission);
+    await sendAnnouncementEmail(submission, listIds);
     await fetchSubmission();
   };
 
@@ -954,6 +956,19 @@ export const ReviewLayout: React.FC<ReviewLayoutProps> = ({
     reportDecision(await onRequestChanges(comment), 'You requested changes');
   };
 
+  // Reviewers and the submitter can remind the approvers still to approve
+  const canRemind = isReviewer || currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy;
+  const remindApprovers = async (target: string) => {
+    const response = await fetch(`${API_URL}/content/submissions/${submission.id}/remind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('sessionId') || ''}` },
+      body: JSON.stringify({ target }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body?.error || 'Could not send the reminder');
+    return body.reminders || [];
+  };
+
   return (
     <div className="review-layout">
       <ReviewTopBar
@@ -964,6 +979,8 @@ export const ReviewLayout: React.FC<ReviewLayoutProps> = ({
         isUrgent={isUrgent}
         approvalGates={(submission as any).approvalGates}
         pendingEdits={pendingEdits}
+        reminders={submission.reminders}
+        onRemind={canRemind ? remindApprovers : undefined}
         canApprove={canApprove}
         isReviewer={isReviewer}
         myDecision={myDecision}

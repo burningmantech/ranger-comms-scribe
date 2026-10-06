@@ -1,5 +1,14 @@
 import { KeyDate, NewsletterRequest, WritingHelp } from './newsletter';
 
+/** A reminder to approve: to one required approver (target = email), or 'council' / 'commsCadre'. */
+export interface SubmissionReminder {
+  target: string;
+  to: string[];
+  by: string;
+  byName: string;
+  at: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -74,6 +83,10 @@ export interface ContentSubmission {
   publicPublishedAt?: string;
   newsletterEditionId?: string;
   newsletterSentIn?: number;
+  /** The mailing lists it was sent to. */
+  sentTo?: Array<{ id: string; name: string; address: string }>;
+  /** Approval reminders sent (POST /content/submissions/:id/remind). */
+  reminders?: SubmissionReminder[];
   /** Set by GET /content/submissions/:id when the item is in an edition. */
   newsletterPlacement?: { editionId: string; number: number; status: string };
 }

@@ -50,12 +50,11 @@ interface ContentContextType {
   rejectSubmission: (submission: ContentSubmission) => Promise<void>;
   addComment: (submission: ContentSubmission, comment: Comment) => Promise<void>;
   deleteSubmission: (submissionId: string) => Promise<void>;
-  sendReminder: (submission: ContentSubmission, manager: CouncilManager) => Promise<void>;
   createSuggestion: (submission: ContentSubmission, suggestion: SuggestedEdit) => Promise<void>;
   approveSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
   rejectSuggestion: (submission: ContentSubmission, suggestionId: string, reason?: string) => Promise<void>;
   overrideApprove: (submission: ContentSubmission, reason?: string) => Promise<void>;
-  sendAnnouncementEmail: (submission: ContentSubmission) => Promise<void>;
+  sendAnnouncementEmail: (submission: ContentSubmission, listIds?: string[]) => Promise<void>;
 }
 
 const ContentContext = createContext<ContentContextType | null>(null);
@@ -437,15 +436,16 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     }
   };
 
-  const sendAnnouncementEmail = async (submission: ContentSubmission) => {
+  const sendAnnouncementEmail = async (submission: ContentSubmission, listIds?: string[]) => {
     try {
       const response = await fetch(`${API_URL}/content/submissions/${submission.id}/send-email`, {
         method: 'POST',
-        headers: getAuthHeaders(true)
+        headers: getAuthHeaders(true),
+        body: JSON.stringify(listIds ? { listIds } : {}),
       });
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Failed to send email');
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || 'Failed to send email');
       }
       // Refresh submissions list
       await fetchSubmissions();
@@ -497,22 +497,6 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
       }
     } catch (err) {
       console.error('Error deleting submission:', err);
-      throw err;
-    }
-  };
-
-  const sendReminder = async (submission: ContentSubmission, manager: CouncilManager) => {
-    try {
-      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/remind`, {
-        method: 'POST',
-        headers: getAuthHeaders(true),
-        body: JSON.stringify({ managerId: manager.id }),
-      });
-      if (!response.ok) {
-        throw new Error('Failed to send reminder');
-      }
-    } catch (err) {
-      console.error('Error sending reminder:', err);
       throw err;
     }
   };
@@ -651,7 +635,6 @@ export const ContentProvider: React.FC<ContentProviderProps> = ({ children }) =>
     rejectSubmission,
     addComment,
     deleteSubmission,
-    sendReminder,
     createSuggestion,
     approveSuggestion,
     rejectSuggestion,

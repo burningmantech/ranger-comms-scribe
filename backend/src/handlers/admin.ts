@@ -319,9 +319,10 @@ router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: 
   for (const userEntry of validUsers) {
     try {
       // Create the user
+      // Emails are stored lowercased (as sign-in finds them), so a pasted address can't make a duplicate
       const newUser = await getOrCreateUser({
-        name: userEntry.name,
-        email: userEntry.email
+        name: String(userEntry.name).trim(),
+        email: String(userEntry.email).trim().toLowerCase()
       }, env);
 
       // Approve the user if requested
@@ -341,7 +342,7 @@ router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: 
 
   return json({
     message: `Successfully created ${createdUsers.length} users`,
-    users: createdUsers,
+    users: createdUsers.map((u) => ({ ...publicUser(u), ...accessView(u, env) })),
     errors: errors.length > 0 ? errors : undefined
   });
 });
