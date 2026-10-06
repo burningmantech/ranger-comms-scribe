@@ -582,26 +582,6 @@
   width: 100%;
 }
 
-/* Original version title/fields */
-.original-title {
-  font-size: 24px;
-  font-weight: 400;
-  color: #202124;
-  margin: 0 0 8px 0;
-}
-
-.original-field {
-  font-size: 14px;
-  color: #5f6368;
-  margin: 0 0 8px 0;
-}
-
-.original-signature {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid #e0e0e0;
-}
-
 .document-meta {
   display: flex;
   align-items: center;
@@ -1012,6 +992,22 @@
 /* Original Version Section */
 .original-version-section {
   margin-bottom: 16px;
+}
+
+.original-caption {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.original-changed-fields {
+  margin: 0 0 12px;
+}
+
+.original-changed-fields dt,
+.original-changed-fields dd {
+  display: inline;
+  margin: 0;
 }
 
 .original-content {

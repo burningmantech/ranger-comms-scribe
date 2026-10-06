@@ -4024,29 +4024,49 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             </div>}
 
             {/* Original Version */}
-            {activeTab === 'original' && <div className="original-version-section">
-              <div className="original-content">
-                <h3 className="original-title">{submission.title}</h3>
-                {replyToValue && (
-                  <p className="original-field">Reply-To: {replyToValue}</p>
-                )}
-                {audienceDisplay && (
-                  <p className="original-field">Audience: {audienceDisplay}</p>
-                )}
-                <div className="rich-text-display">
-                  <LexicalEditorComponent
-                    key="original-display-editor"
-                    initialContent={getRichTextContent(submittedDocument)}
-                    readOnly={true}
-                    showToolbar={false}
-                    className="original-display-editor"
-                  />
+            {activeTab === 'original' && (() => {
+              // The header above shows the proposed title, Reply-To and audience, so only
+              // the ones a reviewer has since changed are repeated here, with their
+              // submitted values.
+              const proposedAudienceDisplay = proposedAudienceArr.map(k => AUDIENCE_LABELS[k] || k).join(', ');
+              const changedFields = [
+                { label: 'Title', original: submission.title, proposed: proposedTitle },
+                { label: 'Reply-To', original: replyToValue, proposed: proposedReplyTo },
+                { label: 'Audience', original: audienceDisplay, proposed: proposedAudienceDisplay },
+              ].filter(f => (f.original || '').trim() !== (f.proposed || '').trim());
+              return (
+                <div className="original-version-section">
+                  <p className="original-caption">As submitted. Read only.</p>
+                  {changedFields.length > 0 && (
+                    <dl className="original-changed-fields">
+                      {changedFields.map(f => (
+                        <div className="document-field-row" key={f.label}>
+                          <dt className="field-row-label">{f.label} as submitted:</dt>
+                          <dd className="field-row-value">{f.original || 'Not specified'}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                  <div className="original-content">
+                    <div className="rich-text-display">
+                      <LexicalEditorComponent
+                        key="original-display-editor"
+                        initialContent={getRichTextContent(submittedDocument)}
+                        readOnly={true}
+                        showToolbar={false}
+                        className="original-display-editor"
+                      />
+                    </div>
+                  </div>
+                  <div className="document-signature-section">
+                    <div className="document-field-row">
+                      <span className="field-row-label">Signature:</span>
+                      <span className="field-row-value">{signatureValue || 'Not specified'}</span>
+                    </div>
+                  </div>
                 </div>
-                {signatureValue && (
-                  <p className="original-field original-signature">Signature: {signatureValue}</p>
-                )}
-              </div>
-            </div>}
+              );
+            })()}
 
             {/* Send Mode */}
             {activeTab === 'send' && <div className="send-mode-section">
