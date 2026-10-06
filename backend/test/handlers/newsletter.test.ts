@@ -24,14 +24,14 @@ let MEMBER = '';
 
 async function seedPeople(env: any) {
   const people = [
-    { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', isAdmin: true, councilRoles: ['CommunicationsManager'] },
+    { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', isAdmin: true, councilRole: 'CommunicationsManager' },
     { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', commsCadre: true },
     { id: 'dev-member', email: 'member@localhost', name: 'Test Member' },
   ];
   for (const p of people) {
     await saveUser(withDerivedAccess({
-      approved: true, verified: true, groups: [], roles: [], userType: 'Member', isAdmin: false,
-      commsCadre: false, councilRoles: [], ...p,
+      verified: true, groups: [], roles: [], userType: 'Member', isAdmin: false,
+      commsCadre: false, councilRole: null, ...p,
     } as any) as any, env);
   }
   ADMIN = await CreateSession('dev@localhost', { email: 'dev@localhost' }, env);
@@ -360,7 +360,7 @@ describe('newsletter editions', () => {
 
     // An Admin makes the cadre member the Communications Manager too (People page)
     const reviewer = await getUser('user2@localhost', env);
-    await saveUser({ ...reviewer!, councilRoles: ['CommunicationsManager'] } as any, env);
+    await saveUser({ ...reviewer!, councilRole: 'CommunicationsManager' } as any, env);
     res = await nl(env, 'GET', `/editions/${id}`, CADRE);
     expect(res.body.approval.commsManager).toEqual({ met: true, by: 'Test Reviewer' });
     expect(res.body.edition.status).toBe('approved');

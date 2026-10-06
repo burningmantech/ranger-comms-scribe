@@ -24,7 +24,7 @@ const BASE_ENV = {
 const MEMBER = {
   id: 'dev-member', email: 'member@localhost', name: 'Test Member', userType: 'Member',
   isAdmin: false, roles: ['Member'], groups: [],
-  approved: true, commsCadre: false, councilRoles: [], accessVersion: 1,
+  commsCadre: false, councilRole: null, accessVersion: 1,
 };
 
 function makeEnv(bypass: boolean) {

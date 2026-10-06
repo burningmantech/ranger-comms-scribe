@@ -57,6 +57,10 @@ describe('people access migration', () => {
     await put('council_members:id-removed:CommunicationsManager', { userId: 'id-removed', role: 'CommunicationsManager', active: true });
     // A council manager by type with no role recorded anywhere
     await put('user/lost@x.org', user('lost@x.org', { userType: 'CouncilManager', roles: ['CouncilManager'] }));
+    // Named for two council roles: a person holds one
+    await put('user/two@x.org', user('two@x.org', { userType: 'CouncilManager', roles: ['CouncilManager'] }));
+    await put('council_member/l3', { id: 'l3', email: 'two@x.org', role: 'PersonnelManager', active: true });
+    await put('council_member/l4', { id: 'l4', email: 'two@x.org', role: 'IntakeManager', active: true });
     // Lead and an unapproved Public user
     await put('user/lead@x.org', user('lead@x.org', { userType: 'Lead' }));
     await put('user/new@x.org', user('new@x.org', { userType: 'Public', approved: false, roles: ['Public'] }));
@@ -68,35 +72,41 @@ describe('people access migration', () => {
     expect(await after('demoted@x.org')).toMatchObject({ isAdmin: true });
     expect(await after('typecadre@x.org')).toMatchObject({ commsCadre: true, council: false });
     expect(await after('listcadre@x.org')).toMatchObject({ commsCadre: true });
-    expect(await after('cm@x.org')).toMatchObject({ commsCadre: true, councilRoles: ['CommunicationsManager'] });
-    expect(await after('intake@x.org')).toMatchObject({ councilRoles: ['IntakeManager'] });
-    expect(await after('orgchart@x.org')).toMatchObject({ councilRoles: ['OperationsManager'] });
-    expect(await after('removed@x.org')).toMatchObject({ commsCadre: true, council: false, councilRoles: [] });
+    expect(await after('cm@x.org')).toMatchObject({ commsCadre: true, councilRole: 'CommunicationsManager' });
+    expect(await after('intake@x.org')).toMatchObject({ councilRole: 'IntakeManager' });
+    expect(await after('orgchart@x.org')).toMatchObject({ councilRole: 'OperationsManager' });
+    expect(await after('removed@x.org')).toMatchObject({ commsCadre: true, council: false, councilRole: null });
     expect(await after('lost@x.org')).toMatchObject({ council: false });
-    expect(await after('lead@x.org')).toMatchObject({ approved: true, isAdmin: false, commsCadre: false, council: false });
-    expect(await after('new@x.org')).toMatchObject({ approved: false });
+    expect(await after('two@x.org')).toMatchObject({ councilRole: 'IntakeManager' }); // first in COUNCIL_ROLES order
+    expect(await after('lead@x.org')).toMatchObject({ isAdmin: false, commsCadre: false, council: false });
+    expect(await after('new@x.org')).toMatchObject({ isAdmin: false, commsCadre: false, council: false });
 
     // The derived legacy fields
     const cm = await getObject<any>('user/cm@x.org', env);
     expect(cm.userType).toBe('CouncilManager');
     expect(cm.roles).toEqual(['CommsCadre', 'CouncilManager']);
     expect((await getObject<any>('user/lead@x.org', env)).userType).toBe('Member');
-    expect((await getObject<any>('user/new@x.org', env)).userType).toBe('Public');
+    // Unapproved sign-ups are Members now: anyone signed in can submit requests
+    const signup = await getObject<any>('user/new@x.org', env);
+    expect(signup.userType).toBe('Member');
+    expect(signup.approved).toBeUndefined();
+    expect(cm.councilRoles).toBeUndefined();
 
     expect(plan!.anomalies).toEqual(expect.arrayContaining([
       'Comms Cadre list names gone@x.org, who has no account: ignored',
       'removed@x.org: an old CommunicationsManager per-person record, but no longer a council manager by type, role or list: not given CommunicationsManager',
       'lost@x.org: a council manager by type or role, but no council role is recorded anywhere: not on Council now (give them a role on the People page)',
+      "two@x.org: named for several council roles (IntakeManager, PersonnelManager); a person holds one, so given IntakeManager: change it on the People page if that's wrong",
     ]));
-    expect(await getObject(MIGRATION_KEY, env)).toMatchObject({ migrated: 11 });
+    expect(await getObject(MIGRATION_KEY, env)).toMatchObject({ migrated: 12 });
   });
 
   it('runs once, and leaves records that already hold access alone', async () => {
     await put('user/a@x.org', user('a@x.org', { userType: 'CommsCadre', roles: ['CommsCadre'] }));
-    await put('user/b@x.org', user('b@x.org', { accessVersion: 1, commsCadre: false, councilRoles: ['IntakeManager'], userType: 'CouncilManager' }));
+    await put('user/b@x.org', user('b@x.org', { accessVersion: 1, commsCadre: false, councilRole: 'IntakeManager', userType: 'CouncilManager' }));
     expect((await planPeopleAccess(env)).alreadyMigrated).toBe(1);
     await migratePeopleAccess(env);
-    expect(await after('b@x.org')).toMatchObject({ commsCadre: false, councilRoles: ['IntakeManager'] });
+    expect(await after('b@x.org')).toMatchObject({ commsCadre: false, councilRole: 'IntakeManager' });
     // A later change to the old list does nothing: it ran already
     await put('comms_cadre:active', [{ email: 'b@x.org', active: true }]);
     expect(await migratePeopleAccess(env)).toBeNull();

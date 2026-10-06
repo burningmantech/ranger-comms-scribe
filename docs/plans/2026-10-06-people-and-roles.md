@@ -24,17 +24,17 @@ Each person's record holds their access, and nothing else does:
 
 | Field | Meaning |
 |---|---|
-| `approved` | Can sign in and submit requests ("awaiting approval" until an Admin approves) |
 | `isAdmin` | Admin: the admin pages, overrides, everything |
 | `commsCadre` | Comms Cadre: reviews requests, builds and sends the newsletter |
-| `councilRoles` | Council roles, any number: `CommunicationsManager`, `IntakeManager`, … |
+| `councilRole` | The one council role held, or null: `CommunicationsManager`, `IntakeManager`, … |
 
-They are independent: a person can be Comms Cadre and Communications Manager. `userType` and `roles` remain on the
-record for older readers but are **derived** from these fields on every save (`saveUser`), never set directly:
-`userType` is the "highest" of Admin › CouncilManager › CommsCadre › Member (approved) › Public; `roles` lists
-`Admin`, `CommsCadre`, `CouncilManager` as they apply.
+Anyone signed in can submit requests and follow their own; there is no approval step (see "One council role, no
+approval step" below). The fields are independent: a person can be Comms Cadre and Communications Manager.
+`userType` and `roles` remain on the record for older readers but are **derived** from these fields on every save
+(`saveUser`), never set directly: `userType` is the "highest" of Admin › CouncilManager › CommsCadre › Member;
+`roles` lists `Admin`, `CommsCadre`, `CouncilManager` as they apply (or `Member`).
 
-Lead and the Public/Member distinction are gone (Leads become approved members). The Roles tab is gone: what each role
+Lead and the Public/Member distinction are gone. The Roles tab is gone: what each role
 can do is fixed in code and described on the People page. The boot-time org chart is gone.
 
 ## Checks
@@ -52,8 +52,8 @@ records (`listPeople`), not from separate lists.
 
 ## Admin
 
-**People** (replaces Users, Council, Comms Cadre and Roles): one row per person with Approved, Admin, Comms Cadre and
-Council roles, a search box and filters (awaiting approval, admins, Comms Cadre, Council). Changes save at once through
+**People** (replaces Users, Council, Comms Cadre and Roles): one row per person with Comms Cadre, Council role (one
+menu) and Admin, a search box and filters (admins, Comms Cadre, Council). Changes save at once through
 `PUT /api/admin/people/:id/access`. The last Admin can't remove their own Admin. Groups, Bulk add, Reminders and
 Templates stay.
 
@@ -88,6 +88,19 @@ The rest of the old Admin tabs moved to where the work happens:
 - **Templates** moved to the same page and are editable by the Comms Cadre as well as Admins
 - **Reminders** are Remind buttons in a request's approval conditions popover (one per unmet gate or waiting
   approver), limited to once a day per target and logged on the request
-- **Bulk add** is Add people on the People screen, with an approved switch and an optional role
+- **Bulk add** is Add people on the People screen, with an optional role
 - On dev and staging `COMMS_EMAIL_OVERRIDE` sends list emails and reminders to one address, so the real lists are
   never mailed from there
+
+## One council role, no approval step
+
+- **A person holds one council role** (`councilRole`, or null). `PUT /api/admin/people/:id/access` takes
+  `councilRole`; setting one replaces the other, and a body with the old `councilRoles` (or `approved`) is refused
+  with 400 so an old caller fails loudly. Records written before this keep `councilRoles` until their next save: they
+  are read as their first known role, and `withDerivedAccess` drops the list on save. The people-access migration
+  gives someone named for several roles the first in `COUNCIL_ROLES` order and reports it
+- **No approval step.** `approved` gated nothing on the server (submitting already needed only a session); it only
+  decided Public vs Member, the People screen's Approve button and "Awaiting approval" filter, and which people the
+  required-approver picker (`GET /user/approvers`) suggested. Everyone signed in is now a Member, the picker lists
+  everyone with an account, and `POST /admin/approve-user` and `POST /auth/approve` are gone. `approved` on older
+  records is ignored and dropped on their next save

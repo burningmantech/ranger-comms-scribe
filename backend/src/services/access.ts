@@ -1,13 +1,13 @@
 import { CouncilRole, UserType } from '../types';
 
 /**
- * What a person can do. The only place that reads `isAdmin`, `commsCadre`, `councilRoles`
- * (and, for records from before the people-access migration, `userType` / `roles`).
+ * What a person can do. The only place that reads `isAdmin`, `commsCadre`, `councilRole`
+ * (and, for older records, `councilRoles` / `userType` / `roles`).
  *
+ * - Anyone signed in: submits requests and follows their own.
  * - Admin: the admin pages, overrides, everything.
  * - Comms Cadre: reviews requests, builds and sends the newsletter.
- * - Council (any council role): approves requests; the Communications Manager approves newsletter editions.
- * - Approved: can sign in and submit requests.
+ * - Council (one council role each): approves requests; the Communications Manager approves newsletter editions.
  *
  * The flags are independent: one person can be Comms Cadre and Communications Manager.
  * `userType` and `roles` on a record are derived from them (`withDerivedAccess`).
@@ -16,12 +16,22 @@ import { CouncilRole, UserType } from '../types';
 export const COUNCIL_ROLES: CouncilRole[] = Object.values(CouncilRole);
 
 export interface Access {
-  approved: boolean;
   isAdmin: boolean;
   commsCadre: boolean;
-  councilRoles: CouncilRole[];
+  /** The one council role held, if any. */
+  councilRole: CouncilRole | null;
   /** Holds a council role (a pre-migration CouncilManager may hold one without it being known). */
   council: boolean;
+}
+
+const asCouncilRole = (value: unknown): CouncilRole | null =>
+  COUNCIL_ROLES.includes(value as CouncilRole) ? (value as CouncilRole) : null;
+
+/** The council role on a record: `councilRole`, or the first of an older record's `councilRoles`. */
+function storedCouncilRole(user: Person): CouncilRole | null {
+  if (user.councilRole !== undefined) return asCouncilRole(user.councilRole);
+  const legacy = Array.isArray(user.councilRoles) ? user.councilRoles : [];
+  return legacy.map(asCouncilRole).find(Boolean) || null;
 }
 
 // Any stored person record (or a dev user); fields are read defensively
@@ -36,7 +46,7 @@ export const normalizeEmail = (email: unknown): string => (typeof email === 'str
 
 /** The record holds the access fields (new users, People page edits, the migration). */
 export function hasAccessFields(user: Person | null | undefined): boolean {
-  return !!user && ((user.accessVersion ?? 0) >= 1 || Array.isArray(user.councilRoles) || typeof user.commsCadre === 'boolean');
+  return !!user && ((user.accessVersion ?? 0) >= 1 || 'councilRole' in user || Array.isArray(user.councilRoles) || typeof user.commsCadre === 'boolean');
 }
 
 /** A verified owner of a BOOTSTRAP_ADMIN_EMAILS address (unverified, anyone could have registered it). */
@@ -46,27 +56,24 @@ function isBootstrapAdmin(user: Person, env?: AccessEnv): boolean {
 }
 
 export function accessOf(user: Person | null | undefined, env?: AccessEnv): Access {
-  if (!user) return { approved: false, isAdmin: false, commsCadre: false, councilRoles: [], council: false };
+  if (!user) return { isAdmin: false, commsCadre: false, councilRole: null, council: false };
   const roles: string[] = Array.isArray(user.roles) ? user.roles : [];
   const bootstrap = isBootstrapAdmin(user, env);
   if (hasAccessFields(user)) {
-    const councilRoles = (Array.isArray(user.councilRoles) ? user.councilRoles : [])
-      .filter((r: any): r is CouncilRole => COUNCIL_ROLES.includes(r));
+    const councilRole = storedCouncilRole(user);
     return {
-      approved: user.approved === true || bootstrap,
       isAdmin: user.isAdmin === true || bootstrap,
       commsCadre: user.commsCadre === true,
-      councilRoles,
-      council: councilRoles.length > 0,
+      councilRole,
+      council: councilRole !== null,
     };
   }
   // A record from before the migration (and the dev users): the type and roles say it
   const councilLegacy = user.userType === UserType.CouncilManager || roles.includes('CouncilManager');
   return {
-    approved: user.approved === true || bootstrap,
     isAdmin: user.isAdmin === true || user.userType === UserType.Admin || bootstrap,
     commsCadre: user.userType === UserType.CommsCadre || roles.includes('CommsCadre'),
-    councilRoles: [],
+    councilRole: null,
     council: councilLegacy,
   };
 }
@@ -74,7 +81,7 @@ export function accessOf(user: Person | null | undefined, env?: AccessEnv): Acce
 export const isAdmin = (user: Person | null | undefined, env?: AccessEnv) => accessOf(user, env).isAdmin;
 export const isCommsCadre = (user: Person | null | undefined) => accessOf(user).commsCadre;
 export const isCouncil = (user: Person | null | undefined) => accessOf(user).council;
-export const hasCouncilRole = (user: Person | null | undefined, role: CouncilRole) => accessOf(user).councilRoles.includes(role);
+export const hasCouncilRole = (user: Person | null | undefined, role: CouncilRole) => accessOf(user).councilRole === role;
 export const isCommsManager = (user: Person | null | undefined) => hasCouncilRole(user, CouncilRole.CommunicationsManager);
 /** Admin, Comms Cadre or Council: sees and reviews every request. */
 export function isReviewer(user: Person | null | undefined, env?: AccessEnv): boolean {
@@ -87,31 +94,34 @@ export function derivedUserType(access: Access): UserType {
   if (access.isAdmin) return UserType.Admin;
   if (access.council) return UserType.CouncilManager;
   if (access.commsCadre) return UserType.CommsCadre;
-  return access.approved ? UserType.Member : UserType.Public;
+  return UserType.Member;
 }
 
-/** The legacy roles list: the roles held (or Member / Public when none). */
+/** The legacy roles list: the roles held (or Member when none). */
 export function derivedRoles(access: Access): string[] {
   const roles: string[] = [];
   if (access.isAdmin) roles.push('Admin');
   if (access.commsCadre) roles.push('CommsCadre');
   if (access.council) roles.push('CouncilManager');
-  if (roles.length === 0) roles.push(access.approved ? 'Member' : 'Public');
+  if (roles.length === 0) roles.push('Member');
   return roles;
 }
 
-/** A record with the access fields set and `userType` / `roles` / `isAdmin` derived from them. */
+/**
+ * A record with the access fields set and `userType` / `roles` / `isAdmin` derived from them. The
+ * older `approved` and `councilRoles` fields are dropped.
+ */
 export function withDerivedAccess<T extends Person>(user: T, access: Access = accessOf(user)): T {
+  const { approved: _approved, councilRoles: _councilRoles, ...rest } = user;
   return {
-    ...user,
-    approved: access.approved,
+    ...rest,
     isAdmin: access.isAdmin,
     commsCadre: access.commsCadre,
-    councilRoles: [...access.councilRoles],
+    councilRole: access.councilRole,
     userType: derivedUserType(access),
     roles: derivedRoles(access),
     accessVersion: 1,
-  };
+  } as unknown as T;
 }
 
 /** Who an approval counts for: the roles the approver held when approving, or holds now. */
@@ -129,7 +139,7 @@ export function approverCounts(
 /** The access fields as the API shows them. */
 export function accessView(user: Person, env?: AccessEnv) {
   const a = accessOf(user, env);
-  return { approved: a.approved, isAdmin: a.isAdmin, commsCadre: a.commsCadre, councilRoles: a.councilRoles };
+  return { isAdmin: a.isAdmin, commsCadre: a.commsCadre, councilRole: a.councilRole };
 }
 
 /** A user record without secrets, for API responses. */
@@ -138,7 +148,7 @@ export function publicUser<T extends Person>(user: T): Omit<T, 'passwordHash'> {
   return rest;
 }
 
-/** The privilege roles held (no Member / Public), for GET /admin/user-roles. */
+/** The privilege roles held (no Member), for GET /admin/user-roles. */
 export function heldRoles(access: Access): string[] {
   return derivedRoles(access).filter((role) => role !== 'Member' && role !== 'Public');
 }

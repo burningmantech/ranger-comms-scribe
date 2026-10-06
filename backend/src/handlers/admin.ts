@@ -2,7 +2,6 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { 
   getAllUsers, 
-  approveUser, 
   isAdmin, 
   createGroup,
   getAllGroups,
@@ -40,7 +39,7 @@ router.get('/people', withAdminCheck, async (_request: Request, env: Env) => {
   return json({ people });
 });
 
-// Change one person's access: { approved?, isAdmin?, commsCadre?, councilRoles? }
+// Change one person's access: { isAdmin?, commsCadre?, councilRole? (one role, or null) }
 router.put('/people/:id/access', withAdminCheck, async (request: Request, env: Env) => {
   const { id } = (request as any).params;
   const actor = (request as any).user as User;
@@ -50,14 +49,18 @@ router.put('/people/:id/access', withAdminCheck, async (request: Request, env: E
   } catch {
     return json({ error: 'Send the access to change as JSON' }, { status: 400 });
   }
+  if ('councilRoles' in body || 'approved' in body) {
+    // A person holds one council role (`councilRole`), and anyone signed in can submit requests
+    return json({ error: "Send councilRole (one role, or null); 'councilRoles' and 'approved' are no longer used" }, { status: 400 });
+  }
   const patch: Record<string, unknown> = {};
-  for (const key of ['approved', 'isAdmin', 'commsCadre'] as const) {
+  for (const key of ['isAdmin', 'commsCadre'] as const) {
     if (key in body) {
       if (typeof body[key] !== 'boolean') return json({ error: `${key} must be true or false` }, { status: 400 });
       patch[key] = body[key];
     }
   }
-  if ('councilRoles' in body) patch.councilRoles = body.councilRoles;
+  if ('councilRole' in body) patch.councilRole = body.councilRole;
   try {
     const updated = await setAccess(decodeURIComponent(id), patch, actor, env);
     return json({ person: personView(updated, env) });
@@ -89,23 +92,6 @@ router.post('/update-user-name', withAdminCheck, async (request: Request, env: E
     message: 'User name updated successfully', 
     user: updatedUser 
   });
-});
-
-// Approve a user
-router.post('/approve-user', withAdminCheck, async (request: Request, env: Env) => {
-  const body = await request.json() as { userId: string };
-  const { userId } = body;
-
-  if (!userId) {
-    return json({ error: 'User ID is required' }, { status: 400 });
-  }
-
-  const updatedUser = await approveUser(userId, env);
-  if (!updatedUser) {
-    return json({ error: 'User not found' }, { status: 404 });
-  }
-
-  return json({ message: 'User approved successfully', user: updatedUser });
 });
 
 // Create a new group
@@ -299,7 +285,7 @@ router.post('/groups/:groupId/send-email', withAdminCheck, async (request: Reque
 
 // Bulk create users
 router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: Env) => {
-  const body = await request.json() as { users: { name: string; email: string; approved: boolean }[] };
+  const body = await request.json() as { users: { name: string; email: string }[] };
   const { users } = body;
 
   if (!users || !Array.isArray(users) || users.length === 0) {
@@ -324,12 +310,6 @@ router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: 
         name: String(userEntry.name).trim(),
         email: String(userEntry.email).trim().toLowerCase()
       }, env);
-
-      // Approve the user if requested
-      if (userEntry.approved && !newUser.approved) {
-        await approveUser(newUser.id, env);
-        newUser.approved = true;
-      }
 
       createdUsers.push(newUser);
     } catch (error) {

@@ -4,9 +4,9 @@ import { PeopleManagement } from '../PeopleManagement';
 import { accessOf, canUseNewsletter, isReviewer } from '../../utils/access';
 
 const PEOPLE = [
-  { id: 'u1', name: 'Boss', email: 'boss@x.org', verified: true, approved: true, isAdmin: true, commsCadre: false, councilRoles: [] },
-  { id: 'u2', name: 'Help Desk', email: 'helpdesk@x.org', verified: true, approved: true, isAdmin: false, commsCadre: true, councilRoles: ['CommunicationsManager'] },
-  { id: 'u3', name: 'New Ranger', email: 'new@x.org', verified: false, approved: false, isAdmin: false, commsCadre: false, councilRoles: [] },
+  { id: 'u1', name: 'Boss', email: 'boss@x.org', verified: true, isAdmin: true, commsCadre: false, councilRole: null },
+  { id: 'u2', name: 'Help Desk', email: 'helpdesk@x.org', verified: true, isAdmin: false, commsCadre: true, councilRole: 'CommunicationsManager' },
+  { id: 'u3', name: 'New Ranger', email: 'new@x.org', verified: false, isAdmin: false, commsCadre: false, councilRole: null },
 ];
 
 let fetchMock: jest.Mock;
@@ -38,14 +38,19 @@ describe('People', () => {
   it('lists people with their roles, and filters them', async () => {
     render(<PeopleManagement />);
     await screen.findByText('Help Desk');
-    expect(within(row('helpdesk@x.org')).getByText('Communications Manager')).toBeInTheDocument();
+    expect((within(row('helpdesk@x.org')).getByLabelText('helpdesk@x.org council role') as HTMLSelectElement).value).toBe('CommunicationsManager');
+    expect((within(row('new@x.org')).getByLabelText('new@x.org council role') as HTMLSelectElement).value).toBe('');
     expect((within(row('helpdesk@x.org')).getByLabelText('helpdesk@x.org Comms Cadre') as HTMLInputElement).checked).toBe(true);
     // You can't take away your own Admin
     expect((within(row('boss@x.org')).getByLabelText('boss@x.org Admin') as HTMLInputElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: /Awaiting approval/ }));
-    expect(screen.queryByText('Help Desk')).not.toBeInTheDocument();
-    expect(screen.getByText('New Ranger')).toBeInTheDocument();
+    // Nobody waits for approval: anyone signed in can submit requests
+    expect(screen.queryByRole('button', { name: /Awaiting approval/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Approved' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Council/ }));
+    expect(screen.getByText('Help Desk')).toBeInTheDocument();
+    expect(screen.queryByText('New Ranger')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Everyone/ }));
     fireEvent.change(screen.getByLabelText('Search people'), { target: { value: 'help' } });
@@ -53,21 +58,19 @@ describe('People', () => {
     expect(screen.queryByText('Boss')).not.toBeInTheDocument();
   });
 
-  it('saves each change at once: approve, Comms Cadre, council roles', async () => {
+  it('saves each change at once: Comms Cadre, and one council role (changed or removed)', async () => {
     render(<PeopleManagement />);
     await screen.findByText('New Ranger');
-    fireEvent.click(within(row('new@x.org')).getByRole('button', { name: 'Approve' }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/admin\/people\/u3\/access$/), expect.objectContaining({ body: JSON.stringify({ approved: true }) })));
-
     fireEvent.click(within(row('new@x.org')).getByLabelText('new@x.org Comms Cadre'));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ body: JSON.stringify({ commsCadre: true }) })));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/admin\/people\/u3\/access$/), expect.objectContaining({ body: JSON.stringify({ commsCadre: true }) })));
 
-    fireEvent.change(within(row('helpdesk@x.org')).getByLabelText('Add a council role to helpdesk@x.org'), { target: { value: 'IntakeManager' } });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ body: JSON.stringify({ councilRoles: ['CommunicationsManager', 'IntakeManager'] }) })));
-    expect(await within(row('helpdesk@x.org')).findByText('Intake Manager')).toBeInTheDocument();
+    const council = within(row('helpdesk@x.org')).getByLabelText('helpdesk@x.org council role') as HTMLSelectElement;
+    fireEvent.change(council, { target: { value: 'IntakeManager' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ body: JSON.stringify({ councilRole: 'IntakeManager' }) })));
+    await waitFor(() => expect(council.value).toBe('IntakeManager'));
 
-    fireEvent.click(within(row('helpdesk@x.org')).getByRole('button', { name: 'Remove Communications Manager from helpdesk@x.org' }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ body: JSON.stringify({ councilRoles: ['IntakeManager'] }) })));
+    fireEvent.change(council, { target: { value: '' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ body: JSON.stringify({ councilRole: null }) })));
   });
 
   it("puts a change back and says why when the server refuses it", async () => {
@@ -84,11 +87,17 @@ describe('People', () => {
 
 describe('access (frontend)', () => {
   it('reads the access fields, and older records by their roles', () => {
-    expect(accessOf({ accessVersion: 1, commsCadre: true, councilRoles: ['CommunicationsManager'], userType: 'CouncilManager' }))
-      .toEqual({ isAdmin: false, commsCadre: true, councilRoles: ['CommunicationsManager'], council: true });
+    expect(accessOf({ accessVersion: 1, commsCadre: true, councilRole: 'CommunicationsManager', userType: 'CouncilManager' }))
+      .toEqual({ isAdmin: false, commsCadre: true, councilRole: 'CommunicationsManager', council: true });
     expect(accessOf({ roles: ['CommsCadre'] })).toMatchObject({ commsCadre: true, council: false });
-    expect(isReviewer({ accessVersion: 1, councilRoles: ['IntakeManager'] })).toBe(true);
+    expect(isReviewer({ accessVersion: 1, councilRole: 'IntakeManager' })).toBe(true);
+    expect(canUseNewsletter({ accessVersion: 1, councilRole: 'CommunicationsManager' })).toBe(true);
+    expect(canUseNewsletter({ accessVersion: 1, councilRole: 'IntakeManager' })).toBe(false);
+  });
+
+  it('reads a signed-in user saved before the change (councilRoles) as their first role', () => {
+    expect(accessOf({ accessVersion: 1, commsCadre: true, councilRoles: ['CommunicationsManager'] })).toMatchObject({ councilRole: 'CommunicationsManager', council: true });
     expect(canUseNewsletter({ accessVersion: 1, councilRoles: ['CommunicationsManager'] })).toBe(true);
-    expect(canUseNewsletter({ accessVersion: 1, councilRoles: ['IntakeManager'] })).toBe(false);
+    expect(accessOf({ accessVersion: 1, councilRole: null, councilRoles: ['IntakeManager'] })).toMatchObject({ councilRole: null, council: false });
   });
 });

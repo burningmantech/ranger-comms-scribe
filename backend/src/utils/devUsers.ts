@@ -18,17 +18,16 @@ export interface DevUser {
   isAdmin: boolean;
   roles: string[];
   groups: string[];
-  approved: boolean;
   commsCadre: boolean;
-  councilRoles: CouncilRole[];
+  councilRole: CouncilRole | null;
   accessVersion: number;
 }
 
 export const DEV_USERS: Record<DevUserKey, DevUser> = {
-  admin: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: UserType.Admin, isAdmin: true, roles: ['Admin'], groups: [], approved: true, commsCadre: false, councilRoles: [], accessVersion: 1 },
-  user2: { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: UserType.CommsCadre, isAdmin: false, roles: ['CommsCadre'], groups: [], approved: true, commsCadre: true, councilRoles: [], accessVersion: 1 },
-  member: { id: 'dev-member', email: 'member@localhost', name: 'Test Member', userType: UserType.Member, isAdmin: false, roles: ['Member'], groups: [], approved: true, commsCadre: false, councilRoles: [], accessVersion: 1 },
-  council: { id: 'dev-council', email: 'council@localhost', name: 'Test Council', userType: UserType.CouncilManager, isAdmin: false, roles: ['CouncilManager'], groups: [], approved: true, commsCadre: false, councilRoles: [CouncilRole.IntakeManager], accessVersion: 1 },
+  admin: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: UserType.Admin, isAdmin: true, roles: ['Admin'], groups: [], commsCadre: false, councilRole: null, accessVersion: 1 },
+  user2: { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: UserType.CommsCadre, isAdmin: false, roles: ['CommsCadre'], groups: [], commsCadre: true, councilRole: null, accessVersion: 1 },
+  member: { id: 'dev-member', email: 'member@localhost', name: 'Test Member', userType: UserType.Member, isAdmin: false, roles: ['Member'], groups: [], commsCadre: false, councilRole: null, accessVersion: 1 },
+  council: { id: 'dev-council', email: 'council@localhost', name: 'Test Council', userType: UserType.CouncilManager, isAdmin: false, roles: ['CouncilManager'], groups: [], commsCadre: false, councilRole: CouncilRole.IntakeManager, accessVersion: 1 },
 };
 
 export function devUserKey(sessionId?: string | null, hint?: string | null): DevUserKey {
@@ -43,7 +42,7 @@ export function devUserKey(sessionId?: string | null, hint?: string | null): Dev
 /** A fresh copy of the dev user for this session ID / hint (callers may mutate it). */
 export function getDevUser(sessionId?: string | null, hint?: string | null): DevUser {
   const user = DEV_USERS[devUserKey(sessionId, hint)];
-  return { ...user, roles: [...user.roles], groups: [...user.groups], councilRoles: [...user.councilRoles] };
+  return { ...user, roles: [...user.roles], groups: [...user.groups] };
 }
 
 /** The dev user for a REST request: `X-Dev-User` header, then the bearer token. */

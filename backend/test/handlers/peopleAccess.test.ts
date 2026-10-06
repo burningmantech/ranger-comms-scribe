@@ -18,8 +18,8 @@ let adminSession = '';
 
 async function person(email: string, access: Record<string, unknown> = {}) {
   await saveUser(withDerivedAccess({
-    id: `id-${email.split('@')[0]}`, email, name: email.split('@')[0], approved: true, verified: true, groups: [],
-    roles: [], userType: 'Member', isAdmin: false, commsCadre: false, councilRoles: [], ...access,
+    id: `id-${email.split('@')[0]}`, email, name: email.split('@')[0], verified: true, groups: [],
+    roles: [], userType: 'Member', isAdmin: false, commsCadre: false, councilRole: null, ...access,
   } as any) as any, env);
 }
 
@@ -38,7 +38,7 @@ beforeEach(async () => {
   clearMemoryCache();
   env = { STORE: new MemoryObjectStore() };
   await person('boss@x.org', { isAdmin: true });
-  await person('cm@x.org', { commsCadre: true, councilRoles: ['CommunicationsManager'] });
+  await person('cm@x.org', { commsCadre: true, councilRole: 'CommunicationsManager' });
   await person('ranger@x.org');
   adminSession = await CreateSession('boss@x.org', { email: 'boss@x.org' }, env);
 });
@@ -50,19 +50,19 @@ afterEach(() => {
 describe('people and access', () => {
   it('adds people (Add people), then gives them a role by the id it returned', async () => {
     const added = await call(adminRouter, 'POST', '/api/admin/bulk-create-users', adminSession, {
-      users: [{ name: ' Casey Ranger ', email: ' Casey@Example.org ', approved: true }, { name: 'Dana', email: 'dana@example.org', approved: false }],
+      users: [{ name: ' Casey Ranger ', email: ' Casey@Example.org ' }, { name: 'Dana', email: 'dana@example.org' }],
     });
     expect(added.status).toBe(200);
     expect(added.body.users).toHaveLength(2);
     const [casey, dana] = added.body.users;
-    expect(casey).toMatchObject({ email: 'casey@example.org', name: 'Casey Ranger', approved: true, commsCadre: false });
+    expect(casey).toMatchObject({ email: 'casey@example.org', name: 'Casey Ranger', userType: 'Member', commsCadre: false, councilRole: null });
     expect(casey.passwordHash).toBeUndefined();
-    expect(dana).toMatchObject({ email: 'dana@example.org', approved: false });
+    expect(dana).toMatchObject({ email: 'dana@example.org', userType: 'Member' });
 
     const res = await call(adminRouter, 'PUT', `/api/admin/people/${encodeURIComponent(casey.id)}/access`, adminSession, { commsCadre: true });
     expect(res.status).toBe(200);
     const stored = await getObject<any>('user/casey@example.org', env);
-    expect(stored).toMatchObject({ commsCadre: true, approved: true, userType: 'CommsCadre' });
+    expect(stored).toMatchObject({ commsCadre: true, userType: 'CommsCadre' });
   });
 
   it('lists the council and the Comms Cadre from people', async () => {
@@ -72,26 +72,39 @@ describe('people and access', () => {
     expect(cadre.body).toEqual([expect.objectContaining({ email: 'cm@x.org', active: true })]);
   });
 
-  it('lets an Admin give one person several roles, which are independent', async () => {
-    let res = await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { commsCadre: true, councilRoles: ['IntakeManager', 'CommunicationsManager'] });
+  it('gives one person one council role, alongside Comms Cadre and Admin, which are independent', async () => {
+    let res = await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { commsCadre: true, councilRole: 'IntakeManager' });
     expect(res.status).toBe(200);
-    expect(res.body.person).toMatchObject({ email: 'ranger@x.org', commsCadre: true, councilRoles: ['IntakeManager', 'CommunicationsManager'], isAdmin: false });
+    expect(res.body.person).toMatchObject({ email: 'ranger@x.org', commsCadre: true, councilRole: 'IntakeManager', isAdmin: false });
     let stored = await getObject<any>('user/ranger@x.org', env);
     expect(stored.userType).toBe('CouncilManager');
     expect(stored.roles).toEqual(['CommsCadre', 'CouncilManager']);
 
-    // Taking away Comms Cadre leaves the council roles alone
+    // A new council role replaces the old one
+    res = await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { councilRole: 'CommunicationsManager' });
+    expect(res.body.person).toMatchObject({ commsCadre: true, councilRole: 'CommunicationsManager' });
+    // Taking away Comms Cadre leaves the council role alone
     res = await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { commsCadre: false });
-    expect(res.body.person).toMatchObject({ commsCadre: false, councilRoles: ['IntakeManager', 'CommunicationsManager'] });
-    // Making them Admin keeps both
+    expect(res.body.person).toMatchObject({ commsCadre: false, councilRole: 'CommunicationsManager' });
+    // Making them Admin keeps it
     res = await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { isAdmin: true, commsCadre: true });
-    expect(res.body.person).toMatchObject({ isAdmin: true, commsCadre: true, councilRoles: ['IntakeManager', 'CommunicationsManager'] });
+    expect(res.body.person).toMatchObject({ isAdmin: true, commsCadre: true, councilRole: 'CommunicationsManager' });
     stored = await getObject<any>('user/ranger@x.org', env);
     expect(stored.roles).toEqual(['Admin', 'CommsCadre', 'CouncilManager']);
+    expect(stored.councilRoles).toBeUndefined();
+    // null takes the council role away
+    res = await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { councilRole: null });
+    expect(res.body.person).toMatchObject({ councilRole: null });
+    expect((await getObject<any>('user/ranger@x.org', env)).roles).toEqual(['Admin', 'CommsCadre']);
   });
 
-  it('refuses unknown council roles and non-boolean flags', async () => {
-    expect((await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { councilRoles: ['Mayor'] })).status).toBe(400);
+  it('refuses unknown council roles, the older fields, and non-boolean flags', async () => {
+    expect((await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { councilRole: 'Mayor' })).status).toBe(400);
+    // The older shapes are refused outright, not ignored
+    const old = await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { councilRoles: ['IntakeManager'] });
+    expect(old.status).toBe(400);
+    expect(old.body.error).toMatch(/councilRole/);
+    expect((await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { approved: true })).status).toBe(400);
     expect((await call(adminRouter, 'PUT', '/api/admin/people/ranger@x.org/access', adminSession, { isAdmin: 'yes' })).status).toBe(400);
     expect((await call(adminRouter, 'PUT', '/api/admin/people/nobody@x.org/access', adminSession, { isAdmin: true })).status).toBe(404);
   });

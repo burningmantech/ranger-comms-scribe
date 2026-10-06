@@ -42,15 +42,18 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  approved: boolean;
+  /** Older records only: sign-ups once waited for an Admin to approve them. Ignored; dropped on save. */
+  approved?: boolean;
   isAdmin: boolean; // Admin (services/access.ts)
-  userType: UserType; // Derived from the access fields on every save: Admin › CouncilManager › CommsCadre › Member › Public
+  userType: UserType; // Derived from the access fields on every save: Admin › CouncilManager › CommsCadre › Member
   groups: string[]; // Array of group IDs the user belongs to
   roles: string[]; // Derived from the access fields below on every save (services/access.ts); never set directly
   /** Comms Cadre: reviews requests, builds and sends the newsletter (services/access.ts). */
   commsCadre?: boolean;
-  /** Council roles held (any number), e.g. CommunicationsManager. */
-  councilRoles?: CouncilRole[];
+  /** The council role held (at most one), e.g. CommunicationsManager. */
+  councilRole?: CouncilRole | null;
+  /** Older records only (read as their first role); dropped on save. */
+  councilRoles?: string[];
   /** 1 once the record holds the access fields above (migrations/peopleAccess.ts). */
   accessVersion?: number;
   passwordHash?: string; // Added for email/password authentication

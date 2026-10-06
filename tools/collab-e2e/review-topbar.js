@@ -249,7 +249,7 @@ async function saveState(u) {
     // ---- 6. Author view (no approve rights): page sees a plain member ----
     const author = await browser.createBrowserContext();
     const ap = await author.newPage();
-    const member = { id: 'author-1', email: 'author@localhost', name: 'Author', roles: [], userType: 'Public', approved: true, verified: true, groups: [] };
+    const member = { id: 'author-1', email: 'author@localhost', name: 'Author', roles: [], userType: 'Member', verified: true, groups: [] };
     // The page sees a plain member (the backend still serves the dev admin's data).
     await ap.evaluateOnNewDocument((u) => {
       const nativeFetch = window.fetch.bind(window);

@@ -53,9 +53,9 @@ async function seedMemberships() {
   // dev@localhost becomes a stored person with Comms Cadre and the Communications Manager
   // council role (People page: PUT /admin/people/:id/access, a real admin session)
   const session = await L.adminSession();
-  await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [{ name: 'Dev Admin', email: DEV_EMAIL, approved: true }] } });
+  await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [{ name: 'Dev Admin', email: DEV_EMAIL }] } });
   await L.api(`/admin/people/${encodeURIComponent(DEV_EMAIL)}/access`, {
-    method: 'PUT', session, body: { commsCadre: true, councilRoles: ['CommunicationsManager'] },
+    method: 'PUT', session, body: { commsCadre: true, councilRole: 'CommunicationsManager' },
   });
 }
 

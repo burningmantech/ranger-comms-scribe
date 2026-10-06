@@ -3,7 +3,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getUserStrict, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
+import { getUser, getUserStrict, getOrCreateUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
@@ -21,7 +21,6 @@ async function createUserSession(user: User, env: Env): Promise<string> {
     name: user.name,
     isAdmin: accessOf(user, env).isAdmin,
     userType: derivedUserType(accessOf(user, env)),
-    approved: user.approved,
     verified: user.verified
   }, env);
 }
@@ -188,7 +187,6 @@ router.post('/register', async (request: Request, env) => {
             email,
             name,
             userId: user.email,
-            approved: user.approved,
             isAdmin: accessOf(user, env).isAdmin,
             verified: !!user.verified,
             sessionId,
@@ -323,7 +321,6 @@ router.post('/login', async (request: Request, env) => {
             email: user.email,
             name: user.name,
             userId: user.email,
-            approved: user.approved,
             isAdmin: accessOf(user, env).isAdmin,
             sessionId,
         });
@@ -534,7 +531,6 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
             email,
             name,
             userId: user.email,
-            approved: user.approved,
             isAdmin: accessOf(user, env).isAdmin,
             sessionId,
         });
@@ -603,22 +599,4 @@ router.post('/logout', async (request: Request, env) => {
 
     await DeleteSession(sessionId, env);
     return json({ message: 'Logged out successfully' });
-});
-
-// This route is now handled by the admin handler
-// Admins only: approving a user grants them access to the app.
-router.post('/approve', withAdminCheck, async (request: Request, env) => {
-  const body = await request.json() as { userId: string };
-  const { userId } = body;
-
-  if (!userId) {
-    return json({ error: 'User ID is required' }, { status: 400 });
-  }
-
-  const approvedUser = await approveUser(userId, env);
-  if (!approvedUser) {
-    return json({ error: 'User not found' }, { status: 404 });
-  }
-  
-  return json({ message: 'User approved', user: approvedUser });
 });

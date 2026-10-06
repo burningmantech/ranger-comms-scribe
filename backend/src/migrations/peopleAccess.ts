@@ -10,10 +10,12 @@ import { Access, COUNCIL_ROLES, hasAccessFields, normalizeEmail, withDerivedAcce
  *
  * - isAdmin: `isAdmin`, or userType Admin
  * - commsCadre: userType CommsCadre, a CommsCadre role, or active on comms_cadre:active
- * - councilRoles: every council_members:role:<role> list and active council_member/<id> record
+ * - councilRole: from the council_members:role:<role> lists and active council_member/<id> records
  *   naming them; plus their per-person council_members:<id>:<role> records (the old org chart
- *   wrote only those) while they are still a council manager by type or role
- * - approved: unchanged
+ *   wrote only those) while they are still a council manager by type or role. A person holds one
+ *   council role: if the old data names several, the first in COUNCIL_ROLES order is kept and the
+ *   rest are reported
+ * - approved: dropped (anyone signed in can submit requests)
  *
  * The old keys are left as they are. People already migrated are skipped.
  */
@@ -23,7 +25,7 @@ export const MIGRATION_KEY = 'migrations/people-access-v1';
 export interface PersonResult {
   email: string;
   before: { userType?: string; roles?: string[]; isAdmin?: boolean; approved?: boolean };
-  after: Pick<Access, 'approved' | 'isAdmin' | 'commsCadre' | 'councilRoles'>;
+  after: Pick<Access, 'isAdmin' | 'commsCadre' | 'councilRole'>;
   sources: string[];
 }
 
@@ -136,10 +138,16 @@ export async function planPeopleAccess(env: Env): Promise<MigrationPlan> {
       }
     }
 
+    const held = COUNCIL_ROLES.filter((role) => councilRoles.has(role));
+    const councilRole = held[0] || null;
+    if (held.length > 1) {
+      anomalies.push(`${user.email}: named for several council roles (${held.join(', ')}); a person holds one, so given ${councilRole}: change it on the People page if that's wrong`);
+    }
+
     people.push({
       email: user.email,
       before: { userType: user.userType, roles, isAdmin: user.isAdmin, approved: user.approved },
-      after: { approved: user.approved === true, isAdmin, commsCadre, councilRoles: Array.from(councilRoles) },
+      after: { isAdmin, commsCadre, councilRole },
       sources,
     });
   }
@@ -154,7 +162,7 @@ export async function migratePeopleAccess(env: Env): Promise<MigrationPlan | nul
     // Re-read: the person may have changed since planning
     const user = await getObjectStrict<User>(`user/${person.email}`, env);
     if (!user || hasAccessFields(user)) continue;
-    const access: Access = { ...person.after, council: person.after.councilRoles.length > 0 };
+    const access: Access = { ...person.after, council: person.after.councilRole !== null };
     await saveUser(withDerivedAccess(user, access) as User, env);
   }
   await putObject(MIGRATION_KEY, {
@@ -165,7 +173,7 @@ export async function migratePeopleAccess(env: Env): Promise<MigrationPlan | nul
   }, env);
   for (const person of plan.people) {
     const a = person.after;
-    const held = [a.isAdmin && 'Admin', a.commsCadre && 'Comms Cadre', ...a.councilRoles].filter(Boolean).join(', ') || (a.approved ? 'approved' : 'awaiting approval');
+    const held = [a.isAdmin && 'Admin', a.commsCadre && 'Comms Cadre', a.councilRole].filter(Boolean).join(', ') || 'no role';
     console.log(`👥 people-access: ${person.email}: ${held}`);
   }
   for (const anomaly of plan.anomalies) console.warn(`⚠️ people-access: ${anomaly}`);

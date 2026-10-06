@@ -47,7 +47,7 @@ export const handleGoogleCredentialResponse = async (
     console.log('Response from backend:', data);
 
     // Stores the person's record from the server (with their access) and signs them in
-    const userData = await handleUserLogin({ email: data.email, name: data.name, isAdmin: !!data.isAdmin, approved: !!data.approved }, data.sessionId);
+    const userData = await handleUserLogin({ email: data.email, name: data.name, isAdmin: !!data.isAdmin }, data.sessionId);
 
     // Update local state
     setUser(userData);

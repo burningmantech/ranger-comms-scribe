@@ -1,14 +1,15 @@
 /**
  * What the signed-in person can do: the frontend mirror of backend/src/services/access.ts. The
- * person's record (GET /auth/me) holds `isAdmin`, `commsCadre` and `councilRoles`; `userType`
- * and `roles` are derived from them. The backend decides every request; these only choose what
+ * person's record (GET /auth/me) holds `isAdmin`, `commsCadre` and `councilRole` (one, or null);
+ * `userType` and `roles` are derived from them. Anyone signed in can submit requests. The backend decides every request; these only choose what
  * the UI offers.
  */
 
 export interface PersonLike {
   isAdmin?: boolean;
-  approved?: boolean;
   commsCadre?: boolean;
+  councilRole?: string | null;
+  /** Older records (and a signed-in user saved before the change): read as their first role. */
   councilRoles?: string[];
   accessVersion?: number;
   userType?: string;
@@ -18,7 +19,7 @@ export interface PersonLike {
 export interface Access {
   isAdmin: boolean;
   commsCadre: boolean;
-  councilRoles: string[];
+  councilRole: string | null;
   council: boolean;
 }
 
@@ -35,21 +36,28 @@ export const COUNCIL_ROLES: Array<{ id: string; label: string }> = [
 export const councilRoleLabel = (id: string) => COUNCIL_ROLES.find((r) => r.id === id)?.label || id;
 
 function hasAccessFields(user: PersonLike): boolean {
-  return (user.accessVersion ?? 0) >= 1 || Array.isArray(user.councilRoles) || typeof user.commsCadre === 'boolean';
+  return (user.accessVersion ?? 0) >= 1 || 'councilRole' in user || Array.isArray(user.councilRoles) || typeof user.commsCadre === 'boolean';
+}
+
+const isCouncilRole = (value: unknown): value is string => COUNCIL_ROLES.some((r) => r.id === value);
+
+function storedCouncilRole(user: PersonLike): string | null {
+  if (user.councilRole !== undefined) return isCouncilRole(user.councilRole) ? user.councilRole : null;
+  return (Array.isArray(user.councilRoles) ? user.councilRoles : []).find(isCouncilRole) || null;
 }
 
 export function accessOf(user: PersonLike | null | undefined): Access {
-  if (!user) return { isAdmin: false, commsCadre: false, councilRoles: [], council: false };
+  if (!user) return { isAdmin: false, commsCadre: false, councilRole: null, council: false };
   const roles = Array.isArray(user.roles) ? user.roles : [];
   if (hasAccessFields(user)) {
-    const councilRoles = Array.isArray(user.councilRoles) ? user.councilRoles : [];
-    return { isAdmin: user.isAdmin === true, commsCadre: user.commsCadre === true, councilRoles, council: councilRoles.length > 0 };
+    const councilRole = storedCouncilRole(user);
+    return { isAdmin: user.isAdmin === true, commsCadre: user.commsCadre === true, councilRole, council: councilRole !== null };
   }
   // A stored user from before the access fields: the roles say it
   return {
     isAdmin: user.isAdmin === true || user.userType === 'Admin' || roles.includes('Admin'),
     commsCadre: user.userType === 'CommsCadre' || roles.includes('CommsCadre'),
-    councilRoles: [],
+    councilRole: null,
     council: user.userType === 'CouncilManager' || roles.includes('CouncilManager'),
   };
 }
@@ -57,7 +65,7 @@ export function accessOf(user: PersonLike | null | undefined): Access {
 export const isAdmin = (user: PersonLike | null | undefined) => accessOf(user).isAdmin;
 export const isCommsCadre = (user: PersonLike | null | undefined) => accessOf(user).commsCadre;
 export const isCouncil = (user: PersonLike | null | undefined) => accessOf(user).council;
-export const isCommsManager = (user: PersonLike | null | undefined) => accessOf(user).councilRoles.includes('CommunicationsManager');
+export const isCommsManager = (user: PersonLike | null | undefined) => accessOf(user).councilRole === 'CommunicationsManager';
 
 /** Admin, Comms Cadre or Council: sees and reviews every request. */
 export function isReviewer(user: PersonLike | null | undefined): boolean {
@@ -86,7 +94,7 @@ export function canSendAnnouncements(user: PersonLike | null | undefined): boole
 /** Sees the Newsletter pages: Comms Cadre, Admins, and the Communications Manager (to approve). */
 export function canUseNewsletter(user: PersonLike | null | undefined): boolean {
   const a = accessOf(user);
-  return a.isAdmin || a.commsCadre || a.councilRoles.includes('CommunicationsManager');
+  return a.isAdmin || a.commsCadre || a.councilRole === 'CommunicationsManager';
 }
 
 /** The signed-in user saved at sign-in (localStorage 'user'), or null. */

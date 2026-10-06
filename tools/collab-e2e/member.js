@@ -130,7 +130,7 @@ async function seedApprover() {
     .some((u) => u.email === APPROVER.email);
   if (!(await listed())) {
     const session = await L.adminSession();
-    await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [{ ...APPROVER, approved: true }] } });
+    await L.api('/admin/bulk-create-users', { method: 'POST', session, body: { users: [APPROVER] } });
     if (!(await listed())) throw new Error(`seeded approver ${APPROVER.email} is not listed by /user/approvers`);
   }
   const council = await L.api('/council/members', { session: MEMBER_SESSION });

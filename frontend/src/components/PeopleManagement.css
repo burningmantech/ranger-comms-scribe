@@ -174,43 +174,21 @@
   color: var(--text-medium);
 }
 
-.people-roles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.people-role {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px 2px 10px;
-  border-radius: var(--radius-full);
-  background: #fdf1e1;
-  border: 1px solid #e8c9a3;
-  color: #7a4100;
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-
-.people-role-remove {
-  border: 0;
-  background: none;
-  color: inherit;
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.people-role-add {
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-full);
-  padding: 2px 8px;
-  font-size: 0.8125rem;
+.people-council {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  font-size: 0.875rem;
   background: white;
   color: var(--text-medium);
+  max-width: 100%;
+}
+
+.people-council.held {
+  background: #fdf1e1;
+  border-color: #e8c9a3;
+  color: #7a4100;
+  font-weight: 600;
 }
 
 .people-actions {

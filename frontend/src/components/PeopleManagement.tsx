@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_URL } from '../config';
-import { COUNCIL_ROLES, councilRoleLabel, storedUser } from '../utils/access';
+import { COUNCIL_ROLES, storedUser } from '../utils/access';
 import './PeopleManagement.css';
 
 /** A person and their access, as GET /api/admin/people returns it. */
@@ -9,21 +9,20 @@ export interface Person {
   name: string;
   email: string;
   verified: boolean;
-  approved: boolean;
   isAdmin: boolean;
   commsCadre: boolean;
-  councilRoles: string[];
+  /** The one council role held, or null. */
+  councilRole: string | null;
 }
 
-type AccessChange = Partial<Pick<Person, 'approved' | 'isAdmin' | 'commsCadre' | 'councilRoles'>>;
-type Filter = 'all' | 'awaiting' | 'admins' | 'cadre' | 'council';
+type AccessChange = Partial<Pick<Person, 'isAdmin' | 'commsCadre' | 'councilRole'>>;
+type Filter = 'all' | 'admins' | 'cadre' | 'council';
 
 const FILTERS: Array<{ id: Filter; label: string; test: (p: Person) => boolean }> = [
   { id: 'all', label: 'Everyone', test: () => true },
-  { id: 'awaiting', label: 'Awaiting approval', test: (p) => !p.approved },
   { id: 'admins', label: 'Admins', test: (p) => p.isAdmin },
   { id: 'cadre', label: 'Comms Cadre', test: (p) => p.commsCadre },
-  { id: 'council', label: 'Council', test: (p) => p.councilRoles.length > 0 },
+  { id: 'council', label: 'Council', test: (p) => !!p.councilRole },
 ];
 
 const authHeaders = (json = false): HeadersInit => ({
@@ -46,16 +45,16 @@ function RoleGuide() {
     <details className="people-guide">
       <summary>What each role can do</summary>
       <dl>
-        <dt>Approved</dt>
-        <dd>Can sign in, submit comms requests and follow their own requests. New sign-ups wait here for approval.</dd>
+        <dt>Everyone</dt>
+        <dd>Anyone signed in can submit comms requests and follow their own requests. No role is needed.</dd>
         <dt>Comms Cadre</dt>
         <dd>Sees and reviews every request, edits and approves them, sends approved announcements, and builds and sends the newsletter.</dd>
-        <dt>Council roles</dt>
-        <dd>Council members see and review every request; a request needs a Council approval. The <strong>Communications Manager</strong> also approves newsletter editions and can override an approval.</dd>
+        <dt>Council role</dt>
+        <dd>Each council member holds one council role. Council members see and review every request; a request needs a Council approval. The <strong>Communications Manager</strong> also approves newsletter editions and can override an approval.</dd>
         <dt>Admin</dt>
-        <dd>Everything above, plus this admin area (people, groups, templates). An Admin can override approvals.</dd>
+        <dd>Everything above, plus this admin area. An Admin can override approvals.</dd>
       </dl>
-      <p>One person can hold several roles, for example Comms Cadre and Communications Manager. Their approval then counts for both.</p>
+      <p>Comms Cadre, a council role and Admin can be combined, for example Comms Cadre and Communications Manager. Their approval then counts for both.</p>
     </details>
   );
 }
@@ -79,11 +78,10 @@ export function parsePeople(text: string): { people: Array<{ name: string; email
   return { people, bad };
 }
 
-/** Add people before they sign in: approved (or not), optionally with a role. */
+/** Add people before they sign in, optionally with a role. */
 function AddPeople({ onAdded }: { onAdded: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
-  const [approved, setApproved] = useState(true);
   const [role, setRole] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -97,16 +95,15 @@ function AddPeople({ onAdded }: { onAdded: () => Promise<void> }) {
       const response = await fetch(`${API_URL}/admin/bulk-create-users`, {
         method: 'POST',
         headers: authHeaders(true),
-        body: JSON.stringify({ users: parsed.people.map((p) => ({ ...p, approved })) }),
+        body: JSON.stringify({ users: parsed.people }),
       });
       if (!response.ok) throw new Error(await errorText(response, 'Could not add them'));
       const body = await response.json();
       const created: Person[] = body.users || [];
       const noRole: string[] = [];
       if (role) {
-        const patch = role === 'commsCadre' ? { commsCadre: true } : role === 'admin' ? { isAdmin: true } : null;
+        const access = role === 'commsCadre' ? { commsCadre: true } : role === 'admin' ? { isAdmin: true } : { councilRole: role };
         for (const person of created) {
-          const access = patch || { councilRoles: Array.from(new Set([...(person.councilRoles || []), role])) };
           const res = await fetch(`${API_URL}/admin/people/${encodeURIComponent(person.id)}/access`, { method: 'PUT', headers: authHeaders(true), body: JSON.stringify(access) });
           if (!res.ok) noRole.push(`${person.email} (${await errorText(res, 'role not set')})`);
         }
@@ -137,10 +134,6 @@ function AddPeople({ onAdded }: { onAdded: () => Promise<void> }) {
         placeholder={'Pat Ranger <pat@example.org>\nsam@example.org'}
       />
       <div className="people-add-options">
-        <label className="people-switch">
-          <input type="checkbox" checked={approved} onChange={(e) => setApproved(e.target.checked)} />
-          <span>Approved</span>
-        </label>
         <label>
           Role{' '}
           <select value={role} onChange={(e) => setRole(e.target.value)} aria-label="Role for the people added">
@@ -285,9 +278,8 @@ export const PeopleManagement: React.FC = () => {
           <thead>
             <tr>
               <th scope="col">Person</th>
-              <th scope="col">Approved</th>
               <th scope="col">Comms Cadre</th>
-              <th scope="col">Council roles</th>
+              <th scope="col">Council role</th>
               <th scope="col">Admin</th>
               <th scope="col"><span className="visually-hidden">Remove</span></th>
             </tr>
@@ -295,7 +287,6 @@ export const PeopleManagement: React.FC = () => {
           <tbody>
             {shown.map((p) => {
               const isMe = p.email.toLowerCase() === me;
-              const unassigned = COUNCIL_ROLES.filter((r) => !p.councilRoles.includes(r.id));
               return (
                 <tr key={p.id} className={saving[p.id] ? 'saving' : ''} data-testid={`person-${p.email}`}>
                   <td className="people-person" data-label="Person">
@@ -320,49 +311,22 @@ export const PeopleManagement: React.FC = () => {
                     <div className="people-email">{p.email}{!p.verified && <span className="people-unverified"> · email not verified</span>}</div>
                     {rowError[p.id] && <div className="people-row-error" role="alert">{rowError[p.id]}</div>}
                   </td>
-                  <td data-label="Approved">
-                    {p.approved ? (
-                      <label className="people-switch" title={p.isAdmin || p.commsCadre || p.councilRoles.length > 0 ? 'Someone with a role stays approved' : undefined}>
-                        <input type="checkbox" checked onChange={() => change(p, { approved: false })} disabled={p.isAdmin || p.commsCadre || p.councilRoles.length > 0} aria-label={`${p.email} approved`} />
-                        <span>Yes</span>
-                      </label>
-                    ) : (
-                      <button type="button" className="btn btn-primary btn-sm" onClick={() => change(p, { approved: true })}>Approve</button>
-                    )}
-                  </td>
                   <td data-label="Comms Cadre">
                     <label className="people-switch">
                       <input type="checkbox" checked={p.commsCadre} onChange={(e) => change(p, { commsCadre: e.target.checked })} aria-label={`${p.email} Comms Cadre`} />
                       <span>{p.commsCadre ? 'Yes' : 'No'}</span>
                     </label>
                   </td>
-                  <td data-label="Council roles">
-                    <div className="people-roles">
-                      {p.councilRoles.map((role) => (
-                        <span key={role} className="people-role">
-                          {councilRoleLabel(role)}
-                          <button
-                            type="button"
-                            className="people-role-remove"
-                            aria-label={`Remove ${councilRoleLabel(role)} from ${p.email}`}
-                            onClick={() => change(p, { councilRoles: p.councilRoles.filter((r) => r !== role) })}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                      {unassigned.length > 0 && (
-                        <select
-                          className="people-role-add"
-                          value=""
-                          aria-label={`Add a council role to ${p.email}`}
-                          onChange={(e) => e.target.value && change(p, { councilRoles: [...p.councilRoles, e.target.value] })}
-                        >
-                          <option value="">{p.councilRoles.length ? '+ Add' : 'None · add…'}</option>
-                          {unassigned.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-                        </select>
-                      )}
-                    </div>
+                  <td data-label="Council role">
+                    <select
+                      className={`people-council ${p.councilRole ? 'held' : ''}`}
+                      value={p.councilRole || ''}
+                      aria-label={`${p.email} council role`}
+                      onChange={(e) => change(p, { councilRole: e.target.value || null })}
+                    >
+                      <option value="">None</option>
+                      {COUNCIL_ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                    </select>
                   </td>
                   <td data-label="Admin">
                     <label className="people-switch" title={isMe && p.isAdmin ? "You can't remove your own Admin" : undefined}>

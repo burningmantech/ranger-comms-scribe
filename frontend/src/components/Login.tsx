@@ -257,7 +257,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
 
     // Shared by login and register: store the person's record (with their access) and sign them in
     const completeSignIn = async (data: any) => {
-        const userData = await handleUserLogin({ email: data.email, name: data.name, isAdmin: !!data.isAdmin, approved: !!data.approved }, data.sessionId);
+        const userData = await handleUserLogin({ email: data.email, name: data.name, isAdmin: !!data.isAdmin }, data.sessionId);
         setUser(userData);
         setParentUser(userData);
 

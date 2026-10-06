@@ -43,14 +43,13 @@ export async function getOrCreateUser({ name, email, password }: { name: string;
     id: crypto.randomUUID(),
     email,
     name: name || email.split('@')[0],
-    userType: UserType.Public,
-    approved: false,
+    userType: UserType.Member,
     isAdmin: false,
     commsCadre: false,
-    councilRoles: [],
+    councilRole: null,
     accessVersion: 1,
     groups: [],
-    roles: ['Public'] // derived from the access fields on save
+    roles: ['Member'] // derived from the access fields on save
   };
 
   // If password is provided, hash it and store it
@@ -127,16 +126,6 @@ function ensureUserDefaults(user: User): User {
   if (!user.roles) {
     user.roles = [];
   }
-  return user;
-}
-
-export async function approveUser(id: string, env: Env): Promise<User | null> {
-  const user = await getUser(id, env);
-  if (!user) return null;
-  
-  user.approved = true;
-  await saveUser(user, env);
-
   return user;
 }
 
@@ -463,7 +452,7 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
   if (user.verified !== true) return user;
 
   const roles = user.roles || [];
-  const alreadyAdmin = accessOf(user).isAdmin && user.approved === true && roles.includes('Admin');
+  const alreadyAdmin = accessOf(user).isAdmin && roles.includes('Admin');
   if (alreadyAdmin) return user;
 
   console.log(`👑 Bootstrap admin: promoting ${user.email}`);
@@ -474,8 +463,7 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
     ...user,
     userType: UserType.Admin,
     isAdmin: true,
-    approved: true,
-    roles: roles.includes('Admin') ? roles : [...roles.filter((r) => r !== 'Public'), 'Admin'],
+    roles: roles.includes('Admin') ? roles : [...roles.filter((r) => r !== 'Public' && r !== 'Member'), 'Admin'],
   };
   await saveUser(promoted, env);
   return promoted;

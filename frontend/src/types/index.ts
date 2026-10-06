@@ -13,7 +13,6 @@ export interface User {
     id: string;
     email: string;
     name: string;
-    approved?: boolean;
     isAdmin?: boolean; // Keeping for backward compatibility
     userType: UserType;
     roles: string[];

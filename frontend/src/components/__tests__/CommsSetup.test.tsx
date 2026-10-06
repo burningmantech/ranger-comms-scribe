@@ -65,8 +65,8 @@ describe('Add people', () => {
       calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       if (url.endsWith('/admin/bulk-create-users')) {
         return { ok: true, status: 200, json: async () => ({ users: [
-          { id: 'casey@x.org', email: 'casey@x.org', name: 'Casey', approved: true, councilRoles: [] },
-          { id: 'dana@x.org', email: 'dana@x.org', name: 'Dana', approved: true, councilRoles: [] },
+          { id: 'casey@x.org', email: 'casey@x.org', name: 'Casey', councilRole: null },
+          { id: 'dana@x.org', email: 'dana@x.org', name: 'Dana', councilRole: null },
         ] }) };
       }
       if (method === 'PUT' && url.includes('dana')) return { ok: false, status: 403, json: async () => ({ error: 'Not allowed' }) };
@@ -80,13 +80,14 @@ describe('Add people', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add 2 people' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Added 2; no role for dana@x.org (Not allowed)');
     expect(calls.find((c) => c.url.endsWith('/bulk-create-users'))!.body).toEqual({ users: [
-      { name: 'Casey', email: 'casey@x.org', approved: true },
-      { name: 'dana', email: 'dana@x.org', approved: true },
+      { name: 'Casey', email: 'casey@x.org' },
+      { name: 'dana', email: 'dana@x.org' },
     ] });
     expect(calls.filter((c) => c.method === 'PUT').map((c) => [c.url.split('/people/')[1], c.body])).toEqual([
       ['casey%40x.org/access', { commsCadre: true }],
       ['dana%40x.org/access', { commsCadre: true }],
     ]);
+    expect(screen.queryByRole('checkbox', { name: 'Approved' })).not.toBeInTheDocument();
   });
 });
 

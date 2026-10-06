@@ -66,7 +66,7 @@ found a read-through cache race this way (a status read overtaken by a concurren
 Use it for `moved-cycles.js` (it also passes without). Run `review-topbar.js` without it: it types as soon as the
 editor is editable, before a slowed first load has filled it.
 
-`member.js` stores an approved approver through the admin API, which needs a real admin session, so it
+`member.js` stores an approver through the admin API, which needs a real admin session, so it
 registers and verifies a bootstrap admin first. Start the backend for it with Cloudflare's always-pass
 Turnstile test secret, the bootstrap address, and AWS keys that can't send email (the backend then
 returns the verification and reset tokens instead of mailing them); it needs network access to

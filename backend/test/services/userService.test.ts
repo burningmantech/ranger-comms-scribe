@@ -7,7 +7,6 @@ jest.mock('../../src/services/cacheService', () => createCacheServiceMock());
 import {
   getOrCreateUser,
   getUser,
-  approveUser,
   getAllUsers,
   saveUser,
   createGroup,
@@ -106,9 +105,10 @@ describe('User Service', () => {
       expect(user.id).toBeDefined(); // User id is a UUID, not the email
       expect(user.name).toBe('Test User');
       expect(user.email).toBe('test@example.com');
-      expect(user.approved).toBe(false);
+      expect(user.approved).toBeUndefined(); // anyone signed in can submit requests: no approval step
       expect(user.isAdmin).toBe(false);
-      expect(user.userType).toBe(UserType.Public);
+      expect(user.councilRole).toBeNull();
+      expect(user.userType).toBe(UserType.Member);
       
       // Verify the user was stored in cache
       expect(putObject).toHaveBeenCalled();
@@ -150,7 +150,7 @@ describe('User Service', () => {
       const user = await getOrCreateUser(adminData, env);
 
       expect(user.isAdmin).toBe(false);
-      expect(user.userType).toBe(UserType.Public);
+      expect(user.userType).toBe(UserType.Member);
     });
   });
 
@@ -200,40 +200,6 @@ describe('User Service', () => {
     
     it('should return null for non-existent users', async () => {
       const user = await getUser('nonexistent@example.com', env);
-      
-      expect(user).toBeNull();
-    });
-  });
-
-  describe('approveUser', () => {
-    it('should approve a user', async () => {
-      // Create a user first
-      const userData = {
-        name: 'Test User',
-        email: 'test@example.com'
-      };
-      
-      await getOrCreateUser(userData, env);
-      
-      // Clear the mock to reset call count
-      (putObject as jest.Mock).mockClear();
-      
-      // Approve the user
-      const user = await approveUser('test@example.com', env);
-      
-      expect(user).toBeDefined();
-      expect(user?.approved).toBe(true);
-      
-      // Verify the user was updated in cache
-      expect(putObject).toHaveBeenCalled();
-      const callArgs = (putObject as jest.Mock).mock.calls.find(
-        call => call[0] === 'user/test@example.com'
-      );
-      expect(callArgs).toBeDefined();
-    });
-    
-    it('should return null for non-existent users', async () => {
-      const user = await approveUser('nonexistent@example.com', env);
       
       expect(user).toBeNull();
     });

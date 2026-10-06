@@ -15,10 +15,10 @@ export class AccessChangeError extends Error {
 }
 
 export interface AccessPatch {
-  approved?: boolean;
   isAdmin?: boolean;
   commsCadre?: boolean;
-  councilRoles?: CouncilRole[];
+  /** The council role to hold, replacing any other; null for none. */
+  councilRole?: CouncilRole | null;
 }
 
 export async function listPeople(env: Env): Promise<User[]> {
@@ -53,16 +53,17 @@ export async function peopleWhere(env: Env, test: (access: Access) => boolean): 
 }
 
 export const commsCadrePeople = (env: Env) => peopleWhere(env, (a) => a.commsCadre);
-export const commsManagerPeople = (env: Env) => peopleWhere(env, (a) => a.councilRoles.includes(CouncilRole.CommunicationsManager));
+export const commsManagerPeople = (env: Env) => peopleWhere(env, (a) => a.councilRole === CouncilRole.CommunicationsManager);
 
 /**
- * Council members as the older `CouncilMember` shape (one entry per role held), for
- * GET /council/members (approver suggestions on the request form and review page, reminders).
+ * Council members as the older `CouncilMember` shape (one entry each), for GET /council/members
+ * (approver suggestions on the request form and review page, reminders).
  */
 export async function councilMemberEntries(env: Env): Promise<CouncilMember[]> {
   const entries: CouncilMember[] = [];
   for (const user of await listPeople(env)) {
-    for (const role of accessOf(user, env).councilRoles) {
+    const role = accessOf(user, env).councilRole;
+    if (role) {
       entries.push({
         id: `${user.id}:${role}`,
         userId: user.id,
@@ -92,19 +93,18 @@ export async function setAccess(targetId: string, patch: AccessPatch, actor: Use
   if (!user) throw new AccessChangeError(404, 'Person not found');
   const current = accessOf(user);
   const next: Access = {
-    approved: patch.approved ?? current.approved,
     isAdmin: patch.isAdmin ?? current.isAdmin,
     commsCadre: patch.commsCadre ?? current.commsCadre,
-    councilRoles: current.councilRoles,
+    councilRole: current.councilRole,
     council: current.council,
   };
-  if (patch.councilRoles !== undefined) {
-    if (!Array.isArray(patch.councilRoles) || patch.councilRoles.some((r) => !COUNCIL_ROLES.includes(r))) {
-      throw new AccessChangeError(400, `Council roles must be among: ${COUNCIL_ROLES.join(', ')}`);
+  if (patch.councilRole !== undefined) {
+    if (patch.councilRole !== null && !COUNCIL_ROLES.includes(patch.councilRole)) {
+      throw new AccessChangeError(400, `The council role must be one of: ${COUNCIL_ROLES.join(', ')} (or null for none)`);
     }
-    next.councilRoles = Array.from(new Set(patch.councilRoles));
+    next.councilRole = patch.councilRole;
+    next.council = patch.councilRole !== null;
   }
-  next.council = next.councilRoles.length > 0;
 
   if (current.isAdmin && !next.isAdmin) {
     if (normalizeEmail(actor.email) === normalizeEmail(user.email)) {
@@ -113,11 +113,6 @@ export async function setAccess(targetId: string, patch: AccessPatch, actor: Use
     const others = (await flagAdmins(env)).filter((u) => normalizeEmail(u.email) !== normalizeEmail(user.email));
     if (others.length === 0) throw new AccessChangeError(409, "This is the only Admin; make someone else an Admin first.");
   }
-  if (!next.approved && (next.isAdmin || next.commsCadre || next.council)) {
-    // A role implies they can sign in
-    next.approved = true;
-  }
-
   const updated = withDerivedAccess(user, next) as User;
   await saveUser(updated, env);
   return updated;
