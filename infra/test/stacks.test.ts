@@ -104,6 +104,13 @@ describe('alex-dev (dev profile)', () => {
     );
   });
 
+  test('lets sent announcements be resent (ALLOW_ANNOUNCEMENT_RESEND=true)', () => {
+    const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'ALLOW_ANNOUNCEMENT_RESEND', Value: 'true' }]),
+    );
+  });
+
   test('service runs one task on FARGATE_SPOT only, with a public IP, overlapping 100%/200% deployments', () => {
     compute.hasResourceProperties('AWS::ECS::Service', {
       DesiredCount: 1,
@@ -257,6 +264,10 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     // Collaboration mode stays at the backend default (legacy) until it's turned on deliberately.
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ Name: 'COLLAB_MODE' })]),
+    );
+    // Announcements are sent once outside dev
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ Name: 'ALLOW_ANNOUNCEMENT_RESEND' })]),
     );
   });
 

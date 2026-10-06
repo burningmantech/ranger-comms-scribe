@@ -230,6 +230,28 @@ describe('announcement email', () => {
     expect(sentInput()).not.toHaveProperty('ReplyToAddresses');
   });
 
+  it('sends a sent announcement again only where resending is allowed (dev)', async () => {
+    await putObject('content_submissions/sub-1', submissionRecord({ status: 'sent', sentAt: '2026-10-05T12:00:00Z' }), env);
+    const refused = await call(env, 'POST', '/submissions/sub-1/send-email');
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as any).error).toBe('Already sent');
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(((await (await call(env, 'GET', '/submissions/sub-1/email-preview')).json()) as any).resendAllowed).toBe(false);
+
+    env.ALLOW_ANNOUNCEMENT_RESEND = true;
+    expect(((await (await call(env, 'GET', '/submissions/sub-1/email-preview')).json()) as any).resendAllowed).toBe(true);
+    expect((await call(env, 'POST', '/submissions/sub-1/send-email')).status).toBe(200);
+    expect(sentInput().Destination?.ToAddresses).toEqual([ANNOUNCE_TO]);
+    clearMemoryCache();
+    const stored = await getObject<any>('content_submissions/sub-1', env);
+    expect(stored.status).toBe('sent');
+    expect(stored.sentAt).not.toBe('2026-10-05T12:00:00Z');
+
+    // Still nothing before approval
+    await putObject('content_submissions/sub-3', submissionRecord({ id: 'sub-3', status: 'in_review' }), env);
+    expect((await call(env, 'POST', '/submissions/sub-3/send-email')).status).toBe(400);
+  });
+
   it('refuses to send without ANNOUNCE_EMAIL_TO, and the preview shows no recipient', async () => {
     delete env.ANNOUNCE_EMAIL_TO;
     await putObject('content_submissions/sub-1', submissionRecord(), env);

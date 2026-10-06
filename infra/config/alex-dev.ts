@@ -63,6 +63,8 @@ const config: ScribeConfig = {
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
     // Merged real-time editing (Yjs, PRD §14) is on in dev; the Rangers environments keep the default 'legacy'.
     COLLAB_MODE: 'yjs',
+    // Sent announcements can be sent again, to test email rendering (they only go to Alex)
+    ALLOW_ANNOUNCEMENT_RESEND: 'true',
   },
 
   // SSM SecureString you create by hand (infra/README.md, first-time setup).

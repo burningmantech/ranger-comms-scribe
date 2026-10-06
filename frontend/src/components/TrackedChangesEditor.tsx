@@ -4195,6 +4195,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                             </button>
                           )}
 
+                          {alreadySent && preview?.resendAllowed && isCommsCadreOrAdmin && onSendEmail && !notConfigured && (
+                            <button
+                              className="btn btn-neutral"
+                              onClick={() => setShowSendConfirm(true)}
+                              disabled={sending}
+                              title="Resending is turned on in this environment only"
+                            >
+                              <i className="fas fa-redo" style={{ marginRight: '6px' }} />
+                              {sending ? 'Sending...' : 'Resend Email'}
+                            </button>
+                          )}
+
                           {alreadySent && (
                             <span className="send-mode-sent-info">
                               <i className="fas fa-check-circle" style={{ marginRight: '4px', color: 'var(--accent-teal)' }} />
@@ -4214,9 +4226,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           {showSendConfirm && (
                             <div className="request-changes-overlay" onClick={() => setShowSendConfirm(false)}>
                               <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
-                                <h3>Send Email</h3>
+                                <h3>{alreadySent ? 'Resend Email' : 'Send Email'}</h3>
                                 <p style={{ margin: '12px 0', color: '#666' }}>
-                                  Are you sure you want to send this announcement to {recipient}? This action cannot be undone.
+                                  {alreadySent
+                                    ? `Send this announcement to ${recipient} again? Resending is turned on in this environment only.`
+                                    : `Are you sure you want to send this announcement to ${recipient}? This action cannot be undone.`}
                                 </p>
                                 <div className="request-changes-actions">
                                   <button className="btn btn-neutral" onClick={() => setShowSendConfirm(false)}>

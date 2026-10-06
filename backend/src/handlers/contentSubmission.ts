@@ -933,7 +933,11 @@ router.get('/submissions/:id/email-preview', withAuth, async (request: Request, 
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  return json(await buildAnnouncementEmail(submission, env));
+  return json({
+    ...(await buildAnnouncementEmail(submission, env)),
+    // Dev: a sent announcement can be sent again (Resend Email)
+    resendAllowed: env.ALLOW_ANNOUNCEMENT_RESEND === true,
+  });
 });
 
 // Send announcement email after full approval; Comms Cadre can send
@@ -946,9 +950,10 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
-  // Must be approved first
-  if (submission.status !== 'approved') {
-    return json({ error: 'Submission not approved yet' }, { status: 400 });
+  // Must be approved first; a sent one again only where resending is allowed (dev)
+  const resend = submission.status === 'sent' && env.ALLOW_ANNOUNCEMENT_RESEND === true;
+  if (submission.status !== 'approved' && !resend) {
+    return json({ error: submission.status === 'sent' ? 'Already sent' : 'Submission not approved yet' }, { status: 400 });
   }
 
   // Only Comms Cadre or Admin can send
