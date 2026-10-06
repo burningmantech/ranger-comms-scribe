@@ -831,8 +831,9 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
     // its document after the undo (an undone reject re-applies the change's text, which
     // no change record holds), so store that instead, as the status handlers store the
     // editor's state sent with a reject (revertedRichText). In collaborative mode the
-    // document is the source of truth. Without it, GET recomputes from the changes
-    // (getCurrentSnapshotChange accounts for the re-apply via reappliedAt).
+    // document is the source of truth. Without it, GET recomputes from the changes. The
+    // change's reappliedAt (set by undoChange) keeps an accept from storing a snapshot
+    // made while it was rejected (isNewestActiveChange).
     if (typeof proposedVersionsRichText === 'string' && proposedVersionsRichText.includes('"root"')) {
       let proposedVersionsContent: string | undefined;
       try {
