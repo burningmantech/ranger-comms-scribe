@@ -101,6 +101,42 @@ describe('SaveStatus', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it("keeps Couldn't save after a later edit saves, until Retry saves the failed one", async () => {
+    let fail = true;
+    const save = jest.fn(async (sid: string, change: any) => {
+      if (fail) throw new Error('offline');
+      return { id: `r${save.mock.calls.length}`, submissionId: sid, field: change.field, oldValue: change.oldValue, newValue: change.newValue,
+        changedBy: 'u', changedByName: 'U', timestamp: '', status: 'pending' as const, comments: [] };
+    });
+    const tm = new TransactionManager('s1', { saveFunction: save, deleteFunction: jest.fn(), retryDelayMs: 0, pauseDelayMs: 60000 });
+    const { container } = render(<SaveStatus transactionManager={tm} />);
+    await act(async () => {
+      tm.startTransaction('content', lex('a'));
+      tm.notifyActivity(lex('ab'));
+      tm.flush();
+      await ticks();
+    });
+    expect(state(container)).toBe('error');
+
+    fail = false;
+    await act(async () => {
+      tm.startTransaction('content', lex('ab'));
+      tm.notifyActivity(lex('abc'));
+      tm.flush();
+      await ticks();
+    });
+    expect(tm.getSaveStatus()).toBe('all-saved'); // the manager alone would report saved
+    expect(state(container)).toBe('error');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await ticks();
+    });
+    expect(state(container)).toBe('saved');
+    expect(tm.getUndoStack().every((tx) => tx.status === 'saved')).toBe(true);
+  });
+
   it("shows Couldn't save with a Retry that saves again", async () => {
     let fail = true;
     const save = jest.fn(async (sid: string, change: any) => {

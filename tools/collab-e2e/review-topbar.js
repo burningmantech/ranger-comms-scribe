@@ -120,6 +120,42 @@ async function saveState(u) {
       .catch(() => check('edit saved at once when the page is hidden', false));
     await h.context.close();
 
+    // ---- 1c. A failed save shows "Couldn't save" + Retry, which survives a later good save ----
+    const subR = await L.createSubmission(['Romeo paragraph.']);
+    const r = await openReview(browser, 'retrier', 'dev-admin-session', subR.id);
+    await r.page.evaluate(() => {
+      const nativeFetch = window.fetch.bind(window);
+      window.__failChangePosts = true;
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (window.__failChangePosts && init && init.method === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(url)) {
+          return Promise.resolve(new Response('unavailable', { status: 503 }));
+        }
+        return nativeFetch(input, init);
+      };
+    });
+    await L.caret(r, 0, -1);
+    await r.page.keyboard.type(' first', { delay: 20 });
+    await L.waitFor(async () => (await saveState(r)) === 'error', 'error state', 12000)
+      .then(() => check("failed save shows Couldn't save", true)).catch(async () => check("failed save shows Couldn't save", false, await saveState(r)));
+    check('Retry offered on error', !!(await r.page.$('.save-status__retry')));
+    await r.page.evaluate(() => { window.__failChangePosts = false; });
+    await L.caret(r, 0, -1);
+    await r.page.keyboard.type(' second', { delay: 20 });
+    await L.waitFor(async () => {
+      const tc = await L.api(`/tracked-changes/submission/${subR.id}`);
+      return (tc.changes || []).length > 0;
+    }, 'second edit saved', 10000).catch(() => null);
+    await L.sleep(300);
+    check('still shows the error after a later edit saved', (await saveState(r)) === 'error' && !!(await r.page.$('.save-status__retry')), await saveState(r));
+    await r.page.click('.save-status__retry');
+    await L.waitFor(async () => (await saveState(r)) === 'saved', 'saved after retry', 10000)
+      .then(() => check('Retry saves the failed edit and ends at Saved', true)).catch(async () => check('Retry saves the failed edit and ends at Saved', false, await saveState(r)));
+    const tcR = await L.api(`/tracked-changes/submission/${subR.id}`);
+    check('both edits stored after Retry', (tcR.changes || []).some((ch) => /first/.test(ch.newValue)) && (tcR.changes || []).some((ch) => /second/.test(ch.newValue)),
+      JSON.stringify((tcR.changes || []).map((ch) => ch.newValue)));
+    await r.context.close();
+
     // ---- 2. Approve (submission B) ----
     const subB = await L.createSubmission(['Bravo text.']);
     const b = await openReview(browser, 'approver', 'dev-admin-session', subB.id);

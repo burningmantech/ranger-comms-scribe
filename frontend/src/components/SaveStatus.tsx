@@ -26,7 +26,9 @@ interface SaveStatusProps {
 
 export function computeSaveState(tm: TransactionManager): SaveStatusState {
   const status = tm.getSaveStatus();
-  if (status === 'error') return 'error';
+  // A later successful save clears the manager's error flag even though an earlier edit
+  // is still unsaved, so check for failed transactions directly.
+  if (status === 'error' || tm.getUndoStack().some((tx) => tx.status === 'failed')) return 'error';
   if (status === 'saving') return 'saving';
   if (tm.getActiveTransaction()) return 'unsaved';
   return 'saved';

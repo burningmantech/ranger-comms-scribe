@@ -62,6 +62,9 @@ async function openUser(browser, name, session, submissionId) {
     if (/\[YJS\]|Collaboration connected|TransactionManager|\[TrackedChangesEditor\] transaction-saved|\[DBG\]/.test(t)) user.logs.push(t.slice(0, 300));
   });
   page.on('pageerror', (err) => user.errors.push(`pageerror: ${err.message}`));
+  // The editor asks to confirm leaving while an edit is unsaved; reloads and navigations in
+  // the tests always leave.
+  page.on('dialog', (d) => { if (d.type() === 'beforeunload') d.accept().catch(() => {}); });
   const cdp = await page.createCDPSession();
   await cdp.send('Network.enable');
   const sockets = new Map();
