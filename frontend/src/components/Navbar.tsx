@@ -136,7 +136,7 @@ const Navbar: React.FC<NavbarProps> = ({ skipNavbar = false }) => {
                             <Link to="/newsletter/editions" className={`navbar-item ${currentPageSlug === 'newsletter' ? 'active' : ''}`} onClick={handleMenuItemClick}>Newsletter</Link>
                         )}
                         {canSeeCalendar && (
-                            <Link to="/comms-calendar" className={`navbar-item ${currentPageSlug === 'comms-calendar' ? 'active' : ''}`} onClick={handleMenuItemClick}>Comms Calendar</Link>
+                            <Link to="/comms-calendar" className={`navbar-item ${currentPageSlug === 'comms-calendar' ? 'active' : ''}`} onClick={handleMenuItemClick}>Calendar</Link>
                         )}
                     </>
                 )}

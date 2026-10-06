@@ -210,9 +210,9 @@ export const CommsCalendar: React.FC = () => {
     <div className="comms-calendar">
       <div className="cc-header">
         <div>
-          <h1>Comms Calendar</h1>
+          <h1>Calendar</h1>
           <p className="cc-muted">
-            Everything we send each year (September to August), and what's due to go out again soon.
+            Annually recurring communications. Event year based.
           </p>
         </div>
         {canEdit && (
