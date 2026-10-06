@@ -34,6 +34,7 @@ import { UserName } from './UserName';
 import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds } from '../utils/changeStatus';
 import { remoteCommentFromMessage } from '../utils/remoteComments';
 import { REVIEW_STATE_MESSAGE_TYPES } from '../utils/reviewState';
+import { currentFormFieldValue } from '../utils/formFieldValue';
 
 const webSocketManager = new WebSocketManager();
 
@@ -1149,6 +1150,46 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [submission.changes, submission.comments, localRemovedChangeIds, localAddedChanges, statusOverrides]);
   const allTrackedChangesRef = useRef(allTrackedChanges);
   allTrackedChangesRef.current = allTrackedChanges;
+
+  // The Subject, Reply-To, Audience and Signature as now proposed: the newest change to each
+  // that isn't rejected (accepted ones included), else the value as submitted. The edit
+  // buffers (proposedTitle etc.) follow them, except while that field is being edited here.
+  const currentTitle = useMemo(
+    () => currentFormFieldValue(allTrackedChanges, 'title') ?? submission.title,
+    [allTrackedChanges, submission.title],
+  );
+  const currentReplyTo = useMemo(
+    () => currentFormFieldValue(allTrackedChanges, 'replyToAddress') ?? replyToValue,
+    [allTrackedChanges, replyToValue],
+  );
+  const currentSignature = useMemo(
+    () => currentFormFieldValue(allTrackedChanges, 'signatureText') ?? signatureValue,
+    [allTrackedChanges, signatureValue],
+  );
+  const currentAudienceValue = useMemo(() => {
+    const value = currentFormFieldValue(allTrackedChanges, 'audience');
+    return (value !== null ? parseAudienceToKeys(value) : audienceArray).join(', ');
+  }, [allTrackedChanges, audienceArray]);
+  const currentAudienceKeys = useMemo(
+    () => (currentAudienceValue ? currentAudienceValue.split(', ') : []),
+    [currentAudienceValue],
+  );
+  const editingFieldsRef = useRef({ title: false, replyTo: false, audience: false, signature: false });
+  editingFieldsRef.current = {
+    title: editingTitle, replyTo: editingReplyTo, audience: editingAudience, signature: editingSignature,
+  };
+  useEffect(() => {
+    if (!editingFieldsRef.current.title) setProposedTitle(currentTitle);
+  }, [currentTitle]);
+  useEffect(() => {
+    if (!editingFieldsRef.current.replyTo) setProposedReplyTo(currentReplyTo);
+  }, [currentReplyTo]);
+  useEffect(() => {
+    if (!editingFieldsRef.current.signature) setProposedSignature(currentSignature);
+  }, [currentSignature]);
+  useEffect(() => {
+    if (!editingFieldsRef.current.audience) setProposedAudienceArr(currentAudienceKeys);
+  }, [currentAudienceKeys]);
 
   // The changes still waiting for a decision: the sidebar's Open list, the editor's
   // highlights and the decision handlers. Filtered after mergeLocalChanges (above), so a
@@ -3339,15 +3380,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   onChange={(e) => setProposedTitle(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      handleFieldChange('title', submission.title, proposedTitle);
+                      handleFieldChange('title', currentTitle, proposedTitle);
                       setEditingTitle(false);
                     } else if (e.key === 'Escape') {
-                      setProposedTitle(submission.proposedVersions?.title || submission.title);
+                      setProposedTitle(currentTitle);
                       setEditingTitle(false);
                     }
                   }}
                   onBlur={() => {
-                    handleFieldChange('title', submission.title, proposedTitle);
+                    handleFieldChange('title', currentTitle, proposedTitle);
                     setEditingTitle(false);
                   }}
                   autoFocus
@@ -3377,15 +3418,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   placeholder="Reply-to email address"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      handleFieldChange('replyToAddress', replyToValue, proposedReplyTo);
+                      handleFieldChange('replyToAddress', currentReplyTo, proposedReplyTo);
                       setEditingReplyTo(false);
                     } else if (e.key === 'Escape') {
-                      setProposedReplyTo(submission.proposedVersions?.replyToAddress || replyToValue);
+                      setProposedReplyTo(currentReplyTo);
                       setEditingReplyTo(false);
                     }
                   }}
                   onBlur={() => {
-                    handleFieldChange('replyToAddress', replyToValue, proposedReplyTo);
+                    handleFieldChange('replyToAddress', currentReplyTo, proposedReplyTo);
                     setEditingReplyTo(false);
                   }}
                   autoFocus
@@ -3432,7 +3473,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     className="btn btn-primary btn-sm"
                     onClick={() => {
                       const newVal = proposedAudienceArr.join(', ');
-                      handleFieldChange('audience', audienceDisplay, newVal);
+                      if (newVal !== currentAudienceValue) {
+                        handleFieldChange(
+                          'audience',
+                          currentAudienceKeys.map(k => AUDIENCE_LABELS[k] || k).join(', '),
+                          newVal,
+                        );
+                      }
                       setEditingAudience(false);
                     }}
                   >
@@ -3441,12 +3488,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   <button
                     className="btn btn-neutral btn-sm"
                     onClick={() => {
-                      const proposed = submission.proposedVersions?.audience;
-                      if (proposed) {
-                        setProposedAudienceArr(parseAudienceToKeys(proposed));
-                      } else {
-                        setProposedAudienceArr(audienceArray);
-                      }
+                      setProposedAudienceArr(currentAudienceKeys);
                       setEditingAudience(false);
                     }}
                   >
@@ -3649,15 +3691,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                           placeholder="Signature text"
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
-                              handleFieldChange('signatureText', signatureValue, proposedSignature);
+                              handleFieldChange('signatureText', currentSignature, proposedSignature);
                               setEditingSignature(false);
                             } else if (e.key === 'Escape') {
-                              setProposedSignature(submission.proposedVersions?.signatureText || signatureValue);
+                              setProposedSignature(currentSignature);
                               setEditingSignature(false);
                             }
                           }}
                           onBlur={() => {
-                            handleFieldChange('signatureText', signatureValue, proposedSignature);
+                            handleFieldChange('signatureText', currentSignature, proposedSignature);
                             setEditingSignature(false);
                           }}
                           autoFocus

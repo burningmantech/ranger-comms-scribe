@@ -16,6 +16,7 @@ import {
   batchCreateTrackedChanges,
   freshProposedVersions,
   FORM_FIELD_CHANGE_FIELDS,
+  currentFormFieldValue,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
@@ -326,6 +327,13 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
 
     // Fall back to calculating from changes if no saved versions
     for (const field of fields) {
+      // A form field's proposed value is a whole value: the newest change that isn't
+      // rejected, accepted ones included (the submission record keeps the submitted value)
+      if (FORM_FIELD_CHANGE_FIELDS.has(field)) {
+        const current = currentFormFieldValue(changes, field);
+        if (current !== null) proposedVersions[field] = current;
+        continue;
+      }
       if (!proposedVersions[field]) {
         const completeVersion = await getCompleteProposedVersion(submissionId, field, env);
         if (completeVersion) {

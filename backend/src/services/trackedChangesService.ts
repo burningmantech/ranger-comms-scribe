@@ -51,6 +51,20 @@ export const FORM_FIELD_CHANGE_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The current proposed value of a form field: the whole value of the newest change to it
+ * that isn't rejected (pending or approved), or null when there is none (the value as
+ * submitted stands). Once every change is resolved this is approvedFieldValue's answer.
+ */
+export function currentFormFieldValue(changes: TrackedChange[], field: string): string | null {
+  const wholeValue = (c: TrackedChange) =>
+    typeof c.completeProposedVersion === 'string' ? c.completeProposedVersion : c.newValue;
+  const active = changes
+    .filter(c => c.field === field && c.status !== 'rejected' && typeof wholeValue(c) === 'string')
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  return active.length > 0 ? wholeValue(active[0]) : null;
+}
+
+/**
  * The cached proposed document, unless a change was made after it was written (an older
  * server didn't invalidate it on create, or the write raced a create). Such a copy lacks
  * that change's edit, so the caller recomputes from the changes instead.
@@ -59,7 +73,9 @@ export function freshProposedVersions(saved: any, changes: TrackedChange[]): any
   if (!saved) return null;
   const savedAt = saved.lastUpdatedAt ? new Date(saved.lastUpdatedAt).getTime() : NaN;
   if (Number.isNaN(savedAt)) return saved; // undated: keep the old behaviour
-  const newerChange = changes.some(c => new Date(c.timestamp).getTime() > savedAt);
+  // Form-field changes (Subject, Reply-To, ...) don't touch the document
+  const newerChange = changes.some(c =>
+    !FORM_FIELD_CHANGE_FIELDS.has(c.field) && new Date(c.timestamp).getTime() > savedAt);
   return newerChange ? null : saved;
 }
 
@@ -326,8 +342,11 @@ export const createTrackedChange = async (
     await putObject(changeKey, newChange, env);
 
     // The cached proposed document predates this change, so drop it and let the next
-    // read recompute it (a stale copy reseeds the editor without this edit).
-    await deleteObject(`proposed_versions/${submissionId}`, env);
+    // read recompute it (a stale copy reseeds the editor without this edit). A form-field
+    // change (Subject, Reply-To, ...) doesn't change the document.
+    if (!FORM_FIELD_CHANGE_FIELDS.has(field)) {
+      await deleteObject(`proposed_versions/${submissionId}`, env);
+    }
 
     return newChange;
   } catch (error) {

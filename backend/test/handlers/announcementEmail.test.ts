@@ -3,7 +3,7 @@ import * as path from 'path';
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { router } from '../../src/handlers/contentSubmission';
-import { updateChangeStatusHandler, batchUpdateStatusHandler, createTrackedChangeHandler } from '../../src/handlers/trackedChanges';
+import { updateChangeStatusHandler, batchUpdateStatusHandler, createTrackedChangeHandler, getTrackedChangesHandler } from '../../src/handlers/trackedChanges';
 import { CustomRequest } from '../../src/types';
 import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
 import { approvedFieldValue, validReplyTo } from '../../src/services/announcementEmail';
@@ -316,6 +316,41 @@ describe('resolving a form-field change leaves the document alone', () => {
     expect(after.content).toBe('Edited body');
     const preview: any = await (await call(env, 'GET', '/submissions/sub-2/email-preview')).json();
     expect(preview.subject).toBe('Old subject');
+  });
+
+  async function proposedTitle(): Promise<string | undefined> {
+    clearMemoryCache();
+    const response = await getTrackedChangesHandler(handlerRequest({ submissionId: 'sub-2' }, {}), env);
+    return ((await response.json()) as any).proposedVersions.title;
+  }
+
+  it('shows the accepted subject as the proposed one, and the submitted one after a reject', async () => {
+    await setUp();
+    const accepted = await titleChange('New subject');
+    expect(await proposedTitle()).toBe('New subject'); // pending
+    await updateChangeStatusHandler(handlerRequest({ changeId: accepted }, { status: 'approved', submissionId: 'sub-2' }), env);
+    expect(await proposedTitle()).toBe('New subject'); // accepted: still the proposed subject
+
+    const rejected = await titleChange('Rejected subject');
+    expect(await proposedTitle()).toBe('Rejected subject');
+    await updateChangeStatusHandler(handlerRequest({ changeId: rejected }, { status: 'rejected', submissionId: 'sub-2' }), env);
+    expect(await proposedTitle()).toBe('New subject'); // back to the accepted one
+
+    await updateChangeStatusHandler(handlerRequest({ changeId: accepted }, { status: 'rejected', submissionId: 'sub-2' }), env);
+    expect(await proposedTitle()).toBeUndefined(); // the submitted subject stands
+  });
+
+  it('keeps the cached proposed document when a form field changes', async () => {
+    await setUp();
+    await putObject('proposed_versions/sub-2', {
+      proposedVersionsRichText: lexical('Cached body'), proposedVersionsContent: 'Cached body',
+      lastUpdatedAt: new Date().toISOString(),
+    }, env);
+    await titleChange('New subject');
+    clearMemoryCache();
+    expect(await getObject<any>('proposed_versions/sub-2', env)).not.toBeNull();
+    const response = await getTrackedChangesHandler(handlerRequest({ submissionId: 'sub-2' }, {}), env);
+    expect(((await response.json()) as any).proposedVersions.content).toBe('Cached body');
   });
 
   it('in a batch', async () => {

@@ -238,6 +238,11 @@ const VARIANT_PREFIXES = {
 /**
  * Serve a gallery image's bytes. Thumbnail and medium requests fall back to the
  * original when no resized copy was uploaded.
+ *
+ * Anyone with the URL can load any file, without signing in: announcement emails link
+ * pasted images here. isPublic (stored on every file) only hides private files from
+ * gallery listings. A private-file option would check it here and keep emailed images
+ * public.
  */
 export async function serveGalleryImage(
     filename: string,
