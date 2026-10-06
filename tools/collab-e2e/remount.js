@@ -11,17 +11,21 @@ const L = require('./lib');
     const b = await L.openUser(browser, 'B', 'dev-user2-session', sub.id);
     await L.converged(a, b);
 
-    // B leaves the Proposed tab (editor unmounts), A types, B comes back.
+    // B leaves the Proposed view (editor unmounts), A types, B comes back.
+    // The view switch (Proposed | Compare | Original); older builds had tabs labelled "... Version".
     const clickTab = async (u, label) => {
-      const tabs = await u.page.$$('.tce-tab');
-      for (const t of tabs) if ((await t.evaluate((e) => e.textContent.trim())) === label) { await t.click(); return; }
-      throw new Error(`no tab ${label}`);
+      const tabs = await u.page.$$('.document-view-bar__option, .tce-tab');
+      for (const t of tabs) {
+        const text = await t.evaluate((e) => e.textContent.trim());
+        if (text === label || text === `${label} Version`) { await t.click(); return; }
+      }
+      throw new Error(`no view ${label}`);
     };
-    await clickTab(b, 'Original Version');
+    await clickTab(b, 'Original');
     await L.sleep(500);
     await L.caret(a, 0);
     await a.page.keyboard.type(' while-away', { delay: 30 });
-    await clickTab(b, 'Proposed Version');
+    await clickTab(b, 'Proposed');
     await b.page.waitForSelector(`${L.EDITOR}[contenteditable="true"]`, { timeout: 15000 });
     const x = await L.converged(a, b);
     report(L.count(x.join('\n'), 'while-away') === 1 && L.count(x.join('\n'), 'First paragraph') === 1, `tab switch away and back: ${JSON.stringify(x)}`);

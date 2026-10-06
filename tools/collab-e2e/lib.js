@@ -1,9 +1,10 @@
 // Two-browser harness: real app at localhost:3000, real backend at localhost:8080 (dev bypass).
+// Override with E2E_APP_URL / E2E_API_URL (e.g. to run a second stack on other ports) and CHROME.
 const puppeteer = require('puppeteer-core');
 
-const API = 'http://localhost:8080/api';
-const APP = 'http://localhost:3000';
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const API = process.env.E2E_API_URL || 'http://localhost:8080/api';
+const APP = process.env.E2E_APP_URL || 'http://localhost:3000';
+const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,6 +62,9 @@ async function openUser(browser, name, session, submissionId) {
     if (/\[YJS\]|Collaboration connected|TransactionManager|\[TrackedChangesEditor\] transaction-saved|\[DBG\]/.test(t)) user.logs.push(t.slice(0, 300));
   });
   page.on('pageerror', (err) => user.errors.push(`pageerror: ${err.message}`));
+  // The editor asks to confirm leaving while an edit is unsaved; reloads and navigations in
+  // the tests always leave.
+  page.on('dialog', (d) => { if (d.type() === 'beforeunload') d.accept().catch(() => {}); });
   const cdp = await page.createCDPSession();
   await cdp.send('Network.enable');
   const sockets = new Map();
@@ -74,8 +78,12 @@ async function openUser(browser, name, session, submissionId) {
   });
   user.sockets = sockets;
   user.changePosts = [];
+  user.changeUrls = [];
   cdp.on('Network.requestWillBeSent', ({ request }) => {
-    if (request.method === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(request.url)) user.changePosts.push(request.postData || '');
+    if (request.method === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(request.url)) {
+      user.changePosts.push(request.postData || '');
+      user.changeUrls.push(request.url);
+    }
   });
   // Keep every WebSocket the page opens, so tests can drop connections (a real outage).
   await page.evaluateOnNewDocument(() => {
@@ -207,4 +215,4 @@ async function converged(a, b) {
 
 const count = (hay, needle) => hay.split(needle).length - 1;
 
-module.exports = { api, createSubmission, launch, openUser, blocks, html, caret, select, waitFor, converged, count, sleep, EDITOR, API };
+module.exports = { api, createSubmission, launch, openUser, blocks, html, caret, select, waitFor, converged, count, sleep, EDITOR, API, APP };

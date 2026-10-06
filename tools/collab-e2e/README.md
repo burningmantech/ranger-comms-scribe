@@ -26,4 +26,10 @@ node outage.js            # offline, reconnect, fresh doc after 20 s
 node remount.js           # tab switch, moving between submissions
 node undo2.js             # undo only affects your own edits
 node legacy.js            # COLLAB_MODE unset: old behaviour unchanged (restart the backend without COLLAB_MODE)
+node review-topbar.js     # review header: Finish review menu, conditions popover, view switch, Send, save
+                          # status (incl. error + Retry), saving on unmount / page hide, queue pager, author
+                          # view; works in both modes. STRICT=1 adds a reload after the Yjs room is dropped
 ```
+
+To run against a second stack on other ports, set `E2E_APP_URL` and `E2E_API_URL` (defaults
+`http://localhost:3000` and `http://localhost:8080/api`); `CHROME` overrides the browser path.
