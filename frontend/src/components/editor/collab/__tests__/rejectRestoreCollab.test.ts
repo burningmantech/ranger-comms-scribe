@@ -30,7 +30,7 @@ import { DeletedTextNode } from '../../nodes/DeletedTextNode';
 import { ImageNode } from '../../nodes/ImageNode';
 import { createLocalEditTracker } from '../localEditTracker';
 import { trackProvenance } from '../provenance';
-import { $stampPendingMarkers, reapplyRejectedChanges, resolveTrackedChange, ResolveTrackedChangeDetail } from '../../plugins/TrackedChangesPlugin';
+import { $stampPendingMarkers, dryRunRejects, reapplyRejectedChanges, resolveTrackedChange, ResolveTrackedChangeDetail } from '../../plugins/TrackedChangesPlugin';
 import { $createDeletedTextNode } from '../../nodes/DeletedTextNode';
 import { $exportNodeJSON, $resolveUnitPoint, locateChange } from '../rejectRestore';
 
@@ -488,5 +488,31 @@ describe('a typed deletion (its after-state holds its own marker)', () => {
     expect(detail.result).toEqual({ restored: true, method: 'marker' });
     expect(blocks(a)[0]).toContain('the 2026 event.');
     expect(docJson(a)).toContain('"deletedText":"Plea"'); // a pending marker is never adopted
+  });
+});
+
+describe('dryRunRejects (a move is rejected all or nothing)', () => {
+  it('reports which halves could be reverted, in order, and changes nothing', () => {
+    const a = client('A');
+    const b = client('B');
+    connect(a, b);
+    seed(a);
+    const { change1, change2 } = cutAndPaste(a);
+    const moved = blocks(b);
+    const ok = dryRunRejects(b.editor, [change1, change2].map((c) => ({ id: c.id, before: c.before, after: c.after })));
+    expect(Array.from(ok.entries())).toEqual([['c1', true], ['c2', true]]);
+    // The pasted text rewritten: the deletion could still be reverted, the insertion not.
+    edit(a, () => {
+      const root = $getRoot();
+      $setSelection(null);
+      root.getChildAtIndex(3)!.replace($createParagraphNode().append($createTextNode('Completely different text by someone.')));
+      root.getChildAtIndex(4)!.replace($createParagraphNode().append($createTextNode('Nothing like the original.')));
+    });
+    const before = blocks(b);
+    expect(before).not.toEqual(moved);
+    const partial = dryRunRejects(b.editor, [change1, change2].map((c) => ({ id: c.id, before: c.before, after: c.after })));
+    expect(Array.from(partial.entries())).toEqual([['c1', true], ['c2', false]]);
+    expect(blocks(b)).toEqual(before);
+    expect(dryRunRejects(null, [{ id: 'x', before: '{}', after: '{}' }]).size).toBe(0);
   });
 });

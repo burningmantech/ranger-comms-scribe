@@ -18,7 +18,7 @@ import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
-import { $reapplyByContext, $rejectByContext, ChangeDocs } from '../collab/rejectRestore';
+import { $exportNodeJSON, $reapplyByContext, $rejectByContext, applyBlockReplacements, ChangeDocs, planRejectRestore } from '../collab/rejectRestore';
 import { getUserColorIndex, getUserColor, getChangeColorIndex, getChangeColor } from '../../../utils/userColors';
 
 /** The change id of a deletion marker whose transaction hasn't been saved yet. */
@@ -1199,6 +1199,28 @@ export function resolveTrackedChange(editor: LexicalEditor, detail: ResolveTrack
     return;
   }
   editor.update(() => $resolveWithMarkers(detail), { tag: 'tracked-changes-resolve' });
+}
+
+/**
+ * Whether each change could be rejected by context, in the order given, against the live
+ * document (a dry run: nothing changes). Each one that could is applied to the working copy
+ * before the next is planned, like a real sequence of rejects. Used to reject a move (two
+ * changes) all or nothing, and to leave out cascaded changes that can't be reverted.
+ */
+export function dryRunRejects(editor: LexicalEditor | null, changes: Array<{ id: string; before?: string; after?: string }>): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  if (!editor) return result;
+  let blocks: any[] = editor.getEditorState().read(() => $getRoot().getChildren().map($exportNodeJSON));
+  for (const c of changes) {
+    if (!c.before || !c.after) {
+      result.set(c.id, false);
+      continue;
+    }
+    const plan = planRejectRestore(c.before, c.after, blocks);
+    result.set(c.id, plan.ok);
+    if (plan.ok) blocks = applyBlockReplacements(blocks, plan.replacements);
+  }
+  return result;
 }
 
 /** The editor the mounted TrackedChangesPlugin is attached to (the proposed version). */

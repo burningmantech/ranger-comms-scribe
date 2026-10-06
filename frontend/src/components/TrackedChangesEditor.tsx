@@ -12,17 +12,18 @@ import { TransactionManager, Transaction } from '../services/transactionManager'
 import SaveIndicator from './SaveIndicator';
 import SaveStatus from './SaveStatus';
 import DocumentViewBar from './DocumentViewBar';
-import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail, getActiveTrackedChangesEditor, reapplyRejectedChanges } from './editor/plugins/TrackedChangesPlugin';
+import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail, getActiveTrackedChangesEditor, reapplyRejectedChanges, dryRunRejects } from './editor/plugins/TrackedChangesPlugin';
 import ApprovalTracker from './ApprovalTracker';
 import { ReviewPanel, ReviewTab } from './review/ReviewPanel';
 import { UndoToast } from './review/UndoToast';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
 import { locateChange } from './editor/collab/rejectRestore';
 import { describeChange, ChangeDescription } from '../utils/changeDescriptions';
-import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, countOpenEdits, pendingOnly } from '../utils/reviewItems';
+import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, countOpenEdits, pairMoves, pendingOnly } from '../utils/reviewItems';
 import { ApprovalGates } from '../types/content';
 import { originalDocument } from '../utils/originalContent';
 import { buildResolveHints } from '../utils/resolveHints';
+import { FailedRejectGate } from '../utils/failedReject';
 import { claimPendingMarkers, takeClaimedMarkers } from './editor/collab/pendingMarkers';
 import type { CollabMode } from '../services/collabConfig';
 import type { CollabSession } from './editor/collab/YjsCollaboration';
@@ -1319,16 +1320,28 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (result === undefined) return;
 
     // A reject can cascade to dependent changes on the server; the response lists them.
-    const cascadeRejectedIds = status === 'rejected'
+    let cascadeRejectedIds = status === 'rejected'
       ? resolvedChangeIds({ changeId, status, cascadeRejectedIds: result?.cascadeRejectedIds }).slice(1)
       : [];
+
+    let reverted = false;
+    if (isCollab && cascadeRejectedIds.length > 0) {
+      // Collaborative mode: revert the cascaded changes in the shared document too
+      // (newest first). One that can't be reverted (its text was edited since: often a
+      // change whose own reject failed just before) keeps its text in the document, so it
+      // goes back to pending on the server instead of being rejected on paper; it is no
+      // part of this reject (nor of its undo).
+      const outcome = revertCascadedChangesRef.current(cascadeRejectedIds);
+      reverted = outcome.reverted;
+      if (outcome.failedIds.length > 0) {
+        cascadeRejectedIds = cascadeRejectedIds.filter(id => !outcome.failedIds.includes(id));
+        await restorePendingRef.current(outcome.failedIds);
+      }
+    }
     // The sidebar shows them rejected, and an undo of this reject undoes them too.
     if (cascadeRejectedIds.length > 0) onCascadeRejectedRef.current(changeId, cascadeRejectedIds);
 
     if (isCollab && cascadeRejectedIds.length > 0) {
-      // Collaborative mode: revert the cascaded changes in the shared document too
-      // (newest first), and show them as rejected in this sidebar.
-      const reverted = revertCascadedChangesRef.current(cascadeRejectedIds);
       const resolver: ChangeResolver = { id: currentUser.email || currentUser.id, name: currentUser.name };
       for (const id of cascadeRejectedIds) {
         onRemoteChangeResolvedRef.current?.(id, 'rejected', resolver);
@@ -1350,16 +1363,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [putChangeStatus, isCollab, currentUser.email, currentUser.id, currentUser.name]);
 
-  // Collaborative mode: changes whose reject by context failed once. A second reject marks
-  // them rejected without changing the document.
-  const restoreFailedIdsRef = useRef<Set<string>>(new Set());
-  // Set below (after handleChangeDecision); returns true when it changed the document.
-  const revertCascadedChangesRef = useRef<(cascadedIds: string[]) => boolean>(() => false);
+  // Collaborative mode: the change whose reject by context just failed. Rejecting that same
+  // change again right away marks it rejected without changing the document; any other
+  // decision or an undo clears it (utils/failedReject).
+  const failedRejectRef = useRef(new FailedRejectGate());
+  // Set below (after handleChangeDecision): reverts cascaded changes in the document.
+  const revertCascadedChangesRef = useRef<(cascadedIds: string[]) => { reverted: boolean; failedIds: string[] }>(
+    () => ({ reverted: false, failedIds: [] }),
+  );
+  // Set below: puts changes back to pending on the server (cascaded ones the document
+  // couldn't revert).
+  const restorePendingRef = useRef<(ids: string[]) => Promise<void>>(async () => {});
 
   // Handle change decision (approve/reject) — fully local, no network on hot path.
   // Returns false when a collaborative reject couldn't revert the document (the change
   // stays pending).
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject'): boolean => {
+    // A reject of the change whose reject just failed may be forced; any decision clears
+    // the remembered failure, so it never carries over to a later, unrelated action.
+    const forceReject = failedRejectRef.current.begin(changeId);
+
     // The text and format hints for the legacy marker / heuristics paths (utils/resolveHints).
     const change = trackedChanges.find(c => c.id === changeId);
     const { deletedTexts, replacementPairs, insertedTexts, formatChanges } = buildResolveHints(change, { collab: isCollab, getText: getDisplayableText });
@@ -1411,8 +1434,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     //     text, or no editor listening): nothing was changed. Leave the change pending and
     //     say so; a second reject marks it rejected without touching the document.
     if (isCollab && decision === 'reject' && resolveDetail.result?.restored !== true) {
-      if (!restoreFailedIdsRef.current.has(changeId)) {
-        restoreFailedIdsRef.current.add(changeId);
+      if (!forceReject) {
+        failedRejectRef.current.fail(changeId);
         if (pendingResolveCountRef.current <= 0) {
           transactionManager.resumeAfterChangeResolution();
           if (!batchSyncInProgressRef.current) isResolvingChangeRef.current = false;
@@ -1421,7 +1444,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         return false;
       }
     }
-    restoreFailedIdsRef.current.delete(changeId);
 
     // 3. Remove CSS highlight decorations for additions
     removeDecorationsForChange(changeId);
@@ -1505,10 +1527,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // and never start or join a transaction, so the user's own edit in progress is left
   // alone (no pause).
   revertCascadedChangesRef.current = (cascadedIds: string[]) => {
-    const cascaded = cascadedIds
+    const all = cascadedIds
       .map(id => trackedChanges.find(c => c.id === id))
       .filter((c): c is TrackedChange => !!c && !!c.richTextOldValue && !!c.richTextNewValue)
       .sort((x, y) => new Date(y.timestamp).getTime() - new Date(x.timestamp).getTime());
+    // Dry run first: a change that can't be reverted is left out, and so is the other half
+    // of its move (reverting only one half would duplicate or drop the moved text).
+    const failedIds: string[] = [];
+    const plan = dryRunRejects(getActiveTrackedChangesEditor(), all.map(c => ({ id: c.id, before: c.richTextOldValue, after: c.richTextNewValue })));
+    all.forEach(c => { if (plan.get(c.id) === false) failedIds.push(c.id); });
+    for (const card of pairMoves(all)) {
+      if (card.type === 'move' && card.ids.some(id => failedIds.includes(id))) {
+        card.ids.forEach(id => { if (!failedIds.includes(id)) failedIds.push(id); });
+      }
+    }
+    const cascaded = all.filter(c => !failedIds.includes(c.id));
     let reverted = false;
     for (const c of cascaded) {
       const detail: ResolveTrackedChangeDetail = {
@@ -1516,13 +1549,47 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         richTextOldValue: c.richTextOldValue, richTextNewValue: c.richTextNewValue,
       };
       window.dispatchEvent(new CustomEvent('resolve-tracked-change', { detail }));
-      // A cascaded change that can't be located is left as it is (the server has rejected
-      // it already); often the first reject removed its text along with its own.
-      if (detail.result?.restored) reverted = true;
-      else console.warn(`[RESOLVE] cascaded change ${c.id} not reverted: ${detail.result?.reason ?? 'no editor'}`);
+      // Often the first reject removed its text along with its own (then it is found
+      // already reverted). One that can't be located keeps its text: it goes back to pending.
+      if (detail.result?.restored) {
+        reverted = true;
+      } else {
+        failedIds.push(c.id);
+        console.warn(`[RESOLVE] cascaded change ${c.id} not reverted (back to pending): ${detail.result?.reason ?? 'no editor'}`);
+      }
     }
-    cascadedIds.forEach(id => removeDecorationsForChange(id));
-    return reverted;
+    cascadedIds.filter(id => !failedIds.includes(id)).forEach(id => removeDecorationsForChange(id));
+    return { reverted, failedIds };
+  };
+
+  // Put changes back to pending on the server (the undo endpoint), with the current
+  // document, and tell the other users. Used for cascaded changes the document couldn't
+  // revert.
+  restorePendingRef.current = async (ids: string[]) => {
+    const sessionId = localStorage.getItem('sessionId');
+    const doc = editedProposedContentRef.current;
+    const hasDoc = !!doc && isLexicalJson(doc);
+    for (const id of ids) {
+      try {
+        const response = await fetch(`${API_URL}/tracked-changes/${id}/undo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionId}` },
+          body: JSON.stringify({ submissionId: submission.id, ...(hasDoc ? { proposedVersionsRichText: doc } : {}) }),
+        });
+        if (!response.ok) console.error(`Could not set ${id} back to pending: ${response.status}`);
+      } catch (err) {
+        console.error(`Could not set ${id} back to pending:`, err);
+      }
+    }
+    recordStatus(ids, 'pending');
+    const client = webSocketClientRef.current;
+    if (client?.send) {
+      try {
+        client.send({ type: 'change_status_updated', data: { changeId: ids[0], status: 'pending', undoneIds: ids } });
+      } catch (e) {
+        console.error('Failed to broadcast the pending status:', e);
+      }
+    }
   };
 
   // Batch action (Accept all / Reject all). `onResolved` gets the ids actually resolved,
@@ -1934,6 +2001,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
    * insertion is left alone, so the moved text is never lost.
    */
   const decideCard = useCallback((card: ChangeCard<TrackedChange>, decision: 'approve' | 'reject') => {
+    // Collaborative mode: a move is rejected all or nothing. If either half can't be
+    // reverted (its text was edited since), nothing is decided: rejecting only the
+    // deletion would put the text back while the pasted copy stays.
+    if (isCollab && decision === 'reject' && card.type === 'move') {
+      const plan = dryRunRejects(getActiveTrackedChangesEditor(), [card.deletion, card.insertion].map(c => ({
+        id: c.id, before: c.richTextOldValue, after: c.richTextNewValue,
+      })));
+      if (plan.size > 0 && !Array.from(plan.values()).every(Boolean)) {
+        failedRejectRef.current.clear();
+        showErrorToast("Couldn't revert this move automatically: its text has been edited since. It is still pending. Edit the text by hand.");
+        return;
+      }
+    }
     const decided: string[] = [];
     for (const id of card.ids) {
       if (handleChangeDecision(id, decision) === false) break;
@@ -1942,7 +2022,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (decided.length === 0) return;
     recordStatus(decided, decision === 'approve' ? 'approved' : 'rejected', selfResolver);
     showUndoToast(decided, decision, 1);
-  }, [handleChangeDecision, recordStatus, selfResolver, showUndoToast]);
+  }, [handleChangeDecision, recordStatus, selfResolver, showUndoToast, isCollab, showErrorToast]);
 
   /** Accept all / Reject all, through the batch path, in document order (moves deletion first). */
   const handleBulkDecision = useCallback((status: 'approved' | 'rejected') => {
@@ -2045,8 +2125,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       undoIds.forEach(id => next.delete(id));
       return next;
     });
+    failedRejectRef.current.clear();
     undoIds.forEach(id => {
-      restoreFailedIdsRef.current.delete(id);
       cascadeByChangeRef.current.delete(id);
     });
 
