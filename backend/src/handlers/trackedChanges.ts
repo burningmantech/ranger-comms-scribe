@@ -14,6 +14,8 @@ import {
   deleteChange,
   getCascadeDependencies,
   batchCreateTrackedChanges,
+  freshProposedVersions,
+  FORM_FIELD_CHANGE_FIELDS,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
@@ -261,19 +263,6 @@ function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]
     c.status !== 'rejected' &&
     (new Date(c.timestamp).getTime() > at || (!!c.reappliedAt && new Date(c.reappliedAt).getTime() > at))
   );
-}
-
-/**
- * The cached proposed document, unless a change was made after it was written (an older
- * server didn't invalidate it on create, or the write raced a create). Such a copy lacks
- * that change's edit, so the caller recomputes from the changes instead.
- */
-function freshProposedVersions(saved: any, changes: TrackedChange[]): any | null {
-  if (!saved) return null;
-  const savedAt = saved.lastUpdatedAt ? new Date(saved.lastUpdatedAt).getTime() : NaN;
-  if (Number.isNaN(savedAt)) return saved; // undated: keep the old behaviour
-  const newerChange = changes.some(c => new Date(c.timestamp).getTime() > savedAt);
-  return newerChange ? null : saved;
 }
 
 // Get all tracked changes for a submission
@@ -528,8 +517,12 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
 
     // After accepting or rejecting, recompute the submission content from the
     // stored original + non-rejected changes so the persisted state is correct.
+    // Not for a form-field change (Subject, Reply-To, ...): its value isn't the document,
+    // and the recompute would write it (or, on a reject, the as-submitted snapshot) over it.
     try {
-      const recomputed = await recomputeContentAfterResolution(submissionId, updatedChange.field, env);
+      const recomputed = FORM_FIELD_CHANGE_FIELDS.has(updatedChange.field)
+        ? null
+        : await recomputeContentAfterResolution(submissionId, updatedChange.field, env);
       if (recomputed) {
         const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
         if (submission) {
@@ -670,11 +663,12 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
     try {
       const clientRichText: string | undefined =
         typeof revertedRichText === 'string' && revertedRichText.includes('"root"') ? revertedRichText : undefined;
-      // Determine which fields were affected
+      // Determine which document fields were affected (form-field changes such as the
+      // Subject never rewrite the document; see the single-change handler)
       const allChanges = await getTrackedChanges(submissionId, env);
       const affectedFields = [...new Set(
         allChanges.filter((c: any) => changeIds.includes(c.id)).map((c: any) => c.field)
-      )];
+      )].filter((field) => !FORM_FIELD_CHANGE_FIELDS.has(field));
 
       for (const field of affectedFields) {
         const recomputed = await recomputeContentAfterResolution(submissionId, field, env);

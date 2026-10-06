@@ -3281,19 +3281,13 @@ span.tracked-deletion-wrapper {
   margin: 16px 0;
 }
 
-.send-mode-body {
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--text-dark, #1a1a1a);
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-.send-mode-signature {
-  font-size: 14px;
-  color: var(--text-medium, #666);
-  white-space: pre-wrap;
-  font-style: italic;
+/* The email body as sent (sandboxed frame; the email carries its own inline styles) */
+.send-mode-frame {
+  display: block;
+  width: 100%;
+  min-height: 200px;
+  border: 0;
+  background: #fff;
 }
 
 .send-mode-actions {
