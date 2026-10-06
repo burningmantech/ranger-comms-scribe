@@ -246,9 +246,10 @@ async function recomputeContentAfterResolution(
 }
 
 /**
- * True when no non-rejected change in the field is newer than `change`. Only then is the
- * change's own snapshot (richTextNewValue) the whole proposed document; otherwise it lacks
- * the newer edits.
+ * True when no non-rejected change in the field is newer than `change`, and no rejection
+ * of another change was undone after it was made. Only then is the change's own snapshot
+ * (richTextNewValue) the whole proposed document; otherwise it lacks the newer edits, or
+ * the text an undone reject put back (the editor's state, sent with the decision, has it).
  */
 function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]): boolean {
   const at = new Date(change.timestamp).getTime();
@@ -256,7 +257,7 @@ function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]
     c.id !== change.id &&
     c.field === change.field &&
     c.status !== 'rejected' &&
-    new Date(c.timestamp).getTime() > at
+    (new Date(c.timestamp).getTime() > at || (!!c.reappliedAt && new Date(c.reappliedAt).getTime() > at))
   );
 }
 
@@ -781,6 +782,9 @@ export async function getChangeHistoryHandler(request: CustomRequest, env: any):
 
 // Undo a change decision
 export async function undoChangeHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the stored document with the request's start, like the status handlers: a
+  // change created while this request runs is then newer than it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { changeId } = request.params!;
 
   if (!request.user) {
@@ -824,14 +828,25 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
     // longer resolved — it needs to be re-accepted or rejected.
 
     // undoChange drops the stored proposed version (to be recomputed). The editor sends
-    // its document after the undo (an undone reject re-applies the change's text), so
-    // store that instead: in collaborative mode the document is the source of truth.
+    // its document after the undo (an undone reject re-applies the change's text, which
+    // no change record holds), so store that instead, as the status handlers store the
+    // editor's state sent with a reject (revertedRichText). In collaborative mode the
+    // document is the source of truth. Without it, GET recomputes from the changes
+    // (getCurrentSnapshotChange accounts for the re-apply via reappliedAt).
     if (typeof proposedVersionsRichText === 'string' && proposedVersionsRichText.includes('"root"')) {
+      let proposedVersionsContent: string | undefined;
+      try {
+        proposedVersionsContent = extractPlainTextFromLexicalJson(JSON.parse(proposedVersionsRichText));
+      } catch {
+        proposedVersionsContent = undefined;
+      }
       await putObject(`proposed_versions/${submissionId}`, {
         submissionId,
         proposedVersionsRichText,
+        ...(proposedVersionsContent !== undefined ? { proposedVersionsContent } : {}),
+        proposedVersionsFields: [updatedChange.field],
         lastUpdatedBy: request.user.id,
-        lastUpdatedAt: new Date().toISOString(),
+        lastUpdatedAt: requestStartedAt,
       }, env);
     }
 

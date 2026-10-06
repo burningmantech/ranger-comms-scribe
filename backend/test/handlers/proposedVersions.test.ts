@@ -5,6 +5,7 @@ import {
   getTrackedChangesHandler,
   batchCreateHandler,
   batchUpdateStatusHandler,
+  undoChangeHandler,
 } from '../../src/handlers/trackedChanges';
 import { CustomRequest } from '../../src/types';
 import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
@@ -78,6 +79,15 @@ async function getProposed(env: any, submissionId: string) {
     content: body.proposedVersions?.content as string | undefined,
     richText: body.proposedVersionsRichText?.content as string | undefined,
   };
+}
+
+/** Undo a decision, sending the editor's document after it (as the review sidebar does). */
+async function undo(env: any, submissionId: string, changeId: string, docText?: string) {
+  await tick();
+  const response = await undoChangeHandler(request({ changeId }, admin, {
+    submissionId, ...(docText !== undefined ? { proposedVersionsRichText: lexical(docText) } : {}),
+  }), env);
+  expect(response.status).toBe(200);
 }
 
 describe('proposed_versions cache', () => {
@@ -229,5 +239,58 @@ describe('proposed_versions cache', () => {
     expect(submission.richTextContent).toBe(lexical('Hello world'));
     const proposed = await getObject<any>(`proposed_versions/${submissionId}`, env);
     expect(proposed.proposedVersionsRichText).toBe(lexical('Hello world'));
+  });
+  describe('after an undone reject', () => {
+    it('keeps the re-applied text when a change is made after the undo', async () => {
+      const { env, submissionId } = await setup();
+      const c1 = await createChange(env, submissionId, 'Hello world', 'Hello big world');
+      await resolve(env, submissionId, c1, 'rejected', 'Hello world');
+      // The editor re-applies "big" and sends its document with the undo
+      await undo(env, submissionId, c1, 'Hello big world');
+      expect((await getProposed(env, submissionId)).richText).toBe(lexical('Hello big world'));
+
+      await createChange(env, submissionId, 'Hello big world', 'Hello big world again');
+      // The new change dropped the stored copy; GET recomputes from the changes
+      expect(await env.STORE.backing.get(`proposed_versions/${submissionId}`)).toBeNull();
+
+      const proposed = await getProposed(env, submissionId);
+      expect(proposed.richText).toBe(lexical('Hello big world again'));
+      expect(proposed.content).toBe('Hello big world again');
+    });
+
+    it('stores the document sent with the undo, dated so a later change wins', async () => {
+      const { env, submissionId } = await setup();
+      const c1 = await createChange(env, submissionId, 'Hello world', 'Hello big world');
+      await resolve(env, submissionId, c1, 'rejected', 'Hello world');
+      await undo(env, submissionId, c1, 'Hello big world');
+
+      clearMemoryCache();
+      const stored = await getObject<any>(`proposed_versions/${submissionId}`, env);
+      expect(stored.proposedVersionsRichText).toBe(lexical('Hello big world'));
+      expect(stored.proposedVersionsContent).toBe('Hello big world');
+      const change = await getObject<any>(`tracked-changes/submission/${submissionId}/${c1}`, env);
+      expect(change.status).toBe('pending');
+      expect(change.reappliedAt).toBeDefined();
+      expect(new Date(stored.lastUpdatedAt).getTime()).toBeLessThanOrEqual(new Date(change.reappliedAt).getTime());
+    });
+
+    it("doesn't let an accept store a snapshot made while the change was rejected", async () => {
+      const { env, submissionId } = await setup();
+      const c1 = await createChange(env, submissionId, 'Hello world', 'Hello big world');
+      await resolve(env, submissionId, c1, 'rejected', 'Hello world');
+      // c2 is made while c1 is rejected: its snapshot has no "big"
+      const c2 = await createChange(env, submissionId, 'Hello world', 'Hello world again');
+      await undo(env, submissionId, c1, 'Hello big world again');
+      expect((await getProposed(env, submissionId)).richText).toBe(lexical('Hello big world again'));
+
+      // Accepting c2 (the newest change) sends the editor's state, which has "big" again
+      await resolve(env, submissionId, c2, 'approved', 'Hello big world again');
+
+      const proposed = await getProposed(env, submissionId);
+      expect(proposed.richText).toBe(lexical('Hello big world again'));
+      clearMemoryCache();
+      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+      expect(submission.richTextContent).toBe(lexical('Hello big world again'));
+    });
   });
 });

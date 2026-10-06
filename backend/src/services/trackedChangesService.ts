@@ -23,6 +23,12 @@ export interface TrackedChange {
   rejectedByName?: string;
   approvedAt?: string;
   rejectedAt?: string;
+  /**
+   * When an undo of this change's rejection put its text back in the document. Changes
+   * made between the rejection and the undo have snapshots without that text, so an
+   * accept doesn't store their snapshot as the document (isNewestActiveChange).
+   */
+  reappliedAt?: string;
   isIncremental?: boolean;
   previousVersionId?: string;
   completeProposedVersion?: string; // Store the complete proposed version for incremental changes
@@ -1049,7 +1055,9 @@ export const undoChange = async (
       return null;
     }
     
-    // Reset the change status to pending and clear approval/rejection info
+    // Reset the change status to pending and clear approval/rejection info. Undoing a
+    // rejection puts the change's text back (the editor re-applies it): snapshots of
+    // changes made while it was rejected lack it (see isNewestActiveChange).
     const updatedChange: TrackedChange = {
       ...targetChange,
       status: 'pending',
@@ -1058,7 +1066,8 @@ export const undoChange = async (
       rejectedBy: undefined,
       rejectedByName: undefined,
       approvedAt: undefined,
-      rejectedAt: undefined
+      rejectedAt: undefined,
+      ...(targetChange.status === 'rejected' ? { reappliedAt: new Date().toISOString() } : {}),
     };
     
     // Save the updated change

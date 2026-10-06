@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffCharsOptimized, diffWords } from '../utils/diffAlgorithm';
-import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, replaceFirstInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical, stripDeletedTextNodes } from '../utils/lexicalUtils';
+import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
 
 import LexicalEditorComponent from './editor/LexicalEditor';
@@ -1227,33 +1227,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     console.log('Edit mode change requested but collaborative editing is always on');
   }, []);
 
-  // Dedicated save function for reverted content.
-  // Saves proposed content directly via tracked-changes API instead of onSave,
-  // which avoids the race condition where handleSave's setSubmission(savedSubmission)
-  // overwrites the optimistic rejection with stale data from the server.
-  const saveRevertedContent = useCallback(async (revertedContent: string) => {
-    try {
-      const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) throw new Error('Not authenticated');
-
-      await fetch(`${API_URL}/tracked-changes/submission/${submission.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionId}`,
-        },
-        body: JSON.stringify({
-          proposedVersionsRichText: revertedContent,
-        }),
-      });
-
-      // Update the last saved content after successful save
-      setLastSavedProposedContent(revertedContent);
-    } catch (error) {
-      console.error('❌ Failed to save reverted content:', error);
-    }
-  }, [submission.id]);
-
   const handleProposedEditSubmit = useCallback(async () => {
     const currentContent = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
     const hasActualChanges = editedProposedContent !== currentContent;
@@ -1290,132 +1263,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       console.error('❌ Save failed:', error);
     }
   }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email, isCollab]);
-
-  // Helper function to revert a change in the content
-  const revertChangeInContent = useCallback((change: TrackedChange) => {
-    // Use ref for current content so concurrent calls see the latest value
-    const currentContent = editedProposedContentRef.current ||
-      editedProposedContent ||
-      submission.proposedVersions?.richTextContent ||
-      submission.richTextContent ||
-      submission.content || '';
-
-    // Original content for position context when restoring deletions
-    const originalContent = submission.richTextContent || submission.content || '';
-
-    // Try to revert using rich text values first, then fall back to plain text
-    const valueToRevert = change.richTextNewValue !== undefined ? change.richTextNewValue : change.newValue;
-    const revertToValue = change.richTextOldValue !== undefined ? change.richTextOldValue : change.oldValue;
-
-    if (valueToRevert === undefined || revertToValue === undefined) {
-      return;
-    }
-
-    const applyRevert = (revertedContent: string) => {
-      // Update ref immediately so concurrent calls see the latest content
-      editedProposedContentRef.current = revertedContent;
-      setEditedProposedContent(revertedContent);
-      if (remoteUpdateFunctionRef.current) {
-        remoteUpdateFunctionRef.current(revertedContent);
-      }
-      setTimeout(() => { saveRevertedContent(revertedContent); }, 100);
-    };
-
-    // Ellipsis separator used by backend to join disjoint change segments
-    const SEGMENT_SEPARATOR = ' \u2026 ';
-
-    // For incremental changes, surgically revert only the specific text
-    // that this change introduced, leaving other changes intact.
-    // NOTE: Deletion restoration is handled separately by the 'resolve-tracked-change'
-    // event (which replaces DeletedTextNodes). This function only needs to handle
-    // removing inserted text from the current document.
-    if (change.isIncremental) {
-      // Extract the text before and after this change was applied so we
-      // can compute what was actually added/removed by this specific change.
-      const changeOldText = getDisplayableText(revertToValue);
-      const changeNewText = getDisplayableText(valueToRevert);
-
-      if (isLexicalJson(currentContent)) {
-        // Strip DeletedTextNodes from the JSON so text is continuous for
-        // accurate search/replace. DeletedTextNodes split text across
-        // multiple nodes, preventing replaceFirstInLexical from finding
-        // junction text that spans a deletion boundary.
-        const cleanedContent = stripDeletedTextNodes(currentContent);
-
-        // Diff the change's old vs new to find the specific insertions/deletions
-        const segments = diffCharsOptimized(changeOldText, changeNewText);
-        let revertedContent = cleanedContent;
-        const CTX = 20;
-
-        // Track offsets in both old and new text independently.
-        // equal segments advance both; insert advances new only; delete advances old only.
-        let oldOffset = 0;
-        let newOffset = 0;
-        for (const seg of segments) {
-          if (seg.type === 'equal') {
-            oldOffset += seg.value.length;
-            newOffset += seg.value.length;
-          } else if (seg.type === 'insert') {
-            // Get surrounding context from the new text for precise matching
-            const before = changeNewText.slice(Math.max(0, newOffset - CTX), newOffset);
-            const after = changeNewText.slice(
-              newOffset + seg.value.length,
-              newOffset + seg.value.length + CTX,
-            );
-
-            // Try context-aware replacement first (before+inserted+after → before+after)
-            if (before.length > 0 || after.length > 0) {
-              const searchStr = before + seg.value + after;
-              const replaceStr = before + after;
-              const result = replaceFirstInLexical(revertedContent, searchStr, replaceStr);
-              if (result !== revertedContent) {
-                revertedContent = result;
-                newOffset += seg.value.length;
-                continue;
-              }
-            }
-
-            // Fallback: replace just the inserted text (first occurrence only)
-            if (seg.value.trim()) {
-              revertedContent = replaceFirstInLexical(revertedContent, seg.value, '');
-            }
-            newOffset += seg.value.length;
-          } else if (seg.type === 'delete') {
-            // Deletions are primarily handled by the resolve-tracked-change event
-            // which replaces DeletedTextNodes with TextNodes. However, if
-            // no DeletedTextNode exists, restore using context-aware placement.
-            const before = changeOldText.slice(Math.max(0, oldOffset - CTX), oldOffset);
-            const afterDel = changeOldText.slice(
-              oldOffset + seg.value.length,
-              oldOffset + seg.value.length + CTX,
-            );
-            if (before.length > 0 && afterDel.length > 0) {
-              const junction = before + afterDel;
-              const restored = before + seg.value + afterDel;
-              const result = replaceFirstInLexical(revertedContent, junction, restored);
-              if (result !== revertedContent) {
-                revertedContent = result;
-              }
-            }
-            oldOffset += seg.value.length;
-          }
-        }
-
-        // Always apply if we cleaned DeletedTextNodes or if the diff changed content
-        if (revertedContent !== currentContent) {
-          applyRevert(revertedContent);
-        }
-      }
-    } else {
-      // For non-incremental changes, revert entire content to old value
-      const currentText = getDisplayableText(currentContent);
-      const newText = getDisplayableText(valueToRevert);
-
-      if (currentText === newText) {
-        applyRevert(getRichTextContent(revertToValue));
-      }
-    }
-  }, [editedProposedContent, submission, getDisplayableText, getRichTextContent, saveRevertedContent]);
 
   // PUT one change's status to the backend. Resolves to the response body (null when it
   // has none), or undefined when the request failed (already reported to the user).
