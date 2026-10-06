@@ -404,41 +404,17 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  // Update the submission
+  // Update the submission. proposedVersions is neither stored in the record nor written
+  // to proposed_versions/<id> here: it lives only in that object, whose one writer from a
+  // client is PUT /tracked-changes/submission/:id. Bodies here often carry a copy loaded
+  // earlier (the submission list, a stale record), which would hide every edit since.
+  const { proposedVersions: _ignoredProposedVersions, ...fieldUpdates } = updates;
   const updatedSubmission = {
     ...submission,
-    ...updates,
+    ...fieldUpdates,
     updatedAt: new Date().toISOString()
   };
-
-  // If proposedVersions are included, also save them to the tracked changes system
-  if (updates.proposedVersions) {
-    try {
-      const { putObject } = await import('../services/cacheService');
-      const proposedVersionsData = {
-        submissionId: id,
-        proposedVersionsRichText: updates.proposedVersions.richTextContent,
-        proposedVersionsContent: updates.proposedVersions.content,
-        lastUpdatedBy: user.id,
-        lastUpdatedAt: new Date().toISOString()
-      };
-      
-      console.log('🔍 Content submission handler - saving proposed versions:', {
-        submissionId: id,
-        hasRichTextContent: !!updates.proposedVersions.richTextContent,
-        richTextContentLength: updates.proposedVersions.richTextContent?.length,
-        richTextContentIsLexical: updates.proposedVersions.richTextContent ? updates.proposedVersions.richTextContent.includes('"root"') : false,
-        hasContent: !!updates.proposedVersions.content,
-        contentLength: updates.proposedVersions.content?.length,
-        richTextContentPreview: updates.proposedVersions.richTextContent?.substring(0, 100)
-      });
-      
-      await putObject(`proposed_versions/${id}`, proposedVersionsData, env);
-      console.log('✅ Proposed versions saved from content submission update');
-    } catch (error) {
-      console.warn('Failed to save proposed versions:', error);
-    }
-  }
+  delete (updatedSubmission as any).proposedVersions;
 
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);

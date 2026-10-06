@@ -423,6 +423,9 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
 
 // Approve or reject a tracked change
 export async function updateChangeStatusHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { changeId } = request.params!;
 
   if (!request.user) {
@@ -557,7 +560,7 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
             proposedVersionsContent: submission.content,
             proposedVersionsRichText: submission.richTextContent,
             proposedVersionsFields: [updatedChange.field],
-            lastUpdatedAt: new Date().toISOString(),
+            lastUpdatedAt: requestStartedAt,
             lastUpdatedBy: request.user.id,
           }, env);
         }
@@ -579,6 +582,9 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
 // editor's Lexical state after all the reverts; like the single-change handler, it is
 // stored instead of the server's recomputed rich text when the batch isn't a plain accept.
 export async function batchUpdateStatusHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -692,7 +698,7 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
               proposedVersionsContent: submission.content,
               proposedVersionsRichText: submission.richTextContent,
               proposedVersionsFields: affectedFields,
-              lastUpdatedAt: new Date().toISOString(),
+              lastUpdatedAt: requestStartedAt,
               lastUpdatedBy: 'batch',
             }, env);
           }
@@ -820,6 +826,9 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
 
 // Update proposed versions for a submission
 export async function updateProposedVersionsHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { submissionId } = request.params!;
 
   if (!request.user) {
@@ -855,7 +864,7 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
       proposedVersionsRichText,
       proposedVersionsContent,
       lastUpdatedBy: request.user.id,
-      lastUpdatedAt: new Date().toISOString()
+      lastUpdatedAt: requestStartedAt
     };
 
     console.log('🔍 updateProposedVersionsHandler - saving data:', {

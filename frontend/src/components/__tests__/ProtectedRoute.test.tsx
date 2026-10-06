@@ -12,13 +12,22 @@ const signIn = (userType: UserType, extra: Record<string, unknown> = {}) => {
 
 const Where: React.FC = () => <div data-testid="path">{useLocation().pathname}</div>;
 
+// `/` redirects to /requests, as in App. It counts its renders and throws after a few, so a
+// redirect loop fails the test at once instead of hanging it.
+let homeRenders = 0;
+const Home: React.FC = () => {
+  homeRenders += 1;
+  if (homeRenders > 10) throw new Error('Redirect loop between / and a protected page');
+  return <Navigate to="/requests" replace />;
+};
+
 // The app's routes around a protected page: `/` and the catch-all redirect to /requests,
 // so a protected page that redirected to `/` would loop.
 function renderAt(path: string, allowedRoles?: UserType[]) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/" element={<Navigate to="/requests" replace />} />
+        <Route path="/" element={<Home />} />
         <Route path="/login" element={<div>Login page</div>} />
         <Route
           path="/requests"
@@ -35,13 +44,12 @@ describe('ProtectedRoute', () => {
   let consoleError: jest.SpyInstance;
 
   beforeEach(() => {
+    homeRenders = 0;
     localStorage.clear();
     consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    // A redirect loop shows up as React's "Maximum update depth exceeded" error
-    expect(consoleError).not.toHaveBeenCalledWith(expect.stringMatching(/Maximum update depth/), expect.anything());
     consoleError.mockRestore();
     localStorage.clear();
   });
