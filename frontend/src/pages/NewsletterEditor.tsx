@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { API_URL } from '../config';
-import LexicalEditorComponent from '../components/editor/LexicalEditor';
+import RichTextField from '../components/newsletter/RichTextField';
 import { EditionPatch, NewsletterApiError, newsletterService } from '../services/newsletterService';
 import {
   CalendarRow,
@@ -446,6 +446,9 @@ export const NewsletterEditor: React.FC = () => {
         {actionMessage && (
           <div className={actionMessage.kind === 'error' ? 'field-error' : 'nle-ok'} role={actionMessage.kind === 'error' ? 'alert' : 'status'}>{actionMessage.text}</div>
         )}
+        {edition.status === 'approved' && (
+          <div className="nle-muted">Approved as it is now. Any edit sends it back for approval.</div>
+        )}
         {edition.status === 'approved' && !permissions.announceConfigured && (
           <div className="nle-muted">Sending is not configured in this environment.</div>
         )}
@@ -502,13 +505,13 @@ export const NewsletterEditor: React.FC = () => {
                 <div className="form-field">
                   <label>Introduction (optional)</label>
                   <div className="nl-blurb-editor">
-                    <LexicalEditorComponent key={`intro-${editorKey}`} initialContent={draft.intro || ''} onChange={(_e, json) => setField('intro', json)} readOnly={locked} autoFocus={false} currentUserId={userId} canCreateSuggestions={false} placeholder="A few words above the first section" />
+                    <RichTextField key={`intro-${editorKey}`} value={draft.intro || ''} onChange={(json) => setField('intro', json)} readOnly={locked} userId={userId} placeholder="A few words above the first section" />
                   </div>
                 </div>
                 <div className="form-field">
                   <label>Footnotes (optional)</label>
                   <div className="nl-blurb-editor">
-                    <LexicalEditorComponent key={`foot-${editorKey}`} initialContent={draft.footnotes || ''} onChange={(_e, json) => setField('footnotes', json)} readOnly={locked} autoFocus={false} currentUserId={userId} canCreateSuggestions={false} placeholder="* The Ranger Council is…" />
+                    <RichTextField key={`foot-${editorKey}`} value={draft.footnotes || ''} onChange={(json) => setField('footnotes', json)} readOnly={locked} userId={userId} placeholder="* The Ranger Council is…" />
                   </div>
                 </div>
               </div>

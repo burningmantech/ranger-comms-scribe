@@ -13,6 +13,15 @@ import { renderContentForEmail, escapeHtml, safeUrl, EMAIL_FONT_FAMILY, EMAIL_MA
 export const DEFAULT_EDITION_TITLE = 'Black Rock Ranger News';
 export const DEFAULT_EDITION_TAGLINE = 'All the Dust that Fits Under Your Hat';
 export const SUBJECT_SERIES = 'Ranger News';
+/** Around parts that only make sense in the email (stripped by webCopy). */
+const EMAIL_ONLY_START = '<!--email-only-->';
+const EMAIL_ONLY_END = '<!--/email-only-->';
+
+/** The sent HTML for the web page: without the email-only parts. */
+export function webCopy(html: string): string {
+  return html.replace(/<!--email-only-->[\s\S]*?<!--\/email-only-->/g, '');
+}
+
 /** Gmail cuts messages off ("[Message clipped]") a little past 100 KB of HTML. */
 export const GMAIL_CLIP_WARNING_BYTES = 95 * 1024;
 
@@ -316,7 +325,8 @@ export function buildNewsletterEmail(edition: NewsletterEdition, ctx: Newsletter
 
   const rows: string[] = [];
   if (webUrl) {
-    rows.push(row(`<div style="font-size:12px;line-height:1.4;color:${COLORS.muted};text-align:center;"><a href="${escapeHtml(webUrl)}" style="color:${COLORS.muted};text-decoration:underline;">View this edition in your browser</a></div>`, `12px ${CONTENT_PADDING}px 0 ${CONTENT_PADDING}px`));
+    // Marked so the web copy can drop it (publicNews.ts): a page needn't link to itself
+    rows.push(EMAIL_ONLY_START + row(`<div style="font-size:12px;line-height:1.4;color:${COLORS.muted};text-align:center;"><a href="${escapeHtml(webUrl)}" style="color:${COLORS.muted};text-decoration:underline;">View this edition in your browser</a></div>`, `12px ${CONTENT_PADDING}px 0 ${CONTENT_PADDING}px`) + EMAIL_ONLY_END);
   }
   rows.push(row(
     `<div style="${font}font-size:46px;line-height:1.05;font-weight:bold;color:${COLORS.masthead};text-align:center;">${mastheadLines(title).map(escapeHtml).join('<br>')}</div>`

@@ -267,6 +267,8 @@ describe('newsletter editions', () => {
     expect(page.status).toBe(200);
     expect(page.body.html).toContain('<meta name="robots" content="noindex, nofollow">');
     expect(page.body.html).toContain('Mark your calendar!');
+    expect(page.body.html).not.toContain('View this edition in your browser');
+    expect(html).toContain('View this edition in your browser');
     expect((await call(publicRouter, env, 'GET', '/api/public/newsletter/12', null)).status).toBe(404);
     const doc = await call(publicRouter, env, 'GET', `/api/public/news/${slug}`, null);
     expect(doc.status).toBe(200);
@@ -305,6 +307,15 @@ describe('newsletter editions', () => {
     expect(res.body.edition.sections[0].heading).toBe('Claim by July 12!');
     expect(res.body.edition.sections[0].id).toBe(sectionId);
     expect(res.body.sources[sectionId].changed).toBe(false);
+  });
+
+  it('keeps the version and the approval when a save changes nothing', async () => {
+    const created = (await nl(env, 'POST', '/editions', CADRE, { subject: 'Same' })).body.edition;
+    await nl(env, 'POST', `/editions/${created.id}/override-approve`, ADMIN, { reason: 'ok' });
+    const res = await nl(env, 'PUT', `/editions/${created.id}`, CADRE, { version: created.version, subject: 'Same', sections: [], calendar: created.calendar, calendarHidden: [] });
+    expect(res.status).toBe(200);
+    expect(res.body.edition.version).toBe(created.version);
+    expect(res.body.edition.status).toBe('approved');
   });
 
   it('lets an Admin or the Communications Manager override, with a reason', async () => {

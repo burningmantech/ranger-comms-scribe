@@ -148,6 +148,22 @@ Content submissions go through a multi-stage approval process:
      broadcasts `comment_resolved`). The review sidebar moves resolved threads to History, with Reopen
    - `PUT /content/submissions/:id` ignores `comments` and `approvals` (their own endpoints own them)
 
+### Newsletter ("Black Rock Ranger News")
+
+See `docs/plans/2026-10-06-newsletter-design.md`.
+
+- Requests with the `newsletter` audience carry a newsletter item (`newsletter`), `keyDates` and `writingHelp`;
+  read audiences through `audienceKeys()` (`backend/src/utils/audiences.ts`), which also understands the older
+  label strings in `formFields.audience`. PUT `/submissions/:id` ignores these fields; use
+  `PATCH /submissions/:id/newsletter`
+- Editions (`newsletter_editions/<id>`) are built, approved and sent through `/api/newsletter`
+  (`services/newsletterService.ts`); the email, preview and web page all come from `services/newsletterEmail.ts`
+- Every save bumps the edition's `version`; approvals only count for the version they were given on, and a save
+  must name the version it edited (409 otherwise)
+- Public pages (no session) are under `/api/public` and the SPA routes `/newsletter`, `/newsletter/:n`, `/news/:slug`
+- A newsletter-only request can't be sent on its own (`send-email` returns 409): it goes out in an edition
+- In the frontend, use `components/newsletter/RichTextField.tsx` for a Lexical editor bound to a form value
+
 ### Real-time Collaboration
 
 WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST API:

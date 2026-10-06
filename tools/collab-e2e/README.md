@@ -51,6 +51,13 @@ node approval-flow.js     # the status follows the tracked changes, live: all ap
                           # edit -> back to in_review, Send hidden; a comment resolved moves to History for
                           # the other user ("All caught up"), Reopen brings it back. Seeds dev@localhost as a
                           # Comms Cadre member and council manager: needs the member.js backend, run it last
+node newsletter.js        # the newsletter: a Member's request with a newsletter item (blurb, photo, link,
+                          # Read more, key date); a second asks Comms to write the blurb; both approved; dev-user2
+                          # builds edition #N from the tray, writes the blurb, adds a photo section and a calendar
+                          # row (autosave), approves; the admin overrides; reopening keeps it approved; test send,
+                          # send; signed out, the archive, edition and Read more pages; the review page says
+                          # where it went. Needs ANNOUNCE_EMAIL_TO and a fake SES (below). PHOTO=<a .jpg> to
+                          # upload photos; E2E_SHOTS=<dir> for the screenshots
 ```
 
 `STORE_LATENCY_MS=<n>` (with `STORE_DRIVER=memory`) delays every store call by a random 0..n ms, like S3 round
@@ -85,4 +92,15 @@ To run against a second stack on other ports (e.g. a second checkout running in 
 
 ```bash
 E2E_APP_URL=http://localhost:3002 E2E_API_URL=http://localhost:8082/api node review-ui.js
+```
+
+For `newsletter.js`, point SES at a fake so nothing is sent: any local HTTP server that answers
+`POST /v2/email/outbound-emails` with `{"MessageId":"x"}` (and records the body if you want to read the email), and
+fake credentials so a real SES call could not succeed either:
+
+```bash
+ANNOUNCE_EMAIL_TO=announce-test@example.org AWS_ENDPOINT_URL_SESV2=http://localhost:4599 \
+  AWS_ACCESS_KEY_ID=fake AWS_SECRET_ACCESS_KEY=fake AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_REGION=us-east-1 \
+  STORE_DRIVER=memory DEV_BYPASS_AUTH=true PUBLIC_URL=http://localhost:8080/api \
+  FRONTEND_URL=http://localhost:3000 GOOGLE_CLIENT_ID=x TURNSTILESECRET=x npm run dev
 ```

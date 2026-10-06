@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import LexicalEditorComponent from '../editor/LexicalEditor';
+import RichTextField from './RichTextField';
 import { NewsletterSection, ReadMoreKind, SectionSource } from '../../types/newsletter';
 import PhotoListEditor from './PhotoListEditor';
 import LinksEditor from './LinksEditor';
@@ -121,14 +121,12 @@ export const SectionCard: React.FC<SectionCardProps> = ({
           <div className="form-field">
             <label>Text</label>
             <div className="nl-blurb-editor">
-              <LexicalEditorComponent
+              <RichTextField
                 key={editorKey}
-                initialContent={section.body}
-                onChange={(_editor, json) => set({ body: json })}
+                value={section.body}
+                onChange={(json) => set({ body: json })}
                 readOnly={disabled}
-                autoFocus={false}
-                currentUserId={userId}
-                canCreateSuggestions={false}
+                userId={userId}
                 placeholder="A few lines. Readers who want more follow Read more."
               />
             </div>

@@ -2,6 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { buildAnnouncementEmail } from '../services/announcementEmail';
+import { webCopy } from '../services/newsletterEmail';
 import { getPublishedDocument, getSentEdition, listSentEditions } from '../services/newsletterService';
 
 /**
@@ -29,7 +30,7 @@ router.get('/newsletter/:number', async (request: Request, env: Env) => {
     number: sent.number,
     subject: sent.subject,
     sentAt: sent.sentAt,
-    html: withNoindexMeta(sent.html),
+    html: withNoindexMeta(webCopy(sent.html)),
   }, { headers: NOINDEX });
 });
 

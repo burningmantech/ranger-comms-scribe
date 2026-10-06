@@ -279,6 +279,7 @@ export async function updateEdition(id: string, patch: any, user: User, env: Env
     assertEditable(edition);
     assertVersion(edition, patch?.version);
     if (!EDITABLE_FIELDS.some((f) => patch && f in patch)) return edition;
+    const before = JSON.stringify(EDITABLE_FIELDS.map((f) => edition[f] ?? null));
 
     try {
       if ('number' in patch) {
@@ -306,6 +307,8 @@ export async function updateEdition(id: string, patch: any, user: User, env: Env
       throw err;
     }
 
+    // A save that changes nothing keeps the version (and so any approval of it)
+    if (JSON.stringify(EDITABLE_FIELDS.map((f) => edition[f] ?? null)) === before) return edition;
     touch(edition, user);
     await putObject(editionKey(edition.id), edition, env);
     return edition;

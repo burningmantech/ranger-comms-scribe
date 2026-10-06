@@ -1,5 +1,5 @@
 import React from 'react';
-import LexicalEditorComponent from '../editor/LexicalEditor';
+import RichTextField from './RichTextField';
 import { NewsletterRequest, ReadMoreKind, isBlankRichText } from '../../types/newsletter';
 import PhotoListEditor from './PhotoListEditor';
 import LinksEditor, { filledLinks, linksError } from './LinksEditor';
@@ -67,15 +67,13 @@ export const NewsletterItemFields: React.FC<NewsletterItemFieldsProps> = ({
         </div>
         {!helpWithBlurb && (
           <div className="nl-blurb-editor">
-            <LexicalEditorComponent
+            <RichTextField
               key={editorKey}
-              initialContent={value.blurb || ''}
-              onChange={(_editor, json) => set({ blurb: isBlankRichText(json) ? '' : json })}
+              value={value.blurb || ''}
+              onChange={(json) => set({ blurb: isBlankRichText(json) ? '' : json })}
               placeholder="e.g. Everyone camping with Rangers needs to register by July 12th, including folks staying at Tokyo pre or post event."
               readOnly={disabled}
-              autoFocus={false}
-              currentUserId={userId}
-              canCreateSuggestions={false}
+              userId={userId}
             />
           </div>
         )}
