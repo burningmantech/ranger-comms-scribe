@@ -104,15 +104,23 @@ describe('alex-dev (dev profile)', () => {
     );
   });
 
-  test('service runs one task on FARGATE_SPOT only, with a public IP, 0%/100% deployments', () => {
+  test('service runs one task on FARGATE_SPOT only, with a public IP, overlapping 100%/200% deployments', () => {
     compute.hasResourceProperties('AWS::ECS::Service', {
       DesiredCount: 1,
       CapacityProviderStrategy: [{ CapacityProvider: 'FARGATE_SPOT', Weight: 1 }],
-      DeploymentConfiguration: Match.objectLike({ MinimumHealthyPercent: 0, MaximumPercent: 100 }),
+      DeploymentConfiguration: Match.objectLike({ MinimumHealthyPercent: 100, MaximumPercent: 200 }),
       NetworkConfiguration: { AwsvpcConfiguration: Match.objectLike({ AssignPublicIp: 'ENABLED' }) },
     });
     persistent.hasResourceProperties('AWS::ECS::ClusterCapacityProviderAssociations', {
       CapacityProviders: Match.arrayWith(['FARGATE_SPOT']),
+    });
+  });
+
+  test('health checks every 5 s', () => {
+    compute.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', {
+      HealthCheckIntervalSeconds: 5,
+      HealthCheckTimeoutSeconds: 4,
+      HealthyThresholdCount: 2,
     });
   });
 

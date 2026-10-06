@@ -189,8 +189,14 @@ to a different account, and each prints its plan before acting.
 |---|---|
 | `bin/dev-up` | Checks the Turnstile parameter, pushes a first `:dev` image if none exists, then runs `cdk deploy scribe-dev-compute --exclusively`. About 5 minutes. |
 | `bin/dev-down` | `cdk destroy scribe-dev-compute --exclusively`. The ALB, task and their public IPv4 addresses go away; data stays in S3. |
-| `bin/dev-deploy` | Builds `comms-scribe:local` (linux/amd64), then runs `bin/deploy staging` with `CI=true`, `AWS_ECR_IMAGE_NAME=<repo>:dev` and the dev cluster and service, and forces a new ECS deployment. Then builds the frontend and runs `bin/publish-frontend`. |
-| `bin/dev-deploy --backend-only` / `--frontend-only` | Just one half. |
+| `bin/dev-deploy` | Builds `comms-scribe:local` (linux/amd64), then runs `bin/deploy staging` with `CI=true`, `AWS_ECR_IMAGE_NAME=<repo>:dev` and the dev cluster and service, and forces a new ECS deployment. The frontend builds alongside and is published (`bin/publish-frontend`) once the new task has taken over. A half whose files haven't changed since its last deploy from this machine is skipped (fingerprints in `~/.cache/comms-scribe/`). About 2–3 minutes for both. |
+| `bin/dev-deploy --all` / `--backend-only` / `--frontend-only` | Both halves regardless of changes (e.g. after a deploy from elsewhere), or just one. |
+
+**No outage on dev deploys.** Dev sets `overlapDeploys` (ECS min 100% / max 200%) and 5-second health checks
+(`infra/config/alex-dev.ts`): the new task starts beside the old one, traffic moves once it passes two checks, and the old
+task drains for 10 seconds and stops. For those seconds two tasks run, each with its own rooms and cache; clients of the old
+one reconnect to the new one, as after any restart. Staging and production still stop the old task first (about 2 minutes
+with no backend), as PRD §7.2 specifies.
 
 While asleep, `https://app.scrivenly.com` still serves the SPA, and `/api/*` returns CloudFront 502s until `bin/dev-up`.
 

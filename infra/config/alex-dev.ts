@@ -31,6 +31,9 @@ const config: ScribeConfig = {
     serviceName: 'scribe-dev',
     cpu: 256,
     memoryMiB: 512,
+    // Dev deploys without an outage and marks a new task healthy in ~10 s
+    overlapDeploys: true,
+    healthCheckIntervalSeconds: 5,
   },
 
   ses: {

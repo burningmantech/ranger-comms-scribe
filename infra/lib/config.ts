@@ -109,6 +109,16 @@ export interface ScribeConfig {
     /** Fargate CPU units (256 = 0.25 vCPU). */
     cpu: number;
     memoryMiB: number;
+    /**
+     * Start the new task before stopping the old one (min 100%, max 200%), so a deploy has no
+     * outage: traffic moves once the new task passes its health checks. For those seconds two
+     * tasks run, each with its own rooms and cache (clients of the old one reconnect to the
+     * new one, as after any restart). Unset: the old task stops first, then the new one starts
+     * (about 2 minutes with no backend).
+     */
+    overlapDeploys?: boolean;
+    /** ALB health check interval in seconds (default 15); two passing checks mark a task healthy. */
+    healthCheckIntervalSeconds?: number;
   };
 
   ses: {
