@@ -48,6 +48,23 @@ afterEach(() => {
 });
 
 describe('people and access', () => {
+  it('adds people (Add people), then gives them a role by the id it returned', async () => {
+    const added = await call(adminRouter, 'POST', '/api/admin/bulk-create-users', adminSession, {
+      users: [{ name: ' Casey Ranger ', email: ' Casey@Example.org ', approved: true }, { name: 'Dana', email: 'dana@example.org', approved: false }],
+    });
+    expect(added.status).toBe(200);
+    expect(added.body.users).toHaveLength(2);
+    const [casey, dana] = added.body.users;
+    expect(casey).toMatchObject({ email: 'casey@example.org', name: 'Casey Ranger', approved: true, commsCadre: false });
+    expect(casey.passwordHash).toBeUndefined();
+    expect(dana).toMatchObject({ email: 'dana@example.org', approved: false });
+
+    const res = await call(adminRouter, 'PUT', `/api/admin/people/${encodeURIComponent(casey.id)}/access`, adminSession, { commsCadre: true });
+    expect(res.status).toBe(200);
+    const stored = await getObject<any>('user/casey@example.org', env);
+    expect(stored).toMatchObject({ commsCadre: true, approved: true, userType: 'CommsCadre' });
+  });
+
   it('lists the council and the Comms Cadre from people', async () => {
     const council = await call(councilRouter, 'GET', '/api/council/members', adminSession);
     expect(council.body).toEqual([expect.objectContaining({ email: 'cm@x.org', role: 'CommunicationsManager', active: true })]);

@@ -79,11 +79,12 @@ tracked changes, change comments, batch create, the timeline and submission comm
 ## Comms setup (follow-on cleanup)
 
 The rest of the old Admin tabs moved to where the work happens:
-- **Groups → mailing lists.** Groups were only used to email their members. Comms needs to send to list addresses
-  such as `ranger-<x>-cadre@burningman.org` instead, so lists are send destinations (`mailing_lists/<id>`), managed by
-  the Comms Cadre and Admins under Requests → Lists & templates. Each says which audiences it serves; the Send view
-  ticks those (Announce when none match) and the sender can change them. The `group/*` data and `/admin/groups`
-  API are left in place, unused by the UI
+- **Groups → mailing lists.** In the UI, groups were only used to email their members. Comms needs to send to list
+  addresses such as `ranger-<x>-cadre@burningman.org` instead, so lists are send destinations (`mailing_lists/<id>`),
+  managed by the Comms Cadre and Admins under Requests → Lists & templates. Each says which audiences it serves; the
+  Send view ticks those (Announce when none match) and the sender can change them. The `group/*` data and
+  `/admin/groups` API are left in place with no screen. The backend still has `groupId` access checks and group
+  notifications for blog posts, pages and gallery media, but no screen sets a `groupId`, so nothing reaches them
 - **Templates** moved to the same page and are editable by the Comms Cadre as well as Admins
 - **Reminders** are Remind buttons in a request's approval conditions popover (one per unmet gate or waiting
   approver), limited to once a day per target and logged on the request
