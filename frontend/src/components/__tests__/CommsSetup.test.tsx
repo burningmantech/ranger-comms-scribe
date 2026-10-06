@@ -6,7 +6,7 @@ import MailingListsManager from '../MailingListsManager';
 import { ApprovalGates } from '../../types/content';
 
 const GATES: ApprovalGates = {
-  councilManager: { met: false },
+  councilManager: { met: false, approvers: [{ email: 'lee@x.org', name: 'Lee', status: 'pending', councilRole: 'IntakeManager' }] },
   commsCadre: { met: true, approverName: 'Help Desk' },
   requiredApprovers: {
     met: false, approved: 1, total: 2,
@@ -23,7 +23,8 @@ describe('approval reminders in the conditions popover', () => {
     const onRemind = jest.fn(async (target: string) => [{ target, to: ['x'], by: 'me@x.org', byName: 'Me', at: new Date().toISOString() }]);
     render(<ConditionsPopover gates={GATES} onRemind={onRemind} reminders={[]} />);
     fireEvent.click(screen.getByRole('button', { name: /conditions met/ }));
-    expect(screen.getByRole('button', { name: /Remind the Council/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Remind Lee/ })).toBeInTheDocument(); // the listed council approver
+    expect(screen.queryByRole('button', { name: /Remind the Council/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Remind the Comms Cadre/ })).not.toBeInTheDocument(); // met
     expect(screen.queryByRole('button', { name: /Remind Sam/ })).not.toBeInTheDocument(); // approved
     fireEvent.click(screen.getByRole('button', { name: /Remind Pat/ }));
@@ -33,10 +34,10 @@ describe('approval reminders in the conditions popover', () => {
   });
 
   it('says why a reminder failed, and hides Remind without permission', async () => {
-    const onRemind = jest.fn(async () => { throw new Error('The Council was reminded today; try again tomorrow'); });
+    const onRemind = jest.fn(async () => { throw new Error('Lee was reminded today; try again tomorrow'); });
     const { unmount } = render(<ConditionsPopover gates={GATES} onRemind={onRemind} />);
     fireEvent.click(screen.getByRole('button', { name: /conditions met/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Remind the Council/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Remind Lee/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('try again tomorrow');
     unmount();
     render(<ConditionsPopover gates={GATES} />);

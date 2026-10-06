@@ -23,8 +23,8 @@ const lexical = (text: string) => JSON.stringify({ root: { type: 'root', version
 
 async function person(key: string, email: string, access: Record<string, unknown> = {}) {
   await saveUser(withDerivedAccess({
-    id: `id-${key}`, email, name: key, approved: true, verified: true, groups: [], roles: [],
-    userType: 'Member', isAdmin: false, commsCadre: false, councilRoles: [], ...access,
+    id: `id-${key}`, email, name: key, verified: true, groups: [], roles: [],
+    userType: 'Member', isAdmin: false, commsCadre: false, councilRole: null, ...access,
   } as any) as any, env);
   sessions[key] = await CreateSession(email, { email }, env);
 }
@@ -57,7 +57,7 @@ beforeEach(async () => {
   await person('admin', 'admin@x.org', { isAdmin: true });
   await person('cadre', 'cadre@x.org', { commsCadre: true });
   await person('cadre2', 'cadre2@x.org', { commsCadre: true });
-  await person('council', 'council@x.org', { councilRoles: ['IntakeManager'] });
+  await person('council', 'council@x.org', { councilRole: 'IntakeManager' });
   await person('member', 'member@x.org');
 });
 
@@ -129,7 +129,7 @@ describe('sending to mailing lists', () => {
 
 describe('reminders', () => {
   beforeEach(async () => {
-    await putObject('content_submissions/r1', submission('r1', { status: 'in_review', requiredApprovers: ['approver@x.org', 'done@x.org'],
+    await putObject('content_submissions/r1', submission('r1', { status: 'in_review', requiredApprovers: ['approver@x.org', 'done@x.org', 'council@x.org'],
       approvals: [{ id: 'a1', submissionId: 'r1', approverId: 'id-done', approverEmail: 'done@x.org', approverName: 'Done', approverType: 'Member', status: 'approved', createdAt: '', updatedAt: '' }] }), env);
     await person('approver', 'approver@x.org');
   });
@@ -152,13 +152,23 @@ describe('reminders', () => {
     expect(notes).toHaveLength(1);
   });
 
-  it('reminds everyone who can meet a gate, except the person asking', async () => {
+  it('reminds the Comms Cadre (except the person asking) and the listed council approvers', async () => {
     const res = await call(contentRouter, 'POST', '/api/content/submissions/r1/remind', 'cadre', { target: 'commsCadre' });
     expect(res.status).toBe(200);
     expect(sent().Destination?.ToAddresses).toEqual(['cadre2@x.org']);
     const council = await call(contentRouter, 'POST', '/api/content/submissions/r1/remind', 'cadre', { target: 'council' });
     expect(sent(1).Destination?.ToAddresses).toEqual(['council@x.org']);
     expect(council.body.reminders.map((r: any) => r.target)).toEqual(['commsCadre', 'council']);
+    // A listed council approver can be reminded by name too
+    expect(sent(1).Content?.Simple?.Subject?.Data).toBe('Reminder: your approval is needed for "Request r1"');
+  });
+
+  it("says when there's no council approver to remind yet", async () => {
+    await putObject('content_submissions/r3', submission('r3', { status: 'in_review', requiredApprovers: ['approver@x.org'] }), env);
+    const res = await call(contentRouter, 'POST', '/api/content/submissions/r3/remind', 'cadre', { target: 'council' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/No council approver chosen yet/);
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 
   it('is for reviewers and the submitter, and only while waiting for approval', async () => {

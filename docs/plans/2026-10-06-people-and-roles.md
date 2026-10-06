@@ -104,3 +104,23 @@ The rest of the old Admin tabs moved to where the work happens:
   required-approver picker (`GET /user/approvers`) suggested. Everyone signed in is now a Member, the picker lists
   everyone with an account, and `POST /admin/approve-user` and `POST /auth/approve` are gone. `approved` on older
   records is ignored and dropped on their next save
+
+## Who approves a request
+
+One approvers list per request (`requiredApprovers`) holds both kinds of approver, and the gates split it:
+
+- **Council**: the council members on the list; at least one listed, all of them approved. The Comms Cadre choose
+  (or swap) the council approver when the submitter didn't know who should approve, and "Add all of Council" lists
+  every council member for a message signed by all of Council. A council member who isn't listed doesn't count
+- **Other approvers**: the rest of the list, all approved (met when there are none)
+- **Comms Cadre** and **Edits resolved** as before
+
+After submission only Admins, the Comms Cadre and Council change the list (`PUT /submissions/:id/approvers`; the
+general PUT ignores it so a stale copy can't undo a change). People added are emailed and notified in the app; the
+status is checked again, so an approved request whose new approvers haven't approved goes back to in review. The
+Comms Cadre see a request with no council approver in their "needs action" list; council members see only the
+requests that list them. Reminders go to each waiting approver by name (`council` reminds the listed council
+members still to approve).
+
+Before this, any council member's approval met the Council gate and an empty list could never be approved, so
+requests submitted with "I don't know" could only be approved by override.

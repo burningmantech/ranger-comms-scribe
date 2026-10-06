@@ -36,7 +36,7 @@ import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds
 import { remoteCommentFromMessage } from '../utils/remoteComments';
 import { REVIEW_STATE_MESSAGE_TYPES } from '../utils/reviewState';
 import { currentFormFieldValue } from '../utils/formFieldValue';
-import { canSendAnnouncements, isReviewer } from '../utils/access';
+import { canSendAnnouncements, councilRoleLabel, isReviewer } from '../utils/access';
 
 const webSocketManager = new WebSocketManager();
 
@@ -103,6 +103,8 @@ interface TrackedChangesEditorProps {
   onDelete?: () => void;
   /** Sends to the chosen mailing lists (ids from the Send view). */
   onSendEmail?: (listIds: string[]) => Promise<void>;
+  /** Saves the approvers list (Comms Cadre, Council, Admins); rejects with the reason. */
+  onChangeApprovers?: (approvers: string[]) => Promise<void>;
   reviewMode?: boolean;
   /**
    * 'yjs': merged real-time editing (PRD §14). The editor syncs through Yjs, only the
@@ -211,6 +213,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onBack,
   onDelete,
   onSendEmail,
+  onChangeApprovers,
   reviewMode = false,
   collabMode = 'legacy',
 }) => {
@@ -398,29 +401,31 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [approverSuggestions, setApproverSuggestions] = useState<Array<{name: string; email: string}>>([]);
   const [activeSuggestionIdx, setActiveSuggestionIdx] = useState(0);
 
-  const canEditRequiredApprovers = useMemo(() => {
-    const isSubmitter = currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy;
-    return isSubmitter || isReviewer(currentUser);
-  }, [currentUser, submission.submittedBy]);
+  // The Comms Cadre, Council and Admins change who approves (e.g. pick the council approver
+  // when the submitter didn't know); the server checks too
+  const canEditRequiredApprovers = !!onChangeApprovers && isReviewer(currentUser) && submission.status !== 'sent';
+  const [approversError, setApproversError] = useState<string | null>(null);
+
+  const changeApprovers = useCallback(async (next: string[]) => {
+    if (!onChangeApprovers) return;
+    setApproversError(null);
+    try {
+      await onChangeApprovers(Array.from(new Set(next.map((e) => e.trim().toLowerCase()).filter(Boolean))));
+    } catch (err) {
+      setApproversError(err instanceof Error ? err.message : 'Could not change the approvers');
+    }
+  }, [onChangeApprovers]);
 
   const handleAddRequiredApprover = useCallback(() => {
     const email = newApproverEmail.trim();
     if (!email) return;
-    const updated = {
-      ...submission,
-      requiredApprovers: Array.from(new Set([...(submission.requiredApprovers || []), email]))
-    };
-    onSave(updated);
+    void changeApprovers([...(submission.requiredApprovers || []), email]);
     setNewApproverEmail('');
-  }, [newApproverEmail, submission, onSave]);
+  }, [newApproverEmail, submission.requiredApprovers, changeApprovers]);
 
   const handleRemoveRequiredApprover = useCallback((email: string) => {
-    const updated = {
-      ...submission,
-      requiredApprovers: (submission.requiredApprovers || []).filter(e => e !== email)
-    };
-    onSave(updated);
-  }, [submission, onSave]);
+    void changeApprovers((submission.requiredApprovers || []).filter(e => e !== email));
+  }, [submission.requiredApprovers, changeApprovers]);
 
   // Fetch approver users and council managers for autocomplete
   useEffect(() => {
@@ -463,14 +468,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [allApproverUsers, showApproverDefaults]);
 
   const handleSuggestionSelect = useCallback((email: string) => {
-    const updated = {
-      ...submission,
-      requiredApprovers: Array.from(new Set([...(submission.requiredApprovers || []), email]))
-    };
-    onSave(updated);
+    void changeApprovers([...(submission.requiredApprovers || []), email]);
     setNewApproverEmail('');
     setApproverSuggestions([]);
-  }, [submission, onSave]);
+  }, [submission.requiredApprovers, changeApprovers]);
+
+  // A message signed by all of Council: everyone with a council role
+  const councilEmails = useMemo(() => Array.from(new Set(councilManagersList.map((m) => m.email.toLowerCase()))), [councilManagersList]);
+  const councilRoleOf = useCallback((email: string) =>
+    councilManagersList.find((m) => m.email.toLowerCase() === email.toLowerCase())?.role, [councilManagersList]);
+  const listedCouncil = (submission.requiredApprovers || []).filter((e) => councilRoleOf(e));
+  const handleAddAllCouncil = useCallback(() => {
+    void changeApprovers([...(submission.requiredApprovers || []), ...councilEmails]);
+  }, [submission.requiredApprovers, councilEmails, changeApprovers]);
 
   const handleApproverKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (approverSuggestions.length === 0) return;
@@ -3517,16 +3527,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             <span className="field-row-label">Approvers:</span>
             <div className="required-approvers-content">
               {(submission.requiredApprovers || []).length === 0 && !canEditRequiredApprovers && (
-                <span className="field-row-value" style={{ color: '#9ca3af' }}>None assigned</span>
+                <span className="field-row-value" style={{ color: '#9ca3af' }}>None yet: the Comms Cadre will choose a council approver</span>
               )}
               {(submission.requiredApprovers || []).map((email) => {
-                const user = allApproverUsers.find(u => u.email === email);
+                const user = allApproverUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
                 const displayName = user?.name || email.split('@')[0];
+                const role = councilRoleOf(email);
                 return (
-                  <span key={email} className="approver-chip" title={email}>
+                  <span key={email} className={`approver-chip ${role ? 'approver-chip--council' : ''}`} title={email} data-testid={`approver-${email}`}>
                     {displayName}
+                    {role && <span className="approver-chip-role">{councilRoleLabel(role)}</span>}
                     {canEditRequiredApprovers && (
-                      <button onClick={() => handleRemoveRequiredApprover(email)} className="approver-chip-remove" title="Remove approver">
+                      <button onClick={() => handleRemoveRequiredApprover(email)} className="approver-chip-remove" title={`Remove ${displayName}`} aria-label={`Remove ${displayName}`}>
                         <i className="fas fa-times" />
                       </button>
                     )}
@@ -3560,7 +3572,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                               <span className="approver-dropdown-name">{u.name || u.email.split('@')[0]}</span>
                               <span className="approver-dropdown-email">{u.email}</span>
                             </div>
-                            {isManager && <span className="approver-badge-cm">Council Manager</span>}
+                            {isManager && <span className="approver-badge-cm">{councilRoleLabel(councilRoleOf(u.email) || '') || 'Council'}</span>}
                           </div>
                         );
                       })}
@@ -3568,6 +3580,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   )}
                 </div>
               )}
+              {canEditRequiredApprovers && councilEmails.some((e) => !(submission.requiredApprovers || []).map((x) => x.toLowerCase()).includes(e)) && (
+                <button type="button" className="approver-all-council" onClick={handleAddAllCouncil}>
+                  Add all of Council
+                </button>
+              )}
+              {canEditRequiredApprovers && listedCouncil.length === 0 && (
+                <span className="approver-hint">Add the council manager who should approve this.</span>
+              )}
+              {approversError && <span className="approver-hint approver-hint--error" role="alert">{approversError}</span>}
             </div>
           </div>
 

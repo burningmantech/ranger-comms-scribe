@@ -189,11 +189,14 @@ const ApprovalTrackerFull: React.FC<ApprovalTrackerProps> = ({
   showOverride,
   overrideInfo,
 }) => {
-  // Council Manager gate
+  // Council gate: the council members on the approvers list
+  const councilApprovers = gates.councilManager.approvers || [];
   const cmStatus = getSimpleGateStatus(gates.councilManager.met);
   const cmStatusText = gates.councilManager.met
     ? `${gates.councilManager.approverName || gates.councilManager.approver || 'Approved'}${gates.councilManager.date ? ' \u2014 ' + formatDate(gates.councilManager.date) : ''}`
-    : 'Waiting';
+    : councilApprovers.length === 0
+      ? 'No council approver chosen'
+      : `Waiting for ${councilApprovers.filter((d) => d.status !== 'approved').map((d) => d.name || d.email).join(', ')}`;
   const cmDetails = gates.councilManager.met ? (
     <div className="approval-gate-detail">
       {gates.councilManager.approverName && (
@@ -261,7 +264,7 @@ const ApprovalTrackerFull: React.FC<ApprovalTrackerProps> = ({
   const raStatus = getRequiredApproversStatus(gates.requiredApprovers);
   const raStatusText =
     gates.requiredApprovers.total === 0
-      ? 'Needs assignment'
+      ? 'None'
       : `${gates.requiredApprovers.approved} of ${gates.requiredApprovers.total}`;
   const raDetails =
     gates.requiredApprovers.details.length > 0 ? (
@@ -331,7 +334,7 @@ const ApprovalTrackerFull: React.FC<ApprovalTrackerProps> = ({
       )}
       <div className="approval-tracker__gates">
         <GateRow
-          label="Council Manager"
+          label="Council"
           status={cmStatus}
           statusText={cmStatusText}
           expandedContent={cmDetails}
@@ -343,7 +346,7 @@ const ApprovalTrackerFull: React.FC<ApprovalTrackerProps> = ({
           expandedContent={ccDetails}
         />
         <GateRow
-          label="Required Approvers"
+          label="Other Approvers"
           status={raStatus}
           statusText={raStatusText}
           expandedContent={raDetails}
@@ -370,7 +373,7 @@ const ApprovalTrackerCompact: React.FC<ApprovalTrackerProps> = ({ gates }) => {
 
   const gateEntries: Array<{ label: string; status: GateStatus }> = [
     {
-      label: 'Council Manager',
+      label: 'Council',
       status: getSimpleGateStatus(gates.councilManager.met),
     },
     {
@@ -378,7 +381,7 @@ const ApprovalTrackerCompact: React.FC<ApprovalTrackerProps> = ({ gates }) => {
       status: getSimpleGateStatus(gates.commsCadre.met),
     },
     {
-      label: 'Required Approvers',
+      label: 'Other Approvers',
       status: getRequiredApproversStatus(gates.requiredApprovers),
     },
     {

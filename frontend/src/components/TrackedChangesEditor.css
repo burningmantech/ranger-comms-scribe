@@ -329,6 +329,43 @@
   white-space: nowrap;
 }
 
+/* A council approver: their role shown in the chip */
+.approver-chip--council {
+  background: rgba(61, 104, 105, 0.08);
+  border-color: rgba(61, 104, 105, 0.35);
+}
+
+.approver-chip-role {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #3d6869;
+}
+
+.approver-all-council {
+  border: 1px dashed #b7c9c9;
+  background: white;
+  color: #3d6869;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.approver-all-council:hover {
+  background: rgba(61, 104, 105, 0.08);
+}
+
+.approver-hint {
+  font-size: 12px;
+  color: #9a6b00;
+}
+
+.approver-hint--error {
+  color: #b42318;
+}
+
 .approver-chip-remove {
   display: inline-flex;
   align-items: center;

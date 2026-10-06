@@ -1,6 +1,6 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates } from '../types';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates, ApproverDetail } from '../types';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
@@ -9,7 +9,7 @@ import { buildAnnouncementEmail, embedGalleryImages } from '../services/announce
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { Access, accessOf, approverCounts, derivedRoles, derivedUserType, isAdmin, isCommsCadre, isCommsManager, isReviewer, normalizeEmail } from '../services/access';
-import { accessByEmail, peopleWhere } from '../services/peopleService';
+import { accessByEmail, peopleByEmail, peopleWhere } from '../services/peopleService';
 import { listMailingLists, suggestedListIds } from '../services/mailingListService';
 import { getUser } from '../services/userService';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
@@ -37,50 +37,19 @@ async function approvalCounter(approvals: ContentApproval[], env: any) {
   return (a: ContentApproval) => approverCounts(a, current.get(normalizeEmail(a.approverEmail)));
 }
 
-// Recompute approval status using unique latest decisions. Promotes to 'approved' only; never
-// demotes (syncSubmissionStatus does that) and never touches a 'sent' submission.
+/** Every approval gate met (the request can be approved). */
+export function allGatesMet(gates: ApprovalGates): boolean {
+  return gates.councilManager.met && gates.commsCadre.met && gates.requiredApprovers.met && gates.trackedChanges.met;
+}
+
+// Recompute approval status from the gates. Promotes to 'approved' only; never demotes
+// (syncSubmissionStatus does that) and never touches a 'sent' submission.
 export async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
   if (submission.status === 'sent') return submission;
-  // Deduplicate by latest decision per approver
-  const approvalsByApprover = new Map<string, ContentApproval>();
-  for (const a of submission.approvals || []) {
-    const key = (a.approverEmail || a.approverId || '').trim().toLowerCase();
-    if (!key) continue;
-    const prev = approvalsByApprover.get(key);
-    if (!prev) {
-      approvalsByApprover.set(key, a);
-    } else {
-      const prevTime = new Date(prev.updatedAt || prev.createdAt).getTime();
-      const currTime = new Date(a.updatedAt || a.createdAt).getTime();
-      approvalsByApprover.set(key, currTime >= prevTime ? a : prev);
-    }
-  }
-  const uniqueApprovals = Array.from(approvalsByApprover.values());
-
-  // Normalize required approvers
-  const required = (submission.requiredApprovers || []).map(e => (e || '').trim().toLowerCase());
-
-  const allRequiredApproversApproved = required.length > 0 && required.every(email =>
-    uniqueApprovals.some(a => (a.approverEmail || '').trim().toLowerCase() === email && a.status === 'approved')
-  );
-
-  // A council member and a Comms Cadre member must have approved (one person holding both counts for both)
-  const counts = await approvalCounter(uniqueApprovals, env);
-  const hasCouncilApproval = uniqueApprovals.some(a => a.status === 'approved' && counts(a).council);
-  const hasCommsCadreApproval = uniqueApprovals.some(a => a.status === 'approved' && counts(a).commsCadre);
-
-  if (allRequiredApproversApproved && hasCouncilApproval && hasCommsCadreApproval) {
-    // Gate: all tracked changes must be resolved before approval
-    const changes = await getTrackedChanges(submission.id, env);
-    const pendingChanges = changes.filter(c => c.status === 'pending');
-    if (pendingChanges.length > 0) {
-      return submission; // Don't approve until all tracked changes are resolved
-    }
-
+  if (allGatesMet(await computeApprovalGates(submission, env))) {
     submission.status = 'approved';
     submission.finalApprovalDate = submission.finalApprovalDate || new Date().toISOString();
   }
-
   return submission;
 }
 
@@ -105,13 +74,15 @@ export async function recomputeApprovalStatus(submission: ContentSubmission, env
  * Re-reads the submission (the caller may just have written it) and writes it only when
  * the status changes. Always tells the room, with the approval gates: `status_changed` when
  * the status changed, else `approval_state`. `onlyDemote` skips the promotion check (a newly
- * created change can only make a change pending).
+ * created change can only make a change pending). `approversChanged` (the approvers list was
+ * edited) also demotes an `approved` request whose gates are no longer met, e.g. a new council
+ * approver who hasn't approved yet; an override approval still holds.
  */
 export async function syncSubmissionStatus(
   submissionId: string,
   env: any,
   actor?: { id?: string; email?: string; name?: string },
-  options: { onlyDemote?: boolean } = {}
+  options: { onlyDemote?: boolean; approversChanged?: boolean } = {}
 ): Promise<ContentSubmission | null> {
   try {
     const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
@@ -119,7 +90,9 @@ export async function syncSubmissionStatus(
     const before = submission.status;
     if (before === 'approved') {
       const changes = await getTrackedChanges(submissionId, env);
-      if (changes.some(c => c.status === 'pending')) {
+      const gatesFail = options.approversChanged && !submission.approvalOverride &&
+        !allGatesMet(await computeApprovalGates(submission, env));
+      if (changes.some(c => c.status === 'pending') || gatesFail) {
         submission.status = 'in_review';
         delete submission.finalApprovalDate;
         if (submission.approvalOverride) submission.approvalOverride = false;
@@ -149,7 +122,7 @@ export async function syncSubmissionStatus(
       userEmail: actor?.email || '',
       data: {
         status: submission.status,
-        ...(changed ? { previousStatus: before, title: submission.title, reason: 'tracked_changes' } : {}),
+        ...(changed ? { previousStatus: before, title: submission.title, reason: options.approversChanged ? 'approvers_changed' : 'tracked_changes' } : {}),
         approvalGates: await computeApprovalGates(submission, env),
       },
     }, env);
@@ -168,55 +141,71 @@ export function canViewSubmission(user: User, submission: ContentSubmission): bo
     !!(submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 }
 
-// Compute structured approval gate data for the frontend approval tracker
-export async function computeApprovalGates(submission: ContentSubmission, env: any): Promise<ApprovalGates> {
-  // Deduplicate by latest decision per approver (same logic as recomputeApprovalStatus)
-  const approvalsByApprover = new Map<string, ContentApproval>();
+/** The latest decision of each approver (by email, else id). */
+function latestDecisions(submission: ContentSubmission): ContentApproval[] {
+  const byApprover = new Map<string, ContentApproval>();
   for (const a of submission.approvals || []) {
     const key = (a.approverEmail || a.approverId || '').trim().toLowerCase();
     if (!key) continue;
-    const prev = approvalsByApprover.get(key);
-    if (!prev) {
-      approvalsByApprover.set(key, a);
-    } else {
-      const prevTime = new Date(prev.updatedAt || prev.createdAt).getTime();
-      const currTime = new Date(a.updatedAt || a.createdAt).getTime();
-      approvalsByApprover.set(key, currTime >= prevTime ? a : prev);
-    }
+    const prev = byApprover.get(key);
+    const time = (x: ContentApproval) => new Date(x.updatedAt || x.createdAt).getTime();
+    if (!prev || time(a) >= time(prev)) byApprover.set(key, a);
   }
-  const uniqueApprovals = Array.from(approvalsByApprover.values());
+  return Array.from(byApprover.values());
+}
 
-  // --- Required approvers gate ---
-  const required = (submission.requiredApprovers || []).map(e => (e || '').trim().toLowerCase());
-  const requiredDetails = required.map(email => {
-    const approval = uniqueApprovals.find(
-      a => (a.approverEmail || '').trim().toLowerCase() === email
-    );
-    return {
+/**
+ * The approval gates (also sent to the review page). The approvers list holds both kinds of
+ * approver: the council members on it are the Council gate (at least one must be listed, and
+ * all of them must approve; a council member who isn't listed doesn't count), the rest the
+ * required approvers gate (met when all approved, or there are none). Someone is a council
+ * member by their stored access, or (for someone with no stored record, e.g. a dev user) by
+ * the role recorded on their approval here. One person on the list who is also Comms Cadre
+ * meets the Comms Cadre gate with the same approval.
+ */
+export async function computeApprovalGates(submission: ContentSubmission, env: any): Promise<ApprovalGates> {
+  const decisions = latestDecisions(submission);
+  const decisionOf = (email: string) => decisions.find((a) => normalizeEmail(a.approverEmail) === email);
+
+  const listed = Array.from(new Set((submission.requiredApprovers || []).map(normalizeEmail).filter(Boolean)));
+  const people = await peopleByEmail(listed, env);
+  const council: ApproverDetail[] = [];
+  const others: ApproverDetail[] = [];
+  for (const email of listed) {
+    const decision = decisionOf(email);
+    const person = people.get(email);
+    const stored = person?.access;
+    const isCouncil = stored ? stored.council : !!decision && approverCounts(decision).council;
+    const detail: ApproverDetail = {
       email,
-      name: approval?.approverName,
-      status: (approval ? approval.status : 'pending') as 'approved' | 'rejected' | 'pending',
-      date: approval ? (approval.updatedAt || approval.createdAt) : undefined,
+      name: person?.name || decision?.approverName,
+      status: (decision ? decision.status : 'pending') as ApproverDetail['status'],
+      date: decision ? (decision.updatedAt || decision.createdAt) : undefined,
+      ...(isCouncil && stored?.councilRole ? { councilRole: stored.councilRole } : {}),
     };
-  });
-  const approvedCount = requiredDetails.filter(d => d.status === 'approved').length;
+    (isCouncil ? council : others).push(detail);
+  }
+  const othersApproved = others.filter((d) => d.status === 'approved').length;
+  const councilMet = council.length > 0 && council.every((d) => d.status === 'approved');
+  const lastCouncil = council
+    .filter((d) => d.status === 'approved')
+    .sort((x, y) => new Date(y.date || 0).getTime() - new Date(x.date || 0).getTime())[0];
+  const lastCouncilDecision = lastCouncil ? decisionOf(lastCouncil.email) : undefined;
 
-  // --- Council and Comms Cadre gates ---
-  const counts = await approvalCounter(uniqueApprovals, env);
-  const councilApproval = uniqueApprovals.find(a => a.status === 'approved' && counts(a).council);
-  const commsCadreApproval = uniqueApprovals.find(a => a.status === 'approved' && counts(a).commsCadre);
+  const counts = await approvalCounter(decisions, env);
+  const commsCadreApproval = decisions.find(a => a.status === 'approved' && counts(a).commsCadre);
 
-  // --- Tracked changes gate ---
   const changes = await getTrackedChanges(submission.id, env);
   const pendingChanges = changes.filter(c => c.status === 'pending');
 
   return {
     councilManager: {
-      met: !!councilApproval,
-      approver: councilApproval?.approverEmail,
-      approverName: councilApproval?.approverName,
-      date: councilApproval ? (councilApproval.updatedAt || councilApproval.createdAt) : undefined,
-      comment: councilApproval?.comment,
+      met: councilMet,
+      approver: councilMet ? lastCouncil?.email : undefined,
+      approverName: councilMet ? council.map((d) => d.name || d.email).join(', ') : undefined,
+      date: councilMet ? lastCouncil?.date : undefined,
+      comment: councilMet ? lastCouncilDecision?.comment : undefined,
+      approvers: council,
     },
     commsCadre: {
       met: !!commsCadreApproval,
@@ -226,10 +215,10 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
       comment: commsCadreApproval?.comment,
     },
     requiredApprovers: {
-      met: required.length > 0 && approvedCount === required.length,
-      approved: approvedCount,
-      total: required.length,
-      details: requiredDetails,
+      met: othersApproved === others.length,
+      approved: othersApproved,
+      total: others.length,
+      details: others,
     },
     trackedChanges: {
       met: pendingChanges.length === 0,
@@ -259,11 +248,12 @@ function cleanNewsletterFields(input: any): Pick<ContentSubmission, 'audiences' 
 }
 
 // Fields only this server sets (newsletter placement and public pages) or that have their own
-// endpoint (PATCH /submissions/:id/newsletter); PUT bodies often carry a stale loaded copy.
+// endpoint (PATCH /submissions/:id/newsletter, PUT /submissions/:id/approvers); PUT bodies
+// often carry a stale loaded copy.
 const PUT_IGNORED_FIELDS = [
   'newsletter', 'keyDates', 'writingHelp',
   'newsletterEditionId', 'newsletterSentIn', 'publicSlug', 'publicPublishedAt',
-  'sentTo', 'reminders',
+  'sentTo', 'reminders', 'requiredApprovers',
 ] as const;
 
 // Create a new content submission
@@ -362,7 +352,7 @@ router.get('/submissions/my-actions', withAuth, async (request: Request, env: an
   for (const submission of allSubmissions) {
     if (['sent', 'rejected', 'draft'].includes(submission.status)) continue;
 
-    const isRequiredApprover = (submission.requiredApprovers || []).includes(user.email);
+    const isRequiredApprover = (submission.requiredApprovers || []).some((e) => normalizeEmail(e) === normalizeEmail(user.email));
     const hasActed = (submission.approvals || []).some(
       (a: ContentApproval) =>
         a.approverEmail === user.email || a.approverId === user.id
@@ -373,13 +363,14 @@ router.get('/submissions/my-actions', withAuth, async (request: Request, env: an
 
     const gates = await computeApprovalGates(submission, env);
 
+    // Council members act on the requests that list them; the Comms Cadre approve, and pick a
+    // council approver when none is listed yet
     if (isRequiredApprover && !hasActed) {
       needsAction.push({ ...submission, approvalGates: gates });
+    } else if (access.commsCadre && gates.councilManager.approvers.length === 0) {
+      needsAction.push({ ...submission, approvalGates: gates });
     } else if (reviewer && !hasActed) {
-      if (
-        (access.council && !gates.councilManager.met) ||
-        (access.commsCadre && !gates.commsCadre.met)
-      ) {
+      if (access.commsCadre && !gates.commsCadre.met) {
         needsAction.push({ ...submission, approvalGates: gates });
       } else {
         inProgress.push({ ...submission, approvalGates: gates });
@@ -465,8 +456,8 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
-  // Check if user has permission to edit this submission
-  // Allow editing required approvers by submitter, Council, or Comms Cadre
+  // Check if user has permission to edit this submission (the approvers have their own
+  // endpoint: PUT /submissions/:id/approvers)
   const canEdit = isReviewer(user) ||
                  submission.submittedBy === user.id ||
                  (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
@@ -1072,9 +1063,105 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
   }
 });
 
-// Remind approvers: one required approver (target = their email) or everyone who can meet a
-// gate ('council' or 'commsCadre'). Email plus an in-app notification, at most once a day per
-// target on a request. Reviewers and the submitter may remind.
+/**
+ * Ask people to approve a request: an email (through COMMS_EMAIL_OVERRIDE on dev and staging)
+ * and an in-app notification each. `kind` 'added': they were just added as an approver;
+ * 'reminder': someone reminded them. Throws if the email can't be sent.
+ */
+async function askForApproval(
+  submission: ContentSubmission,
+  emails: string[],
+  actor: User,
+  kind: 'added' | 'reminder',
+  env: any
+): Promise<void> {
+  let origin = '';
+  try {
+    origin = new URL(env.FRONTEND_URL || env.PUBLIC_URL).origin;
+  } catch {
+    origin = '';
+  }
+  const link = `${origin}/tracked-changes/${submission.id}`;
+  const by = actor.name || actor.email;
+  const subject = kind === 'added'
+    ? `Your approval is needed for "${submission.title}"`
+    : `Reminder: your approval is needed for "${submission.title}"`;
+  const said = kind === 'added'
+    ? `${by} added you as an approver of "${submission.title}".`
+    : `${by} asked for your approval of "${submission.title}".`;
+  const { sendEmail, commsRecipients } = await import('../utils/email');
+  const delivery = commsRecipients(emails, subject, env);
+  await sendEmail(delivery.to, delivery.subject, `${said}\n\nOpen it here: ${link}\n\nThanks!`, env);
+  try {
+    const { createInAppNotification } = await import('../services/notificationService');
+    for (const email of emails) {
+      const person = await getUser(email, env).catch(() => null);
+      if (!person) continue;
+      await createInAppNotification({
+        userId: person.id,
+        type: 'submission_waiting',
+        title: 'Your approval is needed',
+        message: said,
+        submissionId: submission.id,
+        submissionTitle: submission.title,
+        actorName: by,
+      }, env);
+    }
+  } catch (err) {
+    console.error('Could not add approval notifications:', err);
+  }
+}
+
+const looksLikeEmail = (value: string) => /^[^\s@<>,;]+@[^\s@<>,;]+$/.test(value);
+
+// Change a request's approvers (the review page). Admins, the Comms Cadre and Council: the Cadre
+// picks or swaps the council approver(s), e.g. when the submitter didn't know who should approve.
+// People added are asked by email and in the app; the status is checked again (an approved
+// request whose new approvers haven't approved goes back to in review).
+router.put('/submissions/:id/approvers', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  if (!isReviewer(user, env)) {
+    return json({ error: 'Only the Comms Cadre, Council and Admins change who approves a request' }, { status: 403 });
+  }
+  const body = await request.json().catch(() => ({})) as { approvers?: unknown };
+  if (!Array.isArray(body.approvers) || body.approvers.some((e) => typeof e !== 'string')) {
+    return json({ error: 'Send approvers: a list of email addresses' }, { status: 400 });
+  }
+  const approvers = Array.from(new Set(body.approvers.map((e: string) => normalizeEmail(e)).filter(Boolean)));
+  const bad = approvers.find((e) => !looksLikeEmail(e));
+  if (bad) return json({ error: `"${bad}" is not an email address` }, { status: 400 });
+  if (approvers.length > 50) return json({ error: 'At most 50 approvers' }, { status: 400 });
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) return json({ error: 'Submission not found' }, { status: 404 });
+  if (submission.status === 'sent') return json({ error: 'This request has been sent' }, { status: 409 });
+
+  const before = new Set((submission.requiredApprovers || []).map(normalizeEmail));
+  submission.requiredApprovers = approvers;
+  submission.updatedAt = new Date().toISOString();
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  // Ask the people just added, unless they already approved (or are the one adding them)
+  const approvedAlready = new Set(latestDecisions(submission).filter((a) => a.status === 'approved').map((a) => normalizeEmail(a.approverEmail)));
+  const added = approvers.filter((e) => !before.has(e) && e !== normalizeEmail(user.email) && !approvedAlready.has(e));
+  if (added.length > 0 && ['submitted', 'in_review', 'approved'].includes(submission.status)) {
+    try {
+      await askForApproval(submission, added, user, 'added', env);
+    } catch (err) {
+      console.error('Could not tell the new approvers:', err);
+    }
+  }
+
+  const synced = await syncSubmissionStatus(id, env, user, { approversChanged: true });
+  const fresh = synced || submission;
+  return json({ submission: { ...fresh, approvalGates: await computeApprovalGates(fresh, env) } });
+});
+
+// Remind approvers: one approver on the list (target = their email), the listed council members
+// still to approve ('council'), or the Comms Cadre ('commsCadre'). Email plus an in-app
+// notification, at most once a day per target on a request. Reviewers and the submitter may remind.
 const REMIND_INTERVAL_MS = 20 * 60 * 60 * 1000;
 router.post('/submissions/:id/remind', withAuth, async (request: Request, env: any) => {
   const { id } = (request as any).params;
@@ -1095,17 +1182,23 @@ router.post('/submissions/:id/remind', withAuth, async (request: Request, env: a
   const key = target.trim() === 'commsCadre' ? 'commsCadre' : target.trim().toLowerCase();
   let recipients: Array<{ email: string; name: string }>;
   let who: string;
+  const listed = [...gates.councilManager.approvers, ...gates.requiredApprovers.details];
   if (key === 'council') {
-    if (gates.councilManager.met) return json({ error: 'A council member has already approved' }, { status: 409 });
-    recipients = await peopleWhere(env, (a) => a.council);
-    who = 'the Council';
+    if (gates.councilManager.met) return json({ error: 'The council approvers have approved' }, { status: 409 });
+    if (gates.councilManager.approvers.length === 0) {
+      return json({ error: 'No council approver chosen yet: add one to the approvers first' }, { status: 409 });
+    }
+    recipients = gates.councilManager.approvers
+      .filter((d) => d.status !== 'approved')
+      .map((d) => ({ email: d.email, name: d.name || d.email }));
+    who = 'the council approvers';
   } else if (key === 'commsCadre') {
     if (gates.commsCadre.met) return json({ error: 'A Comms Cadre member has already approved' }, { status: 409 });
     recipients = await peopleWhere(env, (a) => a.commsCadre);
     who = 'the Comms Cadre';
   } else {
-    const waiting = gates.requiredApprovers.details.find((d) => d.email === key && d.status !== 'approved');
-    if (!waiting) return json({ error: `${target} isn't a required approver still to approve` }, { status: 409 });
+    const waiting = listed.find((d) => d.email === key && d.status !== 'approved');
+    if (!waiting) return json({ error: `${target} isn't an approver still to approve` }, { status: 409 });
     recipients = [{ email: waiting.email, name: waiting.name || waiting.email }];
     who = waiting.name || waiting.email;
   }
@@ -1118,39 +1211,10 @@ router.post('/submissions/:id/remind', withAuth, async (request: Request, env: a
     return json({ error: `${who} was reminded ${when}; try again tomorrow`, lastReminder: last }, { status: 429 });
   }
 
-  let origin = '';
   try {
-    origin = new URL(env.FRONTEND_URL || env.PUBLIC_URL).origin;
-  } catch {
-    origin = '';
-  }
-  const link = `${origin}/tracked-changes/${id}`;
-  const subject = `Reminder: your approval is needed for "${submission.title}"`;
-  const message = `${user.name || user.email} asked for your approval of "${submission.title}".\n\nOpen it here: ${link}\n\nThanks!`;
-  try {
-    const { sendEmail, commsRecipients } = await import('../utils/email');
-    const delivery = commsRecipients(recipients.map((r) => r.email), subject, env);
-    await sendEmail(delivery.to, delivery.subject, message, env);
+    await askForApproval(submission, recipients.map((r) => r.email), user, 'reminder', env);
   } catch (e: any) {
     return json({ error: e.message || 'Could not send the reminder' }, { status: 502 });
-  }
-  try {
-    const { createInAppNotification } = await import('../services/notificationService');
-    for (const r of recipients) {
-      const person = await getUser(r.email, env).catch(() => null);
-      if (!person) continue;
-      await createInAppNotification({
-        userId: person.id,
-        type: 'submission_waiting',
-        title: 'Your approval is needed',
-        message: `${user.name || user.email} asked for your approval of "${submission.title}".`,
-        submissionId: id,
-        submissionTitle: submission.title,
-        actorName: user.name || user.email,
-      }, env);
-    }
-  } catch (err) {
-    console.error('Could not add reminder notifications:', err);
   }
 
   const reminder = { target: key, to: recipients.map((r) => r.email), by: user.email, byName: user.name || user.email, at: new Date().toISOString() };

@@ -668,6 +668,26 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  // The approvers list (Comms Cadre, Council, Admins): its own endpoint, which also checks the
+  // status again and asks anyone added
+  const handleChangeApprovers = async (approvers: string[]) => {
+    if (!submission) return;
+    const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approvers`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('sessionId') || ''}` },
+      body: JSON.stringify({ approvers }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body?.error || 'Could not change the approvers');
+    const saved = body.submission || {};
+    setSubmission((prev) => prev && ({
+      ...prev,
+      requiredApprovers: saved.requiredApprovers || approvers,
+      status: saved.status || prev.status,
+      approvalGates: saved.approvalGates ?? (prev as any).approvalGates,
+    } as ContentSubmission));
+  };
+
   const handleSendEmail = async (listIds: string[]) => {
     if (!submission) return;
     await sendAnnouncementEmail(submission, listIds);
@@ -823,6 +843,7 @@ export const TrackedChangesView: React.FC = () => {
         reviewMode={true}
         onDelete={handleDelete}
         onSendEmail={handleSendEmail}
+        onChangeApprovers={handleChangeApprovers}
         collabMode={collabMode}
       />
     </ReviewLayout>

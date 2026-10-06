@@ -182,19 +182,33 @@ export interface ApprovalGateDetail {
   comment?: string;
 }
 
+/** One person on a request's approvers list and their decision. */
+export interface ApproverDetail {
+  email: string;
+  name?: string;
+  status: 'approved' | 'rejected' | 'pending';
+  date?: string;
+  /** Their council role, for a council member. */
+  councilRole?: string;
+}
+
+/**
+ * The approval gates (backend computeApprovalGates). The approvers list holds both kinds of
+ * approver: its council members are the Council gate (at least one listed, all approved), the
+ * rest `requiredApprovers` ("other approvers": all approved, met when there are none).
+ */
 export interface ApprovalGates {
-  councilManager: ApprovalGateDetail;
+  councilManager: ApprovalGateDetail & {
+    /** The council members on the approvers list; none means the Comms Cadre still has to pick one. */
+    approvers?: ApproverDetail[];
+  };
   commsCadre: ApprovalGateDetail;
   requiredApprovers: {
     met: boolean;
     approved: number;
     total: number;
-    details: Array<{
-      email: string;
-      name?: string;
-      status: 'approved' | 'rejected' | 'pending';
-      date?: string;
-    }>;
+    /** The approvers on the list who are not on Council. */
+    details: ApproverDetail[];
   };
   trackedChanges: {
     met: boolean;

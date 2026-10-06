@@ -126,12 +126,19 @@ Content submissions go through a multi-stage approval process:
    - Submission gets assigned required approvers
    - Status starts as `draft` or `submitted`
 
-2. **Approval Process**:
-   - Council Manager approval required
-   - Comms Cadre approval required
-   - All required approvers must approve
+2. **Approval Process** (gates in `computeApprovalGates()`; `recomputeApprovalStatus()` approves when all are met):
+   - **Approvers list** (`requiredApprovers`, one list): the submitter fills it on the form (or ticks "I don't know");
+     afterwards only Admins, the Comms Cadre and Council change it, through `PUT /submissions/:id/approvers` (the
+     general PUT ignores it). People added are asked by email (via `COMMS_EMAIL_OVERRIDE` on dev) and in the app, and
+     an approved request whose new approvers haven't approved goes back to `in_review` (an override still holds)
+   - **Council**: the council members on the list. At least one must be listed (the Comms Cadre pick one when the
+     submitter didn't, or "Add all of Council" for a message from all of Council) and every one of them must approve.
+     A council member who isn't listed doesn't count. Council membership is the stored record's, else the role on
+     their approval
+   - **Other approvers**: everyone else on the list must approve (met when there are none)
+   - **Comms Cadre**: any Comms Cadre approval (a listed council member who is also Comms Cadre meets both)
+   - **Edits resolved**: no pending tracked change
    - Status transitions: `submitted`/`in_review` → `approved` → `sent`
-   - Approval logic in `recomputeApprovalStatus()` function
    - **Status follows the tracked changes** (`syncSubmissionStatus()` in `contentSubmission.ts`, called last
      by every tracked-change handler: create, batch create, accept/reject incl. cascade, batch status, undo,
      delete). The submission becomes `approved` once all gates are met, including when the last pending change

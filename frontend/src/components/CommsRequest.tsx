@@ -817,8 +817,8 @@ export const CommsRequest: React.FC = () => {
     <>
       <div className="wizard-card">
         <div className="wizard-card-header">
-          <h3>Required Approvers</h3>
-          <p>Add approvers who should review this request, or let Comms Cadre assign them later.</p>
+          <h3>Approvers</h3>
+          <p>Add the council manager who should approve this (and anyone else who must), or let the Comms Cadre choose. A message from all of Council needs every council manager.</p>
         </div>
 
         <div className="form-field">
@@ -842,7 +842,7 @@ export const CommsRequest: React.FC = () => {
           </label>
           {skipApprovers && (
             <div className="field-hint" style={{ marginTop: 8 }}>
-              No problem — Comms Cadre will assign approvers after submission.
+              No problem: the Comms Cadre will choose a council approver after you submit.
             </div>
           )}
         </div>

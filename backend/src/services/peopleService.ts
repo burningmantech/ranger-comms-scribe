@@ -36,6 +36,17 @@ export async function accessByEmail(emails: string[], env: Env): Promise<Map<str
   return out;
 }
 
+/** Each email's person: their access and name (lowercased email → person); unknown emails are left out. */
+export async function peopleByEmail(emails: string[], env: Env): Promise<Map<string, { access: Access; name: string }>> {
+  const unique = Array.from(new Set(emails.map(normalizeEmail).filter(Boolean)));
+  const out = new Map<string, { access: Access; name: string }>();
+  await Promise.all(unique.map(async (email) => {
+    const user = await getUser(email, env).catch(() => null);
+    if (user) out.set(email, { access: accessOf(user, env), name: user.name || email });
+  }));
+  return out;
+}
+
 export interface PersonRef {
   id: string;
   name: string;

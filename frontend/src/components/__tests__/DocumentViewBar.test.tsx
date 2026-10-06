@@ -44,15 +44,30 @@ describe('buildGateRows', () => {
     expect(rows[2].detail).toBe('All 2 approved');
   });
 
-  it('says when no approvers are assigned', () => {
+  it('says when no council approver is chosen yet, and that nobody else needs to approve', () => {
     const rows = buildGateRows({
-      councilManager: { met: false },
+      councilManager: { met: false, approvers: [] },
       commsCadre: { met: false },
-      requiredApprovers: { met: false, approved: 0, total: 0, details: [] },
+      requiredApprovers: { met: true, approved: 0, total: 0, details: [] },
       trackedChanges: { met: false, pending: 0, total: 0 },
     });
-    expect(rows[2].detail).toBe('No approvers assigned yet');
+    expect(rows[0]).toMatchObject({ label: 'Council', status: 'pending' });
+    expect(rows[0].detail).toBe('No council approver chosen yet. The Comms Cadre adds one to the approvers.');
+    expect(rows[2]).toMatchObject({ label: 'Other approvers', met: true, detail: 'Nobody else to approve' });
     expect(rows[3].detail).toBe('No edits yet');
+  });
+
+  it('names the council approvers, with their roles, and who is still to approve', () => {
+    const rows = buildGateRows({
+      councilManager: { met: false, approvers: [
+        { email: 'pat@x', name: 'Pat', status: 'approved', councilRole: 'IntakeManager' },
+        { email: 'sam@x', status: 'pending', councilRole: 'OperationsManager' },
+      ] },
+      commsCadre: { met: false },
+      requiredApprovers: { met: true, approved: 0, total: 0, details: [] },
+      trackedChanges: { met: true, pending: 0, total: 0 },
+    });
+    expect(rows[0]).toMatchObject({ status: 'partial', detail: '1 of 2 approved. Waiting for sam@x (Operations Manager)' });
   });
 });
 

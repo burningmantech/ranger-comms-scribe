@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { ApprovalGates, SubmissionReminder } from '../types/content';
+import { ApprovalGates, ApproverDetail, SubmissionReminder } from '../types/content';
+import { councilRoleLabel } from '../utils/access';
 import './ConditionsPopover.css';
 
 /**
@@ -21,6 +22,10 @@ export interface GateRow {
 
 const personName = (p: { name?: string; email: string }) => p.name || p.email;
 
+/** "Pat (Intake Manager)", or "Pat (declined)". */
+const approverLabel = (d: ApproverDetail) =>
+  d.status === 'rejected' ? `${personName(d)} (declined)` : d.councilRole ? `${personName(d)} (${councilRoleLabel(d.councilRole)})` : personName(d);
+
 /**
  * `pendingEdits`: the edits still to accept or reject as the review sidebar counts them
  * (one per card: a move is one edit). The server's gate counts change records, so a move
@@ -39,23 +44,34 @@ export function buildGateRows(gates: ApprovalGates, pendingEdits?: number): Gate
   const declined = ra.details.filter((d) => d.status === 'rejected');
   let raDetail: string;
   if (ra.total === 0) {
-    raDetail = 'No approvers assigned yet';
+    raDetail = 'Nobody else to approve';
   } else if (ra.met) {
     raDetail = `All ${ra.total} approved`;
   } else {
-    const names = waitingFor.map((d) => (d.status === 'rejected' ? `${personName(d)} (declined)` : personName(d)));
-    raDetail = `${ra.approved} of ${ra.total} approved. Still needed: ${names.join(', ')}`;
+    raDetail = `${ra.approved} of ${ra.total} approved. Still needed: ${waitingFor.map(approverLabel).join(', ')}`;
+  }
+
+  // Council: the council members on the approvers list (all must approve)
+  const council = cm.approvers || [];
+  const councilWaiting = council.filter((d) => d.status !== 'approved');
+  const councilDeclined = council.some((d) => d.status === 'rejected');
+  let cmDetail: string;
+  if (cm.met) {
+    cmDetail = `Approved by ${council.length ? council.map(approverLabel).join(', ') : cm.approverName || cm.approver || 'the council approver'}`;
+  } else if (council.length === 0) {
+    cmDetail = 'No council approver chosen yet. The Comms Cadre adds one to the approvers.';
+  } else {
+    const approved = council.length - councilWaiting.length;
+    cmDetail = `${council.length > 1 ? `${approved} of ${council.length} approved. ` : ''}Waiting for ${councilWaiting.map(approverLabel).join(', ')}`;
   }
 
   return [
     {
       key: 'councilManager',
-      label: 'Council Manager',
+      label: 'Council',
       met: cm.met,
-      status: cm.met ? 'met' : 'pending',
-      detail: cm.met
-        ? `Approved by ${cm.approverName || cm.approver || 'a council manager'}`
-        : 'Needs approval from a council manager',
+      status: cm.met ? 'met' : councilDeclined ? 'rejected' : council.length > councilWaiting.length ? 'partial' : 'pending',
+      detail: cmDetail,
     },
     {
       key: 'commsCadre',
@@ -68,7 +84,7 @@ export function buildGateRows(gates: ApprovalGates, pendingEdits?: number): Gate
     },
     {
       key: 'requiredApprovers',
-      label: 'Required approvers',
+      label: 'Other approvers',
       met: ra.met,
       status: ra.met ? 'met' : declined.length > 0 ? 'rejected' : ra.approved > 0 ? 'partial' : 'pending',
       detail: raDetail,
@@ -101,22 +117,21 @@ interface ConditionsPopoverProps {
   /** Reminders already sent on this request (shown as "Reminded …"). */
   reminders?: SubmissionReminder[];
   /**
-   * Sends a reminder (target: a required approver's email, 'council' or 'commsCadre') and
+   * Sends a reminder (target: an approver's email, 'council' or 'commsCadre') and
    * resolves to the request's reminders; rejects with the reason. Omit to hide Remind.
    */
   onRemind?: (target: string) => Promise<SubmissionReminder[]>;
 }
 
-/** Remind buttons for an unmet gate: one for the whole gate, or one per waiting approver. */
+/** Remind buttons for an unmet gate: one per waiting approver, or one for the Comms Cadre. */
 function remindTargets(row: GateRow, gates: ApprovalGates): Array<{ target: string; label: string }> {
   if (row.met) return [];
-  if (row.key === 'councilManager') return [{ target: 'council', label: 'Remind the Council' }];
+  const each = (list: ApproverDetail[]) => list
+    .filter((d) => d.status !== 'approved')
+    .map((d) => ({ target: d.email.toLowerCase(), label: `Remind ${personName(d)}` }));
+  if (row.key === 'councilManager') return each(gates.councilManager.approvers || []);
   if (row.key === 'commsCadre') return [{ target: 'commsCadre', label: 'Remind the Comms Cadre' }];
-  if (row.key === 'requiredApprovers') {
-    return gates.requiredApprovers.details
-      .filter((d) => d.status !== 'approved')
-      .map((d) => ({ target: d.email.toLowerCase(), label: `Remind ${personName(d)}` }));
-  }
+  if (row.key === 'requiredApprovers') return each(gates.requiredApprovers.details);
   return [];
 }
 

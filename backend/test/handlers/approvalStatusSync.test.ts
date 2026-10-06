@@ -38,7 +38,7 @@ function approval(email: string, approverType: UserType, status: 'approved' | 'r
   };
 }
 
-/** Every gate but the tracked changes one: required approver, council manager, Comms Cadre. */
+/** Every gate but the tracked changes one: required approver, listed council approver, Comms Cadre. */
 const allApprovals = (): ContentApproval[] => [
   approval('required@example.com', UserType.Member),
   approval('council@example.com', UserType.CouncilManager),
@@ -50,7 +50,7 @@ async function seed(overrides: Partial<ContentSubmission> = {}): Promise<void> {
     id: SUB, title: 'Status sync', content: 'Hello world.', submittedBy: author.id,
     submittedAt: '2026-10-01T00:00:00Z', status: 'in_review', formFields: [], comments: [],
     approvals: allApprovals(), changes: [], commsCadreApprovals: 0, councilManagerApprovals: [],
-    announcementSent: false, assignedCouncilManagers: [], requiredApprovers: ['required@example.com'],
+    announcementSent: false, assignedCouncilManagers: [], requiredApprovers: ['required@example.com', 'council@example.com'],
     ...overrides,
   };
   await putObject(`content_submissions/${SUB}`, submission, env);

@@ -124,8 +124,9 @@ describe('ReviewTopBar: conditions popover', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(trigger);
     const dialog = screen.getByRole('dialog', { name: /approval conditions/i });
-    expect(dialog).toHaveTextContent('Council Manager');
+    expect(dialog).toHaveTextContent('Council');
     expect(dialog).toHaveTextContent('Approved by Casey Manager');
+    expect(dialog).toHaveTextContent('Other approvers');
     expect(dialog).toHaveTextContent('Needs approval from a Comms Cadre member');
     expect(dialog).toHaveTextContent('1 of 3 approved. Still needed: Bo, c@x (declined)');
     expect(dialog).toHaveTextContent('2 edits still to accept or reject');
