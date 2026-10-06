@@ -16,6 +16,7 @@ import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as P
 import ApprovalTracker from './ApprovalTracker';
 import { ReviewPanel, ReviewTab } from './review/ReviewPanel';
 import { UndoToast } from './review/UndoToast';
+import { SendPreview } from './review/SendPreview';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
 import { locateChange } from './editor/collab/rejectRestore';
 import { describeChange, ChangeDescription } from '../utils/changeDescriptions';
@@ -374,7 +375,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Tab navigation state for Proposed / Comparison / Original / Send sections
   const [activeTab, setActiveTab] = useState<'proposed' | 'comparison' | 'original' | 'send'>('proposed');
-  const [sendCopied, setSendCopied] = useState(false);
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -4071,80 +4071,18 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             {/* Send Mode */}
             {activeTab === 'send' && <div className="send-mode-section">
               {(() => {
-                const proposedTitle = (() => {
-                  // Check proposed versions for a title
-                  if (submission.proposedVersions?.title) return submission.proposedVersions.title;
-                  return submission.title;
-                })();
-
-                const bodyContent = (() => {
-                  const content = editedProposedContent || submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
-                  if (typeof content === 'string' && isLexicalJson(content)) {
-                    return extractTextFromLexical(content);
-                  }
-                  if (typeof content === 'object' && isLexicalJson(content)) {
-                    return extractTextFromLexical(content);
-                  }
-                  return typeof content === 'string' ? content : '';
-                })();
-
-                const audienceFields = submission.formFields?.filter(
-                  (f) => f.id === 'audience' || f.label?.toLowerCase() === 'audience'
-                ) || [];
-                const audienceValues: string[] = audienceFields.flatMap((f) => {
-                  if (Array.isArray(f.value)) return f.value as string[];
-                  if (typeof f.value === 'string') {
-                    try { return JSON.parse(f.value); } catch { return [f.value]; }
-                  }
-                  return [];
-                });
-
+                // The preview (subject, recipient, Reply-To, body, signature) comes from the
+                // backend, built by the same code as Send Email, so it is exactly what is sent.
                 const emailAudiences = ['newsletter', 'singular', 'allcom'];
-                const audienceKeys = audienceValues.map((v) => {
-                  // Map from label to key if needed
-                  const entry = Object.entries(AUDIENCE_LABELS).find(([, label]) => label === v);
-                  return entry ? entry[0] : v;
-                });
-                const hasEmailAudience = audienceKeys.some((k) => emailAudiences.includes(k));
-                const audienceLabels = audienceKeys.map((k) => AUDIENCE_LABELS[k] || k);
-
-                const replyTo = submission.formFields?.find(
-                  (f) => f.id === 'replyToAddress' || f.label?.toLowerCase()?.includes('reply')
-                )?.value as string || '';
-                const signature = submission.formFields?.find(
-                  (f) => f.id === 'signatureText' || f.label?.toLowerCase()?.includes('signature')
-                )?.value as string || '';
-
-                const fullText = [
-                  `Subject: ${proposedTitle}`,
-                  '',
-                  bodyContent,
-                  signature ? `\n${signature}` : '',
-                ].join('\n').trim();
+                const audienceAsSubmitted = submission.formFields?.find(
+                  (f) => f.id === 'audience' || f.label?.toLowerCase() === 'audience'
+                )?.value;
 
                 const isCommsCadreOrAdmin = currentUser.roles?.some(
                   (r) => ['CommsCadre', 'Admin'].includes(r)
                 );
 
                 const alreadySent = submission.status === 'sent';
-
-                const handleCopy = async () => {
-                  try {
-                    await navigator.clipboard.writeText(fullText);
-                    setSendCopied(true);
-                    setTimeout(() => setSendCopied(false), 2000);
-                  } catch {
-                    // Fallback
-                    const textarea = document.createElement('textarea');
-                    textarea.value = fullText;
-                    document.body.appendChild(textarea);
-                    textarea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textarea);
-                    setSendCopied(true);
-                    setTimeout(() => setSendCopied(false), 2000);
-                  }
-                };
 
                 const handleSend = async () => {
                   if (!onSendEmail) return;
@@ -4160,104 +4098,96 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   }
                 };
 
+                // Refetch the preview when what it is built from changes
+                const previewKey = [
+                  submission.status,
+                  submission.title,
+                  submission.richTextContent?.length ?? 0,
+                  submission.content?.length ?? 0,
+                  (submission.changes || []).map((c) => `${c.id}:${c.status}`).join(','),
+                ].join('|');
+
                 return (
-                  <div className="send-mode-preview">
-                    <div className="send-mode-email">
-                      <div className="send-mode-field">
-                        <span className="send-mode-label">Subject:</span>
-                        <span className="send-mode-value">{proposedTitle}</span>
-                      </div>
-                      <div className="send-mode-field">
-                        <span className="send-mode-label">To:</span>
-                        <span className="send-mode-value">
-                          {audienceLabels.length > 0 ? audienceLabels.join(', ') : 'No audience specified'}
-                        </span>
-                      </div>
-                      {replyTo && (
-                        <div className="send-mode-field">
-                          <span className="send-mode-label">Reply-To:</span>
-                          <span className="send-mode-value">{replyTo}</span>
-                        </div>
-                      )}
-                      <div className="send-mode-divider" />
-                      <div className="send-mode-body">
-                        {bodyContent}
-                      </div>
-                      {signature && (
+                  <SendPreview
+                    submissionId={submission.id}
+                    refreshKey={previewKey}
+                    renderActions={(preview) => {
+                      // The approved Audience once the preview has loaded, else as submitted
+                      const audienceValue = preview ? preview.audience : audienceAsSubmitted;
+                      const audienceKeys = audienceValue ? parseAudienceToKeys(audienceValue) : [];
+                      const hasEmailAudience = audienceKeys.some((k) => emailAudiences.includes(k));
+                      const recipient = preview?.to || audienceKeys.map((k) => AUDIENCE_LABELS[k] || k).join(', ');
+                      const notConfigured = !!preview && !preview.to;
+
+                      return (
                         <>
-                          <div className="send-mode-divider" />
-                          <div className="send-mode-signature">{signature}</div>
-                        </>
-                      )}
-                    </div>
+                          {!hasEmailAudience && (
+                            <span className="send-mode-note">
+                              <i className="fas fa-info-circle" style={{ marginRight: '4px' }} />
+                              This submission is not an email item
+                            </span>
+                          )}
 
-                    <div className="send-mode-actions">
-                      <button
-                        className="btn btn-neutral"
-                        onClick={handleCopy}
-                      >
-                        <i className={`fas ${sendCopied ? 'fa-check' : 'fa-copy'}`} style={{ marginRight: '6px' }} />
-                        {sendCopied ? 'Copied!' : 'Copy to Clipboard'}
-                      </button>
+                          {hasEmailAudience && !alreadySent && isCommsCadreOrAdmin && onSendEmail && notConfigured && (
+                            <span className="send-mode-note">
+                              <i className="fas fa-info-circle" style={{ marginRight: '4px' }} />
+                              Sending is not configured in this environment
+                            </span>
+                          )}
 
-                      {!hasEmailAudience && (
-                        <span className="send-mode-note">
-                          <i className="fas fa-info-circle" style={{ marginRight: '4px' }} />
-                          This submission is not an email item
-                        </span>
-                      )}
-
-                      {hasEmailAudience && !alreadySent && isCommsCadreOrAdmin && onSendEmail && (
-                        <button
-                          className="btn btn-primary"
-                          onClick={() => setShowSendConfirm(true)}
-                          disabled={sending}
-                        >
-                          <i className="fas fa-paper-plane" style={{ marginRight: '6px' }} />
-                          {sending ? 'Sending...' : 'Send Email'}
-                        </button>
-                      )}
-
-                      {alreadySent && (
-                        <span className="send-mode-sent-info">
-                          <i className="fas fa-check-circle" style={{ marginRight: '4px', color: 'var(--accent-teal)' }} />
-                          Sent{submission.sentBy ? <> by <UserName value={submission.sentBy} /></> : ''}
-                          {submission.sentAt ? ` on ${new Date(submission.sentAt).toLocaleDateString()}` : ''}
-                        </span>
-                      )}
-
-                      {sendError && (
-                        <span className="send-mode-error">
-                          <i className="fas fa-exclamation-circle" style={{ marginRight: '4px' }} />
-                          {sendError}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Send Confirmation */}
-                    {showSendConfirm && (
-                      <div className="request-changes-overlay" onClick={() => setShowSendConfirm(false)}>
-                        <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
-                          <h3>Send Email</h3>
-                          <p style={{ margin: '12px 0', color: '#666' }}>
-                            Are you sure you want to send this announcement to {audienceLabels.join(', ')}? This action cannot be undone.
-                          </p>
-                          <div className="request-changes-actions">
-                            <button className="btn btn-neutral" onClick={() => setShowSendConfirm(false)}>
-                              Cancel
-                            </button>
+                          {hasEmailAudience && !alreadySent && isCommsCadreOrAdmin && onSendEmail && !notConfigured && (
                             <button
                               className="btn btn-primary"
-                              onClick={handleSend}
-                              disabled={sending}
+                              onClick={() => setShowSendConfirm(true)}
+                              disabled={sending || !preview}
                             >
-                              {sending ? 'Sending...' : 'Confirm Send'}
+                              <i className="fas fa-paper-plane" style={{ marginRight: '6px' }} />
+                              {sending ? 'Sending...' : 'Send Email'}
                             </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                          )}
+
+                          {alreadySent && (
+                            <span className="send-mode-sent-info">
+                              <i className="fas fa-check-circle" style={{ marginRight: '4px', color: 'var(--accent-teal)' }} />
+                              Sent{submission.sentBy ? <> by <UserName value={submission.sentBy} /></> : ''}
+                              {submission.sentAt ? ` on ${new Date(submission.sentAt).toLocaleDateString()}` : ''}
+                            </span>
+                          )}
+
+                          {sendError && (
+                            <span className="send-mode-error">
+                              <i className="fas fa-exclamation-circle" style={{ marginRight: '4px' }} />
+                              {sendError}
+                            </span>
+                          )}
+
+                          {/* Send Confirmation */}
+                          {showSendConfirm && (
+                            <div className="request-changes-overlay" onClick={() => setShowSendConfirm(false)}>
+                              <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
+                                <h3>Send Email</h3>
+                                <p style={{ margin: '12px 0', color: '#666' }}>
+                                  Are you sure you want to send this announcement to {recipient}? This action cannot be undone.
+                                </p>
+                                <div className="request-changes-actions">
+                                  <button className="btn btn-neutral" onClick={() => setShowSendConfirm(false)}>
+                                    Cancel
+                                  </button>
+                                  <button
+                                    className="btn btn-primary"
+                                    onClick={handleSend}
+                                    disabled={sending}
+                                  >
+                                    {sending ? 'Sending...' : 'Confirm Send'}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    }}
+                  />
                 );
               })()}
             </div>}

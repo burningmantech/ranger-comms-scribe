@@ -5,7 +5,8 @@ import { Role } from '../services/roleService';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
-import { uploadMedia, absolutizeMediaUrls } from '../services/mediaService';
+import { uploadMedia } from '../services/mediaService';
+import { buildAnnouncementEmail } from '../services/announcementEmail';
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
@@ -917,6 +918,24 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   return json({ success: true, comment: newComment });
 });
 
+// The announcement email as it would be sent: subject, recipient, Reply-To, HTML and text.
+// Built by the same code as send-email, so the review page's Send view shows exactly what goes
+// out. Anyone who can view the submission can preview it (in any status).
+router.get('/submissions/:id/email-preview', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canViewSubmission(user, submission)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  return json(await buildAnnouncementEmail(submission, env));
+});
+
 // Send announcement email after full approval; Comms Cadre can send
 router.post('/submissions/:id/send-email', withAuth, async (request: Request, env: any) => {
   const { id } = (request as any).params;
@@ -944,8 +963,14 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
   }
   try {
     const { sendEmail } = await import('../utils/email');
-    // Media URLs are stored relative to the site; email clients need absolute ones.
-    await sendEmail(toAddress, submission.title, absolutizeMediaUrls(submission.content, env.PUBLIC_URL), env);
+    // The approved document rendered for email (absolute image URLs), with the approved
+    // Subject, Reply-To and signature: the same build as the email-preview endpoint.
+    const email = await buildAnnouncementEmail(submission, env);
+    await sendEmail(toAddress, email.subject, email.text, env, {
+      html: email.html,
+      text: email.text,
+      ...(email.replyTo ? { replyTo: email.replyTo } : {}),
+    });
 
     submission.status = 'sent';
     submission.sentBy = user.id || user.email;

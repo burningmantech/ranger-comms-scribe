@@ -37,6 +37,32 @@ export interface TrackedChange {
   regionMap?: RegionMap; // Maps the affected region in the document for cascade dependency tracking
 }
 
+/**
+ * Tracked-change fields that hold a request's form values (the review page's Subject,
+ * Audience, Reply-To and Signature rows), not the document. Resolving one never touches
+ * content / richTextContent; the approved value is the newest approved change's whole value
+ * (approvedFieldValue in services/announcementEmail.ts).
+ */
+export const FORM_FIELD_CHANGE_FIELDS: ReadonlySet<string> = new Set([
+  'title',
+  'audience',
+  'replyToAddress',
+  'signatureText',
+]);
+
+/**
+ * The cached proposed document, unless a change was made after it was written (an older
+ * server didn't invalidate it on create, or the write raced a create). Such a copy lacks
+ * that change's edit, so the caller recomputes from the changes instead.
+ */
+export function freshProposedVersions(saved: any, changes: TrackedChange[]): any | null {
+  if (!saved) return null;
+  const savedAt = saved.lastUpdatedAt ? new Date(saved.lastUpdatedAt).getTime() : NaN;
+  if (Number.isNaN(savedAt)) return saved; // undated: keep the old behaviour
+  const newerChange = changes.some(c => new Date(c.timestamp).getTime() > savedAt);
+  return newerChange ? null : saved;
+}
+
 export interface ChangeComment {
   id: string;
   changeId: string;

@@ -38,15 +38,27 @@ export function renderEmailText(message: string): string {
 	return message.replace(/<br\s*[\/]?>/gi, "\n");
 }
 
+/** Optional parts of an email beyond the notification template. */
+export interface SendEmailOptions {
+	/** Reply-To address (validated by the caller). */
+	replyTo?: string;
+	/** A complete HTML body, sent as is instead of wrapping `message` in the template. */
+	html?: string;
+	/** A complete plain-text body, sent as is (defaults to `message` with <br> as newlines). */
+	text?: string;
+}
+
 /**
  * Send an email through SES v2. Returns 200 on success (callers used to receive
- * the HTTP status) and throws on failure.
+ * the HTTP status) and throws on failure. Without options, `message` is wrapped in the
+ * Comms Scribe notification template.
  */
 export async function sendEmail(
 	toEmail: string,
 	subjectLine: string,
 	message: string,
-	config: EmailConfig): Promise<number> {
+	config: EmailConfig,
+	options: SendEmailOptions = {}): Promise<number> {
 	const bcc = (config.EMAIL_BCC || []).filter((address) => address.length > 0);
 	const command = new SendEmailCommand({
 		FromEmailAddress: config.EMAIL_FROM || DEFAULT_EMAIL_FROM,
@@ -54,12 +66,13 @@ export async function sendEmail(
 			ToAddresses: [ toEmail ],
 			...(bcc.length > 0 ? { BccAddresses: bcc } : {}),
 		},
+		...(options.replyTo ? { ReplyToAddresses: [ options.replyTo ] } : {}),
 		Content: {
 			Simple: {
-				Subject: { Data: subjectLine },
+				Subject: { Data: subjectLine, Charset: 'UTF-8' },
 				Body: {
-					Text: { Data: renderEmailText(message) },
-					Html: { Data: renderEmailHtml(message) },
+					Text: { Data: options.text ?? renderEmailText(message), Charset: 'UTF-8' },
+					Html: { Data: options.html ?? renderEmailHtml(message), Charset: 'UTF-8' },
 				},
 			},
 		},
