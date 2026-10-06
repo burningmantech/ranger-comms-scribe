@@ -1532,53 +1532,7 @@
   line-height: 1.5;
 }
 
-/* Dialogs */
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.dialog {
-  background-color: #fff;
-  border-radius: 8px;
-  padding: 24px;
-  width: 480px;
-  max-width: 90vw;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-}
-
-.dialog h3 {
-  font-size: 18px;
-  font-weight: 500;
-  color: #202124;
-  margin: 0 0 16px 0;
-}
-
-.dialog textarea {
-  width: 100%;
-  min-height: 100px;
-  padding: 12px;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
-  font-size: 14px;
-  font-family: inherit;
-  resize: vertical;
-}
-
-.dialog textarea:focus {
-  outline: none;
-  border-color: #1a73e8;
-  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
-}
-
+/* Dialogs (the comment and suggestion dialogs use the Request Changes modal classes) */
 .suggestion-preview {
   margin-bottom: 16px;
 }
@@ -1598,38 +1552,6 @@
   border-radius: 4px;
   font-size: 14px;
   line-height: 1.5;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 24px;
-}
-
-.dialog-actions button {
-  padding: 8px 24px;
-  border: 1px solid #dadce0;
-  background-color: #fff;
-  border-radius: 4px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.dialog-actions button:hover {
-  background-color: #f8f9fa;
-}
-
-.dialog-actions button.primary {
-  background-color: #1a73e8;
-  border-color: #1a73e8;
-  color: #fff;
-}
-
-.dialog-actions button.primary:hover {
-  background-color: #1557b0;
-  border-color: #1557b0;
 }
 
 /* Responsive Design */
@@ -2090,17 +2012,6 @@
   outline: none;
   border-color: #1a73e8;
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
-}
-
-.dialog-actions button.reject {
-  background-color: #d33b2c;
-  border-color: #d33b2c;
-  color: #fff;
-}
-
-.dialog-actions button.reject:hover {
-  background-color: #b31412;
-  border-color: #b31412;
 }
 
 .action-button:disabled {

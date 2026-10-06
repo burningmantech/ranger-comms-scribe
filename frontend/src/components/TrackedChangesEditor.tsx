@@ -4239,8 +4239,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       {/* Comment Dialog */}
       {showCommentDialog && (
-        <div className="dialog-overlay" onClick={() => setShowCommentDialog(false)}>
-          <div className="dialog" onClick={e => e.stopPropagation()}>
+        <div className="request-changes-overlay" onClick={() => setShowCommentDialog(false)}>
+          <div className="request-changes-dialog" role="dialog" aria-modal="true" aria-label="Add Comment" onClick={e => e.stopPropagation()}>
             <h3>Add Comment</h3>
             <textarea
               value={commentText}
@@ -4248,9 +4248,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               placeholder="Enter your comment..."
               autoFocus
             />
-            <div className="dialog-actions">
+            <div className="request-changes-actions">
               <button className="btn btn-neutral" onClick={() => setShowCommentDialog(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleCommentSubmit}>
+              <button className="btn btn-primary" onClick={handleCommentSubmit} disabled={!commentText.trim()}>
                 Add Comment
               </button>
             </div>
@@ -4260,8 +4260,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       {/* Suggestion Dialog */}
       {showSuggestionDialog && (
-        <div className="dialog-overlay" onClick={() => setShowSuggestionDialog(false)}>
-          <div className="dialog" onClick={e => e.stopPropagation()}>
+        <div className="request-changes-overlay" onClick={() => setShowSuggestionDialog(false)}>
+          <div className="request-changes-dialog" role="dialog" aria-modal="true" aria-label="Suggest Edit" onClick={e => e.stopPropagation()}>
             <h3>Suggest Edit</h3>
             <div className="suggestion-preview">
               <label>Selected text:</label>
@@ -4273,7 +4273,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               placeholder="Enter your suggested replacement..."
               autoFocus
             />
-            <div className="dialog-actions">
+            <div className="request-changes-actions">
               <button className="btn btn-neutral" onClick={() => setShowSuggestionDialog(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleSuggestionSubmit}>
                 Suggest Edit
