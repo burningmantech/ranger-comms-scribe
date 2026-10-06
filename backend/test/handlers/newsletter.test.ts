@@ -318,6 +318,24 @@ describe('newsletter editions', () => {
     expect(res.body.edition.status).toBe('approved');
   });
 
+  it('counts an approval for the Communications Manager once the approver is put on that list', async () => {
+    const id = (await nl(env, 'POST', '/editions', CADRE, { subject: 'S' })).body.edition.id;
+    let res = await nl(env, 'POST', `/editions/${id}/approve`, CADRE, { status: 'approved' });
+    expect(res.body.edition.status).toBe('in_review');
+    expect(res.body.approval.commsManager.met).toBe(false);
+    expect(res.body.commsManagers).toEqual([{ name: 'Dev Admin', email: 'dev@localhost' }]);
+    expect(res.body.permissions.approvesAs).toEqual({ commsCadre: true, commsManager: false });
+
+    // An Admin makes the cadre member the Communications Manager (Admin → Council)
+    await putObject('council_members:role:CommunicationsManager', [
+      { id: 'cm2', userId: 'dev-user2', role: 'CommunicationsManager', email: 'user2@localhost', name: 'Test Reviewer', active: true, createdAt: '', updatedAt: '' },
+    ], env);
+    res = await nl(env, 'GET', `/editions/${id}`, CADRE);
+    expect(res.body.approval.commsManager).toEqual({ met: true, by: 'Test Reviewer' });
+    expect(res.body.edition.status).toBe('approved');
+    expect((await getObject<any>(`newsletter_editions/${id}`, env)).status).toBe('approved');
+  });
+
   it('lets an Admin or the Communications Manager override, with a reason', async () => {
     const id = (await nl(env, 'POST', '/editions', CADRE, { subject: 'S' })).body.edition.id;
     expect((await nl(env, 'POST', `/editions/${id}/override-approve`, CADRE, { reason: 'urgent' })).status).toBe(403);

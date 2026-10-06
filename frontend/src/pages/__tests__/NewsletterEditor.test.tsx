@@ -60,7 +60,8 @@ function view(e: NewsletterEdition = edition()): EditionView {
     sources: { s1: { submissionId: 'req-1', title: 'Claim your tickets', status: 'approved', changed: false } },
     calendar: [],
     documents: {},
-    permissions: { canApprove: true, canOverride: false, isCommsManager: false, announceConfigured: true },
+    commsManagers: [{ name: 'Casey Manager', email: 'casey@example.org' }],
+    permissions: { canApprove: true, approvesAs: { commsCadre: true, commsManager: false }, canOverride: false, isCommsManager: false, announceConfigured: true },
   };
 }
 
@@ -166,8 +167,10 @@ describe('NewsletterEditor', () => {
     api.decide.mockResolvedValue(view(edition({ status: 'in_review' })));
     renderEditor();
     await screen.findByRole('heading', { name: 'Ranger News #11' });
+    expect(screen.getByText(/waiting for Casey Manager/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(api.decide).toHaveBeenCalledWith('ed-1', 4, 'approved'));
+    expect(await screen.findByText('Your approval counts for the Comms Cadre. Still needed: the Communications Manager (Casey Manager).')).toBeInTheDocument();
   });
 
   it('is read-only once sent', async () => {

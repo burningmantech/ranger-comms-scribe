@@ -1,5 +1,5 @@
 import { DeleteSessionsForUser, Env } from '../utils/sessionManager';
-import { User, UserType, Group } from '../types';
+import { User, UserType, Group, CouncilRole } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
 import { getObject, getObjectStrict, putObject, deleteObject, listObjects } from './cacheService';
 import { DEFAULT_ROLES, Role } from './roleService';
@@ -162,6 +162,21 @@ export async function makeAdmin(id: string, env: Env): Promise<User | null> {
 }
 
 // Change a user's type
+/** 'CouncilManager' if the user is on any active Council role list, 'CommsCadre' if on the active Comms Cadre list. */
+async function listBackedRoles(user: User, env: Env): Promise<string[]> {
+  const email = (user.email || '').trim().toLowerCase();
+  const matches = (m: any) => m && m.active !== false
+    && ((m.email || '').trim().toLowerCase() === email || (user.id && m.userId === user.id));
+  const roles: string[] = [];
+  const councilLists = await Promise.all(
+    Object.values(CouncilRole).map((role) => getObject<any[]>(`council_members:role:${role}`, env).catch(() => null)),
+  );
+  if (councilLists.some((list) => (list || []).some(matches))) roles.push('CouncilManager');
+  const cadre = await getObject<any[]>('comms_cadre:active', env).catch(() => null);
+  if ((cadre || []).some(matches)) roles.push('CommsCadre');
+  return roles;
+}
+
 export async function changeUserType(id: string, userType: UserType, env: Env): Promise<User | null> {
   console.log('🔄 Starting changeUserType for:', { id, userType });
   const user = await getUser(id, env);
@@ -242,7 +257,10 @@ export async function changeUserType(id: string, userType: UserType, env: Env): 
   // Update user type, roles, and isAdmin flag
   console.log('🔄 Updating user type and roles');
   user.userType = userType;
-  user.roles = [roleName]; // Set the roles array based on the role name
+  // The role for the type, plus the roles that come from the Council and Comms Cadre lists
+  // (Admin → Council / Comms Cadre). Those lists are separate from the type, so one person can
+  // be both, e.g. the Communications Manager who is also in the Comms Cadre.
+  user.roles = [roleName, ...(await listBackedRoles(user, env)).filter((role) => role !== roleName)];
   user.isAdmin = (userType === UserType.Admin);
   
   console.log('💾 Saving updated user:', user);

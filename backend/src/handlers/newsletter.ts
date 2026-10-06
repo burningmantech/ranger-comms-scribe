@@ -9,6 +9,8 @@ import {
   addComment,
   addSubmissionSection,
   approvalState,
+  loadApprovalMembership,
+  reconcileApproval,
   canManageNewsletter,
   createEdition,
   decideEdition,
@@ -74,7 +76,11 @@ function handle(work: (request: Request, env: Env) => Promise<Response>) {
 }
 
 /** An edition as the editor gets it: with its approval state, section sources and calendar. */
-async function editionView(edition: NewsletterEdition, env: Env, user: User) {
+async function editionView(current: NewsletterEdition, env: Env, user: User) {
+  const membership = await loadApprovalMembership(env);
+  const edition = await reconcileApproval(current, membership, env);
+  const email = (user.email || '').toLowerCase();
+  const [userIsCadre, userIsManager] = await Promise.all([isCommsCadre(user, env), isCommsManager(user, env)]);
   const documents: Record<string, { title: string; status: string; url: string | null }> = {};
   for (const section of edition.sections) {
     const id = section.readMore.kind === 'document' ? section.readMore.submissionId : undefined;
@@ -88,12 +94,16 @@ async function editionView(edition: NewsletterEdition, env: Env, user: User) {
   }
   return {
     edition,
-    approval: approvalState(edition),
+    approval: approvalState(edition, membership),
+    /** Who can give the Communications Manager approval (Admin → Council). */
+    commsManagers: membership.managers,
     sources: await sectionSources(edition, env),
     calendar: editorCalendar(edition),
     documents,
     permissions: {
-      canApprove: await isCommsManager(user, env) || await isCommsCadre(user, env),
+      canApprove: userIsCadre || userIsManager,
+      /** The gates this user's approval counts for. */
+      approvesAs: { commsCadre: userIsCadre || membership.cadreEmails.has(email), commsManager: userIsManager },
       canOverride: isAdminUser(user) || await isCommsManager(user, env),
       isCommsManager: await isCommsManager(user, env),
       announceConfigured: !!env.ANNOUNCE_EMAIL_TO,
@@ -103,6 +113,7 @@ async function editionView(edition: NewsletterEdition, env: Env, user: User) {
 
 router.get('/editions', withNewsletterAccess, handle(async (_request, env) => {
   const editions = await listEditions(env);
+  const membership = await loadApprovalMembership(env);
   return json({
     editions: editions.map((e) => ({
       id: e.id,
@@ -112,7 +123,7 @@ router.get('/editions', withNewsletterAccess, handle(async (_request, env) => {
       sectionCount: e.sections.length,
       updatedAt: e.updatedAt,
       sentAt: e.sentAt,
-      approval: approvalState(e),
+      approval: approvalState(e, membership),
     })),
     nextNumber: await nextEditionNumber(env, editions),
   });

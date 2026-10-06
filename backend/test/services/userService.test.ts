@@ -361,6 +361,21 @@ describe('User Service', () => {
       expect(admin?.isAdmin).toBe(true); // Should be set to admin
     });
     
+    it('keeps the Council and Comms Cadre roles that come from their lists', async () => {
+      await getOrCreateUser({ name: 'Comms Manager', email: 'cm@example.com' }, env);
+      await putObject('council_members:role:CommunicationsManager', [{ email: 'cm@example.com', role: 'CommunicationsManager', active: true }], env);
+      await putObject('comms_cadre:active', [{ email: 'cm@example.com', active: true }], env);
+
+      const cadre = await changeUserType('cm@example.com', UserType.CommsCadre, env);
+      expect(cadre?.userType).toBe(UserType.CommsCadre);
+      expect(cadre?.roles).toEqual(['CommsCadre', 'CouncilManager']);
+
+      // Off the Comms Cadre list (inactive): only the Council role stays with a Lead type
+      await putObject('comms_cadre:active', [{ email: 'cm@example.com', active: false }], env);
+      const lead = await changeUserType('cm@example.com', UserType.Lead, env);
+      expect(lead?.roles).toEqual(['Public', 'CouncilManager']);
+    });
+
     it('should return null for non-existent users', async () => {
       const result = await changeUserType('nonexistent@example.com', UserType.Member, env);
       

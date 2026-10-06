@@ -606,6 +606,34 @@ export interface ApprovalState {
   override: boolean;
 }
 
+/**
+ * Who counts for each gate now: the active Comms Cadre list and the Council Communications
+ * Manager list (Admin → Comms Cadre / Council). An approval counts for a gate if the approver
+ * was in it when they approved (by type, role or list) or is in its list now, so adding
+ * someone to a list afterwards doesn't make them approve again.
+ */
+export interface ApprovalMembership {
+  cadreEmails: Set<string>;
+  managerEmails: Set<string>;
+  managers: Array<{ name: string; email: string }>;
+}
+
+export async function loadApprovalMembership(env: Env): Promise<ApprovalMembership> {
+  const { getCouncilManagersForRole } = await import('./councilManagerService');
+  const { CouncilRole } = await import('../types');
+  const [cadreEmails, managerEmails, list] = await Promise.all([
+    getActiveCommsCadreEmails(env),
+    getCommsManagerEmails(env),
+    getCouncilManagersForRole(CouncilRole.CommunicationsManager, env).catch(() => []),
+  ]);
+  const managers = (list || [])
+    .filter((m) => m && m.active !== false && m.email)
+    .map((m) => ({ name: m.name || m.email, email: m.email }));
+  return { cadreEmails, managerEmails, managers };
+}
+
+const EMPTY_MEMBERSHIP: ApprovalMembership = { cadreEmails: new Set(), managerEmails: new Set(), managers: [] };
+
 /** The decisions that count: each person's latest, for the current version. */
 function currentDecisions(edition: NewsletterEdition): EditionApproval[] {
   const latest = new Map<string, EditionApproval>();
@@ -618,11 +646,12 @@ function currentDecisions(edition: NewsletterEdition): EditionApproval[] {
   return Array.from(latest.values());
 }
 
-export function approvalState(edition: NewsletterEdition): ApprovalState {
+export function approvalState(edition: NewsletterEdition, membership: ApprovalMembership = EMPTY_MEMBERSHIP): ApprovalState {
   const decisions = currentDecisions(edition);
   const approved = decisions.filter((a) => a.status === 'approved');
-  const cadre = approved.find((a) => a.asCommsCadre);
-  const manager = approved.find((a) => a.asCommsManager);
+  const email = (a: EditionApproval) => (a.approverEmail || '').trim().toLowerCase();
+  const cadre = approved.find((a) => a.asCommsCadre || membership.cadreEmails.has(email(a)));
+  const manager = approved.find((a) => a.asCommsManager || membership.managerEmails.has(email(a)));
   return {
     version: edition.version,
     commsCadre: { met: !!cadre, ...(cadre ? { by: cadre.approverName || cadre.approverEmail } : {}) },
@@ -637,9 +666,9 @@ export function approvalState(edition: NewsletterEdition): ApprovalState {
  * have approved and nobody has asked for changes (one person who is both counts for both,
  * as with requests), or after an override.
  */
-function recomputeStatus(edition: NewsletterEdition): void {
+function recomputeStatus(edition: NewsletterEdition, membership: ApprovalMembership): void {
   if (edition.status === 'sent') return;
-  const state = approvalState(edition);
+  const state = approvalState(edition, membership);
   const approved = state.override || (state.commsCadre.met && state.commsManager.met && state.rejectedBy.length === 0);
   if (approved) {
     edition.status = 'approved';
@@ -650,6 +679,26 @@ function recomputeStatus(edition: NewsletterEdition): void {
   }
 }
 
+/**
+ * Bring an edition's status up to date with who is in the Comms Cadre and Communications
+ * Manager lists now (e.g. the approver was made Communications Manager after approving).
+ * Writes only when the status changes.
+ */
+export async function reconcileApproval(edition: NewsletterEdition, membership: ApprovalMembership, env: Env): Promise<NewsletterEdition> {
+  if (edition.status !== 'in_review' && edition.status !== 'approved') return edition;
+  const probe: NewsletterEdition = { ...edition };
+  recomputeStatus(probe, membership);
+  if (probe.status === edition.status) return edition;
+  return serialized(editionKey(edition.id), async () => {
+    const fresh = await requireEdition(edition.id, env);
+    if (fresh.status !== 'in_review' && fresh.status !== 'approved') return fresh;
+    const before = fresh.status;
+    recomputeStatus(fresh, membership);
+    if (fresh.status !== before) await putObject(editionKey(fresh.id), fresh, env);
+    return fresh;
+  });
+}
+
 export async function submitForApproval(id: string, user: User, env: Env): Promise<NewsletterEdition> {
   const edition = await serialized(editionKey(id), async () => {
     const e = await requireEdition(id, env);
@@ -657,7 +706,7 @@ export async function submitForApproval(id: string, user: User, env: Env): Promi
     if (e.status !== 'draft') return e;
     e.status = 'in_review';
     e.updatedAt = new Date().toISOString();
-    recomputeStatus(e);
+    recomputeStatus(e, await loadApprovalMembership(env));
     await putObject(editionKey(e.id), e, env);
     return e;
   });
@@ -720,7 +769,7 @@ export async function decideEdition(
     });
     if (comment) edition.comments.push(makeComment(edition.id, `${status === 'approved' ? 'Approved' : 'Changes requested'}: ${comment}`, user));
     if (edition.status === 'draft') edition.status = 'in_review';
-    recomputeStatus(edition);
+    recomputeStatus(edition, await loadApprovalMembership(env));
     await putObject(editionKey(edition.id), edition, env);
     return edition;
   });
@@ -738,7 +787,7 @@ export async function overrideApproval(id: string, input: { reason?: unknown; ve
     if (input.version !== undefined) assertVersion(edition, input.version);
     edition.approvalOverride = { by: userKey(user), byName: user.name || user.email, reason, at: new Date().toISOString(), version: edition.version };
     edition.comments.push(makeComment(edition.id, `Approval override: ${reason}`, user));
-    recomputeStatus(edition);
+    recomputeStatus(edition, await loadApprovalMembership(env));
     await putObject(editionKey(edition.id), edition, env);
     return edition;
   });

@@ -2,7 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { CouncilMember, CouncilRole, UserType, User } from '../types';
 import { withAuth } from '../authWrappers';
 import { Env } from '../utils/sessionManager';
-import { getObject, getObjectStrict, putObject, listObjects, removeFromCache } from '../services/cacheService';
+import { getObject, getObjectStrict, putObject, listObjects, deleteObject } from '../services/cacheService';
 import { changeUserType, getUser } from '../services/userService';
 
 export const router = AutoRouter({ base: '/api/council' });
@@ -179,7 +179,7 @@ router.delete('/members/:id', withAuth, async (request: Request, env: Env) => {
   await putObject(`council_members:role:${member.role}`, updatedRoleMembers, env);
 
   // Remove user-specific entry
-  await removeFromCache(`council_members:${member.userId}:${member.role}`, env);
+  await deleteObject(`council_members:${member.userId}:${member.role}`, env);
 
   // Check if user has any other active council roles
   let hasActiveRoles = false;

@@ -93,9 +93,16 @@ function ApprovalSummary({ view }: { view: EditionView }) {
         <i className={`fas ${approval.commsCadre.met || approval.override ? 'fa-check-circle' : 'fa-circle'}`} aria-hidden="true" />
         Comms Cadre{approval.commsCadre.by ? `: ${approval.commsCadre.by}` : ''}
       </span>
-      <span className={`nle-gate ${approval.commsManager.met || approval.override ? 'met' : ''}`}>
+      <span
+        className={`nle-gate ${approval.commsManager.met || approval.override ? 'met' : ''} ${!approval.commsManager.met && !approval.override && view.commsManagers.length === 0 ? 'rejected' : ''}`}
+        title={view.commsManagers.length ? `Communications Manager: ${view.commsManagers.map((m) => m.name).join(', ')}` : 'Nobody is set up as the Communications Manager (Admin → Council)'}
+      >
         <i className={`fas ${approval.commsManager.met || approval.override ? 'fa-check-circle' : 'fa-circle'}`} aria-hidden="true" />
-        Communications Manager{approval.commsManager.by ? `: ${approval.commsManager.by}` : ''}
+        Communications Manager{approval.commsManager.by
+          ? `: ${approval.commsManager.by}`
+          : approval.override ? '' : view.commsManagers.length
+            ? ` (waiting for ${view.commsManagers.map((m) => m.name).join(' or ')})`
+            : ': nobody is set up (Admin → Council), or an Admin can override'}
       </span>
       {approval.override && <span className="nle-gate met">Override: {edition.approvalOverride?.byName}</span>}
       {approval.rejectedBy.length > 0 && (
@@ -406,6 +413,12 @@ export const NewsletterEditor: React.FC = () => {
                 title={myDecision?.status === 'approved' ? 'You approved this version' : `Approve version ${edition.version}`}
                 onClick={() => act('approve', async () => {
                   const v = await newsletterService.decide(id, versionRef.current, 'approved');
+                  const as = v.permissions.approvesAs;
+                  const counted = [as.commsCadre && 'the Comms Cadre', as.commsManager && 'the Communications Manager'].filter(Boolean).join(' and ');
+                  const waiting = v.edition.status === 'approved' ? '' : !v.approval.commsManager.met
+                    ? ` Still needed: the Communications Manager${v.commsManagers.length ? ` (${v.commsManagers.map((m) => m.name).join(' or ')})` : ' (nobody is set up: Admin → Council)'}.`
+                    : !v.approval.commsCadre.met ? ' Still needed: a Comms Cadre member.' : '';
+                  setActionMessage({ kind: 'ok', text: `Your approval counts for ${counted}.${waiting}` });
                   return v;
                 })}
               >

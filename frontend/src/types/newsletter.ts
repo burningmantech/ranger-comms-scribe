@@ -145,7 +145,16 @@ export interface EditionView {
   sources: Record<string, SectionSource>;
   calendar: EditorCalendarEntry[];
   documents: Record<string, { title: string; status: string; url: string | null }>;
-  permissions: { canApprove: boolean; canOverride: boolean; isCommsManager: boolean; announceConfigured: boolean };
+  /** Who can give the Communications Manager approval (Admin → Council). */
+  commsManagers: Array<{ name: string; email: string }>;
+  permissions: {
+    canApprove: boolean;
+    /** The gates the signed-in user's approval counts for. */
+    approvesAs: { commsCadre: boolean; commsManager: boolean };
+    canOverride: boolean;
+    isCommsManager: boolean;
+    announceConfigured: boolean;
+  };
 }
 
 export interface EditionSummary {

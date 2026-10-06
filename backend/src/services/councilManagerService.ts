@@ -1,6 +1,6 @@
 import { Env } from '../utils/sessionManager';
 import { CouncilRole, UserType, CouncilMember, User } from '../types';
-import { getObject, getObjectStrict, putObject, removeFromCache } from './cacheService';
+import { getObject, getObjectStrict, putObject, deleteObject } from './cacheService';
 import { getUser, saveUser } from './userService';
 
 interface OrgChartEntry {
@@ -198,8 +198,9 @@ export async function removeCouncilMember(email: string, role: CouncilRole, env:
     const updatedMembers = existingMembers.filter(member => member.email !== email);
     await putObject(`council_members:role:${role}`, updatedMembers, env);
 
-    // Remove user-specific entry
-    await removeFromCache(`council_members:${user.id}:${role}`, env);
+    // Remove the user-specific entry from the store (removeFromCache only cleared the memory
+    // cache, so the stored record stayed active and still read as a council role)
+    await deleteObject(`council_members:${user.id}:${role}`, env);
 
     // Check if user has any other active council roles by checking each role individually
     let hasOtherRoles = false;

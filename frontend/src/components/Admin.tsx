@@ -748,6 +748,11 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
         {activeTab === AdminTab.Users && (
           <div className="admin-section">
             <h2>User Management</h2>
+            <p className="admin-hint">
+              The Role menu sets one main role. Council roles (such as the Communications Manager) and Comms Cadre
+              membership are set on the <strong>Council</strong> and <strong>Comms Cadre</strong> tabs, and one person
+              can have both; changing the Role here keeps them.
+            </p>
             {users.length === 0 ? (
               <p>No users found. New users will appear here when they sign up.</p>
             ) : (

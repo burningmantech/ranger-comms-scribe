@@ -420,3 +420,10 @@
 .group-actions {
   text-align: right;
 }
+
+.admin-hint {
+  color: var(--text-medium);
+  font-size: 0.875rem;
+  margin: 0 0 12px 0;
+  max-width: 760px;
+}
