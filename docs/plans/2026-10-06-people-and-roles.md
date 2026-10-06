@@ -75,3 +75,18 @@ The old keys are left in place (unused) so a rollback still finds them.
 Permission gaps the review found, left as they were so this change only moves checks onto the new model:
 `getTrackedChangesHandler` and `updateProposedVersionsHandler` allow any signed-in user (`|| true`); creating
 tracked changes, change comments, batch create, the timeline and submission comments check only for a session.
+
+## Comms setup (follow-on cleanup)
+
+The rest of the old Admin tabs moved to where the work happens:
+- **Groups → mailing lists.** Groups were only used to email their members. Comms needs to send to list addresses
+  such as `ranger-<x>-cadre@burningman.org` instead, so lists are send destinations (`mailing_lists/<id>`), managed by
+  the Comms Cadre and Admins under Requests → Lists & templates. Each says which audiences it serves; the Send view
+  ticks those (Announce when none match) and the sender can change them. The `group/*` data and `/admin/groups`
+  API are left in place, unused by the UI
+- **Templates** moved to the same page and are editable by the Comms Cadre as well as Admins
+- **Reminders** are Remind buttons in a request's approval conditions popover (one per unmet gate or waiting
+  approver), limited to once a day per target and logged on the request
+- **Bulk add** is Add people on the People screen, with an approved switch and an optional role
+- On dev and staging `COMMS_EMAIL_OVERRIDE` sends list emails and reminders to one address, so the real lists are
+  never mailed from there

@@ -278,6 +278,8 @@ Read once at boot by `backend/src/config/env.ts` (full list in the contracts doc
 - `DATA_BUCKET`, `S3_ENDPOINT` (MinIO), `AWS_REGION`
 - `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` (CSV)
 - `ANNOUNCE_EMAIL_TO` (unset disables announcements), `NUDGE_EMAIL_OVERRIDE` (dev/staging: every Comms Calendar nudge goes here)
+- `COMMS_EMAIL_OVERRIDE` (dev/staging): announcement sends to mailing lists and approval reminders go only here, with
+  `[for <real recipients>] ` before the subject (`commsRecipients()` in `utils/email.ts`); sign-in emails are unaffected
 - `BOOTSTRAP_ADMIN_EMAILS` (CSV), `GOOGLE_CLIENT_ID`, `TURNSTILESECRET`
 - `DEV_BYPASS_AUTH=true` for fake dev users (local only)
 - `STORE_DRIVER=memory` to skip S3 (tests, quick local runs); `STORE_LATENCY_MS=<n>` adds random S3-like delays
@@ -319,6 +321,22 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
 - Comms Cadre, Admins and the Council Communications Manager edit; other Council members read only
 - CSV import is parsed in the browser (`frontend/src/utils/commsCalendarImport.ts`); same subject + cycle is
   skipped as a duplicate
+
+## Mailing lists, reminders and admin screens
+
+- **Mailing lists** (`MailingList` at `mailing_lists/<id>`, `services/mailingListService.ts`, `/api/mailing-lists`)
+  are where approved announcements are sent. Ranger Announce (id `announce`, address from `ANNOUNCE_EMAIL_TO`) is
+  built in; the rest (e.g. `ranger-<x>-cadre@burningman.org`) are managed by the Comms Cadre and Admins on
+  Requests → Lists & templates (`/requests/settings`, which also has the request templates). Each list names the
+  audiences it serves; `suggestedListIds()` ticks those in the Send view (else Announce), the sender can change
+  the choice, and `send-email` records `submission.sentTo`
+- **Reminders**: `POST /api/content/submissions/:id/remind {target}` (a lowercased approver email, `council` or
+  `commsCadre`) from the Remind buttons in the approval conditions popover. Reviewers and the submitter, while
+  `submitted`/`in_review`; once per target per 20 hours; email plus an in-app notification, not to the sender;
+  logged in `submission.reminders`
+- **Admin** is only People (`PeopleManagement.tsx`): access, plus Add people (`/admin/bulk-create-users`, then
+  the access PUT for a role). The old Groups, Bulk add, Reminders and Templates tabs are gone. Admin routes
+  don't take the `DEV_BYPASS_AUTH` sessions
 
 ## Notifications
 
