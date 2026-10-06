@@ -46,6 +46,8 @@ import {
     FormattedSegment,
 } from '../nodes/DeletedTextNode';
 import { CURRENT_USER_COLOR, getUserColor } from '../../../utils/userColors';
+import { newPendingKey, notePendingMarker } from '../collab/pendingMarkers';
+import { isTypedRange } from '../../../utils/typedText';
 
 interface DeletionInterceptionPluginProps {
     enabled: boolean;
@@ -78,80 +80,69 @@ export default function DeletionInterceptionPlugin({
         const authorColor = currentUserId
             ? (isCollab ? getUserColor(currentUserId) : CURRENT_USER_COLOR)
             : undefined;
-        // Spread into every marker; empty in legacy mode, so its JSON is unchanged.
-        const authorIdField = isCollab && currentUserId ? { authorId: currentUserId } : {};
+        // Spread into every new marker; empty in legacy mode, so its JSON is unchanged.
+        // Collaborative mode: the author's ID, and a unique pending key noted for the
+        // transaction this edit belongs to, so its save stamps exactly this marker
+        // (collab/pendingMarkers.ts).
+        const markerFields = (): { authorId?: string; pendingKey?: string } => {
+            if (!isCollab) return {};
+            const pendingKey = newPendingKey();
+            notePendingMarker(pendingKey);
+            return { ...(currentUserId ? { authorId: currentUserId } : {}), pendingKey };
+        };
 
         // When KEY_BACKSPACE/DELETE allows a deletion through (returns false),
         // the subsequent DELETE_CHARACTER_COMMAND must also allow it through.
         let skipNextDeleteCommand = false;
 
-        /**
-         * Get the text content of the paragraph (top-level block) containing
-         * a given text node, by concatenating all its descendant text nodes.
-         */
-        const getParagraphText = (textNode: LexicalNode): string => {
-            let parent = textNode.getParent();
-            // Walk up to the top-level block (direct child of root)
+        /** The top-level block (direct child of root) containing a node. */
+        const getTopBlock = (node: LexicalNode): LexicalNode | null => {
+            let parent = node.getParent();
             while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
                 parent = parent.getParent();
             }
-            if (!parent) return textNode.getTextContent();
-            return parent.getTextContent();
+            return parent;
         };
 
-        /**
-         * Get the offset of a text node within its paragraph by summing
-         * preceding sibling/descendant text node lengths.
-         */
-        const getOffsetInParagraph = (textNode: LexicalNode): number => {
-            let parent = textNode.getParent();
-            while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
-                parent = parent.getParent();
-            }
-            if (!parent) return 0;
+        /** A plain text node (not a tab, code highlight or other TextNode subclass). */
+        const isPlainText = (node: LexicalNode | null): boolean =>
+            !!node && $isTextNode(node) && node.getType() === 'text';
 
+        /**
+         * Text of a block in the before-state's form (extractTextFromLexical): only plain
+         * text nodes, concatenated, so list items, line breaks, tabs and markers add nothing.
+         */
+        const blockText = (node: LexicalNode): string => {
+            if ($isElementNode(node)) return node.getChildren().map(blockText).join('');
+            return isPlainText(node) ? node.getTextContent() : '';
+        };
+
+        /** Offset of a text node within its top-level block, counted like blockText. */
+        const getOffsetInBlock = (textNode: LexicalNode): number => {
+            const block = getTopBlock(textNode);
+            if (!block) return 0;
             let offset = 0;
             const walk = (node: LexicalNode): boolean => {
-                if (node === textNode) return true; // found it
-                if ($isTextNode(node)) {
-                    offset += node.getTextContent().length;
-                } else if ($isElementNode(node)) {
+                if (node === textNode) return true;
+                if ($isElementNode(node)) {
                     for (const child of node.getChildren()) {
                         if (walk(child)) return true;
                     }
+                } else if (isPlainText(node)) {
+                    offset += node.getTextContent().length;
                 }
                 return false;
             };
-            walk(parent);
+            walk(block);
             return offset;
         };
 
         /**
-         * Find the paragraph index (0-based) of the top-level block
-         * containing a given text node.
-         */
-        const getParagraphIndex = (textNode: LexicalNode): number => {
-            let parent = textNode.getParent();
-            while (parent && parent.getParent() && parent.getParent() !== $getRoot()) {
-                parent = parent.getParent();
-            }
-            if (!parent) return 0;
-            const root = $getRoot();
-            const children = root.getChildren();
-            for (let i = 0; i < children.length; i++) {
-                if (children[i] === parent) return i;
-            }
-            return 0;
-        };
-
-        /**
-         * Check if the character about to be deleted is newly added text
-         * (typed in the current editing session, not present in beforeSnapshot).
+         * Check if the text about to be deleted was typed in the open transaction (it isn't
+         * in the before-state). Then it is really deleted, with no marker.
          *
-         * Works at the paragraph level to avoid text-format mismatches between
-         * extractTextFromLexical (\n) and $getRoot().getTextContent() (\n\n).
-         *
-         * Returns true if the deletion target is entirely new text.
+         * Compares the current document's blocks with the before-state's in the same text
+         * form (see utils/typedText). Any doubt answers false, so a marker is created.
          */
         const isNewlyAddedText = (isForward: boolean): boolean => {
             if (!getBeforeText) return false;
@@ -161,77 +152,41 @@ export default function DeletionInterceptionPlugin({
             const selection = $getSelection();
             if (!$isRangeSelection(selection)) return false;
 
-            // beforeText uses single \n between paragraphs (from extractTextFromLexical)
-            const beforeParagraphs = beforeText.split('\n');
+            // beforeText uses a single \n between top-level blocks (extractTextFromLexical)
+            const beforeBlocks = beforeText.split('\n');
+            const root = $getRoot();
+            const blocks = root.getChildren();
+            const currentBlocks = blocks.map(blockText);
 
+            let block: LexicalNode | null;
+            let start: number;
+            let end: number;
             if (selection.isCollapsed()) {
-                const anchor = selection.anchor;
-                const anchorNode = anchor.getNode();
-                if (!$isTextNode(anchorNode)) return false;
-
-                const paraIndex = getParagraphIndex(anchorNode);
-                const beforePara = beforeParagraphs[paraIndex];
-                if (beforePara === undefined) return true; // Entirely new paragraph
-
-                const currentPara = getParagraphText(anchorNode);
-                if (currentPara === beforePara) return false; // No changes in this paragraph
-                if (currentPara.length <= beforePara.length) return false; // No additions
-
-                // Compute added range within this paragraph
-                let addStart = 0;
-                while (addStart < beforePara.length && beforePara[addStart] === currentPara[addStart]) {
-                    addStart++;
-                }
-                let beforeEnd = beforePara.length - 1;
-                let currentEnd = currentPara.length - 1;
-                while (beforeEnd >= addStart && currentEnd >= addStart && beforePara[beforeEnd] === currentPara[currentEnd]) {
-                    beforeEnd--;
-                    currentEnd--;
-                }
-                const addEnd = currentEnd + 1;
-                if (addEnd <= addStart) return false;
-
-                // Cursor position within paragraph
-                const offsetInPara = getOffsetInParagraph(anchorNode) + anchor.offset;
-                const deletePos = isForward ? offsetInPara : offsetInPara - 1;
-                return deletePos >= addStart && deletePos < addEnd;
+                const anchorNode = selection.anchor.getNode();
+                if (!isPlainText(anchorNode)) return false;
+                const offset = selection.anchor.offset;
+                // The character deleted must be in this text node or in an adjacent plain
+                // text node (never across a line break, marker or other leaf).
+                if (!isForward && offset === 0 && !isPlainText(anchorNode.getPreviousSibling())) return false;
+                if (isForward && offset >= anchorNode.getTextContentSize() && !isPlainText(anchorNode.getNextSibling())) return false;
+                block = getTopBlock(anchorNode);
+                const at = getOffsetInBlock(anchorNode) + offset;
+                start = isForward ? at : at - 1;
+                end = start + 1;
             } else {
-                // Non-collapsed: check if entire selection is within one paragraph's added range
-                const anchor = selection.anchor;
-                const focus = selection.focus;
-                const anchorNode = anchor.getNode();
-                const focusNode = focus.getNode();
-                if (!$isTextNode(anchorNode) || !$isTextNode(focusNode)) return false;
-
-                const anchorParaIdx = getParagraphIndex(anchorNode);
-                const focusParaIdx = getParagraphIndex(focusNode);
-                if (anchorParaIdx !== focusParaIdx) return false; // Cross-paragraph selection
-
-                const beforePara = beforeParagraphs[anchorParaIdx];
-                if (beforePara === undefined) return true;
-
-                const currentPara = getParagraphText(anchorNode);
-                if (currentPara.length <= beforePara.length) return false;
-
-                let addStart = 0;
-                while (addStart < beforePara.length && beforePara[addStart] === currentPara[addStart]) {
-                    addStart++;
-                }
-                let beforeEnd = beforePara.length - 1;
-                let currentEnd = currentPara.length - 1;
-                while (beforeEnd >= addStart && currentEnd >= addStart && beforePara[beforeEnd] === currentPara[currentEnd]) {
-                    beforeEnd--;
-                    currentEnd--;
-                }
-                const addEnd = currentEnd + 1;
-                if (addEnd <= addStart) return false;
-
-                const anchorAbs = getOffsetInParagraph(anchorNode) + anchor.offset;
-                const focusAbs = getOffsetInParagraph(focusNode) + focus.offset;
-                const selStart = Math.min(anchorAbs, focusAbs);
-                const selEnd = Math.max(anchorAbs, focusAbs);
-                return selStart >= addStart && selEnd <= addEnd;
+                const anchorNode = selection.anchor.getNode();
+                const focusNode = selection.focus.getNode();
+                if (!isPlainText(anchorNode) || !isPlainText(focusNode)) return false;
+                block = getTopBlock(anchorNode);
+                if (!block || block !== getTopBlock(focusNode)) return false; // across blocks
+                const anchorAbs = getOffsetInBlock(anchorNode) + selection.anchor.offset;
+                const focusAbs = getOffsetInBlock(focusNode) + selection.focus.offset;
+                start = Math.min(anchorAbs, focusAbs);
+                end = Math.max(anchorAbs, focusAbs);
             }
+            if (!block) return false;
+            const blockIndex = blocks.indexOf(block as any);
+            return isTypedRange(beforeBlocks, currentBlocks, blockIndex, start, end);
         };
 
         /**
@@ -371,7 +326,7 @@ export default function DeletionInterceptionPlugin({
                                     deletedText: deletedSlice,
                                     authorName: currentUserName,
                                     authorColor,
-                                    ...authorIdField,
+                                    ...markerFields(),
                                     formattedSegments: segments,
                                 });
                                 liveNode.insertBefore(deletedNode);
@@ -386,7 +341,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
-                                        ...authorIdField,
+                                        ...markerFields(),
                                         formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
@@ -402,7 +357,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
-                                        ...authorIdField,
+                                        ...markerFields(),
                                         formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
@@ -418,7 +373,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: deletedSlice,
                                         authorName: currentUserName,
                                         authorColor,
-                                        ...authorIdField,
+                                        ...markerFields(),
                                         formattedSegments: segments,
                                     });
                                     selectedNode.insertBefore(deletedNode);
@@ -485,7 +440,7 @@ export default function DeletionInterceptionPlugin({
                                     deletedText: nextChar,
                                     authorName: currentUserName,
                                     authorColor,
-                                    ...authorIdField,
+                                    ...markerFields(),
                                 });
                                 liveNode.insertBefore(deletedNode);
                                 liveNode.remove();
@@ -498,7 +453,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: nextChar,
                                         authorName: currentUserName,
                                         authorColor,
-                                        ...authorIdField,
+                                        ...markerFields(),
                                     });
                                     charNode.insertBefore(deletedNode);
                                     charNode.remove();
@@ -555,7 +510,7 @@ export default function DeletionInterceptionPlugin({
                                     deletedText: prevChar,
                                     authorName: currentUserName,
                                     authorColor,
-                                    ...authorIdField,
+                                    ...markerFields(),
                                 });
                                 liveNode.insertBefore(deletedNode);
                                 liveNode.remove();
@@ -568,7 +523,7 @@ export default function DeletionInterceptionPlugin({
                                         deletedText: prevChar,
                                         authorName: currentUserName,
                                         authorColor,
-                                        ...authorIdField,
+                                        ...markerFields(),
                                     });
                                     charNode.insertBefore(deletedNode);
                                     charNode.remove();
@@ -608,7 +563,7 @@ export default function DeletionInterceptionPlugin({
                             deletedText: charToDelete,
                             authorName: currentUserName,
                             authorColor,
-                            ...authorIdField,
+                            ...markerFields(),
                             formattedSegments: fmtSegs,
                         });
                         liveNode.insertBefore(deletedNode);
@@ -622,7 +577,7 @@ export default function DeletionInterceptionPlugin({
                                 deletedText: charToDelete,
                                 authorName: currentUserName,
                                 authorColor,
-                                ...authorIdField,
+                                ...markerFields(),
                                 formattedSegments: fmtSegs,
                             });
                             charNode.insertBefore(deletedNode);

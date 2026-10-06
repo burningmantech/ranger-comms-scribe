@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
-import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffCharsOptimized, diffWords } from '../utils/diffAlgorithm';
+import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffWords } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
 
@@ -18,10 +18,12 @@ import { ReviewPanel, ReviewTab } from './review/ReviewPanel';
 import { UndoToast } from './review/UndoToast';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
 import { locateChange } from './editor/collab/rejectRestore';
-import { collectTextNodes, detectInlineFormatChanges, describeChange, ChangeDescription } from '../utils/changeDescriptions';
+import { describeChange, ChangeDescription } from '../utils/changeDescriptions';
 import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, pendingOnly } from '../utils/reviewItems';
 import { ApprovalGates } from '../types/content';
 import { originalDocument } from '../utils/originalContent';
+import { buildResolveHints } from '../utils/resolveHints';
+import { claimPendingMarkers, takeClaimedMarkers } from './editor/collab/pendingMarkers';
 import type { CollabMode } from '../services/collabConfig';
 import type { CollabSession } from './editor/collab/YjsCollaboration';
 import type { LocalEditSession } from './editor/collab/localEditTracker';
@@ -623,8 +625,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     // Reset the active-transaction flag when a transaction settles
     // so the next content change starts a new transaction.
-    const handleSettledFlag = () => {
+    const handleSettledFlag = (tx?: Transaction) => {
       hasActiveTransactionRef.current = false;
+      // Collaborative mode: this transaction owns the deletion markers created since the
+      // previous settle; its save stamps exactly those (pendingMarkers.ts).
+      if (isCollab && tx?.id) claimPendingMarkers(tx.id);
       // Fallback for settles that don't need a save (no save-status change follows)
       setTimeout(flushPendingRemoteRefresh, 3000);
     };
@@ -661,12 +666,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // Map __pending_deletion__ to the real changeId in the Lexical JSON
         const currentJson = editedProposedContentRef.current;
         if (isCollab) {
-          // Collaborative mode: other users' pending markers are in the shared document
-          // too. Rename only this user's, in the editor (it syncs, and the editor reports
-          // the result back as the new baseline), never with a document-wide replace.
-          if (currentJson && currentJson.includes('__pending_deletion__')) {
+          // Collaborative mode: other users' pending markers, and stray ones earlier
+          // sessions left, are in the shared document too. Stamp only the markers this
+          // transaction's own edits created (by their pending keys), in the editor (it
+          // syncs, and the editor reports the result back as the new baseline), never with
+          // a document-wide replace.
+          const pendingKeys = takeClaimedMarkers(tx.id);
+          if (pendingKeys.length > 0) {
             window.dispatchEvent(new CustomEvent('commit-pending-deletion', {
-              detail: { newId: tx.remoteChangeId, authorId: currentUser.id || currentUser.email }
+              detail: { newId: tx.remoteChangeId, authorId: currentUser.id || currentUser.email, pendingKeys }
             }));
           }
         } else if (currentJson && currentJson.includes('__pending_deletion__')) {
@@ -1352,176 +1360,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Returns false when a collaborative reject couldn't revert the document (the change
   // stays pending).
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject'): boolean => {
-    // Compute deleted text segments so the handler can match __pending_deletion__ nodes.
-    // Also compute replacement pairs (adjacent delete→insert) so the reject handler
-    // can remove inserted text that corresponds to each deletion.
+    // The text and format hints for the legacy marker / heuristics paths (utils/resolveHints).
     const change = trackedChanges.find(c => c.id === changeId);
-    let deletedTexts: string[] = [];
-    let replacementPairs: Array<{ deleted: string; inserted: string }> = [];
-    let insertedTexts: Array<{ text: string; beforeContext: string; afterContext: string }> = [];
-    if (change) {
-      const rawOld = change.richTextOldValue || change.oldValue || '';
-      const rawNew = change.richTextNewValue || change.newValue || '';
-      const oldText = getDisplayableText(rawOld);
-      const newText = getDisplayableText(rawNew);
-      if (oldText && newText) {
-        const segments = diffCharsOptimized(oldText, newText);
-        deletedTexts = segments
-          .filter(s => s.type === 'delete')
-          .map(s => s.value.replace(/^\n+|\n+$/g, ''))
-          .filter(t => t.length > 0);
-
-        // Build replacement pairs: adjacent (delete, insert) segments form a pair.
-        // When rejecting, we need to remove the inserted text alongside restoring
-        // the deleted text, otherwise both end up in the document.
-        const pairedInsertIndices = new Set<number>();
-        for (let i = 0; i < segments.length; i++) {
-          if (segments[i].type === 'delete' && i + 1 < segments.length && segments[i + 1].type === 'insert') {
-            const del = segments[i].value.replace(/^\n+|\n+$/g, '');
-            const ins = segments[i + 1].value.replace(/^\n+|\n+$/g, '');
-            if (del.length > 0 && ins.length > 0) {
-              replacementPairs.push({ deleted: del, inserted: ins });
-              pairedInsertIndices.add(i + 1);
-            }
-          }
-        }
-
-        // Build insertedTexts: pure inserts NOT part of a delete→insert replacement pair.
-        // These are additions that have no corresponding DeletedTextNode, so the
-        // resolve-tracked-change handler needs to find and remove them from TextNodes.
-        let newOffset = 0;
-        for (let i = 0; i < segments.length; i++) {
-          const seg = segments[i];
-          if (seg.type === 'equal') {
-            newOffset += seg.value.length;
-          } else if (seg.type === 'insert') {
-            if (!pairedInsertIndices.has(i) && seg.value.trim().length > 0) {
-              // Get after-context within the same paragraph for precise matching
-              const afterAll = newText.slice(newOffset + seg.value.length);
-              const nlIdx = afterAll.indexOf('\n');
-              const afterCtx = nlIdx >= 0 ? afterAll.slice(0, Math.min(nlIdx, 30)) : afterAll.slice(0, 30);
-              // Get before-context within the same paragraph
-              const beforeAll = newText.slice(0, newOffset);
-              const lastNl = beforeAll.lastIndexOf('\n');
-              const beforeCtx = lastNl >= 0 ? beforeAll.slice(lastNl + 1) : beforeAll.slice(-30);
-              insertedTexts.push({ text: seg.value, beforeContext: beforeCtx, afterContext: afterCtx });
-            }
-            newOffset += seg.value.length;
-          }
-          // 'delete' segments don't advance newOffset
-        }
-      }
-    }
-
-    // Detect formatting-only changes (block type + inline format) so the
-    // resolve handler can revert them on rejection.
-    let formatChanges: Array<{
-      type?: 'block' | 'inline' | 'indent';
-      text: string;
-      fromType: string;
-      fromTag?: string;
-      toType: string;
-      toTag?: string;
-      fromFormat?: number;
-      toFormat?: number;
-      fromIndent?: number;
-      toIndent?: number;
-      blockIndex?: number;
-    }> = [];
-    if (change && change.richTextOldValue && change.richTextNewValue) {
-      try {
-        const oldJson = isLexicalJson(change.richTextOldValue) ? JSON.parse(change.richTextOldValue) : null;
-        const newJson = isLexicalJson(change.richTextNewValue) ? JSON.parse(change.richTextNewValue) : null;
-        if (oldJson?.root?.children && newJson?.root?.children) {
-          // Helper to extract text from any block (paragraph, heading, list, etc.)
-          // Must match Lexical's getTextContent() behavior for reliable block matching.
-          const extractBlockText = (block: any): string => {
-            if (!block.children) return '';
-            return block.children
-              .map((n: any) => {
-                if (n.type === 'text') return n.text || '';
-                if (n.type === 'linebreak') return '\n';
-                if (n.type === 'tab') return '\t';
-                if (n.children) return extractBlockText(n);
-                return '';
-              })
-              .join('');
-          };
-
-          // Compare all top-level blocks (not just paragraphs/headings)
-          const oldBlocks = oldJson.root.children;
-          const newBlocks = newJson.root.children;
-          for (let i = 0; i < Math.min(oldBlocks.length, newBlocks.length); i++) {
-            // Block type changes (paragraph <-> heading, heading tag changes)
-            if (oldBlocks[i].type !== newBlocks[i].type || oldBlocks[i].tag !== newBlocks[i].tag) {
-              const blockText = extractBlockText(newBlocks[i]);
-              formatChanges.push({
-                type: 'block',
-                text: blockText,
-                blockIndex: i,
-                fromType: oldBlocks[i].type,
-                fromTag: oldBlocks[i].tag,
-                toType: newBlocks[i].type,
-                toTag: newBlocks[i].tag,
-              });
-            }
-
-            // Indent changes on the block itself
-            if ((oldBlocks[i].indent ?? 0) !== (newBlocks[i].indent ?? 0)) {
-              const blockText = extractBlockText(newBlocks[i]);
-              formatChanges.push({
-                type: 'indent',
-                text: blockText,
-                fromType: newBlocks[i].type,
-                toType: newBlocks[i].type,
-                fromIndent: oldBlocks[i].indent ?? 0,
-                toIndent: newBlocks[i].indent ?? 0,
-              });
-            }
-
-            // Indent changes on children (e.g. list items inside list nodes)
-            if (oldBlocks[i].children && newBlocks[i].children) {
-              const detectChildIndentChanges = (oldChildren: any[], newChildren: any[]) => {
-                for (let j = 0; j < Math.min(oldChildren.length, newChildren.length); j++) {
-                  if ((oldChildren[j].indent ?? 0) !== (newChildren[j].indent ?? 0)) {
-                    const itemText = extractBlockText(newChildren[j]);
-                    formatChanges.push({
-                      type: 'indent',
-                      text: itemText,
-                      fromType: newChildren[j].type,
-                      toType: newChildren[j].type,
-                      fromIndent: oldChildren[j].indent ?? 0,
-                      toIndent: newChildren[j].indent ?? 0,
-                    });
-                  }
-                  // Recurse into nested children
-                  if (oldChildren[j].children && newChildren[j].children) {
-                    detectChildIndentChanges(oldChildren[j].children, newChildren[j].children);
-                  }
-                }
-              };
-              detectChildIndentChanges(oldBlocks[i].children, newBlocks[i].children);
-            }
-
-            // Inline format changes — character-level comparison handles node splits
-            // Use recursive collectTextNodes to handle nested structures (lists, links)
-            const oldTexts = collectTextNodes(oldBlocks[i]);
-            const newTexts = collectTextNodes(newBlocks[i]);
-            const inlineChanges = detectInlineFormatChanges(oldTexts, newTexts);
-            for (const ic of inlineChanges) {
-              formatChanges.push({
-                type: 'inline',
-                text: ic.text,
-                fromType: 'text',
-                toType: 'text',
-                fromFormat: ic.fromFormat,
-                toFormat: ic.toFormat,
-              });
-            }
-          }
-        }
-      } catch { /* ignore parse errors */ }
-    }
+    const { deletedTexts, replacementPairs, insertedTexts, formatChanges } = buildResolveHints(change, { collab: isCollab, getText: getDisplayableText });
 
     // Collaborative mode: settle the user's in-progress edit first (with their own last
     // state) so pausing doesn't discard it, and tell the resolve handler whose pending
