@@ -33,6 +33,7 @@ import { withAdminCheck } from '../authWrappers';
 import { getCouncilManagersForRole, addCouncilMember, removeCouncilMember } from '../services/councilManagerService';
 import { getObject, putObject, removeFromCache } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
+import { devUserRolesResponse, getDevUserForRequest } from '../utils/devUsers';
 
 interface RequestWithParams extends Request {
   params: {
@@ -488,7 +489,7 @@ router.post('/roles/sync-groups', withAdminCheck, async (request: Request, env: 
 // Add a new endpoint to get all roles for a user
 router.get('/user-roles', async (request: Request, env: Env) => {
   if (env.DEV_BYPASS_AUTH === 'true') {
-    return json({ roles: ['Admin'], permissions: { canEdit: true, canApprove: true, canCreateSuggestions: true, canReviewTrackedChanges: true, canManageSubmissions: true } });
+    return json(devUserRolesResponse(getDevUserForRequest(request)));
   }
 
   const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');

@@ -31,7 +31,16 @@ node review-topbar.js     # review header: Finish review menu, conditions popove
                           # view; works in both modes. STRICT=1 adds a reload after the Yjs room is dropped
 node review-ui.js         # review sidebar: one "Moved" card for a cut + paste, reject (live for both users),
                           # Undo from the toast, accept, History, clicking a card scrolls to its text
+node member.js            # a Member (dev-member): /requests loads with no redirect loop, New Request form,
+                          # types on its request and it saves, no Finish review menu; dev-user2 rejects
+                          # the edit and the member's card goes live. Fails on any console error
 ```
+
+The dev-bypass users (`backend/src/utils/devUsers.ts`) are picked by the session ID: `dev-admin-session`
+(or any other) is `dev-admin` (Admin), `dev-user2-session` is `dev-user2` (CommsCadre) and
+`dev-member-session` is `dev-member` (`member@localhost`, Member). `X-Dev-User: user2|member` (REST) and
+`testUser=user2|member` (WebSocket) do the same. Names on review cards come from `/user/directory`, which
+only lists stored users, so the dev users show as their ids.
 
 To run against a second stack on other ports (e.g. a second checkout running in parallel), set
 `E2E_APP_URL` and `E2E_API_URL` (defaults `http://localhost:3000` and `http://localhost:8080/api`);
