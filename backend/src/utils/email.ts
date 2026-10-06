@@ -64,16 +64,17 @@ export interface EmailAttachment {
  * Comms Scribe notification template.
  */
 export async function sendEmail(
-	toEmail: string,
+	toEmail: string | string[],
 	subjectLine: string,
 	message: string,
 	config: EmailConfig,
 	options: SendEmailOptions = {}): Promise<number> {
+	const to = Array.isArray(toEmail) ? toEmail : [ toEmail ];
 	const bcc = (config.EMAIL_BCC || []).filter((address) => address.length > 0);
 	const command = new SendEmailCommand({
 		FromEmailAddress: config.EMAIL_FROM || DEFAULT_EMAIL_FROM,
 		Destination: {
-			ToAddresses: [ toEmail ],
+			ToAddresses: to,
 			...(bcc.length > 0 ? { BccAddresses: bcc } : {}),
 		},
 		...(options.replyTo ? { ReplyToAddresses: [ options.replyTo ] } : {}),
@@ -101,7 +102,7 @@ export async function sendEmail(
 
 	try {
 		const result = await getClient(config.SES_REGION || DEFAULT_SES_REGION).send(command);
-		console.log(`Email sent to ${toEmail} (MessageId ${result.MessageId})`);
+		console.log(`Email sent to ${to.join(', ')} (MessageId ${result.MessageId})`);
 		return 200;
 	} catch (error) {
 		const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);

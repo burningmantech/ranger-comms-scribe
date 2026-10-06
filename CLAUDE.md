@@ -273,6 +273,7 @@ Read once at boot by `backend/src/config/env.ts` (full list in the contracts doc
 - `PORT` (default 8080), `PUBLIC_URL`, `FRONTEND_URL`, `CORS_ORIGINS` (CSV)
 - `DATA_BUCKET`, `S3_ENDPOINT` (MinIO), `AWS_REGION`
 - `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` (CSV)
+- `ANNOUNCE_EMAIL_TO` (unset disables announcements), `NUDGE_EMAIL_OVERRIDE` (dev/staging: every Comms Calendar nudge goes here)
 - `BOOTSTRAP_ADMIN_EMAILS` (CSV), `GOOGLE_CLIENT_ID`, `TURNSTILESECRET`
 - `DEV_BYPASS_AUTH=true` for fake dev users (local only)
 - `STORE_DRIVER=memory` to skip S3 (tests, quick local runs); `STORE_LATENCY_MS=<n>` adds random S3-like delays
@@ -297,6 +298,20 @@ Media files (`backend/src/services/mediaService.ts`):
 - Automatic image resizing (thumbnail, medium, full)
 - Supports images, videos, documents
 - Access control via `isPublic` flag and `groupId`
+
+## Comms Calendar
+
+Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-calendar`,
+`backend/src/handlers/commsCalendar.ts`, `services/commsCalendarService.ts`):
+- One `CommsCalendarEntry` per communication at `comms_calendar/<id>`; cycles run Sep→Aug. Next year's
+  version of an entry is a new entry whose `carriedFromId` points at last year's
+- **Upcoming** lists anniversaries in a window that no entry continues yet and that aren't `notRepeating`;
+  **Nudge** emails the team contacts (Reply-To the sender) and is logged on the entry
+- A sent announcement (send-email, or PUT to `sent`) creates/updates entry `sub-<submissionId>` from the
+  request's subject, Publish By, Audience and Owner; the sync never fails the send
+- Comms Cadre, Admins and the Council Communications Manager edit; other Council members read only
+- CSV import is parsed in the browser (`frontend/src/utils/commsCalendarImport.ts`); same subject + cycle is
+  skipped as a duplicate
 
 ## Notifications
 

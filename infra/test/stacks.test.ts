@@ -111,6 +111,13 @@ describe('alex-dev (dev profile)', () => {
     );
   });
 
+  test('sends Comms Calendar nudges only to Alex (NUDGE_EMAIL_OVERRIDE)', () => {
+    const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'NUDGE_EMAIL_OVERRIDE', Value: 'alexander.young@gmail.com' }]),
+    );
+  });
+
   test('service runs one task on FARGATE_SPOT only, with a public IP, overlapping 100%/200% deployments', () => {
     compute.hasResourceProperties('AWS::ECS::Service', {
       DesiredCount: 1,
@@ -269,6 +276,13 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ Name: 'ALLOW_ANNOUNCEMENT_RESEND' })]),
     );
+    // Nudges reach the real teams only in production
+    const nudgeOverride = expect.arrayContaining([expect.objectContaining({ Name: 'NUDGE_EMAIL_OVERRIDE' })]);
+    if (configName === 'rangers-production') {
+      expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(nudgeOverride);
+    } else {
+      expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(nudgeOverride);
+    }
   });
 
   test('forwards the viewer Host header and routes by host on the ALB', () => {

@@ -65,6 +65,8 @@ const config: ScribeConfig = {
     COLLAB_MODE: 'yjs',
     // Sent announcements can be sent again, to test email rendering (they only go to Alex)
     ALLOW_ANNOUNCEMENT_RESEND: 'true',
+    // Comms Calendar nudges go to Alex, never to the team contacts on imported entries
+    NUDGE_EMAIL_OVERRIDE: process.env.SCRIBE_ALEX_DEV_NUDGE_EMAIL_OVERRIDE || 'alexander.young@gmail.com',
   },
 
   // SSM SecureString you create by hand (infra/README.md, first-time setup).

@@ -31,6 +31,8 @@ export interface BackendEnv {
   COLLAB_MODE?: 'yjs' | 'legacy';
   /** 'true' lets a sent announcement be sent again. Dev only, for testing email rendering. */
   ALLOW_ANNOUNCEMENT_RESEND?: 'true';
+  /** Comms Calendar nudges go only to this address instead of the team contacts. Outside production. */
+  NUDGE_EMAIL_OVERRIDE?: string;
 }
 
 export interface UseExisting {

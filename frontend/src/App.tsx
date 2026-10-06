@@ -4,7 +4,7 @@ import Login from './components/Login';
 import Admin from './components/Admin';
 import ResetPassword from './components/ResetPassword';
 import VerifyEmail from './components/VerifyEmail';
-import { User } from './types';
+import { User, UserType } from './types';
 import Home from './components/Home';
 import { API_URL } from './config';
 import Navbar from './components/Navbar';
@@ -22,7 +22,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { NewsletterEditions } from './pages/NewsletterEditions';
 import { NewsletterEditor } from './pages/NewsletterEditor';
 import { NewsletterArchive, PublicEdition, PublicDocument } from './pages/PublicNewsletter';
-import { UserType } from './types';
+import { CommsCalendar } from './pages/CommsCalendar';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -89,6 +89,11 @@ const App: React.FC = () => {
                 <Route path="/newsletter" element={<NewsletterArchive />} />
                 <Route path="/newsletter/:number" element={<PublicEdition />} />
                 <Route path="/news/:slug" element={<PublicDocument />} />
+                {/* Comms Cadre and Council; the backend decides who can edit */}
+                <Route
+                  path="/comms-calendar"
+                  element={<ProtectedRoute element={<CommsCalendar />} allowedRoles={[UserType.CommsCadre, UserType.CouncilManager]} />}
+                />
 
                 {/* Final catch-all if nothing else matches */}
                 <Route path="*" element={<Navigate to="/" replace />} />
