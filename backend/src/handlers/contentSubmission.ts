@@ -13,7 +13,7 @@ import { getCouncilManagersForRole } from '../services/councilManagerService';
 import { getActiveCommsCadreEmails, isCommsCadre } from '../services/commsCadreService';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
-import { getEdition, publishDocumentPage } from '../services/newsletterService';
+import { getEdition } from '../services/newsletterService';
 import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
 
 export const router = AutoRouter({ base: '/api/content' });
@@ -1103,12 +1103,6 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
 
     await putObject(`content_submissions/${id}`, submission, env);
     await deleteObject('content_submissions/list', env);
-    // Its public page, so a later newsletter can link to it ("Read more")
-    try {
-      await publishDocumentPage(id, env);
-    } catch (err) {
-      console.error('Could not publish the public page of', id, err);
-    }
 
     await broadcastToSubmissionRoom(id, {
       type: 'status_changed',

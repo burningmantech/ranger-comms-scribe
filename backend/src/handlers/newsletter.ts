@@ -28,7 +28,7 @@ import {
   updateEdition,
   documentPageUrl,
 } from '../services/newsletterService';
-import { isAdminUser, isCommsManager } from '../services/commsCadreService';
+import { isAdminUser, isCommsCadre, isCommsManager } from '../services/commsCadreService';
 import { NewsletterEdition, ContentSubmission } from '../types';
 import { getObject } from '../services/cacheService';
 
@@ -93,6 +93,7 @@ async function editionView(edition: NewsletterEdition, env: Env, user: User) {
     calendar: editorCalendar(edition),
     documents,
     permissions: {
+      canApprove: await isCommsManager(user, env) || await isCommsCadre(user, env),
       canOverride: isAdminUser(user) || await isCommsManager(user, env),
       isCommsManager: await isCommsManager(user, env),
       announceConfigured: !!env.ANNOUNCE_EMAIL_TO,

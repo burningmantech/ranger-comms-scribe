@@ -398,6 +398,7 @@ export const NewsletterEditor: React.FC = () => {
           )}
           {!sent && edition.status !== 'approved' && (
             <>
+              {permissions.canApprove && (<>
               <button
                 type="button"
                 className="btn btn-primary"
@@ -413,6 +414,7 @@ export const NewsletterEditor: React.FC = () => {
               <button type="button" className="btn btn-neutral" disabled={!!busy} onClick={() => { setDialogText(''); setDialog('changes'); }}>
                 Request changes
               </button>
+              </>)}
               {permissions.canOverride && (
                 <button type="button" className="btn btn-neutral" disabled={!!busy} onClick={() => { setDialogText(''); setDialog('override'); }}>
                   Override

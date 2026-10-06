@@ -145,7 +145,7 @@ export interface EditionView {
   sources: Record<string, SectionSource>;
   calendar: EditorCalendarEntry[];
   documents: Record<string, { title: string; status: string; url: string | null }>;
-  permissions: { canOverride: boolean; isCommsManager: boolean; announceConfigured: boolean };
+  permissions: { canApprove: boolean; canOverride: boolean; isCommsManager: boolean; announceConfigured: boolean };
 }
 
 export interface EditionSummary {

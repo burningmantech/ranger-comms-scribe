@@ -60,7 +60,7 @@ function view(e: NewsletterEdition = edition()): EditionView {
     sources: { s1: { submissionId: 'req-1', title: 'Claim your tickets', status: 'approved', changed: false } },
     calendar: [],
     documents: {},
-    permissions: { canOverride: false, isCommsManager: false, announceConfigured: true },
+    permissions: { canApprove: true, canOverride: false, isCommsManager: false, announceConfigured: true },
   };
 }
 

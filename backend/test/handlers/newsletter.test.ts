@@ -416,7 +416,7 @@ describe('request newsletter fields', () => {
     expect((await content('PATCH', '/submissions/s1/newsletter', CADRE, { keyDates: [] })).status).toBe(409);
   });
 
-  it('send-email refuses a newsletter-only request and publishes the page of one sent on its own', async () => {
+  it('send-email refuses a newsletter-only request, and a request sent on its own gets no public page', async () => {
     await putObject('content_submissions/n1', submission('n1', { audiences: ['newsletter'] }), env);
     const refused = await content('POST', '/submissions/n1/send-email', ADMIN);
     expect(refused.status).toBe(409);
@@ -426,7 +426,8 @@ describe('request newsletter fields', () => {
     expect((await content('POST', '/submissions/s2/send-email', ADMIN)).status).toBe(200);
     const sent = await getObject<any>('content_submissions/s2', env);
     expect(sent.status).toBe('sent');
-    expect(sent.publicPublishedAt).toBeTruthy();
-    expect((await call(publicRouter, env, 'GET', `/api/public/news/${sent.publicSlug}`, null)).status).toBe(200);
+    // Only an edition that links to it publishes its page
+    expect(sent.publicSlug).toBeUndefined();
+    expect(sent.publicPublishedAt).toBeUndefined();
   });
 });

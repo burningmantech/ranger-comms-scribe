@@ -38,8 +38,8 @@ edition is approved, sent to Announce, and published on the web.
    pages it links to, and marks the requests: `newsletterSentIn`, and `status: 'sent'` when the request has no
    singular/allcom audience still to send.
 7. **Public pages** (no sign-in, `noindex`): `/newsletter` (archive), `/newsletter/:number` (the edition as sent) and
-   `/news/:slug` (a request's full announcement; the slug is unguessable). A singular announcement sent on its own
-   also gets its page, so a later edition can link to it.
+   `/news/:slug` (a request's full announcement; the slug is unguessable). A document's page is published only when
+   an edition that links to it is sent (also when it went out on its own as a singular announcement before).
 
 A newsletter-only request no longer has a *Send Email* button on its review page (the backend refuses it too): it
 goes out in an edition.
