@@ -1,7 +1,6 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group, CouncilRole, ApprovalGates } from '../types';
-import { Role } from '../services/roleService';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates } from '../types';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
@@ -9,8 +8,8 @@ import { uploadMedia } from '../services/mediaService';
 import { buildAnnouncementEmail, embedGalleryImages } from '../services/announcementEmail';
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
-import { getCouncilManagersForRole } from '../services/councilManagerService';
-import { getActiveCommsCadreEmails, isCommsCadre } from '../services/commsCadreService';
+import { Access, accessOf, approverCounts, derivedRoles, derivedUserType, isAdmin, isCommsCadre, isCommsManager, isReviewer, normalizeEmail } from '../services/access';
+import { accessByEmail } from '../services/peopleService';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
 import { getEdition } from '../services/newsletterService';
@@ -18,26 +17,15 @@ import { getTrackedChanges, ChangeComment } from '../services/trackedChangesServ
 
 export const router = AutoRouter({ base: '/api/content' });
 
-// Helper: recompute approval status using unique latest decisions and membership lists.
-// Promotes to 'approved' only; never demotes (syncSubmissionStatus does that) and never
-// touches a 'sent' submission.
-// Every council manager's email (lowercased), across all roles. The roles are read in
-// parallel: this runs on every tracked-change operation, and each read is a store round trip.
-async function loadCouncilEmails(env: any): Promise<Set<string>> {
-  const lists = await Promise.all(
-    Object.values(CouncilRole).map((role) =>
-      getCouncilManagersForRole(role as CouncilRole, env).catch(() => [])
-    )
-  );
-  const emails = new Set<string>();
-  for (const members of lists) {
-    for (const m of members || []) {
-      if (m && m.email) emails.add(m.email.trim().toLowerCase());
-    }
-  }
-  return emails;
+// Who each approval counts for: the roles the approver held when approving (the snapshot on
+// the approval) or holds now (their record; services/access.ts). One store read per approver.
+async function approvalCounter(approvals: ContentApproval[], env: any) {
+  const current: Map<string, Access> = await accessByEmail(approvals.map((a) => a.approverEmail || ''), env);
+  return (a: ContentApproval) => approverCounts(a, current.get(normalizeEmail(a.approverEmail)));
 }
 
+// Recompute approval status using unique latest decisions. Promotes to 'approved' only; never
+// demotes (syncSubmissionStatus does that) and never touches a 'sent' submission.
 export async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
   if (submission.status === 'sent') return submission;
   // Deduplicate by latest decision per approver
@@ -63,24 +51,10 @@ export async function recomputeApprovalStatus(submission: ContentSubmission, env
     uniqueApprovals.some(a => (a.approverEmail || '').trim().toLowerCase() === email && a.status === 'approved')
   );
 
-  // Load comms cadre active list
-  const commsCadreEmails = await getActiveCommsCadreEmails(env);
-
-  // Load all council manager emails across roles
-  const councilEmails = await loadCouncilEmails(env);
-
-  // Check that a council manager specifically approved (not just that they exist AND someone approved)
-  const hasCouncilApproval = uniqueApprovals.some(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCouncil = (a.approverType === UserType.CouncilManager) || (a.approverRoles || []).includes('CouncilManager') || councilEmails.has(email);
-    return isCouncil && a.status === 'approved';
-  });
-
-  const hasCommsCadreApproval = uniqueApprovals.some(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCommsCadre = (a.approverType === UserType.CommsCadre) || (a.approverRoles || []).includes('CommsCadre') || commsCadreEmails.has(email);
-    return isCommsCadre && a.status === 'approved';
-  });
+  // A council member and a Comms Cadre member must have approved (one person holding both counts for both)
+  const counts = await approvalCounter(uniqueApprovals, env);
+  const hasCouncilApproval = uniqueApprovals.some(a => a.status === 'approved' && counts(a).council);
+  const hasCommsCadreApproval = uniqueApprovals.some(a => a.status === 'approved' && counts(a).commsCadre);
 
   if (allRequiredApproversApproved && hasCouncilApproval && hasCommsCadreApproval) {
     // Gate: all tracked changes must be resolved before approval
@@ -175,10 +149,8 @@ export async function syncSubmissionStatus(
 
 /** Who may see a submission (GET /submissions/:id); also who may resolve its comments. */
 export function canViewSubmission(user: User, submission: ContentSubmission): boolean {
-  return user.userType === UserType.Admin ||
+  return isReviewer(user) ||
     submission.submittedBy === user.id ||
-    user.userType === UserType.CouncilManager ||
-    user.userType === UserType.CommsCadre ||
     !!(submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
     !!(submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 }
@@ -216,27 +188,10 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
   });
   const approvedCount = requiredDetails.filter(d => d.status === 'approved').length;
 
-  // --- Council manager gate ---
-  const councilEmails = await loadCouncilEmails(env);
-
-  const councilApproval = uniqueApprovals.find(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCouncil = (a.approverType === UserType.CouncilManager) ||
-      (a.approverRoles || []).includes('CouncilManager') ||
-      councilEmails.has(email);
-    return isCouncil && a.status === 'approved';
-  });
-
-  // --- Comms cadre gate ---
-  const commsCadreEmails = await getActiveCommsCadreEmails(env);
-
-  const commsCadreApproval = uniqueApprovals.find(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCommsCadre = (a.approverType === UserType.CommsCadre) ||
-      (a.approverRoles || []).includes('CommsCadre') ||
-      commsCadreEmails.has(email);
-    return isCommsCadre && a.status === 'approved';
-  });
+  // --- Council and Comms Cadre gates ---
+  const counts = await approvalCounter(uniqueApprovals, env);
+  const councilApproval = uniqueApprovals.find(a => a.status === 'approved' && counts(a).council);
+  const commsCadreApproval = uniqueApprovals.find(a => a.status === 'approved' && counts(a).commsCadre);
 
   // --- Tracked changes gate ---
   const changes = await getTrackedChanges(submission.id, env);
@@ -359,32 +314,9 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   
   const allSubmissions = (await Promise.all(submissionPromises)).filter((sub): sub is ContentSubmission => sub !== null);
   
-  // Get user's groups and their associated roles
-  const userGroups = await Promise.all((user.groups || []).map(async (groupId: string) => {
-    const group = await getObject<Group>(`groups/${groupId}`, env);
-    if (!group) return null;
-    
-    // Get the role associated with this group
-    const role = await getObject<Role>(`roles/${group.name}`, env);
-    return { group, role };
-  }));
-  
-  // Check if user has any group with content management permissions
-  const hasContentManagementGroup = userGroups.some((groupData) => {
-    if (!groupData) return false;
-    const { role } = groupData;
-    return role && (
-      role.permissions.canEdit ||
-      role.permissions.canApprove ||
-      role.permissions.canCreateSuggestions ||
-      role.permissions.canApproveSuggestions ||
-      role.permissions.canReviewSuggestions
-    );
-  });
-  
-  // Filter based on user's groups and permissions
+  // Reviewers see everything; others their own, and the ones they approve
   let submissions;
-  if (hasContentManagementGroup || user.userType === UserType.Admin || user.userType === UserType.CouncilManager || user.userType === UserType.CommsCadre) {
+  if (isReviewer(user)) {
     submissions = allSubmissions;
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 
@@ -422,19 +354,17 @@ router.get('/submissions/my-actions', withAuth, async (request: Request, env: an
         a.approverEmail === user.email || a.approverId === user.id
     );
 
-    const isReviewer =
-      user.userType === UserType.CommsCadre ||
-      user.userType === UserType.CouncilManager ||
-      user.userType === UserType.Admin;
+    const access = accessOf(user);
+    const reviewer = isReviewer(user);
 
     const gates = await computeApprovalGates(submission, env);
 
     if (isRequiredApprover && !hasActed) {
       needsAction.push({ ...submission, approvalGates: gates });
-    } else if (isReviewer && !hasActed) {
+    } else if (reviewer && !hasActed) {
       if (
-        (user.userType === UserType.CouncilManager && !gates.councilManager.met) ||
-        (user.userType === UserType.CommsCadre && !gates.commsCadre.met)
+        (access.council && !gates.councilManager.met) ||
+        (access.commsCadre && !gates.commsCadre.met)
       ) {
         needsAction.push({ ...submission, approvalGates: gates });
       } else {
@@ -523,9 +453,7 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
 
   // Check if user has permission to edit this submission
   // Allow editing required approvers by submitter, Council, or Comms Cadre
-  const canEdit = user.userType === UserType.Admin ||
-                 user.userType === UserType.CouncilManager ||
-                 user.userType === UserType.CommsCadre ||
+  const canEdit = isReviewer(user) ||
                  submission.submittedBy === user.id ||
                  (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
@@ -737,8 +665,9 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     approverId: user.id,
     approverEmail: user.email,
     approverName: user.name,
-    approverType: user.userType,
-    approverRoles: user.roles || [],
+    // What they held when approving (approval gates also check what they hold now)
+    approverType: derivedUserType(accessOf(user)),
+    approverRoles: derivedRoles(accessOf(user)),
     status,
     comment,
     createdAt: new Date().toISOString(),
@@ -753,9 +682,7 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
 
   // Check if user has permission to approve this submission
   // Any required reviewer, Comms Cadre, or Council Manager can approve
-  const canApprove = user.userType === UserType.Admin ||
-                    user.userType === UserType.CouncilManager ||
-                    user.userType === UserType.CommsCadre ||
+  const canApprove = isReviewer(user) ||
                     (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
   if (!canApprove) {
@@ -844,16 +771,8 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
   const { confirm, reason } = await request.json();
   const user = (request as any).user as User;
 
-  // Only Communications Manager (specific Council role) or Admin can override
-  let isCommsManagerRole = false;
-  try {
-    const commsManagers = await getCouncilManagersForRole(CouncilRole.CommunicationsManager, env);
-    isCommsManagerRole = commsManagers.some((m) => m.email === user.email || m.userId === user.id);
-  } catch (e) {
-    // Fallback: if user is CouncilManager and system cannot read council roles, deny unless Admin
-    isCommsManagerRole = false;
-  }
-  const canOverride = user.userType === UserType.Admin || isCommsManagerRole;
+  // Only the Communications Manager (council role) or an Admin can override
+  const canOverride = isAdmin(user, env) || isCommsManager(user);
   if (!canOverride) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
@@ -904,9 +823,7 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   }
 
   // Only reviewers can request changes
-  const canRequest = user.userType === UserType.Admin ||
-    user.userType === UserType.CouncilManager ||
-    user.userType === UserType.CommsCadre ||
+  const canRequest = isReviewer(user) ||
     (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
   if (!canRequest) {
@@ -973,10 +890,10 @@ router.patch('/submissions/:id/newsletter', withAuth, async (request: Request, e
   if (!submission) {
     return json({ error: 'Submission not found' }, { status: 404 });
   }
-  const canEdit = user.userType === UserType.Admin ||
+  const canEdit = isAdmin(user, env) ||
     submission.submittedBy === user.id ||
     (submission.requiredApprovers || []).some((e) => (e || '').toLowerCase() === (user.email || '').toLowerCase()) ||
-    await isCommsCadre(user, env);
+    isCommsCadre(user);
   if (!canEdit) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
@@ -1067,7 +984,7 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
   }
 
   // Only Comms Cadre or Admin can send
-  if (!(user.userType === UserType.CommsCadre || user.userType === UserType.Admin)) {
+  if (!(isCommsCadre(user) || isAdmin(user, env))) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
@@ -1142,9 +1059,7 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
   }
 
   // Check if user has permission to track changes on this submission
-  const canTrackChanges = user.userType === UserType.Admin ||
-                         user.userType === UserType.CouncilManager ||
-                         user.userType === UserType.CommsCadre ||
+  const canTrackChanges = isReviewer(user) ||
                          submission.submittedBy === user.id ||
                          (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
@@ -1177,9 +1092,7 @@ router.delete('/submissions/:id', withAuth, async (request: Request, env: any) =
   }
 
   // Check if user has permission to delete this submission
-  const canDelete = user.userType === UserType.Admin ||
-                   user.userType === UserType.CouncilManager ||
-                   user.userType === UserType.CommsCadre ||
+  const canDelete = isReviewer(user) ||
                    submission.submittedBy === user.id;
 
   if (!canDelete) {

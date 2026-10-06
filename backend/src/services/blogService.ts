@@ -1,3 +1,4 @@
+import { isAdmin } from './access';
 import { Env } from '../utils/sessionManager';
 import { BlogPost, BlogComment, BlockedUser, UserType } from '../types';
 import { getUser, canAccessGroup } from '../services/userService';
@@ -53,7 +54,7 @@ export const getBlogPosts = async (env: Env, userId?: string): Promise<BlogPost[
             const user = await getUser(userId, env);
             
             // If user is admin, they can see all posts
-            if (user && user.userType === UserType.Admin) {
+            if (user && isAdmin(user)) {
                 // No filtering needed, admins see everything
             } else {
                 // Filter posts based on access

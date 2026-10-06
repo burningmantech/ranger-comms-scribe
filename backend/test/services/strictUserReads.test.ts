@@ -3,7 +3,6 @@ jest.mock('../../src/utils/googleToken', () => ({ verifyGoogleIdToken: jest.fn()
 
 import { router as authRouter } from '../../src/handlers/auth';
 import { getOrCreateUser, getUser, getUserStrict, saveUser, getAllGroups } from '../../src/services/userService';
-import { getAllRoles, DEFAULT_ROLES } from '../../src/services/roleService';
 import { clearMemoryCache, getObject, getObjectStrict, putObject } from '../../src/services/cacheService';
 import { Env } from '../../src/utils/sessionManager';
 import { verifyGoogleIdToken } from '../../src/utils/googleToken';
@@ -120,18 +119,6 @@ describe('strict reads on user create paths', () => {
     const res = await authRouter.fetch(post('/loginGoogleToken', { token: 'google-token' }), env);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ isAdmin: true, userId: admin.email });
-  });
-
-  it('getAllRoles throws instead of overwriting stored roles with the defaults', async () => {
-    store.get.mockImplementation((key: string) => store.backing.get(key));
-    const custom = [...DEFAULT_ROLES, { ...DEFAULT_ROLES[3], name: 'Custom' }];
-    await putObject('roles', custom, env);
-    clearMemoryCache();
-    store.put.mockClear();
-    store.get.mockRejectedValue(new Error('SlowDown'));
-
-    await expect(getAllRoles(env)).rejects.toThrow('SlowDown');
-    expect(store.put.mock.calls.map(([key]) => key)).not.toContain('roles');
   });
 
   it('getAllGroups throws instead of skipping a group it failed to read', async () => {

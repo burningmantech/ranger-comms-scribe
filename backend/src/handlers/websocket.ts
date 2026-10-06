@@ -1,5 +1,5 @@
+import { isReviewer } from '../services/access';
 import { AutoRouter, json } from 'itty-router';
-import { UserType } from '../types';
 import { Env, GetSession } from '../utils/sessionManager';
 import { getUser } from '../services/userService';
 import { getObject } from '../services/cacheService';
@@ -76,10 +76,8 @@ export async function authorizeRoomConnection(
       return { ok: false, status: 404, body: { error: 'Submission not found' } };
     }
 
-    const hasAccess = user.userType === UserType.Admin ||
+    const hasAccess = isReviewer(user, env) ||
       submission.submittedBy === user.id ||
-      user.userType === UserType.CouncilManager ||
-      user.userType === UserType.CommsCadre ||
       (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
     if (!hasAccess) {

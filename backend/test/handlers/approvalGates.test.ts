@@ -8,9 +8,9 @@ jest.mock('../../src/services/cacheService', () => ({
   listObjects: jest.fn(),
 }));
 
-// Mock councilManagerService
-jest.mock('../../src/services/councilManagerService', () => ({
-  getCouncilManagersForRole: jest.fn(),
+// Mock the people lookup: who holds which role now (services/access.ts)
+jest.mock('../../src/services/peopleService', () => ({
+  accessByEmail: jest.fn(),
 }));
 
 // Mock trackedChangesService
@@ -21,12 +21,27 @@ jest.mock('../../src/services/trackedChangesService', () => ({
 import { computeApprovalGates, recomputeApprovalStatus } from '../../src/handlers/contentSubmission';
 import { ContentSubmission, ContentApproval, UserType, CouncilRole, ApprovalGates } from '../../src/types';
 import { getObject } from '../../src/services/cacheService';
-import { getCouncilManagersForRole } from '../../src/services/councilManagerService';
+import { accessByEmail } from '../../src/services/peopleService';
 import { getTrackedChanges } from '../../src/services/trackedChangesService';
 
 // Cast mocked functions for easy assertion
 const mockGetObject = getObject as jest.MockedFunction<typeof getObject>;
-const mockGetCouncilManagersForRole = getCouncilManagersForRole as jest.MockedFunction<typeof getCouncilManagersForRole>;
+const mockAccessByEmail = accessByEmail as jest.MockedFunction<typeof accessByEmail>;
+
+// People's current access, by email; setPeople() fills it for a test
+const people = new Map<string, any>();
+function setPeople(entries: Record<string, { commsCadre?: boolean; councilRoles?: CouncilRole[] }>) {
+  for (const [email, a] of Object.entries(entries)) {
+    const councilRoles = a.councilRoles || [];
+    people.set(email.toLowerCase(), { approved: true, isAdmin: false, commsCadre: !!a.commsCadre, councilRoles, council: councilRoles.length > 0 });
+  }
+}
+function resetPeople() {
+  people.clear();
+  mockAccessByEmail.mockImplementation(async (emails: string[]) => new Map(
+    emails.map((e) => e.trim().toLowerCase()).filter((e) => people.has(e)).map((e) => [e, people.get(e)]),
+  ));
+}
 const mockGetTrackedChanges = getTrackedChanges as jest.MockedFunction<typeof getTrackedChanges>;
 
 // Helper to create a minimal valid ContentSubmission
@@ -74,7 +89,7 @@ describe('computeApprovalGates', () => {
     jest.clearAllMocks();
 
     // Default mocks: no council managers, no comms cadre, no tracked changes
-    mockGetCouncilManagersForRole.mockResolvedValue([]);
+    resetPeople();
     mockGetObject.mockResolvedValue(null);
     mockGetTrackedChanges.mockResolvedValue([]);
   });
@@ -153,25 +168,9 @@ describe('computeApprovalGates', () => {
     expect(gates.councilManager.date).toBe('2026-01-02T00:00:00Z');
   });
 
-  it('should mark councilManager gate as met when approver is in council members list (by email lookup)', async () => {
-    // The approver has Member type but their email is in the council list
-    mockGetCouncilManagersForRole.mockImplementation(async (role) => {
-      if (role === CouncilRole.CommunicationsManager) {
-        return [
-          {
-            id: 'cm-1',
-            userId: 'user-cm',
-            role: CouncilRole.CommunicationsManager,
-            email: 'comms-mgr@example.com',
-            name: 'Comms Manager',
-            active: true,
-            createdAt: '2026-01-01T00:00:00Z',
-            updatedAt: '2026-01-01T00:00:00Z',
-          },
-        ];
-      }
-      return [];
-    });
+  it('should mark councilManager gate as met when the approver holds a council role now (their record)', async () => {
+    // The approval snapshot says Member, but their record now has a council role
+    setPeople({ 'comms-mgr@example.com': { councilRoles: [CouncilRole.CommunicationsManager] } });
 
     const submission = makeSubmission({
       approvals: [
@@ -247,12 +246,8 @@ describe('computeApprovalGates', () => {
     expect(gates.commsCadre.date).toBe('2026-01-03T00:00:00Z');
   });
 
-  it('should mark commsCadre gate as met when approver is in active comms cadre list (by email lookup)', async () => {
-    // Mock the comms cadre active list
-    mockGetObject.mockResolvedValue([
-      { email: 'cadre-member@example.com', active: true },
-      { email: 'inactive-cadre@example.com', active: false },
-    ]);
+  it('should mark commsCadre gate as met when the approver is Comms Cadre now (their record)', async () => {
+    setPeople({ 'cadre-member@example.com': { commsCadre: true }, 'inactive-cadre@example.com': { commsCadre: false } });
 
     const submission = makeSubmission({
       approvals: [
@@ -271,10 +266,8 @@ describe('computeApprovalGates', () => {
     expect(gates.commsCadre.approver).toBe('cadre-member@example.com');
   });
 
-  it('should NOT mark commsCadre gate as met when approver is in comms cadre list but inactive', async () => {
-    mockGetObject.mockResolvedValue([
-      { email: 'inactive-cadre@example.com', active: false },
-    ]);
+  it('should NOT mark commsCadre gate as met when the approver is no longer Comms Cadre', async () => {
+    setPeople({ 'inactive-cadre@example.com': { commsCadre: false } });
 
     const submission = makeSubmission({
       approvals: [
@@ -527,28 +520,10 @@ describe('computeApprovalGates', () => {
 
   it('should handle multiple gates being met simultaneously', async () => {
     // Set up council manager list
-    mockGetCouncilManagersForRole.mockImplementation(async (role) => {
-      if (role === CouncilRole.OperationsManager) {
-        return [
-          {
-            id: 'cm-1',
-            userId: 'user-cm',
-            role: CouncilRole.OperationsManager,
-            email: 'ops@example.com',
-            name: 'Ops Manager',
-            active: true,
-            createdAt: '2026-01-01T00:00:00Z',
-            updatedAt: '2026-01-01T00:00:00Z',
-          },
-        ];
-      }
-      return [];
-    });
+    setPeople({ 'ops@example.com': { councilRoles: [CouncilRole.OperationsManager] } });
 
-    // Set up comms cadre list
-    mockGetObject.mockResolvedValue([
-      { email: 'cadre@example.com', active: true },
-    ]);
+    // A Comms Cadre member
+    setPeople({ 'cadre@example.com': { commsCadre: true } });
 
     // No pending tracked changes
     mockGetTrackedChanges.mockResolvedValue([
@@ -646,19 +621,14 @@ describe('computeApprovalGates', () => {
 describe('recomputeApprovalStatus — empty required approvers', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetCouncilManagersForRole.mockResolvedValue([]);
+    resetPeople();
     mockGetObject.mockResolvedValue(null);
     mockGetTrackedChanges.mockResolvedValue([]);
   });
 
   it('should NOT mark submission as approved when requiredApprovers is empty, even with council + comms cadre approval', async () => {
-    mockGetCouncilManagersForRole.mockImplementation(async (role) => {
-      if (role === CouncilRole.CommunicationsManager) {
-        return [{ id: 'cm-1', userId: 'u', role: CouncilRole.CommunicationsManager, email: 'council@example.com', name: 'Council', active: true, createdAt: '', updatedAt: '' }];
-      }
-      return [];
-    });
-    mockGetObject.mockResolvedValue([{ email: 'cadre@example.com', active: true }]);
+    setPeople({ 'council@example.com': { councilRoles: [CouncilRole.CommunicationsManager] } });
+    setPeople({ 'cadre@example.com': { commsCadre: true } });
 
     const submission = makeSubmission({
       requiredApprovers: [],

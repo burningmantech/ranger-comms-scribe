@@ -1,3 +1,4 @@
+import { isReviewer } from '../services/access';
 import { CustomRequest } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { AutoRouter } from 'itty-router';
@@ -279,9 +280,7 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     // For now, we'll assume the user has access if they're authenticated
 
     // Check if user has access
-    const hasAccess = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager' ||
+    const hasAccess = isReviewer(request.user) ||
       true; // TODO: Check if user is the submitter
 
     if (!hasAccess) {
@@ -455,9 +454,7 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
     }
 
     // Check permissions: privileged roles always allowed
-    let hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    let hasPermission = isReviewer(request.user);
 
     // Also allow the submission author to accept/reject changes to their content
     if (!hasPermission && submissionId) {
@@ -625,9 +622,7 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
       });
     }
 
-    let hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    let hasPermission = isReviewer(request.user);
 
     // Also allow the submission author to accept/reject changes to their content
     if (!hasPermission && submissionId) {
@@ -796,7 +791,7 @@ export async function addChangeCommentHandler(request: CustomRequest, env: any):
 
 // Get change history for analytics
 export async function getChangeHistoryHandler(request: CustomRequest, env: any): Promise<Response> {
-  if (!request.user || !['Admin', 'CommsCadre', 'CouncilManager'].includes(request.user.userType)) {
+  if (!request.user || !isReviewer(request.user)) {
     return new Response('Forbidden', { status: 403 });
   }
 
@@ -831,9 +826,7 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
     const { submissionId, proposedVersionsRichText } = body || {};
 
     // Check permissions - same as approve/reject: privileged roles, or the submission's author
-    let hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    let hasPermission = isReviewer(request.user);
     if (!hasPermission && submissionId) {
       const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
       if (submission && submission.submittedBy === request.user.id) {
@@ -922,9 +915,7 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
     });
 
     // Check permissions
-    const hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager' ||
+    const hasPermission = isReviewer(request.user) ||
       true; // TODO: Check if user is the submitter
 
     if (!hasPermission) {
@@ -982,9 +973,7 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
 
     // Allow deletion if user is the change author OR has elevated permissions
     const isAuthor = change.changedBy === request.user.id;
-    const hasElevatedPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    const hasElevatedPermission = isReviewer(request.user);
 
     if (!isAuthor && !hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
@@ -1017,9 +1006,7 @@ export async function deleteAllChangesHandler(request: CustomRequest, env: any):
   }
 
   try {
-    const hasElevatedPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    const hasElevatedPermission = isReviewer(request.user);
 
     if (!hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });

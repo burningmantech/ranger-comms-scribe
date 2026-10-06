@@ -21,7 +21,7 @@ import { GetSession, Env } from './utils/sessionManager';
 import { getUser, initializeFirstAdmin } from './services/userService';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
-import { identifyCouncilManagers } from './services/councilManagerService';
+import { migratePeopleAccess } from './migrations/peopleAccess';
 
 declare global {
     interface Request {
@@ -123,11 +123,11 @@ const withOptionalSession = async (request: Request, env: Env) => {
 export const initializeApp = async (env: Env): Promise<void> => {
     await initCache(env);
 
+    // Once: move everyone's access onto their record (docs/plans/2026-10-06-people-and-roles.md)
+    await migratePeopleAccess(env);
+
     // Promote any BOOTSTRAP_ADMIN_EMAILS users that already exist
     await initializeFirstAdmin(env);
-
-    // Identify Council managers from org chart
-    await identifyCouncilManagers(env);
 
     // Cache page slugs
     await cachePageSlugs(env);

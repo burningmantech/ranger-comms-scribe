@@ -1,3 +1,4 @@
+import { accessOf, accessView, derivedUserType, publicUser } from '../services/access';
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
@@ -18,8 +19,8 @@ async function createUserSession(user: User, env: Env): Promise<string> {
   return CreateSession(user.email, {
     email: user.email,
     name: user.name,
-    isAdmin: user.isAdmin,
-    userType: user.userType,
+    isAdmin: accessOf(user, env).isAdmin,
+    userType: derivedUserType(accessOf(user, env)),
     approved: user.approved,
     verified: user.verified
   }, env);
@@ -188,7 +189,7 @@ router.post('/register', async (request: Request, env) => {
             name,
             userId: user.email,
             approved: user.approved,
-            isAdmin: user.isAdmin,
+            isAdmin: accessOf(user, env).isAdmin,
             verified: !!user.verified,
             sessionId,
         });
@@ -323,7 +324,7 @@ router.post('/login', async (request: Request, env) => {
             name: user.name,
             userId: user.email,
             approved: user.approved,
-            isAdmin: user.isAdmin,
+            isAdmin: accessOf(user, env).isAdmin,
             sessionId,
         });
     } catch (error) {
@@ -534,7 +535,7 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
             name,
             userId: user.email,
             approved: user.approved,
-            isAdmin: user.isAdmin,
+            isAdmin: accessOf(user, env).isAdmin,
             sessionId,
         });
     } catch (error) {
@@ -576,14 +577,16 @@ router.get('/me', async (request: Request, env) => {
         if (session) {
             const user = await getUser(session.userId, env);
             if (user) {
-                return json({ user });
+                // Without the password hash; with the access fields (services/access.ts)
+                return json({ user: { ...publicUser(user), ...accessView(user, env) } });
             }
         }
     }
 
     // Fall back to dev bypass if no real session/user
     if (env.DEV_BYPASS_AUTH === 'true') {
-        return json({ user: getDevUserForRequest(request) });
+        const devUser = getDevUserForRequest(request);
+        return json({ user: { ...devUser, ...accessView(devUser, env) } });
     }
 
     if (!sessionId) {

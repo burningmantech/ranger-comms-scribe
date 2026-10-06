@@ -149,10 +149,16 @@ function randomSuffix(): string {
 // Access
 // ---------------------------------------------------------------------------
 
-/** Comms Cadre (any of the three ways) or Admin: may build and send editions. */
+/** Comms Cadre or Admin: may build and send editions. */
 export async function canManageNewsletter(user: User | undefined, env: Env): Promise<boolean> {
   if (!user) return false;
-  return isAdminUser(user) || isCommsCadre(user, env);
+  return isAdminUser(user, env) || isCommsCadre(user, env);
+}
+
+/** Editors plus the Communications Manager: may open editions, comment and approve. */
+export async function canReviewNewsletter(user: User | undefined, env: Env): Promise<boolean> {
+  if (!user) return false;
+  return (await canManageNewsletter(user, env)) || isCommsManager(user, env);
 }
 
 // ---------------------------------------------------------------------------
@@ -607,10 +613,10 @@ export interface ApprovalState {
 }
 
 /**
- * Who counts for each gate now: the active Comms Cadre list and the Council Communications
- * Manager list (Admin → Comms Cadre / Council). An approval counts for a gate if the approver
- * was in it when they approved (by type, role or list) or is in its list now, so adding
- * someone to a list afterwards doesn't make them approve again.
+ * Who counts for each gate now: people with Comms Cadre, and people with the Communications
+ * Manager council role (People page). An approval counts for a gate if the approver held the
+ * role when they approved or holds it now, so giving someone the role afterwards doesn't make
+ * them approve again.
  */
 export interface ApprovalMembership {
   cadreEmails: Set<string>;
@@ -619,17 +625,13 @@ export interface ApprovalMembership {
 }
 
 export async function loadApprovalMembership(env: Env): Promise<ApprovalMembership> {
-  const { getCouncilManagersForRole } = await import('./councilManagerService');
-  const { CouncilRole } = await import('../types');
-  const [cadreEmails, managerEmails, list] = await Promise.all([
-    getActiveCommsCadreEmails(env),
-    getCommsManagerEmails(env),
-    getCouncilManagersForRole(CouncilRole.CommunicationsManager, env).catch(() => []),
-  ]);
-  const managers = (list || [])
-    .filter((m) => m && m.active !== false && m.email)
-    .map((m) => ({ name: m.name || m.email, email: m.email }));
-  return { cadreEmails, managerEmails, managers };
+  const { commsCadrePeople, commsManagerPeople } = await import('./peopleService');
+  const [cadre, managers] = await Promise.all([commsCadrePeople(env), commsManagerPeople(env)]);
+  return {
+    cadreEmails: new Set(cadre.map((p) => p.email.trim().toLowerCase())),
+    managerEmails: new Set(managers.map((p) => p.email.trim().toLowerCase())),
+    managers: managers.map((p) => ({ name: p.name, email: p.email })),
+  };
 }
 
 const EMPTY_MEMBERSHIP: ApprovalMembership = { cadreEmails: new Set(), managerEmails: new Set(), managers: [] };

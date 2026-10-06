@@ -24,6 +24,7 @@ const BASE_ENV = {
 const MEMBER = {
   id: 'dev-member', email: 'member@localhost', name: 'Test Member', userType: 'Member',
   isAdmin: false, roles: ['Member'], groups: [],
+  approved: true, commsCadre: false, councilRoles: [], accessVersion: 1,
 };
 
 function makeEnv(bypass: boolean) {
@@ -106,11 +107,11 @@ describe('dev bypass users', () => {
       expect(Object.values(body.permissions).every((v) => v === false)).toBe(true);
     });
 
-    it('GET /api/admin/user-roles keeps the admin reply for the other dev users', async () => {
+    it('GET /api/admin/user-roles gives the admin Admin and user2 Comms Cadre, both with review rights', async () => {
       const e = env();
-      for (const session of ['dev-admin-session', 'dev-user2-session']) {
+      for (const [session, roles] of [['dev-admin-session', ['Admin']], ['dev-user2-session', ['CommsCadre']]] as const) {
         const body = await (await get('/api/admin/user-roles', e, { Authorization: `Bearer ${session}` })).json();
-        expect(body.roles).toEqual(['Admin']);
+        expect(body.roles).toEqual(roles);
         expect(body.permissions.canApprove).toBe(true);
       }
     });

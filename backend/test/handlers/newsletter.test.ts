@@ -5,18 +5,39 @@ import { router as publicRouter } from '../../src/handlers/publicNews';
 import { router as contentRouter } from '../../src/handlers/contentSubmission';
 import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
 import { createMockObjectStore } from '../helpers/mockObjectStore';
+import { saveUser, getUser } from '../../src/services/userService';
+import { withDerivedAccess } from '../../src/services/access';
+import { CreateSession } from '../../src/utils/sessionManager';
 
 /**
- * Newsletter editions end to end on the in-memory store, through the routers, with the dev
- * users (DEV_BYPASS_AUTH): the admin (dev-admin-session), the Comms Cadre reviewer
- * (dev-user2-session) and a member (dev-member-session). SES is mocked.
+ * Newsletter editions end to end on the in-memory store, through the routers, signed in as
+ * stored people (seedPeople). SES is mocked.
  */
 
 const PUBLIC_URL = 'https://dev.scrivenly.com/api';
 const ANNOUNCE_TO = 'announce-test@example.org';
-const ADMIN = 'dev-admin-session';
-const CADRE = 'dev-user2-session';
-const MEMBER = 'dev-member-session';
+// Session IDs of stored people (seedPeople): an Admin who is the Communications Manager, a
+// Comms Cadre reviewer and a member
+let ADMIN = '';
+let CADRE = '';
+let MEMBER = '';
+
+async function seedPeople(env: any) {
+  const people = [
+    { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', isAdmin: true, councilRoles: ['CommunicationsManager'] },
+    { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', commsCadre: true },
+    { id: 'dev-member', email: 'member@localhost', name: 'Test Member' },
+  ];
+  for (const p of people) {
+    await saveUser(withDerivedAccess({
+      approved: true, verified: true, groups: [], roles: [], userType: 'Member', isAdmin: false,
+      commsCadre: false, councilRoles: [], ...p,
+    } as any) as any, env);
+  }
+  ADMIN = await CreateSession('dev@localhost', { email: 'dev@localhost' }, env);
+  CADRE = await CreateSession('user2@localhost', { email: 'user2@localhost' }, env);
+  MEMBER = await CreateSession('member@localhost', { email: 'member@localhost' }, env);
+}
 
 const lexical = (text: string) => JSON.stringify({
   root: {
@@ -76,7 +97,6 @@ describe('newsletter editions', () => {
     clearMemoryCache();
     env = {
       STORE: createMockObjectStore(),
-      DEV_BYPASS_AUTH: 'true',
       PUBLIC_URL,
       FRONTEND_URL: 'https://dev.scrivenly.com',
       ANNOUNCE_EMAIL_TO: ANNOUNCE_TO,
@@ -85,10 +105,7 @@ describe('newsletter editions', () => {
       .spyOn(SESv2Client.prototype, 'send')
       .mockImplementation(async () => ({ MessageId: 'test-message-id', $metadata: {} }) as any);
 
-    // The dev admin is the Council Communications Manager
-    await putObject('council_members:role:CommunicationsManager', [
-      { id: 'cm', userId: 'dev-admin', role: 'CommunicationsManager', email: 'dev@localhost', name: 'Dev Admin', active: true, createdAt: '', updatedAt: '' },
-    ], env);
+    await seedPeople(env);
 
     // A newsletter item with a blurb, photos, links, a dated deadline and its own document
     await putObject('content_submissions/ticket', submission('ticket', {
@@ -318,7 +335,7 @@ describe('newsletter editions', () => {
     expect(res.body.edition.status).toBe('approved');
   });
 
-  it('counts an approval for the Communications Manager once the approver is put on that list', async () => {
+  it('counts an approval for the Communications Manager once the approver is given that role', async () => {
     const id = (await nl(env, 'POST', '/editions', CADRE, { subject: 'S' })).body.edition.id;
     let res = await nl(env, 'POST', `/editions/${id}/approve`, CADRE, { status: 'approved' });
     expect(res.body.edition.status).toBe('in_review');
@@ -326,10 +343,9 @@ describe('newsletter editions', () => {
     expect(res.body.commsManagers).toEqual([{ name: 'Dev Admin', email: 'dev@localhost' }]);
     expect(res.body.permissions.approvesAs).toEqual({ commsCadre: true, commsManager: false });
 
-    // An Admin makes the cadre member the Communications Manager (Admin → Council)
-    await putObject('council_members:role:CommunicationsManager', [
-      { id: 'cm2', userId: 'dev-user2', role: 'CommunicationsManager', email: 'user2@localhost', name: 'Test Reviewer', active: true, createdAt: '', updatedAt: '' },
-    ], env);
+    // An Admin makes the cadre member the Communications Manager too (People page)
+    const reviewer = await getUser('user2@localhost', env);
+    await saveUser({ ...reviewer!, councilRoles: ['CommunicationsManager'] } as any, env);
     res = await nl(env, 'GET', `/editions/${id}`, CADRE);
     expect(res.body.approval.commsManager).toEqual({ met: true, by: 'Test Reviewer' });
     expect(res.body.edition.status).toBe('approved');
@@ -368,8 +384,9 @@ describe('request newsletter fields', () => {
   beforeEach(() => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     clearMemoryCache();
-    env = { STORE: createMockObjectStore(), DEV_BYPASS_AUTH: 'true', PUBLIC_URL, ANNOUNCE_EMAIL_TO: ANNOUNCE_TO };
+    env = { STORE: createMockObjectStore(), PUBLIC_URL, ANNOUNCE_EMAIL_TO: ANNOUNCE_TO };
     jest.spyOn(SESv2Client.prototype, 'send').mockImplementation(async () => ({ MessageId: 'm', $metadata: {} }) as any);
+    return seedPeople(env);
   });
 
   afterEach(() => {

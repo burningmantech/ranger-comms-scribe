@@ -1,3 +1,4 @@
+import { isAdmin } from '../services/access';
 import { AutoRouter } from 'itty-router';
 import { SubmissionTemplate } from '../types';
 import { Env } from '../utils/sessionManager';
@@ -22,7 +23,7 @@ router.get('/', withAuth, async (request: Request, env: Env) => {
 // GET /api/templates/admin — list all templates (admin only)
 router.get('/admin', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!isAdmin(user, env)) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
@@ -38,7 +39,7 @@ router.get('/admin', withAuth, async (request: Request, env: Env) => {
 // POST /api/templates — create template (admin only)
 router.post('/', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!isAdmin(user, env)) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
@@ -77,7 +78,7 @@ router.post('/', withAuth, async (request: Request, env: Env) => {
 // PUT /api/templates/:id — update template (admin only)
 router.put('/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!isAdmin(user, env)) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
@@ -114,7 +115,7 @@ router.put('/:id', withAuth, async (request: Request, env: Env) => {
 // DELETE /api/templates/:id — delete template (admin only)
 router.delete('/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!isAdmin(user, env)) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },

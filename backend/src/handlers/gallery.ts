@@ -1,5 +1,5 @@
 import { AutoRouter } from 'itty-router';
-import { getMedia, uploadMedia, deleteMedia, isUserAdmin } from '../services/mediaService';
+import { getMedia, uploadMedia, deleteMedia } from '../services/mediaService';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { MediaItem, GalleryComment, User } from '../types';

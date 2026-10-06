@@ -12,6 +12,7 @@ import {
   loadApprovalMembership,
   reconcileApproval,
   canManageNewsletter,
+  canReviewNewsletter,
   createEdition,
   decideEdition,
   deleteEdition,
@@ -52,12 +53,22 @@ async function bodyOf(request: Request): Promise<any> {
   }
 }
 
-/** withAuth, then Comms Cadre or Admin. */
+/** withAuth, then Comms Cadre or Admin: building and sending editions. */
 async function withNewsletterAccess(request: Request, env: Env) {
   const denied = await withAuth(request, env);
   if (denied) return denied;
   if (!(await canManageNewsletter(userOf(request), env))) {
     return json({ error: 'Only the Comms Cadre can work on the newsletter' }, { status: 403 });
+  }
+  return undefined;
+}
+
+/** withAuth, then Comms Cadre, Admin or the Communications Manager: reading, commenting, approving. */
+async function withNewsletterReview(request: Request, env: Env) {
+  const denied = await withAuth(request, env);
+  if (denied) return denied;
+  if (!(await canReviewNewsletter(userOf(request), env))) {
+    return json({ error: 'Only the Comms Cadre and the Communications Manager can see newsletter editions' }, { status: 403 });
   }
   return undefined;
 }
@@ -111,7 +122,7 @@ async function editionView(current: NewsletterEdition, env: Env, user: User) {
   };
 }
 
-router.get('/editions', withNewsletterAccess, handle(async (_request, env) => {
+router.get('/editions', withNewsletterReview, handle(async (_request, env) => {
   const editions = await listEditions(env);
   const membership = await loadApprovalMembership(env);
   return json({
@@ -136,7 +147,7 @@ router.post('/editions', withNewsletterAccess, handle(async (request, env) => {
 
 router.get('/tray', withNewsletterAccess, handle(async (_request, env) => json(await getTray(env))));
 
-router.get('/editions/:id', withNewsletterAccess, handle(async (request, env) => {
+router.get('/editions/:id', withNewsletterReview, handle(async (request, env) => {
   const edition = await getEdition(paramsOf(request).id, env);
   if (!edition) return json({ error: 'Edition not found' }, { status: 404 });
   return json(await editionView(edition, env, userOf(request)));
@@ -165,7 +176,7 @@ router.post('/editions/:id/sections/:sectionId/refresh', withNewsletterAccess, h
   return json(await editionView(edition, env, userOf(request)));
 }));
 
-router.get('/editions/:id/preview', withNewsletterAccess, handle(async (request, env) => {
+router.get('/editions/:id/preview', withNewsletterReview, handle(async (request, env) => {
   const edition = await getEdition(paramsOf(request).id, env);
   if (!edition) return json({ error: 'Edition not found' }, { status: 404 });
   const email = await renderEdition(edition, env);
@@ -177,23 +188,23 @@ router.post('/editions/:id/submit', withNewsletterAccess, handle(async (request,
   return json(await editionView(edition, env, userOf(request)));
 }));
 
-router.post('/editions/:id/approve', withNewsletterAccess, handle(async (request, env) => {
+router.post('/editions/:id/approve', withNewsletterReview, handle(async (request, env) => {
   const edition = await decideEdition(paramsOf(request).id, await bodyOf(request), userOf(request), env);
   return json(await editionView(edition, env, userOf(request)));
 }));
 
-router.post('/editions/:id/override-approve', withNewsletterAccess, handle(async (request, env) => {
+router.post('/editions/:id/override-approve', withNewsletterReview, handle(async (request, env) => {
   const edition = await overrideApproval(paramsOf(request).id, await bodyOf(request), userOf(request), env);
   return json(await editionView(edition, env, userOf(request)));
 }));
 
-router.post('/editions/:id/comments', withNewsletterAccess, handle(async (request, env) => {
+router.post('/editions/:id/comments', withNewsletterReview, handle(async (request, env) => {
   const { content } = await bodyOf(request);
   const edition = await addComment(paramsOf(request).id, content, userOf(request), env);
   return json(await editionView(edition, env, userOf(request)));
 }));
 
-router.post('/editions/:id/send-test', withNewsletterAccess, handle(async (request, env) => {
+router.post('/editions/:id/send-test', withNewsletterReview, handle(async (request, env) => {
   return json(await sendTestEdition(paramsOf(request).id, userOf(request), env));
 }));
 
