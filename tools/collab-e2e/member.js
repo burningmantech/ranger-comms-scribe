@@ -22,8 +22,11 @@
 // script first makes a real admin the way a first admin is made: it registers
 // E2E_ADMIN_EMAIL (default e2e-admin@example.com), verifies it and sets a password with the
 // tokens a DEV_BYPASS_AUTH backend returns when it can't send email, then logs in. For that
-// the backend needs BOOTSTRAP_ADMIN_EMAILS=<that address> and Cloudflare's always-pass
-// Turnstile test secret, TURNSTILESECRET=1x0000000000000000000000000000000AA.
+// the backend needs BOOTSTRAP_ADMIN_EMAILS=<that address>, Cloudflare's always-pass
+// Turnstile test secret (TURNSTILESECRET=1x0000000000000000000000000000000AA) and network
+// access to challenges.cloudflare.com, and must have no working AWS/SES credentials (e.g.
+// invalid AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, no AWS_PROFILE): when it can send the
+// email it returns no token. README.md has the full command.
 const L = require('./lib');
 
 const MEMBER_SESSION = 'dev-member-session';
@@ -60,6 +63,7 @@ function watch(user) {
   });
   page.on('request', (req) => {
     if (req.method() === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(req.url())) user.changePosts.push(req.url());
+    if (req.method() === 'POST' && /\/api\/content\/submissions$/.test(req.url())) user.submissionPosts.push(req.url());
     // /api/admin/ calls, except GET /admin/user-roles (the signed-in user's own roles, open to
     // every user and read app-wide by ContentContext) and its CORS preflight.
     if (req.url().includes('/api/admin/') && !(/\/api\/admin\/user-roles$/.test(req.url()) && ['GET', 'OPTIONS'].includes(req.method()))) user.adminCalls.push(`${req.method()} ${req.url().replace(/^https?:\/\/[^/]+/, '')}`);
@@ -74,7 +78,7 @@ async function openMember(browser) {
   }
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
-  const user = { name: 'member', page, context, errors: [], failed: [], changePosts: [], adminCalls: [], navs: 0 };
+  const user = { name: 'member', page, context, errors: [], failed: [], changePosts: [], submissionPosts: [], adminCalls: [], navs: 0 };
   watch(user);
   // Count client-side navigations (react-router's Navigate uses history.replaceState) and
   // main-frame navigations: a redirect loop shows up as a fast-growing count.
@@ -195,7 +199,8 @@ async function createRequest(m) {
   await page.type('input[name="replyToAddress"]', 'replies@example.com');
   await clickNext(page);
   // Nothing may have been submitted by the Next clicks.
-  check('New Request: Next did not submit the form', !(await page.$('.modal-content')));
+  check('New Request: Next did not submit the form', m.submissionPosts.length === 0 && !(await page.$('.modal-content')),
+    `${m.submissionPosts.length} POST /content/submissions`);
 
   // Step 3: approvers. Type part of the name and pick the suggestion.
   await page.waitForSelector('.approver-input-wrap input', { visible: true });
@@ -211,6 +216,8 @@ async function createRequest(m) {
   const created = page.waitForResponse((r) => r.request().method() === 'POST' && /\/api\/content\/submissions$/.test(r.url()), { timeout: 15000 });
   await page.click('.wizard-nav .btn-submit');
   const res = await created;
+  await L.sleep(500);
+  check('New Request: Submit posts the request once', m.submissionPosts.length === 1, `${m.submissionPosts.length} POSTs`);
   const body = await res.json().catch(() => ({}));
   check('New Request: POST /content/submissions succeeds', res.ok(), `${res.status()}`);
   await page.waitForSelector('.modal-content', { timeout: 10000 });
