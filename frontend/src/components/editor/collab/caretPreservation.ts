@@ -302,11 +302,21 @@ function $removeBlockRange(block: ElementNode, start: number, end: number): void
   }
 }
 
-/** $setPoint from @lexical/yjs: a position on a decorator or line break goes to its parent. */
-function $setPointFromCollab(point: PointType, key: string, offset: number): void {
+/**
+ * $setPoint from @lexical/yjs: a position on a decorator or line break goes to its parent.
+ *
+ * Returns false (and leaves the point alone) when the position's node no longer exists:
+ * another user removed the block the caret was in (a reject of an inserted paragraph, a
+ * deleted block). The Yjs position then resolves into the deleted paragraph, whose collab
+ * nodes still carry the keys of Lexical nodes that are gone, and point.set would throw
+ * "PointType.set: node with key ... not found".
+ */
+function $setPointFromCollab(point: PointType, key: string, offset: number): boolean {
   let node = $getNodeByKey(key);
-  if (node !== null && !$isElementNode(node) && !$isTextNode(node)) {
-    const parent = node.getParentOrThrow();
+  if (node === null || !node.isAttached()) return false;
+  if (!$isElementNode(node) && !$isTextNode(node)) {
+    const parent = node.getParent();
+    if (parent === null) return false;
     key = parent.getKey();
     offset = node.getIndexWithinParent();
     node = parent;
@@ -317,6 +327,26 @@ function $setPointFromCollab(point: PointType, key: string, offset: number): voi
     offset = Math.min(offset, node.getChildrenSize());
   }
   point.set(key, offset, $isElementNode(node) ? 'element' : 'text');
+  return true;
+}
+
+/** Whether a point's node exists, is attached and fits the point's type. */
+function $isLivePoint(point: PointType): boolean {
+  const node = $getNodeByKey(point.key);
+  if (node === null || !node.isAttached()) return false;
+  return point.type === 'text' ? $isTextNode(node) : $isElementNode(node);
+}
+
+/**
+ * The caret's position can't be restored (its block is gone). Keep the selection Lexical
+ * recovered while applying the remote update (it moves a caret out of a removed node to the
+ * previous one); if there is none that points at live nodes, put the caret at the start of
+ * the document.
+ */
+function $keepRecoveredSelection(): void {
+  const current = $getSelection();
+  if ($isRangeSelection(current) && $isLivePoint(current.anchor) && $isLivePoint(current.focus)) return;
+  $getRoot().selectStart();
 }
 
 /** The restore itself, inside an editor update. Exported for tests. */
@@ -332,8 +362,13 @@ export function $restoreCaret(
   );
   if (resolved.anchorCollabNode === null || resolved.focusCollabNode === null) return false;
   const selection = $createRangeSelection();
-  $setPointFromCollab(selection.anchor, resolved.anchorCollabNode.getKey(), resolved.anchorOffset);
-  $setPointFromCollab(selection.focus, resolved.focusCollabNode.getKey(), resolved.focusOffset);
+  if (
+    !$setPointFromCollab(selection.anchor, resolved.anchorCollabNode.getKey(), resolved.anchorOffset) ||
+    !$setPointFromCollab(selection.focus, resolved.focusCollabNode.getKey(), resolved.focusOffset)
+  ) {
+    $keepRecoveredSelection();
+    return false;
+  }
 
   if (pending.collapsed && pending.context) {
     const at = $pointToBlockOffset(selection.anchor);
