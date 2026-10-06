@@ -10,6 +10,7 @@ import { useCollabMode } from '../services/collabConfig';
 import { useUserDirectory } from '../services/userDirectory';
 import { applyChangeStatus, ChangeResolver, ResolvedStatus } from '../utils/changeStatus';
 import { countOpenEdits } from '../utils/reviewItems';
+import { mergeComment } from '../utils/remoteComments';
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -383,6 +384,15 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  // A comment another session posted (over the submission room): into the Open list now.
+  const handleRemoteComment = useCallback((comment: Comment) => {
+    setSubmission(prev => {
+      if (!prev) return prev;
+      const comments = mergeComment(prev.comments, comment);
+      return comments === prev.comments ? prev : { ...prev, comments };
+    });
+  }, []);
+
   // Functional updates throughout: these run from timers and long-lived socket handlers
   // (and several times in one batch), so they must never write back a stale submission.
   const setChangeStatus = useCallback((changeIds: string[], status: ResolvedStatus, resolver?: ChangeResolver) => {
@@ -694,6 +704,7 @@ export const TrackedChangesView: React.FC = () => {
         onSuggestion={handleSuggestion}
         onRefreshNeeded={handleRefreshNeeded}
         onRemoteChangeResolved={handleRemoteChangeResolved}
+        onRemoteComment={handleRemoteComment}
         onBack={() => navigate('/requests')}
         reviewMode={true}
         onDelete={handleDelete}

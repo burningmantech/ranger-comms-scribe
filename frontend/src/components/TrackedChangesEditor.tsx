@@ -31,6 +31,7 @@ import type { LocalEditSession } from './editor/collab/localEditTracker';
 import './TrackedChangesEditor.css';
 import { UserName } from './UserName';
 import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds } from '../utils/changeStatus';
+import { remoteCommentFromMessage } from '../utils/remoteComments';
 
 const webSocketManager = new WebSocketManager();
 
@@ -84,6 +85,8 @@ interface TrackedChangesEditorProps {
   onSuggestion: (suggestion: Change) => void;
   onRefreshNeeded?: () => void;
   onRemoteChangeResolved?: (changeId: string, status: string, resolver?: ChangeResolver) => void;
+  /** A comment another session posted (a comment on a change, a general comment, a Request changes note). */
+  onRemoteComment?: (comment: Comment) => void;
   onBack?: () => void;
   onDelete?: () => void;
   onSendEmail?: () => Promise<void>;
@@ -178,6 +181,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onSuggestion,
   onRefreshNeeded,
   onRemoteChangeResolved,
+  onRemoteComment,
   onBack,
   onDelete,
   onSendEmail,
@@ -574,6 +578,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // through refs instead of capturing the first render's.
   const onRemoteChangeResolvedRef = useRef(onRemoteChangeResolved);
   onRemoteChangeResolvedRef.current = onRemoteChangeResolved;
+  const onRemoteCommentRef = useRef(onRemoteComment);
+  onRemoteCommentRef.current = onRemoteComment;
 
   // Collaborative mode: refetch the change list after a remote accept/reject, so the
   // sidebar gets the server's status (including cascade-rejected changes). A batch
@@ -2780,6 +2786,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // Trigger a refresh so the re-added tracked change appears
         refreshWithRemoteGuardRef.current();
       });
+
+      // Comments posted in other sessions (on a change, general, or a Request changes
+      // note, which arrives with status_changed) show in the Open list right away. The
+      // poster's own copy arrives too; the parent ignores a comment it already has.
+      const handleRemoteComment = (message: WebSocketMessage) => {
+        const comment = remoteCommentFromMessage(message);
+        if (comment) onRemoteCommentRef.current?.(comment);
+      };
+      client.on('comment_added', handleRemoteComment);
+      client.on('status_changed', handleRemoteComment);
 
       // Listen for change status updates (accept/reject) from remote users
       client.on('change_status_updated', (message: WebSocketMessage) => {

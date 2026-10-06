@@ -18,6 +18,7 @@ import {
   ChangeComment
 } from '../services/trackedChangesService';
 import { getObject, putObject } from '../services/cacheService';
+import { broadcastToSubmissionRoom } from './websocket';
 import { mergeTextIntoLexicalJson } from '../services/trackedChangesService';
 
 
@@ -750,6 +751,16 @@ export async function addChangeCommentHandler(request: CustomRequest, env: any):
       request.user.name,
       env
     );
+
+    // Tell the submission's room, like a submission comment (comment_added), so other
+    // reviewers see it without reloading. The message carries the change id.
+    await broadcastToSubmissionRoom(change.submissionId, {
+      type: 'comment_added',
+      userId: request.user.id || request.user.email,
+      userName: request.user.name,
+      userEmail: request.user.email,
+      data: { comment: newComment, changeId },
+    }, env);
 
     return new Response(JSON.stringify(newComment), {
       headers: { 'Content-Type': 'application/json' }
