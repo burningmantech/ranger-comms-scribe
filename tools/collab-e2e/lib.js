@@ -1,9 +1,10 @@
 // Two-browser harness: real app at localhost:3000, real backend at localhost:8080 (dev bypass).
+// E2E_APP / E2E_API point it at another local stack (e.g. one on other ports).
 const puppeteer = require('puppeteer-core');
 
-const API = 'http://localhost:8080/api';
-const APP = 'http://localhost:3000';
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const API = process.env.E2E_API || 'http://localhost:8080/api';
+const APP = process.env.E2E_APP || 'http://localhost:3000';
+const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

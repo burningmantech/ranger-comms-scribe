@@ -26,4 +26,13 @@ node outage.js            # offline, reconnect, fresh doc after 20 s
 node remount.js           # tab switch, moving between submissions
 node undo2.js             # undo only affects your own edits
 node legacy.js            # COLLAB_MODE unset: old behaviour unchanged (restart the backend without COLLAB_MODE)
+node review-ui.js         # review sidebar: one "Moved" card for a cut + paste, reject (live for both users),
+                          # Undo from the toast, accept, History, clicking a card scrolls to its text
+```
+
+To run against a stack on other ports (e.g. a second checkout running in parallel), point the
+harness at it with `E2E_APP` and `E2E_API` (and `CHROME` for another browser binary):
+
+```bash
+E2E_APP=http://localhost:3002 E2E_API=http://localhost:8082/api node review-ui.js
 ```

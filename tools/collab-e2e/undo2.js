@@ -30,8 +30,8 @@ async function expandGroups(u) {
       await L.sleep(4500);
       const { changes } = await L.api(`/tracked-changes/submission/${sub.id}`);
       const target = changes.find((c) => c.newValue.includes('Rejectme'));
-      await L.waitFor(async () => { await expandGroups(b); return (await b.page.$(`.change-item[data-change-id="${target.id}"]`)) !== null; }, 'in sidebar');
-      await (await b.page.$(`.change-item[data-change-id="${target.id}"] button[title="Reject this change"]`)).click();
+      await L.waitFor(async () => { await expandGroups(b); return (await b.page.$(`.change-item[data-change-ids~="${target.id}"]`)) !== null; }, 'in sidebar');
+      await (await b.page.$(`.change-item[data-change-ids~="${target.id}"] button[title="Reject"]`)).click();
       await L.waitFor(async () => !(await L.blocks(a)).join('').includes('Rejectme'), 'rejected');
       await L.sleep(1500);
       await L.caret(b, 1); // focus B's editor
