@@ -143,7 +143,10 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     return element;
   }
 
-  updateDOM(): false {
+  updateDOM(prevNode: DeletedTextNode, dom: HTMLElement): false {
+    // A pending marker gets its change id when its transaction is saved: keep the
+    // wrapper's data-change-id (used to find a change's markers in the DOM) in step.
+    if (prevNode.__changeId !== this.__changeId) dom.setAttribute('data-change-id', this.__changeId);
     return false;
   }
 
