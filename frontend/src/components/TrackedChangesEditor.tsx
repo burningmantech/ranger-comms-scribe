@@ -1331,18 +1331,17 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       : [];
 
     let reverted = false;
+    let notReverted: string[] = [];
     if (isCollab && cascadeRejectedIds.length > 0) {
       // Collaborative mode: revert the cascaded changes in the shared document too
       // (newest first). One that can't be reverted (its text was edited since: often a
       // change whose own reject failed just before) keeps its text in the document, so it
-      // goes back to pending on the server instead of being rejected on paper; it is no
-      // part of this reject (nor of its undo).
+      // goes back to pending on the server instead of being rejected on paper (below, after
+      // the re-PUT); it is no part of this reject (nor of its undo).
       const outcome = revertCascadedChangesRef.current(cascadeRejectedIds);
       reverted = outcome.reverted;
-      if (outcome.failedIds.length > 0) {
-        cascadeRejectedIds = cascadeRejectedIds.filter(id => !outcome.failedIds.includes(id));
-        await restorePendingRef.current(outcome.failedIds);
-      }
+      notReverted = outcome.failedIds;
+      cascadeRejectedIds = cascadeRejectedIds.filter(id => !notReverted.includes(id));
     }
     // The sidebar shows them rejected, and an undo of this reject undoes them too.
     if (cascadeRejectedIds.length > 0) onCascadeRejectedRef.current(changeId, cascadeRejectedIds);
@@ -1353,13 +1352,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         onRemoteChangeResolvedRef.current?.(id, 'rejected', resolver);
       }
       setLocalAddedChanges(prev => applyChangeStatus(prev, cascadeRejectedIds, 'rejected', resolver));
-      // The first PUT carried the document before these reverts, so store it again. The
-      // cascaded changes are rejected on the server already, so this PUT cascades no
-      // further; it isn't broadcast (the single broadcast below covers it).
+      // The first PUT carried the document before these reverts, so store it again. Every
+      // cascaded change is still rejected on the server at this point (the server cascades
+      // only to pending ones), so this PUT cascades no further; it isn't broadcast (the
+      // single broadcast below covers it).
       if (reverted && editedProposedContentRef.current) {
         await putChangeStatus(changeId, 'rejected', editedProposedContentRef.current);
       }
     }
+    // Only now: a change set back to pending before the re-PUT would be cascaded again.
+    if (notReverted.length > 0) await restorePendingRef.current(notReverted);
 
     // Broadcast to other connected users via WebSocket, once, with the cascade ids
     // included so collaborative-mode clients mark those rejected too.
@@ -1547,6 +1549,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         card.ids.forEach(id => { if (!failedIds.includes(id)) failedIds.push(id); });
       }
     }
+    if (failedIds.length > 0) console.warn(`[RESOLVE] cascaded changes ${failedIds.join(', ')} can't be reverted: back to pending`);
     const cascaded = all.filter(c => !failedIds.includes(c.id));
     let reverted = false;
     for (const c of cascaded) {
@@ -2032,13 +2035,26 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   /** Accept all / Reject all, through the batch path, in document order (moves deletion first). */
   const handleBulkDecision = useCallback((status: 'approved' | 'rejected') => {
-    const ids = openItemsRef.current.flatMap(item => (item.type === 'comment' ? [] : item.ids));
+    // Collaborative mode, Reject all: a move is rejected all or nothing (as with its card),
+    // so a move that can't be reverted as a whole is left out.
+    const editor = isCollab && status === 'rejected' ? getActiveTrackedChangesEditor() : null;
+    const ids = openItemsRef.current.flatMap(item => {
+      if (item.type === 'comment') return [];
+      if (editor && item.type === 'move') {
+        const plan = dryRunRejects(editor, [item.deletion, item.insertion].map(c => ({ id: c.id, before: c.richTextOldValue, after: c.richTextNewValue })));
+        if (!Array.from(plan.values()).every(Boolean)) {
+          console.warn(`[RESOLVE] Reject all: the move ${item.ids.join(' + ')} can't be reverted as a whole; left pending`);
+          return [];
+        }
+      }
+      return item.ids;
+    });
     if (ids.length === 0) return;
     handleBatchAction(ids, status, (resolved) => {
       recordStatus(resolved, status, selfResolver);
       showUndoToast(resolved, status === 'approved' ? 'approve' : 'reject', resolved.length);
     });
-  }, [handleBatchAction, recordStatus, selfResolver, showUndoToast]);
+  }, [handleBatchAction, recordStatus, selfResolver, showUndoToast, isCollab]);
 
   /**
    * Undo accepts or rejects (with the changes the server cascade-rejected with them).

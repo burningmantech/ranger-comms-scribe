@@ -287,6 +287,24 @@ async function run(browser, n) {
   await L.waitFor(async () => (await movedCards(b)).length === 1 && (await movedCards(a)).length === 1, 'the move is still an open card for both', 10000);
   step('the failed move stayed pending (its text is still there); only the Updated card was decided');
 
+  // 5b. B rejects A's step-1 deletion (two characters). Before the fix this cascaded on the
+  //     server to later changes, the failed move among them. Whatever the server cascades,
+  //     the move (which the document can't revert) must stay pending with its text.
+  decisions.length = 0;
+  const mark2 = cascadeLogs.length;
+  await (await cardButton(b, deletionIds, 'Reject')).click();
+  await L.sleep(4000);
+  step(`B rejected the step-1 deletion: decisions ${JSON.stringify(decisions)}; cascade: ${JSON.stringify(cascadeLogs.slice(mark2))}`);
+  if (decisions.filter((d) => move2.ids.some((id) => d.startsWith(id))).length) throw new Error(`the failed move was decided: ${JSON.stringify(decisions)}`);
+  await L.waitFor(async () => {
+    const { changes } = await L.api(`/tracked-changes/submission/${sub.id}`);
+    return changes.filter((c) => move2.ids.includes(c.id)).every((c) => c.status === 'pending');
+  }, 'server: the move is still pending after the cascade', 10000);
+  if (!(await L.blocks(b)).includes('Something else entirely, written over it by A.')) throw new Error('the moved, rewritten text is gone');
+  await L.waitFor(async () => (await movedCards(b)).length === 1 && (await movedCards(a)).length === 1, 'the move is still an open card for both after the cascade', 10000);
+  await L.converged(a, b);
+  step('after the step-1 deletion was rejected the move is still pending, its text in both documents');
+
   for (const u of [a, b]) {
     const errors = u.errors.filter((e) => !/favicon|DevTools|Failed to load resource/.test(e));
     if (errors.length) console.log(`[run ${n}] ${u.name} console errors:`, errors.slice(0, 5));
