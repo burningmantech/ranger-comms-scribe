@@ -1,5 +1,7 @@
 // Comms Calendar: mirrors CommsCalendarEntry in backend/src/types.ts
 
+import { DateLink } from './annualDates';
+
 export type CommsMethod = 'Announce' | 'Newsletter' | 'Both' | 'N/A';
 
 export const COMMS_METHODS: CommsMethod[] = ['Announce', 'Newsletter', 'Both', 'N/A'];
@@ -31,6 +33,10 @@ export interface CommsCalendarEntry {
   newsletterSentIn?: number;
   carriedFromId?: string;
   notRepeating?: boolean;
+  /** The message's text (plain, a line per paragraph), pasted or imported from its document, for its dates. */
+  documentText?: string;
+  /** Dates in documentText linked to annual dates. */
+  dateLinks?: DateLink[];
   nudges: CommsCalendarNudge[];
   source: 'manual' | 'import' | 'submission';
   createdBy: string;
@@ -53,6 +59,8 @@ export interface CommsCalendarInput {
   submissionId?: string | null;
   carriedFromId?: string | null;
   notRepeating?: boolean;
+  documentText?: string | null;
+  dateLinks?: DateLink[];
 }
 
 export interface UpcomingItem {

@@ -15,7 +15,7 @@ import { getUser } from '../services/userService';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
 import { getEdition } from '../services/newsletterService';
-import { AnnualDateInputError, cleanDateLinks } from '../services/annualDatesService';
+import { cleanDateLinks, DateLinkError } from '../utils/dateLinks';
 import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
 import { canEditCalendar, syncCalendarFromSubmission } from '../services/commsCalendarService';
 
@@ -268,7 +268,7 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     newsletterFields = cleanNewsletterFields(submission);
     dateLinks = cleanDateLinks(submission.dateLinks);
   } catch (err) {
-    if (err instanceof InputError || err instanceof AnnualDateInputError) return json({ error: err.message }, { status: 400 });
+    if (err instanceof InputError || err instanceof DateLinkError) return json({ error: err.message }, { status: 400 });
     throw err;
   }
 
@@ -918,7 +918,7 @@ router.put('/submissions/:id/date-links', withAuth, async (request: Request, env
     if (dateLinks.length) submission.dateLinks = dateLinks;
     else delete submission.dateLinks;
   } catch (err) {
-    if (err instanceof AnnualDateInputError) return json({ error: err.message }, { status: 400 });
+    if (err instanceof DateLinkError) return json({ error: err.message }, { status: 400 });
     throw err;
   }
   submission.updatedAt = new Date().toISOString();

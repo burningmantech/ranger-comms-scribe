@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal } from './Modal';
 import { annualDatesService } from '../../services/annualDatesService';
-import { ContentSubmission } from '../../types/content';
+import { commsCalendarService } from '../../services/commsCalendarService';
+import { CommsCalendarEntry } from '../../types/commsCalendar';
 import { DateLink } from '../../types/annualDates';
 import DatesPanel, { DateSource } from '../dates/DatesPanel';
 import { useAnnualDates } from '../dates/useAnnualDates';
@@ -9,30 +10,43 @@ import { buildDateGroups } from '../dates/dateGroups';
 import { blockTextFromLexical, isLexicalJson } from '../../utils/lexicalUtils';
 
 interface RequestDatesModalProps {
-  submissionId: string;
-  subject: string;
+  entry: CommsCalendarEntry;
   /** The next occurrence on or after this is what the text should show (Coming up: the date it's due again). */
   referenceYmd: string;
   canEdit: boolean;
   onClose: () => void;
+  /** The entry with its new links (document entries keep their links on the entry). */
+  onEntryChange?: (entry: CommsCalendarEntry) => void;
 }
 
 /**
- * "Dates in this request" for a calendar entry's Scribe request: track, link or import its dates
- * from the Comms Calendar. Rewriting the text happens on the request's review page (a tracked change).
+ * "Dates in this request" for a calendar entry: its own document text (pasted or imported) when it
+ * has one, else its Scribe request's text and blurb. Track, link or track all from the Comms
+ * Calendar. Rewriting a request's text happens on its review page (a tracked change); a document is
+ * last year's message, so its dates are only compared, never rewritten.
  */
-export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ submissionId, subject, referenceYmd, canEdit, onClose }) => {
-  const [submission, setSubmission] = useState<ContentSubmission | null>(null);
-  const [links, setLinks] = useState<DateLink[]>([]);
+export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ entry, referenceYmd, canEdit, onClose, onEntryChange }) => {
+  const fromDocument = !!entry.documentText;
+  const submissionId = fromDocument ? undefined : entry.submissionId;
+  const [sources, setSources] = useState<DateSource[] | null>(
+    fromDocument ? [{ field: 'body', label: 'the message', text: entry.documentText! }] : null,
+  );
+  const [links, setLinks] = useState<DateLink[]>(fromDocument ? entry.dateLinks || [] : []);
   const [error, setError] = useState<string | null>(null);
   const annualDates = useAnnualDates();
 
   useEffect(() => {
+    if (!submissionId) return undefined;
     let cancelled = false;
     annualDatesService.getSubmission(submissionId)
       .then((loaded) => {
         if (cancelled) return;
-        setSubmission(loaded);
+        const body = loaded.proposedVersions?.richTextContent || loaded.richTextContent || loaded.content || '';
+        const blurb = loaded.newsletter?.blurb || '';
+        setSources([
+          { field: 'body', label: 'the text', text: isLexicalJson(body) ? blockTextFromLexical(body) : body },
+          ...(blurb ? [{ field: 'blurb' as const, label: 'the blurb', text: blockTextFromLexical(blurb) }] : []),
+        ]);
         setLinks(loaded.dateLinks || []);
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : String(err)));
@@ -41,18 +55,8 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ submission
     };
   }, [submissionId]);
 
-  const sources: DateSource[] = useMemo(() => {
-    if (!submission) return [];
-    const body = submission.proposedVersions?.richTextContent || submission.richTextContent || submission.content || '';
-    const blurb = submission.newsletter?.blurb || '';
-    return [
-      { field: 'body', label: 'the text', text: isLexicalJson(body) ? blockTextFromLexical(body) : body },
-      ...(blurb ? [{ field: 'blurb' as const, label: 'the blurb', text: blockTextFromLexical(blurb) }] : []),
-    ];
-  }, [submission]);
-
   const hasDates = useMemo(
-    () => links.length > 0 || buildDateGroups(sources, [], referenceYmd, []).groups.length > 0,
+    () => links.length > 0 || (!!sources && buildDateGroups(sources, [], referenceYmd, []).groups.length > 0),
     [sources, links, referenceYmd],
   );
 
@@ -61,7 +65,11 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ submission
     setLinks(next);
     setError(null);
     try {
-      await annualDatesService.saveDateLinks(submissionId, next);
+      if (submissionId) {
+        await annualDatesService.saveDateLinks(submissionId, next);
+      } else {
+        onEntryChange?.(await commsCalendarService.update(entry.id, { dateLinks: next }));
+      }
     } catch (err) {
       setLinks(previous);
       setError(err instanceof Error ? err.message : 'Could not save the linked dates');
@@ -70,19 +78,24 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ submission
 
   return (
     <Modal
-      title={`Dates in “${subject}”`}
+      title={`Dates in “${entry.subject}”`}
       onClose={onClose}
       wide
       footer={(
         <>
-          <a className="cc-btn cc-btn--ghost" href={`/tracked-changes/${encodeURIComponent(submissionId)}`}>Open the request</a>
+          {submissionId && (
+            <a className="cc-btn cc-btn--ghost" href={`/tracked-changes/${encodeURIComponent(submissionId)}`}>Open the request</a>
+          )}
+          {!submissionId && entry.link && (
+            <a className="cc-btn cc-btn--ghost" href={entry.link} target="_blank" rel="noopener noreferrer">Open the message</a>
+          )}
           <button type="button" className="cc-btn cc-btn--primary" onClick={onClose}>Done</button>
         </>
       )}
     >
       {error && <div className="cc-error" role="alert">{error}</div>}
-      {!submission && !error && <div className="cc-empty">Loading…</div>}
-      {submission && (
+      {!sources && !error && <div className="cc-empty">Loading…</div>}
+      {sources && (
         <DatesPanel
           sources={sources}
           links={links}
@@ -90,12 +103,13 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({ submission
           referenceYmd={referenceYmd}
           annualDates={annualDates.entries}
           onAnnualDateAdded={annualDates.added}
-          updateHref={`/tracked-changes/${encodeURIComponent(submissionId)}`}
+          updateHref={submissionId ? `/tracked-changes/${encodeURIComponent(submissionId)}` : undefined}
           submissionId={submissionId}
           disabled={!canEdit}
+          title={submissionId ? 'Dates in this request' : 'Dates in this message'}
         />
       )}
-      {submission && !hasDates && <div className="cc-empty">No dates found in this request's text.</div>}
+      {sources && !hasDates && <div className="cc-empty">No dates found in this message.</div>}
     </Modal>
   );
 };

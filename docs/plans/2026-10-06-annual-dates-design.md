@@ -61,6 +61,11 @@ that mentions one when its text is out of date.
 - **From the Comms Calendar:** an entry that came from a Scribe request has a **Dates** button that opens the
   same panel for that request (track, link, track all). In Coming up it compares against the date the entry is
   due again, so it shows next year's dates. Text is only rewritten on the review page, so stale dates link there.
+- A calendar entry can carry its message's text (`documentText`, plain text, up to 200,000 characters) and its
+  own `dateLinks`, saved with PUT `/api/comms-calendar/:id`. The text is pasted in the entry form, or imported
+  from the message's Google Doc (the 2027 sheet's 36 docs were read through the HelpDesk browser: the doc's
+  Subject line and Body section). The Dates button then works on the entry itself; a message is last year's
+  text, so its dates are compared and tracked, never rewritten.
 
 ## Access
 

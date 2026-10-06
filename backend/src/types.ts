@@ -669,6 +669,10 @@ export interface CommsCalendarEntry {
   carriedFromId?: string;
   /** The team won't send it again: it leaves the Upcoming list. */
   notRepeating?: boolean;
+  /** The message's text (plain, a line per paragraph), pasted or imported from its document, for its dates. */
+  documentText?: string;
+  /** Dates in documentText linked to annual dates (field 'body'). */
+  dateLinks?: DateLink[];
   nudges: CommsCalendarNudge[];
   source: 'manual' | 'import' | 'submission';
   createdBy: string;

@@ -30,6 +30,8 @@ interface DatesPanelProps {
   focusKey?: string | null;
   submissionId?: string;
   disabled?: boolean;
+  /** "Dates in this request" unless it's something else (a calendar entry's message). */
+  title?: string;
 }
 
 const newId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
@@ -57,7 +59,7 @@ export const groupElementId = (key: string) => `date-group-${key.replace(/[^\w-]
  */
 export const DatesPanel: React.FC<DatesPanelProps> = ({
   sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, updateHref, onShowMention,
-  focusKey, submissionId, disabled,
+  focusKey, submissionId, disabled, title = 'Dates in this request',
 }) => {
   const [tracking, setTracking] = useState<DateGroup | null>(null);
   const [trackingAll, setTrackingAll] = useState(false);
@@ -225,8 +227,8 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
   };
 
   return (
-    <section className="dt-panel" aria-label="Dates in this request">
-      <h4 className="dt-title"><i className="far fa-calendar-alt" aria-hidden="true" /> Dates in this request</h4>
+    <section className="dt-panel" aria-label={title}>
+      <h4 className="dt-title"><i className="far fa-calendar-alt" aria-hidden="true" /> {title}</h4>
       <p className="dt-intro cc-muted">
         Track a date to keep it in the annual dates table. Next year (or when the table changes) you can update every
         mention of it here in one click.

@@ -32,6 +32,7 @@ interface FormState {
   submissionId: string;
   carriedFromId: string;
   notRepeating: boolean;
+  documentText: string;
 }
 
 function toForm(values: CommsCalendarInput | CommsCalendarEntry | undefined): FormState {
@@ -47,6 +48,7 @@ function toForm(values: CommsCalendarInput | CommsCalendarEntry | undefined): Fo
     submissionId: values?.submissionId ?? '',
     carriedFromId: values?.carriedFromId ?? '',
     notRepeating: values?.notRepeating ?? false,
+    documentText: values?.documentText ?? '',
   };
 }
 
@@ -111,6 +113,7 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
       submissionId: form.submissionId || null,
       carriedFromId: form.carriedFromId || null,
       notRepeating: form.notRepeating,
+      documentText: form.documentText.trim() || null,
     };
     setSaving(true);
     setError(null);
@@ -179,6 +182,16 @@ export const EntryFormModal: React.FC<EntryFormModalProps> = ({
         <label className="cc-field cc-field--full">
           <span>Link to the message</span>
           <input type="url" value={form.link} onChange={(e) => set('link', e.target.value)} placeholder="https://" />
+        </label>
+        <label className="cc-field cc-field--full">
+          <span>The message's text</span>
+          <textarea
+            rows={4}
+            value={form.documentText}
+            onChange={(e) => set('documentText', e.target.value)}
+            placeholder="Paste the announcement here to find and track its dates (Dates)"
+          />
+          <small>Not needed when it came from a Scribe request.</small>
         </label>
         <label className="cc-field cc-field--full">
           <span>Milestone / comments</span>

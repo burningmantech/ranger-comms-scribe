@@ -10,6 +10,7 @@ import { audienceKeys } from '../utils/audiences';
 import { escapeHtml } from '../utils/lexicalEmail';
 import { renderEmailHtml } from '../utils/email';
 import { isValidYmd, addDays, daysBetween, toUtc } from '../utils/ymd';
+import { cleanDateLinks, DateLinkError } from '../utils/dateLinks';
 
 /**
  * Comms Calendar: the communications sent in each Sep→Aug cycle, so Comms can ask the
@@ -186,6 +187,8 @@ export interface EntryInput {
   submissionId?: string | null;
   carriedFromId?: string | null;
   notRepeating?: boolean;
+  documentText?: string | null;
+  dateLinks?: CommsCalendarEntry['dateLinks'];
 }
 
 /** Validated fields; `null` means "remove this optional field". */
@@ -194,7 +197,7 @@ export type EntryPatch = {
 } & { contactEmails?: string[] };
 
 const EMAIL_RE = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/;
-const LIMITS = { subject: 500, link: 2000, team: 200, comments: 5000, id: 200, contacts: 20 };
+const LIMITS = { subject: 500, link: 2000, team: 200, comments: 5000, id: 200, contacts: 20, documentText: 200_000 };
 
 export function isValidEmail(value: string): boolean {
   return EMAIL_RE.test(value);
@@ -306,7 +309,22 @@ export function validateEntryInput(
       if (typeof body.notRepeating !== 'boolean') return { error: 'notRepeating must be true or false' };
       patch.notRepeating = body.notRepeating;
     }
+
+    if (has('documentText')) {
+      const value = body.documentText;
+      if (value !== null && typeof value !== 'string') return { error: 'documentText must be text' };
+      const textValue = typeof value === 'string' ? value.replace(/\r\n?/g, '\n').trim() : '';
+      if (textValue.length > LIMITS.documentText) return { error: `documentText is too long (max ${LIMITS.documentText} characters)` };
+      patch.documentText = textValue || null;
+    }
+
+    if (has('dateLinks')) {
+      const links = cleanDateLinks(body.dateLinks);
+      if (links.some((l) => l.field !== 'body')) return { error: 'A calendar entry only links dates in its document' };
+      patch.dateLinks = links.length ? links : null;
+    }
   } catch (error) {
+    if (error instanceof DateLinkError) return { error: error.message };
     return { error: error instanceof Error ? error.message : String(error) };
   }
   return { patch };

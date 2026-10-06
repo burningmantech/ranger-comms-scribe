@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { router } from '../../src/handlers/annualDates';
 import { router as contentRouter } from '../../src/handlers/contentSubmission';
+import { router as calendarRouter } from '../../src/handlers/commsCalendar';
 import { clearMemoryCache, getObject } from '../../src/services/cacheService';
 import { cleanCalendar, cleanKeyDate, cleanKeyDates } from '../../src/utils/newsletterInput';
 import { ContentSubmission } from '../../src/types';
@@ -125,5 +126,46 @@ describe('Annual dates API', () => {
     expect((await call(env, 'PUT', `/content/submissions/${id}/date-links`, {
       session: SESSIONS.cadre, body: { dateLinks: [moved] },
     }, contentRouter)).status).toBe(200);
+  });
+});
+
+describe('Comms Calendar entries: document text and linked dates', () => {
+  let env: any;
+
+  beforeEach(() => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    clearMemoryCache();
+    env = { STORE: createMockObjectStore(), DEV_BYPASS_AUTH: 'true', FRONTEND_URL: 'https://scrivenly.com' };
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  const calendar = (method: string, path: string, session: string, body?: unknown) =>
+    calendarRouter.fetch(new Request(`http://localhost/api/comms-calendar${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session}` },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    }), env);
+
+  it('keeps the document text and its linked dates; clears them with null', async () => {
+    const created = await (await calendar('POST', '/', SESSIONS.cadre, {
+      subject: 'Ranger Social', targetDate: '2026-08-20', documentText: 'Join us\r\n6pm - 10pm on Sept. 1 2026.',
+    })).json() as any;
+    expect(created.documentText).toBe('Join us\n6pm - 10pm on Sept. 1 2026.');
+
+    const link = { id: 'l1', annualDateId: 'a1', field: 'body', text: '6pm - 10pm on Sept. 1 2026', year: 2026 };
+    const linked = await calendar('PUT', `/${created.id}`, SESSIONS.cadre, { dateLinks: [link] });
+    expect(linked.status).toBe(200);
+    expect((await linked.json() as any).dateLinks).toEqual([link]);
+
+    expect((await calendar('PUT', `/${created.id}`, SESSIONS.cadre, { dateLinks: [{ ...link, field: 'blurb' }] })).status).toBe(400);
+    expect((await calendar('PUT', `/${created.id}`, SESSIONS.member, { dateLinks: [] })).status).toBe(403);
+
+    const cleared = await (await calendar('PUT', `/${created.id}`, SESSIONS.cadre, { documentText: null, dateLinks: [] })).json() as any;
+    expect(cleared.documentText).toBeUndefined();
+    expect(cleared.dateLinks).toBeUndefined();
   });
 });

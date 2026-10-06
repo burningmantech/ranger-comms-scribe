@@ -365,7 +365,8 @@ Things that happen every year, so requests can follow them (`docs/plans/2026-10-
 - A new annual date defaults to a Labor Day rule. **Track all** adds and links every unlinked date at once
   (`TrackAllModal.tsx`). On the Comms Calendar, entries from a Scribe request have a **Dates** button
   (`RequestDatesModal.tsx`; Coming up compares against the date it's due again); text updates there link to the
-  review page
+  review page. An entry can also hold its message's text (`documentText`, pasted in the entry form or imported
+  from its Google Doc) with its own `dateLinks`, so Dates works for messages that never went through Scribe
 - A request's `dateLinks` are saved by `PUT /content/submissions/:id/date-links` (the request's editors or Comms
   Calendar editors); PUT `/submissions/:id` ignores them. A key date's `annualDateId` goes through the newsletter PATCH.
 - Links never change text by themselves. **Update text** rewrites the date in its written style: a

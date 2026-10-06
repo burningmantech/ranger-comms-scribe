@@ -296,7 +296,7 @@ export const CommsCalendar: React.FC = () => {
                             <button type="button" className="cc-btn cc-btn--small" onClick={() => startThisYear(item)}>
                               This year's entry
                             </button>
-                            {item.entry.submissionId && (
+                            {(item.entry.submissionId || item.entry.documentText) && (
                               <button
                                 type="button"
                                 className="cc-btn cc-btn--small"
@@ -391,7 +391,7 @@ export const CommsCalendar: React.FC = () => {
                             ) : (
                               <>
                                 <button type="button" className="cc-btn cc-btn--small" onClick={() => setDialog({ kind: 'edit', entry })}>Edit</button>
-                                {entry.submissionId && (
+                                {(entry.submissionId || entry.documentText) && (
                                   <button
                                     type="button"
                                     className="cc-btn cc-btn--small"
@@ -441,13 +441,15 @@ export const CommsCalendar: React.FC = () => {
           }}
         />
       )}
-      {dialog?.kind === 'dates' && dialog.entry.submissionId && (
+      {dialog?.kind === 'dates' && (
         <RequestDatesModal
-          submissionId={dialog.entry.submissionId}
-          subject={dialog.entry.subject}
+          entry={dialog.entry}
           referenceYmd={dialog.referenceYmd}
           canEdit={canEdit}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            load();
+          }}
         />
       )}
       {dialog?.kind === 'fromRequest' && (

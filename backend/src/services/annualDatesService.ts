@@ -1,4 +1,4 @@
-import { AnnualDate, AnnualDateOverride, AnnualDateRule, DateLink, User } from '../types';
+import { AnnualDate, AnnualDateOverride, AnnualDateRule, User } from '../types';
 import { Env } from '../utils/sessionManager';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
 import { canEditCalendar } from './commsCalendarService';
@@ -193,28 +193,5 @@ export function newAnnualDate(patch: AnnualDatePatch, createdBy: string, id: str
   return applyAnnualDatePatch(base, patch);
 }
 
-// ---------------------------------------------------------------------------
-// A request's links to annual dates
-// ---------------------------------------------------------------------------
+export { cleanDateLinks } from '../utils/dateLinks';
 
-const MAX_DATE_LINKS = 40;
-
-/** Validate a request's dateLinks; throws Error with a message for a 400. */
-export function cleanDateLinks(input: unknown): DateLink[] {
-  if (input === undefined || input === null) return [];
-  if (!Array.isArray(input)) throw new Invalid('dateLinks must be a list');
-  if (input.length > MAX_DATE_LINKS) throw new Invalid(`At most ${MAX_DATE_LINKS} linked dates`);
-  return input.map((raw: any, i) => {
-    const field = `Linked date ${i + 1}`;
-    if (!raw || typeof raw !== 'object') throw new Invalid(`${field} is invalid`);
-    const id = optionalText(raw.id ?? '', `${field} id`, LIMITS.id);
-    const annualDateId = optionalText(raw.annualDateId ?? '', `${field} annual date`, LIMITS.id);
-    const text = optionalText(raw.text ?? '', `${field} text`, LIMITS.text);
-    if (!id || !annualDateId || !text) throw new Invalid(`${field} needs an id, an annual date and its text`);
-    if (raw.field !== 'body' && raw.field !== 'blurb') throw new Invalid(`${field}: field must be body or blurb`);
-    if (!Number.isInteger(raw.year) || raw.year < 2000 || raw.year > 2100) throw new Invalid(`${field}: year must be a year`);
-    return { id, annualDateId, field: raw.field, text, year: raw.year };
-  });
-}
-
-export { Invalid as AnnualDateInputError };
