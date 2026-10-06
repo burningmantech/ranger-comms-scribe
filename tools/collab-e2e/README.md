@@ -46,6 +46,11 @@ node member.js            # a Member (dev-member): /requests loads with no redir
                           # calls), types on its request and it saves, no Finish review menu; dev-user2
                           # rejects the edit and the member's card goes live. Fails on any console error.
                           # Needs the backend started as below (it seeds an approver as a bootstrap admin)
+node approval-flow.js     # the status follows the tracked changes, live: all approvals first, then the last
+                          # edit accepted -> approved, 4/4 and Send in both browsers without a reload; a new
+                          # edit -> back to in_review, Send hidden; a comment resolved moves to History for
+                          # the other user ("All caught up"), Reopen brings it back. Seeds dev@localhost as a
+                          # Comms Cadre member and council manager: needs the member.js backend, run it last
 ```
 
 `STORE_LATENCY_MS=<n>` (with `STORE_DRIVER=memory`) delays every store call by a random 0..n ms, like S3 round

@@ -197,6 +197,10 @@ export interface ContentComment {
   updatedAt: string;
   isSuggestion: boolean;
   resolved: boolean;
+  /** Who resolved the thread (email, else id) and when; cleared when it is reopened. */
+  resolvedBy?: string;
+  resolvedByName?: string;
+  resolvedAt?: string;
   parentId?: string;
   replies?: ContentComment[];
 }

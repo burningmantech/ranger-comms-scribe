@@ -5,6 +5,7 @@ import {
   buildCommentThreads,
   buildHistory,
   buildOpenItems,
+  buildResolvedThreads,
   countOpenEdits,
   findMovePartner,
   orderByPosition,
@@ -135,6 +136,55 @@ describe('comment threads', () => {
     expect(threads.map((t) => t.id)).toEqual(['k1', 'orphan']);
     expect(threads[0].replies[0].id).toBe('r1');
     expect(threads[0].replies[0].replies[0].id).toBe('r2');
+  });
+});
+
+describe('resolved comment threads', () => {
+  const resolved = (c: Comment, by = 'rev@x', s = 50): Comment => ({ ...c, resolved: true, resolvedBy: by, resolvedByName: 'Rev', resolvedAt: at(s).toISOString() });
+
+  it('leave the Open list, general or on a pending change, with their replies', () => {
+    const comments = [
+      resolved(comment('k1', 'general note', 1)),
+      comment('r1', '@reply:k1 a reply', 2),
+      resolved(comment('k2', '@change:c1 on the change', 3)),
+      comment('k3', 'still open', 4),
+    ];
+    const items = buildOpenItems([change('c1', 'a b', 'a x b')], comments, new Map());
+    expect(items.map((i) => i.key)).toEqual(['c1', 'comment:k3']);
+    const card = items[0];
+    expect(card.type !== 'comment' && card.threads).toEqual([]);
+  });
+
+  it('leave the Open list empty when every comment is resolved and no change is pending ("All caught up")', () => {
+    const items = buildOpenItems([], [resolved(comment('k1', 'note', 1)), resolved(comment('k2', '@change:c9 on a resolved change', 2))], new Map());
+    expect(items).toEqual([]);
+    expect(countOpenEdits(items)).toBe(0);
+  });
+
+  it('a thread on a resolved change stays open until it is resolved', () => {
+    const items = buildOpenItems([], [comment('k1', '@change:c9 why?', 1)], new Map());
+    expect(items.map((i) => [i.key, i.type === 'comment' && i.changeId])).toEqual([['comment:k1', 'c9']]);
+  });
+
+  it('are listed for History, most recently resolved first, with who resolved them and their replies', () => {
+    const list = buildResolvedThreads([
+      resolved(comment('k1', 'first', 1), 'a@x', 10),
+      comment('r1', '@reply:k1 reply', 2),
+      resolved(comment('k2', '@change:c4 second', 3), 'b@x', 20),
+      comment('k3', 'open', 4),
+    ]);
+    expect(list.map((e) => [e.key, e.resolverId, e.changeId])).toEqual([
+      ['resolved:k2', 'b@x', 'c4'],
+      ['resolved:k1', 'a@x', undefined],
+    ]);
+    expect(list[1].thread.replies.map((r) => r.id)).toEqual(['r1']);
+    expect(list[0].at).toBe(at(20).getTime());
+  });
+
+  it('a reopened thread is back in Open and gone from History', () => {
+    const comments = [{ ...comment('k1', 'note', 1), resolved: false }];
+    expect(buildResolvedThreads(comments)).toEqual([]);
+    expect(buildOpenItems([], comments, new Map()).map((i) => i.key)).toEqual(['comment:k1']);
   });
 });
 

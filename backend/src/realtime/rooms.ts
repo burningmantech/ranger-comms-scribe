@@ -29,10 +29,11 @@ import { WebSocket } from 'ws';
 
 export type WebSocketMessageType =
   | 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated'
-  | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected'
+  | 'comment_added' | 'comment_resolved' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected'
   | 'heartbeat' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation'
   | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update'
-  | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated';
+  | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated'
+  | 'approval_state';
 
 export interface RoomUser {
   userId: string;

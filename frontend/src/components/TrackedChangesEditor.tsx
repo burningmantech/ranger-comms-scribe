@@ -19,7 +19,7 @@ import { UndoToast } from './review/UndoToast';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
 import { locateChange } from './editor/collab/rejectRestore';
 import { describeChange, ChangeDescription } from '../utils/changeDescriptions';
-import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, countOpenEdits, findMovePartner, pairMoves, pendingOnly } from '../utils/reviewItems';
+import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, buildResolvedThreads, commentChangeId, countOpenEdits, findMovePartner, pairMoves, pendingOnly } from '../utils/reviewItems';
 import { ApprovalGates } from '../types/content';
 import { originalDocument } from '../utils/originalContent';
 import { buildResolveHints } from '../utils/resolveHints';
@@ -32,6 +32,7 @@ import './TrackedChangesEditor.css';
 import { UserName } from './UserName';
 import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds } from '../utils/changeStatus';
 import { remoteCommentFromMessage } from '../utils/remoteComments';
+import { REVIEW_STATE_MESSAGE_TYPES } from '../utils/reviewState';
 
 const webSocketManager = new WebSocketManager();
 
@@ -87,6 +88,13 @@ interface TrackedChangesEditorProps {
   onRemoteChangeResolved?: (changeId: string, status: string, resolver?: ChangeResolver) => void;
   /** A comment another session posted (a comment on a change, a general comment, a Request changes note). */
   onRemoteComment?: (comment: Comment) => void;
+  /**
+   * Submission-room messages about the submission's status, approval gates or comment
+   * resolutions (utils/reviewState REVIEW_STATE_MESSAGE_TYPES), for the page to apply.
+   */
+  onReviewStateMessage?: (message: WebSocketMessage) => void;
+  /** Resolve (true) or reopen (false) a comment thread; resolves to whether it was saved. */
+  onResolveComment?: (commentId: string, resolved: boolean) => Promise<boolean>;
   onBack?: () => void;
   onDelete?: () => void;
   onSendEmail?: () => Promise<void>;
@@ -193,6 +201,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onRefreshNeeded,
   onRemoteChangeResolved,
   onRemoteComment,
+  onReviewStateMessage,
+  onResolveComment,
   onBack,
   onDelete,
   onSendEmail,
@@ -591,6 +601,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onRemoteChangeResolvedRef.current = onRemoteChangeResolved;
   const onRemoteCommentRef = useRef(onRemoteComment);
   onRemoteCommentRef.current = onRemoteComment;
+  const onReviewStateMessageRef = useRef(onReviewStateMessage);
+  onReviewStateMessageRef.current = onReviewStateMessage;
 
   // Collaborative mode: refetch the change list after a remote accept/reject, so the
   // sidebar gets the server's status (including cascade-rejected changes). A batch
@@ -1991,6 +2003,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     () => buildHistory(allTrackedChanges, decidedAt, describe),
     [allTrackedChanges, decidedAt, describe],
   );
+  const resolvedThreads = useMemo(() => buildResolvedThreads(submission.comments), [submission.comments]);
+  const handleResolveThread = useCallback(async (threadId: string, resolved: boolean) => {
+    if (!onResolveComment) return;
+    const ok = await onResolveComment(threadId, resolved);
+    if (!ok) showErrorToast(`Couldn't ${resolved ? 'resolve' : 'reopen'} the comment`);
+  }, [onResolveComment, showErrorToast]);
 
   /** Record decisions (or undos) known here before the change records catch up. */
   const recordStatus = useCallback((ids: string[], status: StatusOverride['status'], resolver?: ChangeResolver) => {
@@ -2385,6 +2403,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onReply: handleCommentReply,
     canUndo: canUndoEntry,
     onUndo: (entry: HistoryEntry<TrackedChange>) => { undoDecision(entry.ids); },
+    resolvedThreads,
+    onResolveThread: onResolveComment ? handleResolveThread : undefined,
   };
 
   // Generate a summary of changes for WebSocket notifications
@@ -2836,6 +2856,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       };
       client.on('comment_added', handleRemoteComment);
       client.on('status_changed', handleRemoteComment);
+
+      // The submission's status, approval gates and comment resolutions (the server tells
+      // the room after every tracked-change operation, approval and resolve): the page
+      // applies them, so the header's conditions and the Send button stay current.
+      const forwardReviewState = (message: WebSocketMessage) => onReviewStateMessageRef.current?.(message);
+      for (const type of REVIEW_STATE_MESSAGE_TYPES) client.on(type, forwardReviewState);
 
       // Listen for change status updates (accept/reject) from remote users
       client.on('change_status_updated', (message: WebSocketMessage) => {

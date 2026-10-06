@@ -5,16 +5,25 @@ import { formatRelativeTime } from './time';
 
 interface CommentThreadProps {
   thread: CommentNode;
-  /** Post a reply to a comment (any comment in the thread). */
-  onReply: (parentId: string, text: string) => void;
+  /** Post a reply to a comment (any comment in the thread). Without it (History) the thread is read-only. */
+  onReply?: (parentId: string, text: string) => void;
+  /** Resolve the thread (shown on its root comment). */
+  onResolve?: (threadId: string) => void;
+}
+
+interface CommentEntryProps {
+  node: CommentNode;
+  depth: number;
+  onReply?: CommentThreadProps['onReply'];
+  onResolve?: CommentThreadProps['onResolve'];
 }
 
 /** One comment and its replies, with an inline reply box. */
-const CommentEntry: React.FC<{ node: CommentNode; depth: number; onReply: CommentThreadProps['onReply'] }> = ({ node, depth, onReply }) => {
+const CommentEntry: React.FC<CommentEntryProps> = ({ node, depth, onReply, onResolve }) => {
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState('');
   const submit = () => {
-    if (!text.trim()) return;
+    if (!text.trim() || !onReply) return;
     onReply(node.id, text.trim());
     setText('');
     setReplying(false);
@@ -26,9 +35,20 @@ const CommentEntry: React.FC<{ node: CommentNode; depth: number; onReply: Commen
         <span className="rp-comment__time" title={new Date(node.createdAt).toLocaleString()}>
           {formatRelativeTime(new Date(node.createdAt))}
         </span>
+        {depth === 0 && onResolve && (
+          <button
+            type="button"
+            className="rp-icon-btn rp-comment__resolve"
+            title="Resolve"
+            aria-label="Resolve comment thread"
+            onClick={(e) => { e.stopPropagation(); onResolve(node.id); }}
+          >
+            <i className="fas fa-check" aria-hidden="true" />
+          </button>
+        )}
       </div>
       <div className="rp-comment__body">{commentText(node)}</div>
-      {!replying && (
+      {onReply && !replying && (
         <button
           type="button"
           className="rp-link-btn"
@@ -69,9 +89,9 @@ const CommentEntry: React.FC<{ node: CommentNode; depth: number; onReply: Commen
   );
 };
 
-export const CommentThread: React.FC<CommentThreadProps> = ({ thread, onReply }) => (
-  <div className="rp-thread">
-    <CommentEntry node={thread} depth={0} onReply={onReply} />
+export const CommentThread: React.FC<CommentThreadProps> = ({ thread, onReply, onResolve }) => (
+  <div className="rp-thread" data-thread-id={thread.id}>
+    <CommentEntry node={thread} depth={0} onReply={onReply} onResolve={onResolve} />
   </div>
 );
 

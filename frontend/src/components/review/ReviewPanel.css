@@ -388,6 +388,20 @@
   color: #80868b;
 }
 
+/* Resolve a thread (Google Docs' check mark), at the end of the root comment's header */
+.rp-comment__resolve {
+  margin-left: auto;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+.rp-comment__resolve:hover:not(:disabled) {
+  color: #1e8e3e;
+  background: #e6f4ea;
+}
+
 .rp-comment__body {
   margin: 2px 0 2px;
   font-size: 13px;
@@ -468,6 +482,18 @@
 
 .rp-history__status--rejected {
   color: #c5221f;
+}
+
+.rp-history__item--resolved {
+  border-left-color: #1a73e8;
+}
+
+.rp-history__status--resolved {
+  color: #1967d2;
+}
+
+.rp-history__item--resolved .rp-thread {
+  margin-top: 6px;
 }
 
 .rp-history__time {

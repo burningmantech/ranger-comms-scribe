@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChangeCard, HistoryEntry, OpenItem, ReviewChangeLike } from '../../utils/reviewItems';
+import { ChangeCard, HistoryEntry, OpenItem, ResolvedThreadEntry, ReviewChangeLike } from '../../utils/reviewItems';
 import { ReviewCard } from './ReviewCard';
 import { HistoryList } from './HistoryList';
 import './ReviewPanel.css';
@@ -32,13 +32,17 @@ export interface ReviewPanelProps<T extends ReviewChangeLike> {
   onReply: (parentId: string, text: string) => void;
   canUndo: (entry: HistoryEntry<T>) => boolean;
   onUndo: (entry: HistoryEntry<T>) => void;
+  /** Resolved comment threads (History, with Reopen). */
+  resolvedThreads?: ResolvedThreadEntry[];
+  /** Resolve (true) or reopen (false) a comment thread. Without it there is no Resolve / Reopen. */
+  onResolveThread?: (threadId: string, resolved: boolean) => void;
   /** Rendered at the end of the header (e.g. the sidebar's collapse button). */
   headerExtra?: React.ReactNode;
 }
 
 /**
- * The review sidebar: "Open" (pending changes and comments, in document order) and
- * "History" (decisions, with Undo). Bulk actions and the keyboard shortcuts are in the
+ * The review sidebar: "Open" (pending changes and unresolved comments, in document order)
+ * and "History" (decisions, with Undo, and resolved comment threads, with Reopen). Bulk actions and the keyboard shortcuts are in the
  * ⋯ menu.
  */
 export function ReviewPanel<T extends ReviewChangeLike>(props: ReviewPanelProps<T>): JSX.Element {
@@ -189,6 +193,7 @@ export function ReviewPanel<T extends ReviewChangeLike>(props: ReviewPanelProps<
                   onReject={props.onReject}
                   onComment={props.onComment}
                   onReply={props.onReply}
+                  onResolveThread={props.onResolveThread ? (id) => props.onResolveThread!(id, true) : undefined}
                 />
               ))}
             </div>
@@ -200,6 +205,8 @@ export function ReviewPanel<T extends ReviewChangeLike>(props: ReviewPanelProps<
             onUndo={props.onUndo}
             busyIds={props.undoBusyIds}
             fieldLabel={props.fieldLabel}
+            resolvedThreads={props.resolvedThreads}
+            onReopen={props.onResolveThread ? (id) => props.onResolveThread!(id, false) : undefined}
           />
         )}
       </div>

@@ -20,6 +20,7 @@ import {
 import { getObject, putObject } from '../services/cacheService';
 import { broadcastToSubmissionRoom } from './websocket';
 import { mergeTextIntoLexicalJson } from '../services/trackedChangesService';
+import { syncSubmissionStatus } from './contentSubmission';
 
 
 /**
@@ -414,6 +415,9 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
       { diffAgainstOldValue: diffAgainstOldValue === true }
     );
 
+    // A new pending change: an approved submission goes back to review
+    await syncSubmissionStatus(submissionId, env, request.user, { onlyDemote: true });
+
     return new Response(JSON.stringify(newChange), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -571,6 +575,9 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
       console.error('Failed to update submission content after change resolution:', err);
     }
 
+    // The last pending change resolved may complete the approval (cascade included)
+    await syncSubmissionStatus(submissionId, env, request.user);
+
     return new Response(JSON.stringify({ success: true, cascadeRejectedIds }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -709,6 +716,8 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
     } catch (err) {
       console.error('Failed to update submission content after batch resolution:', err);
     }
+
+    await syncSubmissionStatus(submissionId, env, request.user);
 
     return new Response(JSON.stringify({ results }), {
       headers: { 'Content-Type': 'application/json' }
@@ -862,6 +871,9 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
       }, env);
     }
 
+    // The change is pending again: an approved submission goes back to review
+    await syncSubmissionStatus(submissionId, env, request.user);
+
     return new Response(JSON.stringify({ success: true, change: updatedChange }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -970,6 +982,9 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
       return new Response('Change not found', { status: 404 });
     }
 
+    // Deleting the last pending change (an author's undo of their own edit) may complete the approval
+    await syncSubmissionStatus(submissionId, env, request.user);
+
     return new Response(JSON.stringify({ success: true, submissionId: result.submissionId }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -1008,6 +1023,8 @@ export async function deleteAllChangesHandler(request: CustomRequest, env: any):
     // Delete proposed versions cache
     await deleteObject(`proposed_versions/${submissionId}`, env);
     await deleteObject(`tracked_changes:submission:${submissionId}`, env);
+
+    await syncSubmissionStatus(submissionId, env, request.user);
 
     return new Response(JSON.stringify({ success: true, count: objects.objects.length }), {
       headers: { 'Content-Type': 'application/json' }
@@ -1091,6 +1108,8 @@ export async function batchCreateHandler(request: CustomRequest, env: any): Prom
     }));
 
     const createdChanges = await batchCreateTrackedChanges(submissionId, changesData, env);
+
+    await syncSubmissionStatus(submissionId, env, request.user, { onlyDemote: true });
 
     return new Response(JSON.stringify({ success: true, changes: createdChanges }), {
       headers: { 'Content-Type': 'application/json' }

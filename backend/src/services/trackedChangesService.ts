@@ -45,6 +45,11 @@ export interface ChangeComment {
   authorId: string;
   authorName: string;
   createdAt: string;
+  /** Set by POST /content/submissions/:id/comments/:commentId/resolve */
+  resolved?: boolean;
+  resolvedBy?: string;
+  resolvedByName?: string;
+  resolvedAt?: string;
 }
 
 // Get all tracked changes for a submission

@@ -11,6 +11,34 @@ import { useUserDirectory } from '../services/userDirectory';
 import { applyChangeStatus, ChangeResolver, ResolvedStatus } from '../utils/changeStatus';
 import { countOpenEdits } from '../utils/reviewItems';
 import { mergeComment } from '../utils/remoteComments';
+import { applyCommentResolution, applyReviewStateMessage, needsReviewStateRefresh } from '../utils/reviewState';
+import type { WebSocketMessage } from '../services/websocketService';
+
+/** A stored submission comment in the frontend's shape (resolve fields included). */
+export function toFrontendComment(raw: any): Comment {
+  return {
+    id: raw.id,
+    content: raw.content,
+    authorId: raw.authorId,
+    createdAt: new Date(raw.createdAt),
+    type: raw.isSuggestion ? 'SUGGESTION' : 'COMMENT',
+    resolved: raw.resolved || false,
+    ...(raw.resolved ? { resolvedBy: raw.resolvedBy, resolvedByName: raw.resolvedByName, resolvedAt: raw.resolvedAt } : {}),
+  };
+}
+
+/** Stored approvals in the frontend's shape. */
+const toFrontendApprovals = (approvals: any[] | undefined): Approval[] => (approvals || []).map((approval: any) => ({
+  id: approval.id,
+  approverId: approval.approverId,
+  approverEmail: approval.approverEmail,
+  status: approval.status.toUpperCase(),
+  comment: approval.comment,
+  timestamp: new Date(approval.createdAt)
+}));
+
+/** Delay before refetching the status and gates, so a burst of messages makes one request. */
+const REVIEW_STATE_REFRESH_MS = 300;
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -159,22 +187,8 @@ export const TrackedChangesView: React.FC = () => {
         submittedBy: data.submittedBy,
         submittedAt: new Date(data.submittedAt),
         formFields: data.formFields || [],
-        comments: (data.comments || []).map((comment: any) => ({
-          id: comment.id,
-          content: comment.content,
-          authorId: comment.authorId,
-          createdAt: new Date(comment.createdAt),
-          type: comment.isSuggestion ? 'SUGGESTION' : 'COMMENT',
-          resolved: comment.resolved || false
-        })),
-        approvals: (data.approvals || []).map((approval: any) => ({
-          id: approval.id,
-          approverId: approval.approverId,
-          approverEmail: approval.approverEmail,
-          status: approval.status.toUpperCase(),
-          comment: approval.comment,
-          timestamp: new Date(approval.createdAt)
-        })),
+        comments: (data.comments || []).map(toFrontendComment),
+        approvals: toFrontendApprovals(data.approvals),
         changes: transformedChanges, // Use the tracked changes from the separate API
         assignedReviewers: [],
         assignedCouncilManagers: data.assignedCouncilManagers || [],
@@ -287,9 +301,13 @@ export const TrackedChangesView: React.FC = () => {
       const loaded = submission;
       const changed = (key: keyof ContentSubmission) =>
         !loaded || JSON.stringify(updatedSubmission[key]) !== JSON.stringify(loaded[key]);
+      // Never the status, comments or approvals: the server owns them (they follow the
+      // tracked changes, the comment and resolve endpoints, and the approve endpoint), and
+      // they change under this page from the submission room.
+      const serverOwned = new Set<string>(['id', 'status', 'comments', 'approvals']);
       const body: Record<string, unknown> = { id: backendSubmission.id };
       for (const key of Object.keys(backendSubmission) as Array<keyof typeof backendSubmission>) {
-        if (key !== 'id' && changed(key as keyof ContentSubmission)) body[key] = backendSubmission[key];
+        if (!serverOwned.has(key) && changed(key as keyof ContentSubmission)) body[key] = backendSubmission[key];
       }
       const proposedVersionsChanged = !!updatedSubmission.proposedVersions && changed('proposedVersions');
 
@@ -368,14 +386,9 @@ export const TrackedChangesView: React.FC = () => {
       // resolved them), the proposed versions and the other comments, and an accept or
       // reject that arrived while the POST was in flight must not be overwritten.
       const saved = await response.json();
-      const newComment: Comment = {
-        id: saved?.id || comment.id,
-        content: saved?.content ?? comment.content,
-        authorId: saved?.authorId || comment.authorId,
-        createdAt: saved?.createdAt ? new Date(saved.createdAt) : new Date(comment.createdAt),
-        type: saved ? (saved.isSuggestion ? 'SUGGESTION' : 'COMMENT') : comment.type,
-        resolved: saved?.resolved || false,
-      };
+      const newComment: Comment = saved?.id
+        ? toFrontendComment({ ...saved, content: saved.content ?? comment.content, authorId: saved.authorId || comment.authorId, createdAt: saved.createdAt || comment.createdAt })
+        : { ...comment, resolved: false };
       setSubmission(prev => {
         if (!prev || prev.comments.some(c => c.id === newComment.id)) return prev;
         return { ...prev, comments: [...prev.comments, newComment] };
@@ -393,6 +406,107 @@ export const TrackedChangesView: React.FC = () => {
       return comments === prev.comments ? prev : { ...prev, comments };
     });
   }, []);
+
+  // ---- The status, approval gates and comment resolutions, kept current from the room ----
+  // Messages are applied as they come (they carry the server's state); a refetch of just the
+  // status, gates and approvals covers messages without them and reconnects. Never a full
+  // fetchSubmission: that replaces the change list and proposed versions under the editor.
+  const submissionRef = useRef(submission);
+  submissionRef.current = submission;
+  const reviewStateVersionRef = useRef(0);
+  const reviewStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshReviewState = useCallback(async () => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId || !submissionId) return;
+    const version = reviewStateVersionRef.current;
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submissionId}`, {
+        headers: { Authorization: `Bearer ${sessionId}` },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      // A message applied meanwhile is newer than this response
+      if (version !== reviewStateVersionRef.current) return;
+      setSubmission(prev => {
+        if (!prev || prev.id !== data.id) return prev;
+        return {
+          ...prev,
+          status: data.status ?? prev.status,
+          approvalGates: data.approvalGates ?? prev.approvalGates,
+          approvals: toFrontendApprovals(data.approvals),
+        };
+      });
+    } catch (err) {
+      console.error('TrackedChangesView: could not refresh the review state:', err);
+    }
+  }, [submissionId]);
+  const scheduleReviewStateRefresh = useCallback(() => {
+    if (reviewStateTimerRef.current) clearTimeout(reviewStateTimerRef.current);
+    reviewStateTimerRef.current = setTimeout(() => {
+      reviewStateTimerRef.current = null;
+      refreshReviewState();
+    }, REVIEW_STATE_REFRESH_MS);
+  }, [refreshReviewState]);
+  useEffect(() => () => {
+    if (reviewStateTimerRef.current) clearTimeout(reviewStateTimerRef.current);
+  }, []);
+
+  const handleReviewStateMessage = useCallback((message: WebSocketMessage) => {
+    if (message.submissionId && submissionId && message.submissionId !== submissionId) return;
+    reviewStateVersionRef.current++;
+    setSubmission(prev => (prev ? applyReviewStateMessage(prev, message) : prev));
+    if (needsReviewStateRefresh(message)) scheduleReviewStateRefresh();
+  }, [submissionId, scheduleReviewStateRefresh]);
+
+  // Resolve (true) or reopen (false) a comment thread: shown at once, undone if the server refuses.
+  const handleResolveComment = useCallback(async (commentId: string, resolved: boolean): Promise<boolean> => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId || !submissionId) return false;
+    const before = submissionRef.current?.comments.find(c => c.id === commentId);
+    setSubmission(prev => {
+      if (!prev) return prev;
+      const comments = applyCommentResolution(prev.comments, {
+        commentId,
+        resolved,
+        resolvedBy: currentUser?.email || currentUser?.id,
+        resolvedByName: currentUser?.name,
+        resolvedAt: new Date().toISOString(),
+      });
+      return comments === prev.comments ? prev : { ...prev, comments };
+    });
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submissionId}/comments/${commentId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionId}` },
+        body: JSON.stringify({ resolved }),
+      });
+      if (!response.ok) throw new Error(`the server answered ${response.status}`);
+      const saved = await response.json().catch(() => null);
+      if (saved?.id) {
+        setSubmission(prev => {
+          if (!prev) return prev;
+          const comments = applyCommentResolution(prev.comments, {
+            commentId, resolved: !!saved.resolved, resolvedBy: saved.resolvedBy, resolvedByName: saved.resolvedByName, resolvedAt: saved.resolvedAt,
+          });
+          return comments === prev.comments ? prev : { ...prev, comments };
+        });
+      }
+      return true;
+    } catch (err) {
+      console.error(`Could not ${resolved ? 'resolve' : 'reopen'} comment ${commentId}:`, err);
+      const previous = before;
+      if (previous) {
+        setSubmission(prev => {
+          if (!prev) return prev;
+          const comments = applyCommentResolution(prev.comments, {
+            commentId, resolved: previous.resolved, resolvedBy: previous.resolvedBy, resolvedByName: previous.resolvedByName, resolvedAt: previous.resolvedAt,
+          });
+          return comments === prev.comments ? prev : { ...prev, comments };
+        });
+      }
+      return false;
+    }
+  }, [submissionId, currentUser?.email, currentUser?.id, currentUser?.name]);
 
   // Functional updates throughout: these run from timers and long-lived socket handlers
   // (and several times in one batch), so they must never write back a stale submission.
@@ -500,22 +614,8 @@ export const TrackedChangesView: React.FC = () => {
           submittedBy: data.submittedBy,
           submittedAt: new Date(data.submittedAt),
           formFields: data.formFields || [],
-          comments: (data.comments || []).map((comment: any) => ({
-            id: comment.id,
-            content: comment.content,
-            authorId: comment.authorId,
-            createdAt: new Date(comment.createdAt),
-            type: comment.isSuggestion ? 'SUGGESTION' : 'COMMENT',
-            resolved: comment.resolved || false
-          })),
-          approvals: (data.approvals || []).map((approval: any) => ({
-            id: approval.id,
-            approverId: approval.approverId,
-            approverEmail: approval.approverEmail,
-            status: approval.status.toUpperCase(),
-            comment: approval.comment,
-            timestamp: new Date(approval.createdAt)
-          })),
+          comments: (data.comments || []).map(toFrontendComment),
+          approvals: toFrontendApprovals(data.approvals),
           changes: transformedChanges,
           assignedReviewers: [],
           assignedCouncilManagers: data.assignedCouncilManagers || [],
@@ -708,6 +808,8 @@ export const TrackedChangesView: React.FC = () => {
         onRefreshNeeded={handleRefreshNeeded}
         onRemoteChangeResolved={handleRemoteChangeResolved}
         onRemoteComment={handleRemoteComment}
+        onReviewStateMessage={handleReviewStateMessage}
+        onResolveComment={handleResolveComment}
         onBack={() => navigate('/requests')}
         reviewMode={true}
         onDelete={handleDelete}

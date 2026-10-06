@@ -109,6 +109,10 @@ export interface Comment {
   createdAt: Date;
   type: 'COMMENT' | 'SUGGESTION';
   resolved: boolean;
+  /** Who resolved the thread (email, else id), their name, and when (cleared on reopen). */
+  resolvedBy?: string;
+  resolvedByName?: string;
+  resolvedAt?: Date | string;
   suggestedEdit?: SuggestedEdit;
 }
 
