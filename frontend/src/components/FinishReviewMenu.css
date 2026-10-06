@@ -108,3 +108,20 @@
   border: 0;
   border-top: 1px solid #e8eaed;
 }
+
+/* The reviewer has voted: the button shows the decision */
+.finish-review__toggle--approved {
+  background: #15803d;
+}
+
+.finish-review__toggle--approved:hover {
+  background: #166534;
+}
+
+.finish-review__toggle--rejected {
+  background: #b91c1c;
+}
+
+.finish-review__toggle--rejected:hover {
+  background: #991b1b;
+}

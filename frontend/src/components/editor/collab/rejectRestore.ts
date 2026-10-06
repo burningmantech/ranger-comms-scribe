@@ -40,8 +40,8 @@ const TEXT_BLOCK_TYPES = new Set(['paragraph', 'heading', 'quote', 'code']);
 /** Properties that differ between equal documents (computed or editor-local), never compared. */
 const IGNORED_PROPS = new Set(['direction', 'textFormat', 'textStyle', 'version', 'detail']);
 
-/** Deletion-marker properties that change after creation (rename on save, display). */
-const IGNORED_MARKER_PROPS = new Set(['changeId', 'authorName', 'authorColor']);
+/** Deletion-marker properties that change after creation (rename on save, display, the creator's key). */
+const IGNORED_MARKER_PROPS = new Set(['changeId', 'authorName', 'authorColor', 'pendingKey']);
 
 /** Units of context on each side of a hunk used to check its location. */
 const CONTEXT_UNITS = 24;

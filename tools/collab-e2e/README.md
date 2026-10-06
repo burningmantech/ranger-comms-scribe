@@ -31,6 +31,10 @@ node review-topbar.js     # review header: Finish review menu, conditions popove
                           # view; works in both modes. STRICT=1 adds a reload after the Yjs room is dropped
 node review-ui.js         # review sidebar: one "Moved" card for a cut + paste, reject (live for both users),
                           # Undo from the toast, accept, History, clicking a card scrolls to its text
+node stray-marker.js      # the dev-site Moved card: deletion markers stamped only by their own
+                          # transaction, a paragraph + list moved over an empty paragraph rejects
+                          # exactly; a move whose paste was rewritten is rejected all or nothing and
+                          # a failed reject never carries over to another card
 ```
 
 To run against a second stack on other ports (e.g. a second checkout running in parallel), set

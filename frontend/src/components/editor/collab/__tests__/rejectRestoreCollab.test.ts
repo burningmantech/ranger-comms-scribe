@@ -20,7 +20,7 @@ import {
   TextNode,
 } from 'lexical';
 import { HeadingNode, QuoteNode, $createHeadingNode } from '@lexical/rich-text';
-import { ListItemNode, ListNode } from '@lexical/list';
+import { $createListItemNode, $createListNode, ListItemNode, ListNode } from '@lexical/list';
 import { CodeHighlightNode, CodeNode } from '@lexical/code';
 import { TableCellNode, TableNode, TableRowNode } from '@lexical/table';
 import { LinkNode } from '@lexical/link';
@@ -30,7 +30,8 @@ import { DeletedTextNode } from '../../nodes/DeletedTextNode';
 import { ImageNode } from '../../nodes/ImageNode';
 import { createLocalEditTracker } from '../localEditTracker';
 import { trackProvenance } from '../provenance';
-import { reapplyRejectedChanges, resolveTrackedChange, ResolveTrackedChangeDetail } from '../../plugins/TrackedChangesPlugin';
+import { $stampPendingMarkers, dryRunRejects, reapplyRejectedChanges, resolveTrackedChange, ResolveTrackedChangeDetail } from '../../plugins/TrackedChangesPlugin';
+import { $createDeletedTextNode } from '../../nodes/DeletedTextNode';
 import { $exportNodeJSON, $resolveUnitPoint, locateChange } from '../rejectRestore';
 
 // The same nodes as CollaborativeEditor ($parseSerializedNode needs every type registered).
@@ -353,5 +354,165 @@ describe('reject by context through Yjs (the move from the bug report)', () => {
     };
     resolveTrackedChange(b.editor, detail, false);
     expect(detail.result).toBeUndefined();
+  });
+});
+
+describe('a paragraph with a line break and its list, cut and pasted over an empty paragraph', () => {
+  // The shape of the dev-site Moved card: "New for 2026:" + line break, then a list.
+  function seedSection(c: Client): void {
+    edit(c, () => {
+      const root = $getRoot();
+      root.append($createParagraphNode().append($createTextNode('Intro.')));
+      root.append($createParagraphNode().append($createTextNode('New for 2026:').toggleFormat('bold'), $createTextNode(' '), $createLineBreakNode()));
+      root.append($createListNode('bullet').append(
+        $createListItemNode().append($createTextNode('Special price tickets.')),
+        $createListItemNode().append($createTextNode('All passes in one email.')),
+      ));
+      root.append($createParagraphNode().append($createTextNode('Key Things to Know:')));
+      root.append($createListNode('bullet').append($createListItemNode().append($createTextNode('Only claim a VP if needed.'))));
+      root.append($createParagraphNode());
+      root.append($createParagraphNode().append($createTextNode('General Info:')));
+    }, 'history-merge');
+  }
+
+  function cutSectionAndPaste(a: Client): { cut: ChangeRecord; paste: ChangeRecord } {
+    const tracker = createLocalEditTracker(a.doc, NODES, (tr) => tr.origin !== 'remote');
+    let clipboard: any = null;
+    const cutSession = tracker.begin();
+    edit(a, () => {
+      const from = $textIn(1, 'first');
+      const to = ($getRoot().getChildAtIndex(2) as any).getLastChild().getLastChild();
+      const sel = $createRangeSelection();
+      sel.anchor.set(from.getKey(), 0, 'text');
+      sel.focus.set(to.getKey(), to.getTextContentSize(), 'text');
+      $setSelection(sel);
+      clipboard = $generateJSONFromSelectedNodes(a.editor, sel);
+      sel.removeText();
+    });
+    const cut = { id: 'cut', before: tracker.baselineJson(cutSession), after: tracker.currentJson() };
+    tracker.end(cutSession);
+
+    const pasteSession = tracker.begin();
+    edit(a, () => {
+      // The empty paragraph before "General Info:"
+      const root = $getRoot();
+      const target = root.getChildAtIndex(root.getChildrenSize() - 2) as any;
+      const sel = $createRangeSelection();
+      sel.anchor.set(target.getKey(), 0, 'element');
+      sel.focus.set(target.getKey(), 0, 'element');
+      $setSelection(sel);
+      $insertGeneratedNodes(a.editor, $generateNodesFromSerializedNodes(clipboard.nodes), $getSelection() as any);
+    });
+    const paste = { id: 'paste', before: tracker.baselineJson(pasteSession), after: tracker.currentJson() };
+    tracker.end(pasteSession);
+    tracker.destroy();
+    return { cut, paste };
+  }
+
+  const json = (c: Client) => {
+    flush(c);
+    return c.editor.getEditorState().read(() => JSON.stringify($getRoot().getChildren().map($exportNodeJSON)));
+  };
+
+  it("the paste's before-state has the empty paragraph back, without the pasted line break", () => {
+    const a = client('A');
+    seedSection(a);
+    const { paste } = cutSectionAndPaste(a);
+    const target = JSON.parse(paste.before).root.children[4];
+    expect(target.type).toBe('paragraph');
+    expect(JSON.stringify(target)).not.toContain('linebreak');
+  });
+
+  it('rejecting the cut, then the paste, restores the original exactly in both editors', () => {
+    const a = client('A');
+    const b = client('B');
+    connect(a, b);
+    seedSection(a);
+    const original = json(a);
+    const { cut, paste } = cutSectionAndPaste(a);
+    expect(rejectOn(b, cut).result).toEqual({ restored: true, method: 'context' });
+    expect(rejectOn(b, paste).result).toEqual({ restored: true, method: 'context' });
+    expect(json(b)).toEqual(original);
+    expect(json(a)).toEqual(original);
+  });
+});
+
+describe('a typed deletion (its after-state holds its own marker)', () => {
+  const docJson = (c: Client) => {
+    flush(c);
+    return c.editor.getEditorState().read(() => JSON.stringify($getRoot().getChildren().map($exportNodeJSON)));
+  };
+
+  it('reject turns the stamped marker back into text and leaves no marker', () => {
+    const a = client('A');
+    const b = client('B');
+    connect(a, b);
+    seed(a);
+    const original = blocks(a);
+    const tracker = createLocalEditTracker(a.doc, NODES, (tr) => tr.origin !== 'remote');
+    const session = tracker.begin();
+    // What DeletionInterceptionPlugin does for a Backspace over saved text: the text
+    // becomes a pending marker with this client's pending key.
+    edit(a, () => {
+      const node = $textIn(0, 'first'); // "Welcome to the 2026 event. ..."
+      const parts = node.splitText(15, 20); // "2026 "
+      parts[1].replace($createDeletedTextNode({ changeId: '__pending_deletion__', deletedText: '2026 ', authorId: 'author-a', pendingKey: 'k1' }));
+    });
+    const change = { id: 'del-1', before: tracker.baselineJson(session), after: tracker.currentJson() };
+    tracker.end(session);
+    tracker.destroy();
+    expect(change.after).toContain('__pending_deletion__');
+    // The save stamps the marker (bookkeeping, synced to the reviewer).
+    edit(a, () => { $stampPendingMarkers('del-1', ['k1']); }, 'tracked-changes-decoration');
+    expect(docJson(b)).toContain('"changeId":"del-1"');
+
+    const detail = rejectOn(b, change);
+    expect(detail.result).toEqual({ restored: true, method: 'context' });
+    for (const c of [a, b]) {
+      expect(blocks(c)).toEqual(original);
+      expect(docJson(c)).not.toContain('deleted-text');
+    }
+  });
+
+  it('a collaborative reject without rich text unwraps only the markers stamped with its id', () => {
+    const a = client('A');
+    seed(a);
+    edit(a, () => {
+      const node = $textIn(0, 'first');
+      const parts = node.splitText(15, 20, 27, 31);
+      parts[1].replace($createDeletedTextNode({ changeId: 'del-1', deletedText: '2026 ', authorId: 'author-a' }));
+      parts[3].replace($createDeletedTextNode({ changeId: '__pending_deletion__', deletedText: 'Plea', authorId: 'author-a' }));
+    });
+    const detail: ResolveTrackedChangeDetail = { changeId: 'del-1', action: 'reject', deletedTexts: ['2026 ', 'Plea'], pendingAuthorIds: ['author-a'] };
+    resolveTrackedChange(a.editor, detail, true);
+    expect(detail.result).toEqual({ restored: true, method: 'marker' });
+    expect(blocks(a)[0]).toContain('the 2026 event.');
+    expect(docJson(a)).toContain('"deletedText":"Plea"'); // a pending marker is never adopted
+  });
+});
+
+describe('dryRunRejects (a move is rejected all or nothing)', () => {
+  it('reports which halves could be reverted, in order, and changes nothing', () => {
+    const a = client('A');
+    const b = client('B');
+    connect(a, b);
+    seed(a);
+    const { change1, change2 } = cutAndPaste(a);
+    const moved = blocks(b);
+    const ok = dryRunRejects(b.editor, [change1, change2].map((c) => ({ id: c.id, before: c.before, after: c.after })));
+    expect(Array.from(ok.entries())).toEqual([['c1', true], ['c2', true]]);
+    // The pasted text rewritten: the deletion could still be reverted, the insertion not.
+    edit(a, () => {
+      const root = $getRoot();
+      $setSelection(null);
+      root.getChildAtIndex(3)!.replace($createParagraphNode().append($createTextNode('Completely different text by someone.')));
+      root.getChildAtIndex(4)!.replace($createParagraphNode().append($createTextNode('Nothing like the original.')));
+    });
+    const before = blocks(b);
+    expect(before).not.toEqual(moved);
+    const partial = dryRunRejects(b.editor, [change1, change2].map((c) => ({ id: c.id, before: c.before, after: c.after })));
+    expect(Array.from(partial.entries())).toEqual([['c1', true], ['c2', false]]);
+    expect(blocks(b)).toEqual(before);
+    expect(dryRunRejects(null, [{ id: 'x', before: '{}', after: '{}' }]).size).toBe(0);
   });
 });

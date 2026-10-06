@@ -18,8 +18,11 @@ import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
-import { $reapplyByContext, $rejectByContext, ChangeDocs } from '../collab/rejectRestore';
+import { $exportNodeJSON, $reapplyByContext, $rejectByContext, applyBlockReplacements, ChangeDocs, planRejectRestore } from '../collab/rejectRestore';
 import { getUserColorIndex, getUserColor, getChangeColorIndex, getChangeColor } from '../../../utils/userColors';
+
+/** The change id of a deletion marker whose transaction hasn't been saved yet. */
+const PENDING_DELETION = '__pending_deletion__';
 
 export interface TrackedChange {
   id: string;
@@ -976,7 +979,13 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleCommit = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { newId, authorId } = customEvent.detail;
+      const { newId, authorId, pendingKeys } = customEvent.detail;
+      if (newId && Array.isArray(pendingKeys)) {
+        // Collaborative mode: stamp exactly the markers the saved transaction created.
+        if (pendingKeys.length === 0) return;
+        editor.update(() => $stampPendingMarkers(newId, pendingKeys), { tag: 'tracked-changes-decoration' });
+        return;
+      }
       if (newId) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
@@ -997,6 +1006,28 @@ export default function TrackedChangesPlugin({
     window.addEventListener('commit-pending-deletion', handleCommit);
     return () => window.removeEventListener('commit-pending-deletion', handleCommit);
   }, [editor]);
+
+  // Collaborative mode: remove orphaned pending deletion markers (see
+  // $hasOrphanPendingMarkers), checked after the document settles: on load and after edits.
+  useEffect(() => {
+    if (!isCollab) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const check = () => {
+      timer = null;
+      if (!editor.getEditorState().read($hasOrphanPendingMarkers)) return;
+      editor.update(() => { $removeOrphanPendingMarkers(); }, { tag: 'tracked-changes-decoration' });
+    };
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(check, ORPHAN_MARKER_CHECK_DELAY_MS);
+    };
+    schedule();
+    const unregister = editor.registerMutationListener(DeletedTextNode, schedule);
+    return () => {
+      unregister();
+      if (timer) clearTimeout(timer);
+    };
+  }, [editor, isCollab]);
 
   // Listen for resolve-tracked-change events from TrackedChangesEditor
   useEffect(() => {
@@ -1042,51 +1073,154 @@ export interface ResolveTrackedChangeDetail {
   result?: { restored: boolean; method: 'marker' | 'context'; reason?: string };
 }
 
-/** Whether a deletion marker belongs to the change being resolved (same rule as $resolveWithMarkers). */
-function markerMatches(node: DeletedTextNode, detail: ResolveTrackedChangeDetail): boolean {
-  if (node.getChangeId() === detail.changeId) return true;
-  const { deletedTexts, pendingAuthorIds } = detail;
-  const authorMismatch = Array.isArray(pendingAuthorIds) && node.getAuthorId() !== undefined &&
-    !pendingAuthorIds.includes(node.getAuthorId() as string);
-  return !authorMismatch && node.getChangeId() === '__pending_deletion__' &&
-    Array.isArray(deletedTexts) && deletedTexts.includes(node.getDeletedText());
+/**
+ * Collaborative mode: give the markers with these pending keys (the ones the saved
+ * transaction's own edits created) the change id. A marker that already has an id, or
+ * that another transaction created, is never touched.
+ */
+export function $stampPendingMarkers(changeId: string, pendingKeys: string[]): number {
+  const keys = new Set(pendingKeys);
+  let stamped = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    const key = node.getPendingKey();
+    if (key !== undefined && keys.has(key) && node.getChangeId() === PENDING_DELETION) {
+      node.setChangeId(changeId);
+      stamped++;
+    }
+  }
+  return stamped;
+}
+
+/** Delay before checking for orphaned pending markers after a marker change. */
+const ORPHAN_MARKER_CHECK_DELAY_MS = 1500;
+
+/**
+ * An orphaned pending marker: a deletion marker that still has the placeholder id and no
+ * pending key. Every marker created in collaborative mode now has a pending key until its
+ * transaction stamps it, so one without is left over from before (its transaction was
+ * saved without stamping it, or never saved): it belongs to no change, and nothing will
+ * ever stamp or resolve it. A pending marker with a pending key may still be waiting for
+ * its transaction's save (on another client too), so it is left alone.
+ */
+function isOrphanPendingMarker(node: DeletedTextNode): boolean {
+  return node.getChangeId() === PENDING_DELETION && node.getPendingKey() === undefined;
+}
+
+export function $hasOrphanPendingMarkers(): boolean {
+  return $nodesOfType(DeletedTextNode).some(isOrphanPendingMarker);
+}
+
+/** Remove orphaned pending markers (collaborative mode). Returns how many. */
+export function $removeOrphanPendingMarkers(): number {
+  let removed = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    if (isOrphanPendingMarker(node)) {
+      node.remove();
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Collaborative mode: the markers stamped with this change's id. Rejected: each becomes
+ * its deleted text again. Approved: removed. Returns how many there were.
+ */
+function $resolveOwnMarkers(changeId: string, action: 'approve' | 'reject'): number {
+  let count = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    if (node.getChangeId() !== changeId) continue;
+    if (action === 'approve') node.remove();
+    else node.replace($createTextNode(node.getDeletedText()));
+    count++;
+  }
+  return count;
+}
+
+/** Remove the markers stamped with this change's id. Returns how many. */
+function $removeMarkersOf(changeId: string): number {
+  let count = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    if (node.getChangeId() === changeId) {
+      node.remove();
+      count++;
+    }
+  }
+  return count;
 }
 
 /**
  * Apply an approve or reject to the editor tree.
  *
- * Collaborative mode, reject: when the change has deletion markers in the document, they
- * are resolved as before. Otherwise the change is reverted by context ($rejectByContext):
- * the change's own before/after documents locate its region in the live document, and the
- * old content replaces it. Without rich text nothing is changed (the text heuristics are
- * no-ops for cuts and multi-paragraph pastes). `detail.result` always reports the outcome;
- * the update is discrete, so the result and the committed state are both available when
- * this returns.
+ * Collaborative mode:
+ * - Reject of a change with rich text: reverted by context ($rejectByContext): the
+ *   change's own before/after documents locate its region in the live document, and the
+ *   old content replaces it. The change's own deletion markers are in its after-state, so
+ *   the restore turns them back into text. A marker that still carries the change's id
+ *   afterwards was not made by the change (a stray pending marker an earlier session left,
+ *   stamped by mistake): it stands for text that was never in a saved version, so it is
+ *   removed. On failure nothing changes.
+ * - Reject without rich text: only the markers stamped with the change's id are turned back
+ *   into text; nothing is changed when there are none.
+ * - Approve: the markers stamped with the change's id are removed.
+ * The index-based text and format heuristics never run in collaborative mode.
+ * `detail.result` reports a reject's outcome; the update is discrete, so the result and
+ * the committed state are both available when this returns.
  *
- * Legacy mode, or approve: markers, then the text and format heuristics ($resolveWithMarkers).
+ * Legacy mode: markers, then the text and format heuristics ($resolveWithMarkers).
  */
 export function resolveTrackedChange(editor: LexicalEditor, detail: ResolveTrackedChangeDetail, collab: boolean): void {
   if (!detail || !detail.changeId || !detail.action) return;
-  if (collab && detail.action === 'reject') {
+  if (collab) {
+    const { changeId, action } = detail;
     const before = detail.richTextOldValue;
     const after = detail.richTextNewValue;
     editor.update(() => {
-      if ($nodesOfType(DeletedTextNode).some((n) => markerMatches(n, detail))) {
-        $resolveWithMarkers(detail);
-        detail.result = { restored: true, method: 'marker' };
+      if (action === 'approve') {
+        $resolveOwnMarkers(changeId, 'approve');
         return;
       }
-      const outcome = before && after
-        ? $rejectByContext(before, after)
-        : { ok: false as const, reason: 'the change has no rich text' };
-      detail.result = outcome.ok
-        ? { restored: true, method: 'context' }
-        : { restored: false, method: 'context', reason: outcome.reason };
-      if (!outcome.ok) console.warn(`[RESOLVE] reject by context failed for ${detail.changeId}: ${outcome.reason}`);
+      if (before && after) {
+        const outcome = $rejectByContext(before, after);
+        if (outcome.ok) {
+          $removeMarkersOf(changeId);
+          detail.result = { restored: true, method: 'context' };
+        } else {
+          detail.result = { restored: false, method: 'context', reason: outcome.reason };
+          console.warn(`[RESOLVE] reject by context failed for ${changeId}: ${outcome.reason}`);
+        }
+        return;
+      }
+      const unwrapped = $resolveOwnMarkers(changeId, 'reject');
+      detail.result = unwrapped > 0
+        ? { restored: true, method: 'marker' }
+        : { restored: false, method: 'marker', reason: 'the change has no rich text' };
     }, { tag: 'tracked-changes-resolve', discrete: true });
     return;
   }
   editor.update(() => $resolveWithMarkers(detail), { tag: 'tracked-changes-resolve' });
+}
+
+/**
+ * Whether each change could be rejected by context, in the order given, against the live
+ * document (a dry run: nothing changes). Each one that could is applied to the working copy
+ * before the next is planned, like a real sequence of rejects. Used to reject a move (two
+ * changes) all or nothing, and to leave out cascaded changes that can't be reverted.
+ */
+export function dryRunRejects(editor: LexicalEditor | null, changes: Array<{ id: string; before?: string; after?: string }>): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  if (!editor) return result;
+  let blocks: any[] = editor.getEditorState().read(() => $getRoot().getChildren().map($exportNodeJSON));
+  for (const c of changes) {
+    if (!c.before || !c.after) {
+      result.set(c.id, false);
+      continue;
+    }
+    const plan = planRejectRestore(c.before, c.after, blocks);
+    result.set(c.id, plan.ok);
+    if (plan.ok) blocks = applyBlockReplacements(blocks, plan.replacements);
+  }
+  return result;
 }
 
 /** The editor the mounted TrackedChangesPlugin is attached to (the proposed version). */

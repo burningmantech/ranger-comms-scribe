@@ -112,3 +112,39 @@
     width: 100%;
   }
 }
+
+/* "You approved this request" etc. after a Finish-review decision (non-blocking) */
+.review-decision-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 8px;
+  background: #323232;
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  max-width: 90vw;
+}
+
+.review-decision-toast--error {
+  background: #d93025;
+}
+
+.review-decision-toast__close {
+  padding: 0 0 0 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.review-decision-toast__close:hover {
+  opacity: 1;
+}

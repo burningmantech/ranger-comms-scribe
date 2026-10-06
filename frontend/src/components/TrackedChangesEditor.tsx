@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
-import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffCharsOptimized, diffWords } from '../utils/diffAlgorithm';
+import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffWords } from '../utils/diffAlgorithm';
 import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
 
@@ -12,22 +12,26 @@ import { TransactionManager, Transaction } from '../services/transactionManager'
 import SaveIndicator from './SaveIndicator';
 import SaveStatus from './SaveStatus';
 import DocumentViewBar from './DocumentViewBar';
-import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail, getActiveTrackedChangesEditor, reapplyRejectedChanges } from './editor/plugins/TrackedChangesPlugin';
+import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail, getActiveTrackedChangesEditor, reapplyRejectedChanges, dryRunRejects } from './editor/plugins/TrackedChangesPlugin';
 import ApprovalTracker from './ApprovalTracker';
 import { ReviewPanel, ReviewTab } from './review/ReviewPanel';
 import { UndoToast } from './review/UndoToast';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
 import { locateChange } from './editor/collab/rejectRestore';
-import { collectTextNodes, detectInlineFormatChanges, describeChange, ChangeDescription } from '../utils/changeDescriptions';
-import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, pendingOnly } from '../utils/reviewItems';
+import { describeChange, ChangeDescription } from '../utils/changeDescriptions';
+import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, countOpenEdits, pairMoves, pendingOnly } from '../utils/reviewItems';
 import { ApprovalGates } from '../types/content';
 import { originalDocument } from '../utils/originalContent';
+import { buildResolveHints } from '../utils/resolveHints';
+import { FailedRejectGate } from '../utils/failedReject';
+import { claimPendingMarkers, takeClaimedMarkers } from './editor/collab/pendingMarkers';
 import type { CollabMode } from '../services/collabConfig';
 import type { CollabSession } from './editor/collab/YjsCollaboration';
 import type { LocalEditSession } from './editor/collab/localEditTracker';
 import './TrackedChangesEditor.css';
 import { UserName } from './UserName';
 import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds } from '../utils/changeStatus';
+import { remoteCommentFromMessage } from '../utils/remoteComments';
 
 const webSocketManager = new WebSocketManager();
 
@@ -81,6 +85,8 @@ interface TrackedChangesEditorProps {
   onSuggestion: (suggestion: Change) => void;
   onRefreshNeeded?: () => void;
   onRemoteChangeResolved?: (changeId: string, status: string, resolver?: ChangeResolver) => void;
+  /** A comment another session posted (a comment on a change, a general comment, a Request changes note). */
+  onRemoteComment?: (comment: Comment) => void;
   onBack?: () => void;
   onDelete?: () => void;
   onSendEmail?: () => Promise<void>;
@@ -175,6 +181,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   onSuggestion,
   onRefreshNeeded,
   onRemoteChangeResolved,
+  onRemoteComment,
   onBack,
   onDelete,
   onSendEmail,
@@ -571,6 +578,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // through refs instead of capturing the first render's.
   const onRemoteChangeResolvedRef = useRef(onRemoteChangeResolved);
   onRemoteChangeResolvedRef.current = onRemoteChangeResolved;
+  const onRemoteCommentRef = useRef(onRemoteComment);
+  onRemoteCommentRef.current = onRemoteComment;
 
   // Collaborative mode: refetch the change list after a remote accept/reject, so the
   // sidebar gets the server's status (including cascade-rejected changes). A batch
@@ -623,8 +632,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
     // Reset the active-transaction flag when a transaction settles
     // so the next content change starts a new transaction.
-    const handleSettledFlag = () => {
+    const handleSettledFlag = (tx?: Transaction) => {
       hasActiveTransactionRef.current = false;
+      // Collaborative mode: this transaction owns the deletion markers created since the
+      // previous settle; its save stamps exactly those (pendingMarkers.ts).
+      if (isCollab && tx?.id) claimPendingMarkers(tx.id);
       // Fallback for settles that don't need a save (no save-status change follows)
       setTimeout(flushPendingRemoteRefresh, 3000);
     };
@@ -661,12 +673,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // Map __pending_deletion__ to the real changeId in the Lexical JSON
         const currentJson = editedProposedContentRef.current;
         if (isCollab) {
-          // Collaborative mode: other users' pending markers are in the shared document
-          // too. Rename only this user's, in the editor (it syncs, and the editor reports
-          // the result back as the new baseline), never with a document-wide replace.
-          if (currentJson && currentJson.includes('__pending_deletion__')) {
+          // Collaborative mode: other users' pending markers, and stray ones earlier
+          // sessions left, are in the shared document too. Stamp only the markers this
+          // transaction's own edits created (by their pending keys), in the editor (it
+          // syncs, and the editor reports the result back as the new baseline), never with
+          // a document-wide replace.
+          const pendingKeys = takeClaimedMarkers(tx.id);
+          if (pendingKeys.length > 0) {
             window.dispatchEvent(new CustomEvent('commit-pending-deletion', {
-              detail: { newId: tx.remoteChangeId, authorId: currentUser.id || currentUser.email }
+              detail: { newId: tx.remoteChangeId, authorId: currentUser.id || currentUser.email, pendingKeys }
             }));
           }
         } else if (currentJson && currentJson.includes('__pending_deletion__')) {
@@ -1311,28 +1326,42 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (result === undefined) return;
 
     // A reject can cascade to dependent changes on the server; the response lists them.
-    const cascadeRejectedIds = status === 'rejected'
+    let cascadeRejectedIds = status === 'rejected'
       ? resolvedChangeIds({ changeId, status, cascadeRejectedIds: result?.cascadeRejectedIds }).slice(1)
       : [];
+
+    let reverted = false;
+    let notReverted: string[] = [];
+    if (isCollab && cascadeRejectedIds.length > 0) {
+      // Collaborative mode: revert the cascaded changes in the shared document too
+      // (newest first). One that can't be reverted (its text was edited since: often a
+      // change whose own reject failed just before) keeps its text in the document, so it
+      // goes back to pending on the server instead of being rejected on paper (below, after
+      // the re-PUT); it is no part of this reject (nor of its undo).
+      const outcome = revertCascadedChangesRef.current(cascadeRejectedIds);
+      reverted = outcome.reverted;
+      notReverted = outcome.failedIds;
+      cascadeRejectedIds = cascadeRejectedIds.filter(id => !notReverted.includes(id));
+    }
     // The sidebar shows them rejected, and an undo of this reject undoes them too.
     if (cascadeRejectedIds.length > 0) onCascadeRejectedRef.current(changeId, cascadeRejectedIds);
 
     if (isCollab && cascadeRejectedIds.length > 0) {
-      // Collaborative mode: revert the cascaded changes in the shared document too
-      // (newest first), and show them as rejected in this sidebar.
-      const reverted = revertCascadedChangesRef.current(cascadeRejectedIds);
       const resolver: ChangeResolver = { id: currentUser.email || currentUser.id, name: currentUser.name };
       for (const id of cascadeRejectedIds) {
         onRemoteChangeResolvedRef.current?.(id, 'rejected', resolver);
       }
       setLocalAddedChanges(prev => applyChangeStatus(prev, cascadeRejectedIds, 'rejected', resolver));
-      // The first PUT carried the document before these reverts, so store it again. The
-      // cascaded changes are rejected on the server already, so this PUT cascades no
-      // further; it isn't broadcast (the single broadcast below covers it).
+      // The first PUT carried the document before these reverts, so store it again. Every
+      // cascaded change is still rejected on the server at this point (the server cascades
+      // only to pending ones), so this PUT cascades no further; it isn't broadcast (the
+      // single broadcast below covers it).
       if (reverted && editedProposedContentRef.current) {
         await putChangeStatus(changeId, 'rejected', editedProposedContentRef.current);
       }
     }
+    // Only now: a change set back to pending before the re-PUT would be cascaded again.
+    if (notReverted.length > 0) await restorePendingRef.current(notReverted);
 
     // Broadcast to other connected users via WebSocket, once, with the cascade ids
     // included so collaborative-mode clients mark those rejected too.
@@ -1342,186 +1371,29 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     }
   }, [putChangeStatus, isCollab, currentUser.email, currentUser.id, currentUser.name]);
 
-  // Collaborative mode: changes whose reject by context failed once. A second reject marks
-  // them rejected without changing the document.
-  const restoreFailedIdsRef = useRef<Set<string>>(new Set());
-  // Set below (after handleChangeDecision); returns true when it changed the document.
-  const revertCascadedChangesRef = useRef<(cascadedIds: string[]) => boolean>(() => false);
+  // Collaborative mode: the change whose reject by context just failed. Rejecting that same
+  // change again right away marks it rejected without changing the document; any other
+  // decision or an undo clears it (utils/failedReject).
+  const failedRejectRef = useRef(new FailedRejectGate());
+  // Set below (after handleChangeDecision): reverts cascaded changes in the document.
+  const revertCascadedChangesRef = useRef<(cascadedIds: string[]) => { reverted: boolean; failedIds: string[] }>(
+    () => ({ reverted: false, failedIds: [] }),
+  );
+  // Set below: puts changes back to pending on the server (cascaded ones the document
+  // couldn't revert).
+  const restorePendingRef = useRef<(ids: string[]) => Promise<void>>(async () => {});
 
   // Handle change decision (approve/reject) — fully local, no network on hot path.
   // Returns false when a collaborative reject couldn't revert the document (the change
   // stays pending).
   const handleChangeDecision = useCallback((changeId: string, decision: 'approve' | 'reject'): boolean => {
-    // Compute deleted text segments so the handler can match __pending_deletion__ nodes.
-    // Also compute replacement pairs (adjacent delete→insert) so the reject handler
-    // can remove inserted text that corresponds to each deletion.
+    // A reject of the change whose reject just failed may be forced; any decision clears
+    // the remembered failure, so it never carries over to a later, unrelated action.
+    const forceReject = failedRejectRef.current.begin(changeId);
+
+    // The text and format hints for the legacy marker / heuristics paths (utils/resolveHints).
     const change = trackedChanges.find(c => c.id === changeId);
-    let deletedTexts: string[] = [];
-    let replacementPairs: Array<{ deleted: string; inserted: string }> = [];
-    let insertedTexts: Array<{ text: string; beforeContext: string; afterContext: string }> = [];
-    if (change) {
-      const rawOld = change.richTextOldValue || change.oldValue || '';
-      const rawNew = change.richTextNewValue || change.newValue || '';
-      const oldText = getDisplayableText(rawOld);
-      const newText = getDisplayableText(rawNew);
-      if (oldText && newText) {
-        const segments = diffCharsOptimized(oldText, newText);
-        deletedTexts = segments
-          .filter(s => s.type === 'delete')
-          .map(s => s.value.replace(/^\n+|\n+$/g, ''))
-          .filter(t => t.length > 0);
-
-        // Build replacement pairs: adjacent (delete, insert) segments form a pair.
-        // When rejecting, we need to remove the inserted text alongside restoring
-        // the deleted text, otherwise both end up in the document.
-        const pairedInsertIndices = new Set<number>();
-        for (let i = 0; i < segments.length; i++) {
-          if (segments[i].type === 'delete' && i + 1 < segments.length && segments[i + 1].type === 'insert') {
-            const del = segments[i].value.replace(/^\n+|\n+$/g, '');
-            const ins = segments[i + 1].value.replace(/^\n+|\n+$/g, '');
-            if (del.length > 0 && ins.length > 0) {
-              replacementPairs.push({ deleted: del, inserted: ins });
-              pairedInsertIndices.add(i + 1);
-            }
-          }
-        }
-
-        // Build insertedTexts: pure inserts NOT part of a delete→insert replacement pair.
-        // These are additions that have no corresponding DeletedTextNode, so the
-        // resolve-tracked-change handler needs to find and remove them from TextNodes.
-        let newOffset = 0;
-        for (let i = 0; i < segments.length; i++) {
-          const seg = segments[i];
-          if (seg.type === 'equal') {
-            newOffset += seg.value.length;
-          } else if (seg.type === 'insert') {
-            if (!pairedInsertIndices.has(i) && seg.value.trim().length > 0) {
-              // Get after-context within the same paragraph for precise matching
-              const afterAll = newText.slice(newOffset + seg.value.length);
-              const nlIdx = afterAll.indexOf('\n');
-              const afterCtx = nlIdx >= 0 ? afterAll.slice(0, Math.min(nlIdx, 30)) : afterAll.slice(0, 30);
-              // Get before-context within the same paragraph
-              const beforeAll = newText.slice(0, newOffset);
-              const lastNl = beforeAll.lastIndexOf('\n');
-              const beforeCtx = lastNl >= 0 ? beforeAll.slice(lastNl + 1) : beforeAll.slice(-30);
-              insertedTexts.push({ text: seg.value, beforeContext: beforeCtx, afterContext: afterCtx });
-            }
-            newOffset += seg.value.length;
-          }
-          // 'delete' segments don't advance newOffset
-        }
-      }
-    }
-
-    // Detect formatting-only changes (block type + inline format) so the
-    // resolve handler can revert them on rejection.
-    let formatChanges: Array<{
-      type?: 'block' | 'inline' | 'indent';
-      text: string;
-      fromType: string;
-      fromTag?: string;
-      toType: string;
-      toTag?: string;
-      fromFormat?: number;
-      toFormat?: number;
-      fromIndent?: number;
-      toIndent?: number;
-      blockIndex?: number;
-    }> = [];
-    if (change && change.richTextOldValue && change.richTextNewValue) {
-      try {
-        const oldJson = isLexicalJson(change.richTextOldValue) ? JSON.parse(change.richTextOldValue) : null;
-        const newJson = isLexicalJson(change.richTextNewValue) ? JSON.parse(change.richTextNewValue) : null;
-        if (oldJson?.root?.children && newJson?.root?.children) {
-          // Helper to extract text from any block (paragraph, heading, list, etc.)
-          // Must match Lexical's getTextContent() behavior for reliable block matching.
-          const extractBlockText = (block: any): string => {
-            if (!block.children) return '';
-            return block.children
-              .map((n: any) => {
-                if (n.type === 'text') return n.text || '';
-                if (n.type === 'linebreak') return '\n';
-                if (n.type === 'tab') return '\t';
-                if (n.children) return extractBlockText(n);
-                return '';
-              })
-              .join('');
-          };
-
-          // Compare all top-level blocks (not just paragraphs/headings)
-          const oldBlocks = oldJson.root.children;
-          const newBlocks = newJson.root.children;
-          for (let i = 0; i < Math.min(oldBlocks.length, newBlocks.length); i++) {
-            // Block type changes (paragraph <-> heading, heading tag changes)
-            if (oldBlocks[i].type !== newBlocks[i].type || oldBlocks[i].tag !== newBlocks[i].tag) {
-              const blockText = extractBlockText(newBlocks[i]);
-              formatChanges.push({
-                type: 'block',
-                text: blockText,
-                blockIndex: i,
-                fromType: oldBlocks[i].type,
-                fromTag: oldBlocks[i].tag,
-                toType: newBlocks[i].type,
-                toTag: newBlocks[i].tag,
-              });
-            }
-
-            // Indent changes on the block itself
-            if ((oldBlocks[i].indent ?? 0) !== (newBlocks[i].indent ?? 0)) {
-              const blockText = extractBlockText(newBlocks[i]);
-              formatChanges.push({
-                type: 'indent',
-                text: blockText,
-                fromType: newBlocks[i].type,
-                toType: newBlocks[i].type,
-                fromIndent: oldBlocks[i].indent ?? 0,
-                toIndent: newBlocks[i].indent ?? 0,
-              });
-            }
-
-            // Indent changes on children (e.g. list items inside list nodes)
-            if (oldBlocks[i].children && newBlocks[i].children) {
-              const detectChildIndentChanges = (oldChildren: any[], newChildren: any[]) => {
-                for (let j = 0; j < Math.min(oldChildren.length, newChildren.length); j++) {
-                  if ((oldChildren[j].indent ?? 0) !== (newChildren[j].indent ?? 0)) {
-                    const itemText = extractBlockText(newChildren[j]);
-                    formatChanges.push({
-                      type: 'indent',
-                      text: itemText,
-                      fromType: newChildren[j].type,
-                      toType: newChildren[j].type,
-                      fromIndent: oldChildren[j].indent ?? 0,
-                      toIndent: newChildren[j].indent ?? 0,
-                    });
-                  }
-                  // Recurse into nested children
-                  if (oldChildren[j].children && newChildren[j].children) {
-                    detectChildIndentChanges(oldChildren[j].children, newChildren[j].children);
-                  }
-                }
-              };
-              detectChildIndentChanges(oldBlocks[i].children, newBlocks[i].children);
-            }
-
-            // Inline format changes — character-level comparison handles node splits
-            // Use recursive collectTextNodes to handle nested structures (lists, links)
-            const oldTexts = collectTextNodes(oldBlocks[i]);
-            const newTexts = collectTextNodes(newBlocks[i]);
-            const inlineChanges = detectInlineFormatChanges(oldTexts, newTexts);
-            for (const ic of inlineChanges) {
-              formatChanges.push({
-                type: 'inline',
-                text: ic.text,
-                fromType: 'text',
-                toType: 'text',
-                fromFormat: ic.fromFormat,
-                toFormat: ic.toFormat,
-              });
-            }
-          }
-        }
-      } catch { /* ignore parse errors */ }
-    }
+    const { deletedTexts, replacementPairs, insertedTexts, formatChanges } = buildResolveHints(change, { collab: isCollab, getText: getDisplayableText });
 
     // Collaborative mode: settle the user's in-progress edit first (with their own last
     // state) so pausing doesn't discard it, and tell the resolve handler whose pending
@@ -1570,8 +1442,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     //     text, or no editor listening): nothing was changed. Leave the change pending and
     //     say so; a second reject marks it rejected without touching the document.
     if (isCollab && decision === 'reject' && resolveDetail.result?.restored !== true) {
-      if (!restoreFailedIdsRef.current.has(changeId)) {
-        restoreFailedIdsRef.current.add(changeId);
+      if (!forceReject) {
+        failedRejectRef.current.fail(changeId);
         if (pendingResolveCountRef.current <= 0) {
           transactionManager.resumeAfterChangeResolution();
           if (!batchSyncInProgressRef.current) isResolvingChangeRef.current = false;
@@ -1580,7 +1452,6 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         return false;
       }
     }
-    restoreFailedIdsRef.current.delete(changeId);
 
     // 3. Remove CSS highlight decorations for additions
     removeDecorationsForChange(changeId);
@@ -1664,10 +1535,22 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // and never start or join a transaction, so the user's own edit in progress is left
   // alone (no pause).
   revertCascadedChangesRef.current = (cascadedIds: string[]) => {
-    const cascaded = cascadedIds
+    const all = cascadedIds
       .map(id => trackedChanges.find(c => c.id === id))
       .filter((c): c is TrackedChange => !!c && !!c.richTextOldValue && !!c.richTextNewValue)
       .sort((x, y) => new Date(y.timestamp).getTime() - new Date(x.timestamp).getTime());
+    // Dry run first: a change that can't be reverted is left out, and so is the other half
+    // of its move (reverting only one half would duplicate or drop the moved text).
+    const failedIds: string[] = [];
+    const plan = dryRunRejects(getActiveTrackedChangesEditor(), all.map(c => ({ id: c.id, before: c.richTextOldValue, after: c.richTextNewValue })));
+    all.forEach(c => { if (plan.get(c.id) === false) failedIds.push(c.id); });
+    for (const card of pairMoves(all)) {
+      if (card.type === 'move' && card.ids.some(id => failedIds.includes(id))) {
+        card.ids.forEach(id => { if (!failedIds.includes(id)) failedIds.push(id); });
+      }
+    }
+    if (failedIds.length > 0) console.warn(`[RESOLVE] cascaded changes ${failedIds.join(', ')} can't be reverted: back to pending`);
+    const cascaded = all.filter(c => !failedIds.includes(c.id));
     let reverted = false;
     for (const c of cascaded) {
       const detail: ResolveTrackedChangeDetail = {
@@ -1675,13 +1558,47 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         richTextOldValue: c.richTextOldValue, richTextNewValue: c.richTextNewValue,
       };
       window.dispatchEvent(new CustomEvent('resolve-tracked-change', { detail }));
-      // A cascaded change that can't be located is left as it is (the server has rejected
-      // it already); often the first reject removed its text along with its own.
-      if (detail.result?.restored) reverted = true;
-      else console.warn(`[RESOLVE] cascaded change ${c.id} not reverted: ${detail.result?.reason ?? 'no editor'}`);
+      // Often the first reject removed its text along with its own (then it is found
+      // already reverted). One that can't be located keeps its text: it goes back to pending.
+      if (detail.result?.restored) {
+        reverted = true;
+      } else {
+        failedIds.push(c.id);
+        console.warn(`[RESOLVE] cascaded change ${c.id} not reverted (back to pending): ${detail.result?.reason ?? 'no editor'}`);
+      }
     }
-    cascadedIds.forEach(id => removeDecorationsForChange(id));
-    return reverted;
+    cascadedIds.filter(id => !failedIds.includes(id)).forEach(id => removeDecorationsForChange(id));
+    return { reverted, failedIds };
+  };
+
+  // Put changes back to pending on the server (the undo endpoint), with the current
+  // document, and tell the other users. Used for cascaded changes the document couldn't
+  // revert.
+  restorePendingRef.current = async (ids: string[]) => {
+    const sessionId = localStorage.getItem('sessionId');
+    const doc = editedProposedContentRef.current;
+    const hasDoc = !!doc && isLexicalJson(doc);
+    for (const id of ids) {
+      try {
+        const response = await fetch(`${API_URL}/tracked-changes/${id}/undo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionId}` },
+          body: JSON.stringify({ submissionId: submission.id, ...(hasDoc ? { proposedVersionsRichText: doc } : {}) }),
+        });
+        if (!response.ok) console.error(`Could not set ${id} back to pending: ${response.status}`);
+      } catch (err) {
+        console.error(`Could not set ${id} back to pending:`, err);
+      }
+    }
+    recordStatus(ids, 'pending');
+    const client = webSocketClientRef.current;
+    if (client?.send) {
+      try {
+        client.send({ type: 'change_status_updated', data: { changeId: ids[0], status: 'pending', undoneIds: ids } });
+      } catch (e) {
+        console.error('Failed to broadcast the pending status:', e);
+      }
+    }
   };
 
   // Batch action (Accept all / Reject all). `onResolved` gets the ids actually resolved,
@@ -2036,6 +1953,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   );
   const openItemsRef = useRef(openItems);
   openItemsRef.current = openItems;
+  // Pending edits as the reviewer sees them: one per card (a move is one), comments excluded.
+  const openEditCount = useMemo(() => countOpenEdits(openItems), [openItems]);
 
   const decidedAt = useMemo(() => {
     const map = new Map<string, number>();
@@ -2091,6 +2010,19 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
    * insertion is left alone, so the moved text is never lost.
    */
   const decideCard = useCallback((card: ChangeCard<TrackedChange>, decision: 'approve' | 'reject') => {
+    // Collaborative mode: a move is rejected all or nothing. If either half can't be
+    // reverted (its text was edited since), nothing is decided: rejecting only the
+    // deletion would put the text back while the pasted copy stays.
+    if (isCollab && decision === 'reject' && card.type === 'move') {
+      const plan = dryRunRejects(getActiveTrackedChangesEditor(), [card.deletion, card.insertion].map(c => ({
+        id: c.id, before: c.richTextOldValue, after: c.richTextNewValue,
+      })));
+      if (plan.size > 0 && !Array.from(plan.values()).every(Boolean)) {
+        failedRejectRef.current.clear();
+        showErrorToast("Couldn't revert this move automatically: its text has been edited since. It is still pending. Edit the text by hand.");
+        return;
+      }
+    }
     const decided: string[] = [];
     for (const id of card.ids) {
       if (handleChangeDecision(id, decision) === false) break;
@@ -2099,17 +2031,30 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (decided.length === 0) return;
     recordStatus(decided, decision === 'approve' ? 'approved' : 'rejected', selfResolver);
     showUndoToast(decided, decision, 1);
-  }, [handleChangeDecision, recordStatus, selfResolver, showUndoToast]);
+  }, [handleChangeDecision, recordStatus, selfResolver, showUndoToast, isCollab, showErrorToast]);
 
   /** Accept all / Reject all, through the batch path, in document order (moves deletion first). */
   const handleBulkDecision = useCallback((status: 'approved' | 'rejected') => {
-    const ids = openItemsRef.current.flatMap(item => (item.type === 'comment' ? [] : item.ids));
+    // Collaborative mode, Reject all: a move is rejected all or nothing (as with its card),
+    // so a move that can't be reverted as a whole is left out.
+    const editor = isCollab && status === 'rejected' ? getActiveTrackedChangesEditor() : null;
+    const ids = openItemsRef.current.flatMap(item => {
+      if (item.type === 'comment') return [];
+      if (editor && item.type === 'move') {
+        const plan = dryRunRejects(editor, [item.deletion, item.insertion].map(c => ({ id: c.id, before: c.richTextOldValue, after: c.richTextNewValue })));
+        if (!Array.from(plan.values()).every(Boolean)) {
+          console.warn(`[RESOLVE] Reject all: the move ${item.ids.join(' + ')} can't be reverted as a whole; left pending`);
+          return [];
+        }
+      }
+      return item.ids;
+    });
     if (ids.length === 0) return;
     handleBatchAction(ids, status, (resolved) => {
       recordStatus(resolved, status, selfResolver);
       showUndoToast(resolved, status === 'approved' ? 'approve' : 'reject', resolved.length);
     });
-  }, [handleBatchAction, recordStatus, selfResolver, showUndoToast]);
+  }, [handleBatchAction, recordStatus, selfResolver, showUndoToast, isCollab]);
 
   /**
    * Undo accepts or rejects (with the changes the server cascade-rejected with them).
@@ -2202,8 +2147,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       undoIds.forEach(id => next.delete(id));
       return next;
     });
+    failedRejectRef.current.clear();
     undoIds.forEach(id => {
-      restoreFailedIdsRef.current.delete(id);
       cascadeByChangeRef.current.delete(id);
     });
 
@@ -2395,7 +2340,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     onTabChange: setSidebarTab,
     openItems,
     history,
-    pendingCount: trackedChanges.length,
+    pendingCount: openEditCount,
     canReview: canMakeEditorialDecisions(),
     currentUserId: currentUser.email || currentUser.id,
     selectedKey,
@@ -2857,6 +2802,16 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         // Trigger a refresh so the re-added tracked change appears
         refreshWithRemoteGuardRef.current();
       });
+
+      // Comments posted in other sessions (on a change, general, or a Request changes
+      // note, which arrives with status_changed) show in the Open list right away. The
+      // poster's own copy arrives too; the parent ignores a comment it already has.
+      const handleRemoteComment = (message: WebSocketMessage) => {
+        const comment = remoteCommentFromMessage(message);
+        if (comment) onRemoteCommentRef.current?.(comment);
+      };
+      client.on('comment_added', handleRemoteComment);
+      client.on('status_changed', handleRemoteComment);
 
       // Listen for change status updates (accept/reject) from remote users
       client.on('change_status_updated', (message: WebSocketMessage) => {
@@ -4275,19 +4230,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 </button>
               </div>
             )}
-            {sidebarCollapsed && !isSmallScreen && (
+            {/* The collapsed sidebar's count. Never in review mode: the review panel is
+                always open there and counts its items itself. */}
+            {sidebarCollapsed && !isSmallScreen && !reviewMode && (
               <div className="collapsed-sidebar-indicator">
                 <div
-                  className={`change-count-badge ${trackedChanges.filter(c => c.status === 'pending').length > 0 ? 'has-pending' : ''}`}
-                  title={`${trackedChanges.filter(c => c.status === 'pending').length > 0 ? trackedChanges.filter(c => c.status === 'pending').length + ' pending' : trackedChanges.length + ' changes'}`}
+                  className={`change-count-badge ${openEditCount > 0 ? 'has-pending' : ''}`}
+                  title={`${openEditCount} pending`}
                 >
-                  {trackedChanges.filter(c => c.status === 'pending').length || trackedChanges.length}
+                  {openEditCount}
                 </div>
               </div>
             )}
             {sidebarCollapsed && isSmallScreen && sidebarAutoCollapsed && (
               <div className="mobile-auto-collapsed-indicator">
-                <span>💬 {trackedChanges.length} changes</span>
+                <span>💬 {openEditCount} changes</span>
               </div>
             )}
             {(!sidebarCollapsed || reviewMode) && (
@@ -4314,8 +4271,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       {/* Comment Dialog */}
       {showCommentDialog && (
-        <div className="dialog-overlay" onClick={() => setShowCommentDialog(false)}>
-          <div className="dialog" onClick={e => e.stopPropagation()}>
+        <div className="request-changes-overlay" onClick={() => setShowCommentDialog(false)}>
+          <div className="request-changes-dialog" role="dialog" aria-modal="true" aria-label="Add Comment" onClick={e => e.stopPropagation()}>
             <h3>Add Comment</h3>
             <textarea
               value={commentText}
@@ -4323,9 +4280,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               placeholder="Enter your comment..."
               autoFocus
             />
-            <div className="dialog-actions">
+            <div className="request-changes-actions">
               <button className="btn btn-neutral" onClick={() => setShowCommentDialog(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleCommentSubmit}>
+              <button className="btn btn-primary" onClick={handleCommentSubmit} disabled={!commentText.trim()}>
                 Add Comment
               </button>
             </div>
@@ -4335,8 +4292,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
       {/* Suggestion Dialog */}
       {showSuggestionDialog && (
-        <div className="dialog-overlay" onClick={() => setShowSuggestionDialog(false)}>
-          <div className="dialog" onClick={e => e.stopPropagation()}>
+        <div className="request-changes-overlay" onClick={() => setShowSuggestionDialog(false)}>
+          <div className="request-changes-dialog" role="dialog" aria-modal="true" aria-label="Suggest Edit" onClick={e => e.stopPropagation()}>
             <h3>Suggest Edit</h3>
             <div className="suggestion-preview">
               <label>Selected text:</label>
@@ -4348,7 +4305,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               placeholder="Enter your suggested replacement..."
               autoFocus
             />
-            <div className="dialog-actions">
+            <div className="request-changes-actions">
               <button className="btn btn-neutral" onClick={() => setShowSuggestionDialog(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleSuggestionSubmit}>
                 Suggest Edit

@@ -5,6 +5,7 @@ import {
   buildCommentThreads,
   buildHistory,
   buildOpenItems,
+  countOpenEdits,
   orderByPosition,
   pairMoves,
   pendingOnly,
@@ -155,5 +156,20 @@ describe('history', () => {
   it('uses the local decision time when the record has none yet', () => {
     const history = buildHistory([change('c1', 'a', 'ab', { status: 'approved' })], new Map([['c1', 12345]]));
     expect(history[0].at).toBe(12345);
+  });
+});
+
+describe('countOpenEdits (the Open tab and conditions popover count)', () => {
+  it('counts a Moved card once, other changes once each, and comments not at all', () => {
+    const changes = [change('c1', DOC, CUT), change('c2', CUT, PASTED), change('c3', 'Intro.', 'Intro, edited.')];
+    expect(countOpenEdits(changes)).toBe(2);
+    const items = buildOpenItems(changes, [comment('k1', 'A general comment')], new Map());
+    expect(items).toHaveLength(3);
+    expect(countOpenEdits(items)).toBe(2);
+  });
+
+  it('counts only pending change records', () => {
+    expect(countOpenEdits([change('c1', DOC, CUT), change('c2', CUT, PASTED, { status: 'rejected' })])).toBe(1);
+    expect(countOpenEdits([])).toBe(0);
   });
 });

@@ -12,10 +12,14 @@ interface ReviewTopBarProps {
   submittedAt: Date;
   isUrgent: boolean;
   approvalGates?: ApprovalGates;
+  /** Edits still to accept or reject, one per review card (the conditions popover's count). */
+  pendingEdits?: number;
   /** Shows "Finish review" (Approve / Request changes / Decline). */
   canApprove: boolean;
   /** Shows the queue pager (see QueueNavigator). */
   isReviewer: boolean;
+  /** The reviewer's current vote on the request, shown on the Finish review button. */
+  myDecision?: 'approved' | 'rejected' | null;
   onBack: () => void;
   onApprove: () => void;
   onRequestChanges: () => void;
@@ -31,8 +35,10 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
   submittedAt,
   isUrgent,
   approvalGates,
+  pendingEdits,
   canApprove,
   isReviewer,
+  myDecision = null,
   onBack,
   onApprove,
   onRequestChanges,
@@ -67,7 +73,7 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
       </div>
 
       <div className="review-top-bar__center">
-        {approvalGates && <ConditionsPopover gates={approvalGates} />}
+        {approvalGates && <ConditionsPopover gates={approvalGates} pendingEdits={pendingEdits} />}
       </div>
 
       <div className="review-top-bar__right">
@@ -78,6 +84,7 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
         />
         {canApprove && (
           <FinishReviewMenu
+            decision={myDecision}
             onApprove={onApprove}
             onRequestChanges={onRequestChanges}
             onDecline={onReject}

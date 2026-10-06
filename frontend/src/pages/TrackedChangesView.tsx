@@ -9,6 +9,8 @@ import { extractTextFromLexical, isLexicalJson } from '../utils/lexicalUtils';
 import { useCollabMode } from '../services/collabConfig';
 import { useUserDirectory } from '../services/userDirectory';
 import { applyChangeStatus, ChangeResolver, ResolvedStatus } from '../utils/changeStatus';
+import { countOpenEdits } from '../utils/reviewItems';
+import { mergeComment } from '../utils/remoteComments';
 
 export const TrackedChangesView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -168,6 +170,7 @@ export const TrackedChangesView: React.FC = () => {
         approvals: (data.approvals || []).map((approval: any) => ({
           id: approval.id,
           approverId: approval.approverId,
+          approverEmail: approval.approverEmail,
           status: approval.status.toUpperCase(),
           comment: approval.comment,
           timestamp: new Date(approval.createdAt)
@@ -382,6 +385,15 @@ export const TrackedChangesView: React.FC = () => {
     }
   };
 
+  // A comment another session posted (over the submission room): into the Open list now.
+  const handleRemoteComment = useCallback((comment: Comment) => {
+    setSubmission(prev => {
+      if (!prev) return prev;
+      const comments = mergeComment(prev.comments, comment);
+      return comments === prev.comments ? prev : { ...prev, comments };
+    });
+  }, []);
+
   // Functional updates throughout: these run from timers and long-lived socket handlers
   // (and several times in one batch), so they must never write back a stale submission.
   const setChangeStatus = useCallback((changeIds: string[], status: ResolvedStatus, resolver?: ChangeResolver) => {
@@ -499,6 +511,7 @@ export const TrackedChangesView: React.FC = () => {
           approvals: (data.approvals || []).map((approval: any) => ({
             id: approval.id,
             approverId: approval.approverId,
+            approverEmail: approval.approverEmail,
             status: approval.status.toUpperCase(),
             comment: approval.comment,
             timestamp: new Date(approval.createdAt)
@@ -619,39 +632,37 @@ export const TrackedChangesView: React.FC = () => {
     (f: any) => f.name === 'urgent' && (f.value === 'true' || f.value === true)
   ) || false;
 
-  const handleSubmissionApprove = async () => {
+  // The reviewer's vote on the whole request (Finish review). Resolves to whether it was
+  // recorded, with the server's message when it wasn't.
+  const postSubmissionDecision = async (status: 'approved' | 'rejected'): Promise<DecisionResult> => {
     const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) return;
-    await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${sessionId}`,
-      },
-      body: JSON.stringify({ status: 'approved' })
-    });
-    await fetchSubmission();
-  };
-
-  const handleSubmissionReject = async () => {
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) return;
-    await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${sessionId}`,
-      },
-      body: JSON.stringify({ status: 'rejected' })
-    });
-    await fetchSubmission();
-  };
-
-  const handleRequestChanges = async (comment: string) => {
-    const sessionId = localStorage.getItem('sessionId');
-    if (!sessionId) return;
+    if (!sessionId) return { ok: false, error: 'You are not signed in' };
     try {
-      await fetch(`${API_URL}/content/submissions/${submission.id}/request-changes`, {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionId}`,
+        },
+        body: JSON.stringify({ status })
+      });
+      const body = response.ok ? null : await response.json().catch(() => null);
+      await fetchSubmission();
+      return response.ok ? { ok: true } : { ok: false, error: body?.error || `the server answered ${response.status}` };
+    } catch (err) {
+      console.error(`Error recording the ${status} decision:`, err);
+      return { ok: false, error: 'network error' };
+    }
+  };
+
+  const handleSubmissionApprove = () => postSubmissionDecision('approved');
+  const handleSubmissionReject = () => postSubmissionDecision('rejected');
+
+  const handleRequestChanges = async (comment: string): Promise<DecisionResult> => {
+    const sessionId = localStorage.getItem('sessionId');
+    if (!sessionId) return { ok: false, error: 'You are not signed in' };
+    try {
+      const response = await fetch(`${API_URL}/content/submissions/${submission.id}/request-changes`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -659,9 +670,12 @@ export const TrackedChangesView: React.FC = () => {
         },
         body: JSON.stringify({ comment })
       });
+      const body = response.ok ? null : await response.json().catch(() => null);
       await fetchSubmission();
+      return response.ok ? { ok: true } : { ok: false, error: body?.error || `the server answered ${response.status}` };
     } catch (err) {
       console.error('Error requesting changes:', err);
+      return { ok: false, error: 'network error' };
     }
   };
 
@@ -693,6 +707,7 @@ export const TrackedChangesView: React.FC = () => {
         onSuggestion={handleSuggestion}
         onRefreshNeeded={handleRefreshNeeded}
         onRemoteChangeResolved={handleRemoteChangeResolved}
+        onRemoteComment={handleRemoteComment}
         onBack={() => navigate('/requests')}
         reviewMode={true}
         onDelete={handleDelete}
@@ -707,6 +722,24 @@ export const TrackedChangesView: React.FC = () => {
 // ReviewLayout — wraps TCE with ReviewTopBar + Request Changes modal
 // ---------------------------------------------------------------------------
 
+/** Outcome of a Finish-review decision: recorded, or not (with the reason). */
+export interface DecisionResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** The reviewer's current vote on the whole request, from the submission's approvals. */
+export function reviewerDecision(approvals: Approval[] | undefined, user: Pick<User, 'id' | 'email'>): 'approved' | 'rejected' | null {
+  const mine = (approvals || []).find(a =>
+    (!!a.approverId && a.approverId === user.id) || (!!a.approverEmail && a.approverEmail === user.email));
+  const status = String(mine?.status || '').toUpperCase();
+  if (status === 'APPROVED') return 'approved';
+  if (status === 'REJECTED') return 'rejected';
+  return null;
+}
+
+const DECISION_TOAST_MS = 5000;
+
 interface ReviewLayoutProps {
   submission: ContentSubmission;
   currentUser: User;
@@ -714,14 +747,14 @@ interface ReviewLayoutProps {
   isReviewer: boolean;
   isUrgent: boolean;
   onBack: () => void;
-  onApprove: () => void;
-  onReject: () => void;
-  onRequestChanges: (comment: string) => void;
+  onApprove: () => Promise<DecisionResult>;
+  onReject: () => Promise<DecisionResult>;
+  onRequestChanges: (comment: string) => Promise<DecisionResult>;
   onNavigate: (submissionId: string) => void;
   children: React.ReactNode;
 }
 
-const ReviewLayout: React.FC<ReviewLayoutProps> = ({
+export const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   submission,
   currentUser,
   canApprove,
@@ -735,9 +768,50 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   children,
 }) => {
   const userName = useUserDirectory();
+  // Counted like the review sidebar's Open tab: one per card (a move is one edit).
+  const pendingEdits = useMemo(() => countOpenEdits(submission.changes || []), [submission.changes]);
   const [showRequestChanges, setShowRequestChanges] = useState(false);
   const [requestChangesComment, setRequestChangesComment] = useState('');
   const requestChangesInputRef = useRef<HTMLTextAreaElement>(null);
+  const [showDeclineConfirm, setShowDeclineConfirm] = useState(false);
+  const declineCancelRef = useRef<HTMLButtonElement>(null);
+  // Non-blocking feedback after a Finish-review decision
+  const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The decision just recorded here, shown until the refetched approvals agree
+  const [recordedDecision, setRecordedDecision] = useState<{ submissionId: string; decision: 'approved' | 'rejected' } | null>(null);
+
+  const decisionFromApprovals = reviewerDecision(submission.approvals, currentUser);
+  const myDecision = recordedDecision && recordedDecision.submissionId === submission.id
+    ? recordedDecision.decision
+    : decisionFromApprovals;
+  // Once the approvals agree, they are the source again (another session may change it later)
+  useEffect(() => {
+    if (recordedDecision && (recordedDecision.submissionId !== submission.id || recordedDecision.decision === decisionFromApprovals)) {
+      setRecordedDecision(null);
+    }
+  }, [recordedDecision, decisionFromApprovals, submission.id]);
+
+  const showToast = useCallback((message: string, error = false) => {
+    setToast({ message, error });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast(null);
+    }, DECISION_TOAST_MS);
+  }, []);
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
+
+  const reportDecision = (result: DecisionResult, success: string, decision?: 'approved' | 'rejected') => {
+    if (result.ok) {
+      if (decision) setRecordedDecision({ submissionId: submission.id, decision });
+      showToast(success);
+    } else {
+      showToast(`Couldn't record your decision: ${result.error || 'unknown error'}`, true);
+    }
+  };
 
   // Focus the comment box when the dialog opens. autoFocus alone loses: the dialog opens
   // from the Finish review menu, which returns focus to its button as it closes (in an
@@ -745,12 +819,30 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
   useEffect(() => {
     if (showRequestChanges) requestChangesInputRef.current?.focus();
   }, [showRequestChanges]);
+  // Same for the Decline confirmation: focus its Cancel (the safe choice). Escape closes it.
+  useEffect(() => {
+    if (!showDeclineConfirm) return;
+    declineCancelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowDeclineConfirm(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showDeclineConfirm]);
 
-  const handleSubmitRequestChanges = () => {
-    if (!requestChangesComment.trim()) return;
-    onRequestChanges(requestChangesComment.trim());
+  const handleApprove = async () => {
+    reportDecision(await onApprove(), 'You approved this request', 'approved');
+  };
+
+  const handleConfirmDecline = async () => {
+    setShowDeclineConfirm(false);
+    reportDecision(await onReject(), 'You declined this request', 'rejected');
+  };
+
+  const handleSubmitRequestChanges = async () => {
+    const comment = requestChangesComment.trim();
+    if (!comment) return;
     setRequestChangesComment('');
     setShowRequestChanges(false);
+    reportDecision(await onRequestChanges(comment), 'You requested changes');
   };
 
   return (
@@ -762,12 +854,14 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
         submittedAt={submission.submittedAt instanceof Date ? submission.submittedAt : new Date(submission.submittedAt)}
         isUrgent={isUrgent}
         approvalGates={(submission as any).approvalGates}
+        pendingEdits={pendingEdits}
         canApprove={canApprove}
         isReviewer={isReviewer}
+        myDecision={myDecision}
         onBack={onBack}
-        onApprove={onApprove}
+        onApprove={handleApprove}
         onRequestChanges={() => setShowRequestChanges(true)}
-        onReject={onReject}
+        onReject={() => setShowDeclineConfirm(true)}
         onNavigate={onNavigate}
       />
       {children}
@@ -802,6 +896,51 @@ const ReviewLayout: React.FC<ReviewLayoutProps> = ({
           </div>
         </div>
       )}
+
+      {/* Decline confirmation (Finish review -> Decline), in the Request Changes modal's style */}
+      {showDeclineConfirm && (
+        <div className="request-changes-overlay" onClick={() => setShowDeclineConfirm(false)}>
+          <div
+            className="request-changes-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="decline-confirm-title"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 id="decline-confirm-title">Decline this request?</h3>
+            <p style={{ margin: '0 0 12px', color: '#666', fontSize: '0.9em' }}>
+              The submitter will be notified.
+            </p>
+            <div className="request-changes-actions">
+              <button ref={declineCancelRef} className="btn btn-neutral" onClick={() => setShowDeclineConfirm(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" onClick={handleConfirmDecline}>
+                Decline
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className={`review-decision-toast${toast.error ? ' review-decision-toast--error' : ''}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span>{toast.message}</span>
+          <button
+            type="button"
+            className="review-decision-toast__close"
+            onClick={() => setToast(null)}
+            aria-label="Dismiss"
+            title="Dismiss"
+          >
+            <i className="fas fa-times" aria-hidden="true" />
+          </button>
+        </div>
+      )}
     </div>
   );
-}; 
+};
