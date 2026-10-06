@@ -6,7 +6,7 @@ import { newsletterService } from '../../services/newsletterService';
 import NewsletterItemFields, { cleanNewsletterItem, newsletterItemError } from './NewsletterItemFields';
 import KeyDatesEditor, { filledKeyDates, keyDatesError } from './KeyDatesEditor';
 import { AnnualDate } from '../../types/annualDates';
-import { replaceFirstInLexical } from '../../utils/lexicalUtils';
+import { replaceNthInLexical } from '../../utils/lexicalUtils';
 import './newsletter.css';
 
 interface NewsletterReviewPanelProps {
@@ -22,7 +22,7 @@ interface NewsletterReviewPanelProps {
    * Set to a function that replaces text in the blurb and saves the item (so a linked date and its
    * text never disagree); false when the text isn't there or the save failed.
    */
-  blurbReplacer?: React.MutableRefObject<((search: string, replacement: string) => Promise<boolean>) | null>;
+  blurbReplacer?: React.MutableRefObject<((search: string, replacement: string, occurrence: number) => Promise<boolean>) | null>;
   annualDates?: AnnualDate[];
   onAnnualDateAdded?: (entry: AnnualDate) => void;
   referenceYmd?: string;
@@ -62,13 +62,13 @@ export const NewsletterReviewPanel: React.FC<NewsletterReviewPanelProps> = ({
 
   useEffect(() => {
     if (!blurbReplacer) return;
-    blurbReplacer.current = async (search, replacement) => {
+    blurbReplacer.current = async (search, replacement, occurrence) => {
       if (dirty) {
         setMessage({ kind: 'error', text: 'Save the newsletter item first, then update the date' });
         return false;
       }
       const blurb = item.blurb || '';
-      const next = replaceFirstInLexical(blurb, search, replacement);
+      const next = replaceNthInLexical(blurb, search, replacement, occurrence);
       if (!blurb || next === blurb) return false;
       try {
         const result = await newsletterService.updateRequestNewsletter(submission.id, {

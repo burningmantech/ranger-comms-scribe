@@ -22,7 +22,7 @@ import { LexicalEditor } from 'lexical';
 import DatesPanel, { DateSource } from './dates/DatesPanel';
 import { useAnnualDates } from './dates/useAnnualDates';
 import { DateLink } from '../types/annualDates';
-import { extractTextFromLexical, replaceFirstInLexical } from '../utils/lexicalUtils';
+import { blockTextFromLexical, replaceNthInLexical } from '../utils/lexicalUtils';
 import { replaceTextInEditor } from './editor/utils/replaceText';
 import { todayIso } from './newsletter/dates';
 
@@ -433,15 +433,17 @@ export const CommsRequest: React.FC = () => {
   // Dates written in the text and blurb, for "Dates in this request"
   const blurb = newsletterItem.blurb || '';
   const dateSources: DateSource[] = React.useMemo(() => [
-    { field: 'body' as const, label: 'the text', text: extractTextFromLexical(editorContent) },
-    ...(wantsNewsletter && !helpWithBlurb ? [{ field: 'blurb' as const, label: 'the blurb', text: extractTextFromLexical(blurb) }] : []),
+    { field: 'body' as const, label: 'the text', text: blockTextFromLexical(editorContent) },
+    ...(wantsNewsletter && !helpWithBlurb ? [{ field: 'blurb' as const, label: 'the blurb', text: blockTextFromLexical(blurb) }] : []),
   ], [editorContent, blurb, wantsNewsletter, helpWithBlurb]);
 
-  const replaceDateText = async (field: DateLink['field'], search: string, replacement: string): Promise<boolean> => {
+  const replaceDateText = async (
+    field: DateLink['field'], search: string, replacement: string, occurrence: number,
+  ): Promise<boolean> => {
     if (field === 'body') {
-      return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement) : false;
+      return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement, occurrence) : false;
     }
-    const next = replaceFirstInLexical(blurb, search, replacement);
+    const next = replaceNthInLexical(blurb, search, replacement, occurrence);
     if (next === blurb || !blurb) return false;
     setNewsletterItem((item) => ({ ...item, blurb: next }));
     setBlurbEditorKey((k) => k + 1);

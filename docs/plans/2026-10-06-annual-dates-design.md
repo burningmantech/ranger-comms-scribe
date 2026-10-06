@@ -23,9 +23,16 @@ that mentions one when its text is out of date.
 ## Finding dates
 
 - `frontend/src/utils/dateDetection.ts` runs chrono-node's strict parser over the plain text of the
-  body and blurb.
-  - Only real dates count, so "today", "Friday" and "next week" are ignored.
+  body and blurb, with a line break between blocks and list items (`blockTextFromLexical`).
+  - Only real dates count: the match must contain a month name or a numeric date, so "today",
+    "Friday", "next week" and "one minute after" are ignored.
   - Times and ranges are read as well.
+- Mentions of the same date (and end date) are one group (`components/dates/dateGroups.ts`): a notice
+  that says "July 12th" five different ways is one row, tracked, linked and updated together. Each
+  mention is shown with the words around it in its paragraph.
+- On the review page each date in the text is underlined in its group's status color, with a calendar
+  bubble in the margin beside its line (`DateBubbles.tsx`, an overlay measured from the editor's DOM).
+  A bubble opens its row; a mention in the row scrolls the text to it.
 - There is no editor node and no text transform. The review editor runs Yjs plus tracked changes,
   and the email renderer would need every new node type.
 

@@ -1,19 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AnnualDate, DateLink } from '../../types/annualDates';
-import { DetectedDate, detectDates, rewriteDate, suggestDateName } from '../../utils/dateDetection';
-import {
-  describeRule, formatOccurrence, formatTimes, nextOccurrence, occurrenceOn,
-} from '../../utils/annualDates';
+import { dateSnippet, rewriteDate, suggestDateName } from '../../utils/dateDetection';
+import { describeRule, formatOccurrence, formatTimes, occurrenceOn, nextOccurrence } from '../../utils/annualDates';
 import TrackDateModal from './TrackDateModal';
+import { bestMention, buildDateGroups, DateGroup, DateSource, Mention } from './dateGroups';
 import './Dates.css';
 
-export interface DateSource {
-  field: DateLink['field'];
-  /** "the text", "the blurb" */
-  label: string;
-  /** Plain text */
-  text: string;
-}
+export type { DateSource } from './dateGroups';
 
 interface DatesPanelProps {
   sources: DateSource[];
@@ -23,161 +16,237 @@ interface DatesPanelProps {
   referenceYmd: string;
   annualDates: AnnualDate[];
   onAnnualDateAdded: (entry: AnnualDate) => void;
-  /** Replace `search` in a field with `replacement`; false when it isn't there any more. */
-  onReplaceText: (field: DateLink['field'], search: string, replacement: string) => Promise<boolean>;
+  /**
+   * Replace the `occurrence`th (from 0) `search` in a field with `replacement`; false when it isn't
+   * there any more.
+   */
+  onReplaceText: (field: DateLink['field'], search: string, replacement: string, occurrence: number) => Promise<boolean>;
+  /** Scroll the text to a mention (the review editor); without it, mentions aren't clickable. */
+  onShowMention?: (mention: Mention) => void;
+  /** A group to bring into view and highlight (a bubble in the text was clicked). */
+  focusKey?: string | null;
   submissionId?: string;
   disabled?: boolean;
 }
 
-interface Row {
-  key: string;
-  source: DateSource;
-  found: DetectedDate;
-  link?: DateLink;
-}
-
 const newId = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
 
-/** The link for a date found in the text: same field, and the text as written (or one inside the other). */
-function linkFor(links: DateLink[], field: DateLink['field'], found: DetectedDate): DateLink | undefined {
-  return links.find((l) => l.field === field && l.text === found.text)
-    || links.find((l) => l.field === field && (found.text.includes(l.text) || l.text.includes(found.text)));
+const SNIPPETS_SHOWN = 2;
+
+/** The distinct texts (per field) of a group's mentions. */
+function distinctTexts(group: DateGroup): Mention[] {
+  const seen = new Set<string>();
+  return group.mentions.filter((m) => {
+    const key = `${m.source.field}|${m.found.text}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
+export const groupElementId = (key: string) => `date-group-${key.replace(/[^\w-]/g, '_')}`;
+
 /**
- * "Dates in this request": the dates found in the text and blurb. Each can be tracked as an annual
- * date (same date every year, or from Labor Day), linked to one already in the table, and updated
- * in place when the table or the year says it should now be a different date. Nothing changes
- * without a click.
+ * "Dates in this request": the dates found in the text and blurb, one row per date with every place
+ * it is mentioned. A date can be tracked as an annual date (same date every year, or from Labor Day),
+ * linked to one already in the table, and updated everywhere it is mentioned when the table or the
+ * year says it should now be a different date. Nothing changes without a click.
  */
 export const DatesPanel: React.FC<DatesPanelProps> = ({
-  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, submissionId, disabled,
+  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, onShowMention, focusKey,
+  submissionId, disabled,
 }) => {
-  const [tracking, setTracking] = useState<Row | null>(null);
+  const [tracking, setTracking] = useState<DateGroup | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const rows: Row[] = useMemo(() => sources.flatMap((source) =>
-    detectDates(source.text, referenceYmd).map((found, i) => ({
-      key: `${source.field}:${i}:${found.text}`,
-      source,
-      found,
-      link: linkFor(links, source.field, found),
-    }))), [sources, links, referenceYmd]);
+  const { groups, orphanLinks } = useMemo(
+    () => buildDateGroups(sources, links, referenceYmd, annualDates),
+    [sources, links, referenceYmd, annualDates],
+  );
 
-  const usedLinks = new Set(rows.map((r) => r.link?.id).filter(Boolean));
-  const orphanLinks = links.filter((l) => !usedLinks.has(l.id));
-  const byId = useMemo(() => new Map(annualDates.map((e) => [e.id, e])), [annualDates]);
+  useEffect(() => {
+    if (!focusKey) return;
+    document.getElementById(groupElementId(focusKey))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusKey]);
 
-  if (!rows.length && !orphanLinks.length) return null;
+  if (!groups.length && !orphanLinks.length) return null;
 
-  const addLink = (row: Row, entry: AnnualDate) => {
-    const occurrence = occurrenceOn(entry, row.found.date) || nextOccurrence(entry, row.found.date);
+  /** Link every mention of the group to `entry` (one link per distinct text). */
+  const linkGroup = (group: DateGroup, entry: AnnualDate) => {
+    const occurrence = occurrenceOn(entry, group.date) || nextOccurrence(entry, group.date);
+    const texts = distinctTexts(group);
+    const keep = links.filter((l) => !texts.some((m) => m.source.field === l.field && m.found.text === l.text));
     onLinksChange([
-      ...links.filter((l) => l.id !== row.link?.id),
-      { id: newId(), annualDateId: entry.id, field: row.source.field, text: row.found.text, year: occurrence.year },
+      ...keep,
+      ...texts.map((m) => ({ id: newId(), annualDateId: entry.id, field: m.source.field, text: m.found.text, year: occurrence.year })),
     ]);
   };
 
-  const unlink = (id: string) => onLinksChange(links.filter((l) => l.id !== id));
+  const unlinkGroup = (group: DateGroup) => {
+    const ids = new Set(group.mentions.map((m) => m.link?.id).filter(Boolean));
+    onLinksChange(links.filter((l) => !ids.has(l.id)));
+  };
 
-  const update = async (row: Row, entry: AnnualDate) => {
-    const target = nextOccurrence(entry, referenceYmd);
-    const rewrite = rewriteDate(row.found, target);
-    if (!rewrite || !row.link) return;
-    setBusy(row.key);
+  /** Rewrite every mention to the group's target date, last first so earlier ones keep their place. */
+  const update = async (group: DateGroup) => {
+    const target = group.target!;
+    setBusy(group.key);
     setMessage(null);
+    const rewritten = new Map<string, string>();
+    const missed: string[] = [];
+    let timesDiffer = false;
     try {
-      const done = await onReplaceText(row.source.field, row.found.text, rewrite.text);
-      if (!done) {
-        setMessage(`Couldn't find “${row.found.text}” in ${row.source.label} to change it. Edit it by hand.`);
-        return;
+      const order = [...group.mentions].sort((a, b) => (a.source.field === b.source.field
+        ? b.found.index - a.found.index
+        : a.source.field.localeCompare(b.source.field)));
+      for (const mention of order) {
+        const rewrite = rewriteDate(mention.found, target);
+        if (!rewrite) {
+          missed.push(mention.found.text);
+          continue;
+        }
+        timesDiffer = timesDiffer || rewrite.timesDiffer;
+        if (await onReplaceText(mention.source.field, mention.found.text, rewrite.text, mention.occurrence)) {
+          rewritten.set(`${mention.source.field}|${mention.found.text}`, rewrite.text);
+        } else {
+          missed.push(mention.found.text);
+        }
       }
-      onLinksChange(links.map((l) => (l.id === row.link!.id ? { ...l, text: rewrite.text, year: target.year } : l)));
-      if (rewrite.timesDiffer) {
-        setMessage(`Updated the date. The times are now ${formatTimes(target.startTime, target.endTime)}: change them in ${row.source.label} by hand.`);
+      if (rewritten.size) {
+        const keep = links.filter((l) => !group.mentions.some((m) => m.link?.id === l.id));
+        const entryId = group.entry!.id;
+        onLinksChange([
+          ...keep,
+          ...Array.from(rewritten.entries()).map(([key, text]) => ({
+            id: newId(), annualDateId: entryId, field: key.split('|')[0] as DateLink['field'], text, year: target.year,
+          })),
+        ]);
       }
+      const notes: string[] = [];
+      if (missed.length) notes.push(`Couldn't change “${missed.join('”, “')}”: edit by hand.`);
+      if (timesDiffer) notes.push(`The times are now ${formatTimes(target.startTime, target.endTime)}: change them by hand.`);
+      if (notes.length) setMessage(notes.join(' '));
     } finally {
       setBusy(null);
     }
   };
 
-  const renderLinked = (row: Row, link: DateLink) => {
-    const entry = byId.get(link.annualDateId);
-    if (!entry) {
-      return (
-        <>
-          <span className="dt-status dt-status--gone">The annual date it was linked to was deleted.</span>
-          <button type="button" className="cc-btn cc-btn--small cc-btn--ghost" onClick={() => unlink(link.id)} disabled={disabled}>Unlink</button>
-        </>
-      );
-    }
-    const target = nextOccurrence(entry, referenceYmd);
-    const stale = target.date !== row.found.date || (!!target.endDate && target.endDate !== row.found.endDate);
-    return (
+  const toggle = (key: string) => {
+    const next = new Set(expanded);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setExpanded(next);
+  };
+
+  const renderMention = (mention: Mention) => {
+    const snippet = dateSnippet(mention.source.text, mention.found);
+    const content = (
       <>
-        <span className="dt-entry">
-          <i className="fas fa-link" aria-hidden="true" /> <strong>{entry.name}</strong>
-          <span className="cc-muted"> · {describeRule(entry.rule)}{target.overridden ? ' (moved this year)' : ''}</span>
-        </span>
-        {stale ? (
-          <span className="dt-status dt-status--stale">
-            {target.year}: {formatOccurrence(target)}
-            <button
-              type="button"
-              className="cc-btn cc-btn--small cc-btn--primary"
-              onClick={() => update(row, entry)}
-              disabled={disabled || busy === row.key}
-            >
-              {busy === row.key ? 'Updating…' : 'Update text'}
-            </button>
-          </span>
-        ) : (
-          <span className="dt-status dt-status--ok"><i className="fas fa-check" aria-hidden="true" /> Right for {target.year}</span>
-        )}
-        <button type="button" className="cc-btn cc-btn--small cc-btn--ghost" onClick={() => unlink(link.id)} disabled={disabled}>Unlink</button>
+        {snippet.before}<mark className="dt-mark">{snippet.match}</mark>{snippet.after}
+        {sources.length > 1 && <span className="cc-muted cc-small"> ({mention.source.label})</span>}
       </>
+    );
+    return (
+      <li key={mention.key} className="dt-mention">
+        {onShowMention && mention.source.field === 'body' ? (
+          <button type="button" className="dt-mention-link" onClick={() => onShowMention(mention)} title="Show in the text">
+            {content}
+          </button>
+        ) : content}
+      </li>
     );
   };
 
-  const renderUntracked = (row: Row) => {
-    const matches = annualDates.filter((entry) => {
-      const occurrence = occurrenceOn(entry, row.found.date);
-      if (!occurrence) return false;
-      return !row.found.startTime || !occurrence.startTime || occurrence.startTime === row.found.startTime;
-    });
-    return (
-      <>
-        {matches.slice(0, 2).map((entry) => (
-          <span key={entry.id} className="dt-match">
-            Looks like <strong>{entry.name}</strong>
-            <button type="button" className="cc-btn cc-btn--small" onClick={() => addLink(row, entry)} disabled={disabled}>Link</button>
-          </span>
-        ))}
-        <button type="button" className="cc-btn cc-btn--small" onClick={() => setTracking(row)} disabled={disabled}>
-          Track every year…
-        </button>
-      </>
-    );
+  const renderActions = (group: DateGroup) => {
+    switch (group.status) {
+      case 'ok':
+      case 'stale':
+        return (
+          <>
+            <span className="dt-entry">
+              <i className="fas fa-link" aria-hidden="true" /> <strong>{group.entry!.name}</strong>
+              <span className="cc-muted"> · {describeRule(group.entry!.rule)}{group.target!.overridden ? ' (moved this year)' : ''}</span>
+            </span>
+            {group.status === 'stale' ? (
+              <span className="dt-status dt-status--stale">
+                {group.target!.year}: {formatOccurrence(group.target!)}
+                <button
+                  type="button"
+                  className="cc-btn cc-btn--small cc-btn--primary"
+                  onClick={() => update(group)}
+                  disabled={disabled || busy === group.key}
+                >
+                  {busy === group.key ? 'Updating…' : group.mentions.length > 1 ? `Update all ${group.mentions.length}` : 'Update text'}
+                </button>
+              </span>
+            ) : (
+              <span className="dt-status dt-status--ok"><i className="fas fa-check" aria-hidden="true" /> Right for {group.target!.year}</span>
+            )}
+            <button type="button" className="cc-btn cc-btn--small cc-btn--ghost" onClick={() => unlinkGroup(group)} disabled={disabled}>Unlink</button>
+          </>
+        );
+      case 'gone':
+        return (
+          <>
+            <span className="dt-status dt-status--gone">The annual date it was linked to was deleted.</span>
+            <button type="button" className="cc-btn cc-btn--small cc-btn--ghost" onClick={() => unlinkGroup(group)} disabled={disabled}>Unlink</button>
+          </>
+        );
+      default:
+        return (
+          <>
+            {group.matches.slice(0, 2).map((entry) => (
+              <span key={entry.id} className="dt-match">
+                Looks like <strong>{entry.name}</strong>
+                <button type="button" className="cc-btn cc-btn--small" onClick={() => linkGroup(group, entry)} disabled={disabled}>Link</button>
+              </span>
+            ))}
+            <button type="button" className="cc-btn cc-btn--small" onClick={() => setTracking(group)} disabled={disabled}>
+              Track every year…
+            </button>
+          </>
+        );
+    }
   };
 
   return (
     <section className="dt-panel" aria-label="Dates in this request">
       <h4 className="dt-title"><i className="far fa-calendar-alt" aria-hidden="true" /> Dates in this request</h4>
       <p className="dt-intro cc-muted">
-        Track a date to keep it in the annual dates table. Next year (or when the table changes) you can update it here in one click.
+        Track a date to keep it in the annual dates table. Next year (or when the table changes) you can update every
+        mention of it here in one click.
       </p>
       {message && <div className="dt-message" role="status">{message}</div>}
       <ul className="dt-list">
-        {rows.map((row) => (
-          <li key={row.key} className="dt-row" data-testid="date-row">
-            <span className="dt-found">
-              <q>{row.found.text}</q>
-              <span className="cc-muted cc-small"> in {row.source.label}</span>
-            </span>
-            <span className="dt-actions">{row.link ? renderLinked(row, row.link) : renderUntracked(row)}</span>
-          </li>
-        ))}
+        {groups.map((group) => {
+          const best = bestMention(group).found;
+          const shown = expanded.has(group.key) ? group.mentions : group.mentions.slice(0, SNIPPETS_SHOWN);
+          return (
+            <li
+              key={group.key}
+              id={groupElementId(group.key)}
+              className={`dt-row dt-row--${group.status}${focusKey === group.key ? ' dt-row--focus' : ''}`}
+              data-testid="date-row"
+            >
+              <div className="dt-head">
+                <span className={`dt-dot dt-dot--${group.status}`} aria-hidden="true" />
+                <strong>{formatOccurrence({ date: group.date, endDate: group.endDate, startTime: best.startTime, endTime: best.endTime })}</strong>
+                {group.mentions.length > 1 && <span className="cc-muted cc-small">{group.mentions.length} mentions</span>}
+              </div>
+              <ul className="dt-mentions">
+                {shown.map(renderMention)}
+              </ul>
+              {group.mentions.length > SNIPPETS_SHOWN && (
+                <button type="button" className="dt-more" onClick={() => toggle(group.key)}>
+                  {expanded.has(group.key) ? 'Show fewer' : `Show all ${group.mentions.length}`}
+                </button>
+              )}
+              <div className="dt-actions">{renderActions(group)}</div>
+            </li>
+          );
+        })}
         {orphanLinks.map((link) => (
           <li key={link.id} className="dt-row" data-testid="date-row">
             <span className="dt-found">
@@ -185,20 +254,27 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
               <span className="cc-muted cc-small"> is no longer in {sources.find((s) => s.field === link.field)?.label || 'the request'}</span>
             </span>
             <span className="dt-actions">
-              <button type="button" className="cc-btn cc-btn--small cc-btn--ghost" onClick={() => unlink(link.id)} disabled={disabled}>Unlink</button>
+              <button
+                type="button"
+                className="cc-btn cc-btn--small cc-btn--ghost"
+                onClick={() => onLinksChange(links.filter((l) => l.id !== link.id))}
+                disabled={disabled}
+              >
+                Unlink
+              </button>
             </span>
           </li>
         ))}
       </ul>
       {tracking && (
         <TrackDateModal
-          found={tracking.found}
-          defaultName={suggestDateName(tracking.source.text, tracking.found)}
+          found={bestMention(tracking).found}
+          defaultName={suggestDateName(bestMention(tracking).source.text, bestMention(tracking).found)}
           submissionId={submissionId}
           onClose={() => setTracking(null)}
           onSaved={(entry) => {
             onAnnualDateAdded(entry);
-            addLink(tracking, entry);
+            linkGroup(tracking, entry);
             setTracking(null);
           }}
         />

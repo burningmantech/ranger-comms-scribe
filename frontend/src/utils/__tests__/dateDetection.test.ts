@@ -1,4 +1,5 @@
-import { detectDates, rewriteDate, suggestDateName } from '../dateDetection';
+import { dateSnippet, detectDates, occurrenceIndex, rewriteDate, suggestDateName } from '../dateDetection';
+import { blockTextFromLexical, replaceNthInLexical } from '../lexicalUtils';
 
 const REF = '2026-10-06';
 const one = (text: string, ref = REF) => {
@@ -28,6 +29,7 @@ describe('detectDates', () => {
 
   it('ignores words that are not dates', () => {
     expect(detectDates('May we ask you on Friday, today or next week?', REF)).toEqual([]);
+    expect(detectDates('Gates open one minute after midnight', REF)).toEqual([]);
   });
 });
 
@@ -79,5 +81,48 @@ describe('suggestDateName', () => {
     const text = 'Tickets by July 12th. Vehicle passes by July 31st.';
     const second = detectDates(text, REF)[1];
     expect(suggestDateName(text, second)).toBe('Vehicle passes');
+  });
+});
+
+describe('where a date is', () => {
+  const text = 'By Sunday, July 12th at 23:59. After July 12th, nothing.\nNew paragraph about July 12th and more words that go on and on and on and on.';
+
+  it('counts earlier occurrences of the same text, inside longer dates too', () => {
+    const found = detectDates(text, REF);
+    expect(found.map((f) => [f.text, occurrenceIndex(text, f)])).toEqual([
+      ['Sunday, July 12th at 23:59', 0],
+      ['July 12th', 1],
+      ['July 12th', 2],
+    ]);
+  });
+
+  it('shows the words around a date within its paragraph', () => {
+    const found = detectDates(text, REF);
+    expect(dateSnippet(text, found[1], 20)).toEqual({ before: '…at 23:59. After ', match: 'July 12th', after: ', nothing.' });
+    expect(dateSnippet(text, found[2], 20)).toEqual({ before: 'New paragraph about ', match: 'July 12th', after: ' and more words that…' });
+  });
+
+  it('replaces the nth occurrence in Lexical JSON', () => {
+    const json = JSON.stringify({ root: { children: [
+      { type: 'paragraph', children: [{ type: 'text', text: 'Sunday, July 12th and July 12th' }] },
+      { type: 'paragraph', children: [{ type: 'text', text: 'July 12th' }] },
+    ] } });
+    const next = JSON.parse(replaceNthInLexical(json, 'July 12th', 'July 11th', 2));
+    expect(next.root.children[1].children[0].text).toBe('July 11th');
+    expect(next.root.children[0].children[0].text).toBe('Sunday, July 12th and July 12th');
+    expect(replaceNthInLexical(json, 'July 12th', 'x', 5)).toBe(json);
+  });
+});
+
+describe('blockTextFromLexical', () => {
+  it('puts a line break between list items and blocks, keeping links inline', () => {
+    const json = JSON.stringify({ root: { type: 'root', children: [
+      { type: 'paragraph', children: [{ type: 'text', text: 'Intro ' }, { type: 'link', children: [{ type: 'text', text: 'link' }] }, { type: 'text', text: '.' }] },
+      { type: 'list', children: [
+        { type: 'listitem', children: [{ type: 'text', text: 'Noon on Monday, August 24th.' }] },
+        { type: 'listitem', children: [{ type: 'text', text: 'Only Staff' }, { type: 'deleted-text', text: 'gone' }] },
+      ] },
+    ] } });
+    expect(blockTextFromLexical(json)).toBe('Intro link.\nNoon on Monday, August 24th.\nOnly Staff');
   });
 });

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ContentSubmission, User, Comment, Change, Approval } from '../types/content';
 import { smartDiff, WordDiff, applyChanges, calculateIncrementalChanges, diffChars, diffWords } from '../utils/diffAlgorithm';
-import { extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
+import { blockTextFromLexical, extractTextFromLexical, isLexicalJson, findAndReplaceInLexical, insertTextInLexical, removeTextFromLexical, restoreDeletedTextInLexical } from '../utils/lexicalUtils';
 import { API_URL } from '../config';
 
 import LexicalEditorComponent from './editor/LexicalEditor';
@@ -39,6 +39,8 @@ import { currentFormFieldValue } from '../utils/formFieldValue';
 import { canSendAnnouncements, councilRoleLabel, isAdmin, isCommsCadre, isReviewer } from '../utils/access';
 import { LexicalEditor } from 'lexical';
 import DatesPanel, { DateSource } from './dates/DatesPanel';
+import DateBubbles from './dates/DateBubbles';
+import { buildDateGroups, Mention } from './dates/dateGroups';
 import { useAnnualDates } from './dates/useAnnualDates';
 import { replaceTextInEditor } from './editor/utils/replaceText';
 import { annualDatesService } from '../services/annualDatesService';
@@ -245,10 +247,27 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const [dateLinksError, setDateLinksError] = useState<string | null>(null);
   const [blurbForDates, setBlurbForDates] = useState(submission.newsletter?.blurb || '');
   const bodyEditorRef = useRef<LexicalEditor | null>(null);
-  const blurbReplacerRef = useRef<((search: string, replacement: string) => Promise<boolean>) | null>(null);
+  const blurbReplacerRef = useRef<((search: string, replacement: string, occurrence: number) => Promise<boolean>) | null>(null);
+  const [bodyEditor, setBodyEditorState] = useState<LexicalEditor | null>(null);
   const setBodyEditor = useCallback((editor: LexicalEditor | null) => {
     bodyEditorRef.current = editor;
+    setBodyEditorState(editor);
   }, []);
+  // A bubble in the text points at its row in "Dates in this request", and a row at its text
+  const [editorContainer, setEditorContainer] = useState<HTMLDivElement | null>(null);
+  const [dateFocusKey, setDateFocusKey] = useState<string | null>(null);
+  const [dateFlashKey, setDateFlashKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!dateFocusKey) return undefined;
+    const timer = setTimeout(() => setDateFocusKey(null), 2500);
+    return () => clearTimeout(timer);
+  }, [dateFocusKey]);
+  useEffect(() => {
+    if (!dateFlashKey) return undefined;
+    const timer = setTimeout(() => setDateFlashKey(null), 2000);
+    return () => clearTimeout(timer);
+  }, [dateFlashKey]);
+  const showDateMention = useCallback((mention: Mention) => setDateFlashKey(mention.key), []);
   useEffect(() => {
     setDateLinks(submission.dateLinks || []);
   }, [submission.dateLinks]);
@@ -3339,11 +3358,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   const proposedTextForDates = editedProposedContent || proposedEditorContent;
   const blurbInNewsletter = currentAudienceKeys.includes('newsletter');
   const dateSources: DateSource[] = useMemo(() => [
-    { field: 'body', label: 'the text', text: getDisplayableText(proposedTextForDates) },
+    { field: 'body', label: 'the text', text: isLexicalJson(proposedTextForDates) ? blockTextFromLexical(proposedTextForDates) : proposedTextForDates },
     ...(blurbInNewsletter && blurbForDates
-      ? [{ field: 'blurb' as const, label: 'the blurb', text: extractTextFromLexical(blurbForDates) }]
+      ? [{ field: 'blurb' as const, label: 'the blurb', text: blockTextFromLexical(blurbForDates) }]
       : []),
-  ], [proposedTextForDates, blurbInNewsletter, blurbForDates, getDisplayableText]);
+  ], [proposedTextForDates, blurbInNewsletter, blurbForDates]);
+  const dateGroups = useMemo(
+    () => buildDateGroups(dateSources, dateLinks, datesReferenceYmd, annualDates.entries).groups,
+    [dateSources, dateLinks, datesReferenceYmd, annualDates.entries],
+  );
 
   return (
     <div className={`tracked-changes-editor ${reviewMode ? 'review-mode' : ''}`}>
@@ -3670,7 +3693,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             {activeTab === 'proposed' && <div className="proposed-version-section">
               {/* Action bar - only shown when there are actions available */}
               <div className="proposed-content">
-                <div className="rich-text-editor-container">
+                <div className="rich-text-editor-container" ref={setEditorContainer}>
                   <CollaborativeEditor
                     key={isCollab ? `proposed-collaborative-editor:${submission.id}` : 'proposed-collaborative-editor'}
                     documentId={submission.id}
@@ -3762,6 +3785,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     onTransactionRedone={handleTransactionRedone}
                     interceptDeletions={true}
                   />
+                  {dateGroups.length > 0 && (
+                    <DateBubbles
+                      editor={bodyEditor}
+                      container={editorContainer}
+                      groups={dateGroups}
+                      onSelect={setDateFocusKey}
+                      flashKey={dateFlashKey}
+                    />
+                  )}
                 </div>
 
                 {/* Signature at bottom of proposed version */}
@@ -3818,10 +3850,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   referenceYmd={datesReferenceYmd}
                   annualDates={annualDates.entries}
                   onAnnualDateAdded={annualDates.added}
-                  onReplaceText={async (field, search, replacement) => {
-                    if (field === 'blurb') return blurbReplacerRef.current ? blurbReplacerRef.current(search, replacement) : false;
-                    return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement) : false;
+                  onReplaceText={async (field, search, replacement, occurrence) => {
+                    if (field === 'blurb') {
+                      return blurbReplacerRef.current ? blurbReplacerRef.current(search, replacement, occurrence) : false;
+                    }
+                    return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement, occurrence) : false;
                   }}
+                  onShowMention={showDateMention}
+                  focusKey={dateFocusKey}
                   submissionId={submission.id}
                   disabled={!canLinkDates}
                 />

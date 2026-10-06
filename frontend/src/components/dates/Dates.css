@@ -154,3 +154,157 @@
 .nl-key-date-row .dt-keydate {
   flex-basis: 100%;
 }
+
+/* One row per date, with where it is mentioned */
+
+.dt-row {
+  display: block;
+}
+
+.dt-row--focus {
+  background: var(--primary-light);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 2px var(--accent-gold);
+}
+
+.dt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dt-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dt-mentions {
+  list-style: none;
+  margin: 4px 0 4px 18px;
+  padding: 0;
+}
+
+.dt-mention {
+  font-size: 13px;
+  color: var(--text-medium);
+  margin: 2px 0;
+}
+
+.dt-mention-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.dt-mention-link:hover .dt-mark {
+  text-decoration: underline;
+}
+
+.dt-mark {
+  background: #fdf2d0;
+  color: var(--text-dark);
+  font-weight: 600;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+.dt-more {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 4px 18px;
+  font-size: 12px;
+  color: var(--accent-teal);
+  cursor: pointer;
+}
+
+.dt-row .dt-actions {
+  margin-left: 18px;
+}
+
+/* Status colors: dots in the panel, bubbles in the text */
+
+.dt-dot--ok, .dt-bubble--ok { background: var(--accent-teal); }
+.dt-dot--stale, .dt-bubble--stale { background: var(--accent-wine); }
+.dt-dot--match, .dt-bubble--match { background: var(--accent-gold); }
+.dt-dot--untracked, .dt-bubble--untracked { background: #9a928d; }
+.dt-dot--gone, .dt-bubble--gone { background: var(--danger); }
+
+/* The review editor: each date underlined, with a bubble in the margin beside its line */
+
+.dt-bubbles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.dt-underline {
+  position: absolute;
+  border-bottom: 2px dotted;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.dt-underline--ok { border-color: var(--accent-teal); }
+.dt-underline--stale { border-color: var(--accent-wine); border-bottom-style: solid; }
+.dt-underline--match { border-color: var(--accent-gold); }
+.dt-underline--untracked { border-color: #9a928d; }
+.dt-underline--gone { border-color: var(--danger); }
+
+.dt-underline--flash {
+  background: rgba(181, 157, 105, 0.25);
+  border-radius: 2px;
+  animation: dt-glow 0.6s ease-in-out 3;
+}
+
+@keyframes dt-glow {
+  50% { background: rgba(181, 157, 105, 0.55); }
+}
+
+.dt-bubble {
+  position: absolute;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.dt-bubble--untracked {
+  background: #fff;
+  color: #7d7470;
+  box-shadow: inset 0 0 0 1.5px #9a928d;
+}
+
+.dt-bubble:hover,
+.dt-bubble:focus-visible {
+  transform: translateY(-50%) scale(1.2);
+}
+
+.dt-bubble--flash {
+  animation: dt-pulse 0.6s ease-in-out 3;
+}
+
+@keyframes dt-pulse {
+  0%, 100% { transform: translateY(-50%) scale(1); }
+  50% { transform: translateY(-50%) scale(1.5); }
+}

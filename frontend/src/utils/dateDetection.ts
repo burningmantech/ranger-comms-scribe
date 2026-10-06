@@ -3,8 +3,9 @@ import { addDays, daysBetween, Occurrence } from './annualDates';
 
 /**
  * Dates written in request text ("8/16/2023", "6pm - 10pm on Sept. 1 2026", "Aug 26 - Sept 1, 2026"),
- * found with chrono's strict parser: only real dates, so "today", "Friday" or "next week" don't
- * count. A date without a year takes the year chrono picks near the reference date.
+ * found with chrono's strict parser and kept only when a month name or a numeric date is written, so
+ * "today", "Friday", "next week" or "one minute after" don't count. A date without a year takes the
+ * year chrono picks near the reference date.
  */
 
 export interface DetectedDate {
@@ -39,6 +40,7 @@ export function detectDates(text: string, referenceYmd: string): DetectedDate[] 
   for (const result of chrono.strict.parse(text, reference)) {
     const start = result.start;
     if (!start.isCertain('month') || !start.isCertain('day')) continue;
+    if (!new RegExp(TOKEN.source, 'i').test(result.text)) continue;
     const found: DetectedDate = {
       text: result.text,
       index: result.index,
@@ -198,4 +200,38 @@ export function suggestDateName(text: string, found: Pick<DetectedDate, 'index' 
   let name = words(lead) >= 2 || !trail ? lead : trail;
   if (name.length > MAX_NAME) name = name.slice(0, MAX_NAME).replace(/\s+\S*$/, '');
   return name ? name[0].toUpperCase() + name.slice(1) : '';
+}
+
+// ---------------------------------------------------------------------------
+// Where a date is in its text
+// ---------------------------------------------------------------------------
+
+/** How many times `found.text` appears in `text` before this match (to find the same one in the editor). */
+export function occurrenceIndex(text: string, found: Pick<DetectedDate, 'index' | 'text'>): number {
+  let count = 0;
+  for (let at = text.indexOf(found.text); at !== -1 && at < found.index; at = text.indexOf(found.text, at + 1)) count++;
+  return count;
+}
+
+export interface Snippet {
+  before: string;
+  match: string;
+  after: string;
+}
+
+/** The date with up to `radius` characters either side within its paragraph, cut at words, on one line. */
+export function dateSnippet(text: string, found: Pick<DetectedDate, 'index' | 'text'>, radius = 60): Snippet {
+  const oneLine = (value: string) => value.replace(/\s+/g, ' ');
+  const matchEnd = found.index + found.text.length;
+  const paragraphStart = text.lastIndexOf('\n', found.index - 1) + 1;
+  const nextBreak = text.indexOf('\n', matchEnd);
+  const paragraphEnd = nextBreak === -1 ? text.length : nextBreak;
+  const from = Math.max(paragraphStart, found.index - radius);
+  const to = Math.min(paragraphEnd, matchEnd + radius);
+  let before = text.slice(from, found.index);
+  let after = text.slice(matchEnd, to);
+  // Drop a word cut in half (unless the window starts or ends exactly between words)
+  if (from > paragraphStart) before = `…${/\s/.test(text[from - 1]) ? before : before.replace(/^\S*\s/, '')}`;
+  if (to < paragraphEnd) after = `${/\s/.test(text[to]) ? after : after.replace(/\s\S*$/, '')}…`;
+  return { before: oneLine(before), match: found.text, after: oneLine(after) };
 }

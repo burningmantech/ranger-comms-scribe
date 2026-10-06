@@ -354,8 +354,13 @@ Things that happen every year, so requests can follow them (`docs/plans/2026-10-
   (`HH:mm`), `durationDays`, and per-year `overrides`.
 - Pure logic is in `backend/src/utils/annualDates.ts`, mirrored in `frontend/src/utils/annualDates.ts`.
 - The occurrence year is the calendar year, never the Comms Calendar cycle.
-- `frontend/src/utils/dateDetection.ts` (chrono-node, strict) finds dates in the body and blurb text.
-  `components/dates/DatesPanel.tsx` (on the request form and the review page) tracks and links them.
+- `frontend/src/utils/dateDetection.ts` (chrono-node, strict, and a month name or numeric date must be written)
+  finds dates in the body and blurb text (`blockTextFromLexical`, a line break per block and list item).
+- `components/dates/DatesPanel.tsx` (on the request form and the review page) groups mentions of the same date
+  (`dateGroups.ts`), shows the words around each, and tracks, links and updates every mention at once.
+- On the review page `DateBubbles.tsx` overlays the editor: each date is underlined in its status color with a
+  bubble in the margin that opens its row; clicking a mention in the panel scrolls to it. Outside the document,
+  so tracked changes and Yjs never see it
 - A request's `dateLinks` are saved by `PUT /content/submissions/:id/date-links`; PUT
   `/submissions/:id` ignores them. A key date's `annualDateId` goes through the newsletter PATCH.
 - Links never change text by themselves. **Update text** rewrites the date in its written style: a
