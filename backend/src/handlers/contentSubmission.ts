@@ -10,6 +10,10 @@ import { buildAnnouncementEmail, embedGalleryImages } from '../services/announce
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { getCouncilManagersForRole } from '../services/councilManagerService';
+import { getActiveCommsCadreEmails, isCommsCadre } from '../services/commsCadreService';
+import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
+import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
+import { getEdition, publishDocumentPage } from '../services/newsletterService';
 import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
 
 export const router = AutoRouter({ base: '/api/content' });
@@ -60,8 +64,7 @@ export async function recomputeApprovalStatus(submission: ContentSubmission, env
   );
 
   // Load comms cadre active list
-  const commsCadreList = (await getObject<any[]>('comms_cadre:active', env)) || [];
-  const commsCadreEmails = new Set((commsCadreList.filter(m => m.active).map(m => (m.email || '').trim().toLowerCase())));
+  const commsCadreEmails = await getActiveCommsCadreEmails(env);
 
   // Load all council manager emails across roles
   const councilEmails = await loadCouncilEmails(env);
@@ -225,10 +228,7 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
   });
 
   // --- Comms cadre gate ---
-  const commsCadreList = (await getObject<any[]>('comms_cadre:active', env)) || [];
-  const commsCadreEmails = new Set(
-    commsCadreList.filter(m => m.active).map(m => (m.email || '').trim().toLowerCase())
-  );
+  const commsCadreEmails = await getActiveCommsCadreEmails(env);
 
   const commsCadreApproval = uniqueApprovals.find(a => {
     const email = (a.approverEmail || '').trim().toLowerCase();
@@ -271,10 +271,44 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
   };
 }
 
+/**
+ * The request form's newsletter fields, validated: audience keys, writing help, the
+ * newsletter item (only kept when the audience includes the newsletter) and key dates.
+ */
+function cleanNewsletterFields(input: any): Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'> {
+  const out: Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'> = {};
+  if (Array.isArray(input.audiences)) {
+    out.audiences = input.audiences.filter((a: unknown) => typeof a === 'string' && a.trim()).map((a: string) => a.trim()).slice(0, 20);
+  }
+  const writingHelp = cleanWritingHelp(input.writingHelp);
+  if (writingHelp.document || writingHelp.blurb) out.writingHelp = writingHelp;
+  const keyDates = cleanKeyDates(input.keyDates);
+  if (keyDates.length) out.keyDates = keyDates;
+  if (input.newsletter && (out.audiences || []).includes('newsletter')) {
+    out.newsletter = cleanNewsletterRequest(input.newsletter);
+  }
+  return out;
+}
+
+// Fields only this server sets (newsletter placement and public pages) or that have their own
+// endpoint (PATCH /submissions/:id/newsletter); PUT bodies often carry a stale loaded copy.
+const PUT_IGNORED_FIELDS = [
+  'newsletter', 'keyDates', 'writingHelp',
+  'newsletterEditionId', 'newsletterSentIn', 'publicSlug', 'publicPublishedAt',
+] as const;
+
 // Create a new content submission
 router.post('/submissions', withAuth, async (request: Request, env: any) => {
   const submission: Partial<ContentSubmission> = await request.json();
   const user = (request as any).user as User;
+
+  let newsletterFields: Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'>;
+  try {
+    newsletterFields = cleanNewsletterFields(submission);
+  } catch (err) {
+    if (err instanceof InputError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
 
   const newSubmission: ContentSubmission = {
     id: crypto.randomUUID(),
@@ -291,7 +325,8 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     councilManagerApprovals: [],
     announcementSent: false,
     assignedCouncilManagers: submission.assignedCouncilManagers || [],
-    requiredApprovers: submission.requiredApprovers || []
+    requiredApprovers: submission.requiredApprovers || [],
+    ...newsletterFields,
   };
   // The content as submitted, kept unchanged for the Original view (accept / reject
   // rewrite content and richTextContent). A copy of exactly what is stored above.
@@ -455,9 +490,13 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   const approvalGates = await computeApprovalGates(submission, env);
 
   // Merge proposed versions into submission if they exist
+  const placedIn = submission.newsletterEditionId ? await getEdition(submission.newsletterEditionId, env).catch(() => null) : null;
   const submissionWithProposedVersions = {
     ...submission,
     approvalGates,
+    ...(placedIn && placedIn.sections.some((s) => s.sourceSubmissionId === submission.id)
+      ? { newsletterPlacement: { editionId: placedIn.id, number: placedIn.number, status: placedIn.status } }
+      : {}),
     proposedVersions: savedProposedVersions ? {
       richTextContent: savedProposedVersions.proposedVersionsRichText,
       content: savedProposedVersions.proposedVersionsContent,
@@ -517,6 +556,10 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     else (updatedSubmission as any)[key] = submission[key];
   }
   delete (updatedSubmission as any).proposedVersions;
+  for (const key of PUT_IGNORED_FIELDS) {
+    if (submission[key] === undefined) delete (updatedSubmission as any)[key];
+    else (updatedSubmission as any)[key] = submission[key];
+  }
 
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);
@@ -918,6 +961,73 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   return json({ success: true, comment: newComment });
 });
 
+// The newsletter item, key dates and writing help. Not tracked changes: the submitter,
+// required approvers, the Comms Cadre and Admins edit them directly (the cadre may write the
+// blurb for someone who asked for help). Fixed once the item has gone out in an edition.
+router.patch('/submissions/:id/newsletter', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const body = await request.json().catch(() => ({}));
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  const canEdit = user.userType === UserType.Admin ||
+    submission.submittedBy === user.id ||
+    (submission.requiredApprovers || []).some((e) => (e || '').toLowerCase() === (user.email || '').toLowerCase()) ||
+    await isCommsCadre(user, env);
+  if (!canEdit) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+  if (submission.newsletterSentIn) {
+    return json({ error: `This item went out in issue #${submission.newsletterSentIn} and can no longer change` }, { status: 409 });
+  }
+
+  try {
+    if ('newsletter' in body) {
+      if (body.newsletter) submission.newsletter = cleanNewsletterRequest(body.newsletter);
+      else delete submission.newsletter;
+    }
+    if ('keyDates' in body) {
+      const keyDates = cleanKeyDates(body.keyDates);
+      if (keyDates.length) submission.keyDates = keyDates;
+      else delete submission.keyDates;
+    }
+    if ('writingHelp' in body) {
+      const writingHelp = cleanWritingHelp(body.writingHelp);
+      if (writingHelp.document || writingHelp.blurb) submission.writingHelp = writingHelp;
+      else delete submission.writingHelp;
+    }
+  } catch (err) {
+    if (err instanceof InputError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
+  submission.updatedAt = new Date().toISOString();
+
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  await broadcastToSubmissionRoom(id, {
+    type: 'content_updated',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: {
+      title: submission.title,
+      status: submission.status,
+      changes: { newsletter: submission.newsletter, keyDates: submission.keyDates, writingHelp: submission.writingHelp },
+    },
+  }, env);
+
+  return json({
+    newsletter: submission.newsletter || null,
+    keyDates: submission.keyDates || [],
+    writingHelp: submission.writingHelp || {},
+    updatedAt: submission.updatedAt,
+  });
+});
+
 // The announcement email as it would be sent: subject, recipient, Reply-To, HTML and text.
 // Built by the same code as send-email, so the review page's Send view shows exactly what goes
 // out. Anyone who can view the submission can preview it (in any status).
@@ -956,6 +1066,12 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
+  // A newsletter item goes out in a newsletter edition, not on its own
+  const audiences = audienceKeys(submission, await getTrackedChanges(id, env));
+  if (audiences.includes('newsletter') && !audiences.some((a) => STANDALONE_EMAIL_AUDIENCES.has(a))) {
+    return json({ error: 'This request goes out in the newsletter. Add it to an edition instead.' }, { status: 409 });
+  }
+
   // The list comes from config so dev and staging can't email the real announcement list
   const toAddress = env.ANNOUNCE_EMAIL_TO;
   if (!toAddress) {
@@ -982,6 +1098,12 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
 
     await putObject(`content_submissions/${id}`, submission, env);
     await deleteObject('content_submissions/list', env);
+    // Its public page, so a later newsletter can link to it ("Read more")
+    try {
+      await publishDocumentPage(id, env);
+    } catch (err) {
+      console.error('Could not publish the public page of', id, err);
+    }
 
     await broadcastToSubmissionRoom(id, {
       type: 'status_changed',

@@ -175,6 +175,144 @@ export interface ContentSubmission {
   approvalOverrideAt?: string;
   sentBy?: string;
   sentAt?: string;
+  /** Audience keys ('newsletter', 'singular', ...). Older submissions only have the labels in formFields.audience; read both through audienceKeys(). */
+  audiences?: string[];
+  /** The submitter asked Comms to write the full document and/or the newsletter blurb. */
+  writingHelp?: WritingHelp;
+  /** The newsletter item, when the audience includes the newsletter. Edited directly, not through tracked changes. */
+  newsletter?: NewsletterRequest;
+  /** Dates and deadlines; they go in the newsletter calendar. */
+  keyDates?: KeyDate[];
+  /** The public "Read more" page (/news/<slug>). The slug is made when an edition links the document; the page is served once published. */
+  publicSlug?: string;
+  publicPublishedAt?: string;
+  /** The edition this item is placed in (cleared when its section is removed). */
+  newsletterEditionId?: string;
+  /** The number of the edition this item went out in. */
+  newsletterSentIn?: number;
+  updatedAt?: string;
+}
+
+export interface WritingHelp {
+  document?: boolean;
+  blurb?: boolean;
+}
+
+/** A date or deadline (YYYY-MM-DD, with an optional end date) for the newsletter calendar. */
+export interface KeyDate {
+  date: string;
+  endDate?: string;
+  label: string;
+  link?: string;
+  linkLabel?: string;
+}
+
+export interface NewsletterLink {
+  label: string;
+  url: string;
+}
+
+export interface NewsletterPhoto {
+  /** Gallery URL (/api/gallery/<file>) or an absolute http(s) URL. */
+  src: string;
+  mediumSrc?: string;
+  alt: string;
+  credit?: string;
+  caption?: string;
+}
+
+/**
+ * Where an item's "Read more" goes: nowhere, the full document (its public page), or a URL.
+ * In an edition, `submissionId` names the document; in a request it is the request's own.
+ */
+export interface NewsletterReadMore {
+  kind: 'none' | 'document' | 'url';
+  submissionId?: string;
+  url?: string;
+  label?: string;
+}
+
+/** What the submitter asks to have in the newsletter. */
+export interface NewsletterRequest {
+  /** Defaults to the submission title. */
+  headline?: string;
+  /** A few lines (Lexical JSON). */
+  blurb?: string;
+  photos: NewsletterPhoto[];
+  links: NewsletterLink[];
+  readMore: NewsletterReadMore;
+}
+
+export type NewsletterEditionStatus = 'draft' | 'in_review' | 'approved' | 'sent';
+
+/** One section of an edition: a snapshot of a request's newsletter item, or written by the cadre. */
+export interface NewsletterSection {
+  id: string;
+  kind: 'item' | 'custom';
+  /** The request this section was made from, and a hash of its newsletter item at that time. */
+  sourceSubmissionId?: string;
+  sourceHash?: string;
+  heading: string;
+  /** Shown as a highlighted panel ("Important: ..."). */
+  important?: boolean;
+  /** Lexical JSON. */
+  body: string;
+  photos: NewsletterPhoto[];
+  links: NewsletterLink[];
+  readMore: NewsletterReadMore;
+  keyDates: KeyDate[];
+}
+
+/** A calendar row added by hand (rows from sections are derived when rendering). */
+export interface CalendarRow extends KeyDate {
+  id: string;
+}
+
+export interface EditionApproval {
+  id: string;
+  approverId: string;
+  approverEmail: string;
+  approverName: string;
+  /** Which gates this person counted for when they decided. */
+  asCommsCadre: boolean;
+  asCommsManager: boolean;
+  status: 'approved' | 'rejected';
+  comment?: string;
+  /** The edition version this decision is about; a later edit makes it stale. */
+  version: number;
+  createdAt: string;
+}
+
+export interface NewsletterEdition {
+  id: string;
+  number: number;
+  /** Masthead. */
+  title: string;
+  tagline: string;
+  /** Subject before " - Ranger News #N". */
+  subject: string;
+  /** Optional opening text under the masthead (Lexical JSON). */
+  intro?: string;
+  sections: NewsletterSection[];
+  calendar: CalendarRow[];
+  /** Keys (calendarRowKey) of derived calendar rows the cadre removed. */
+  calendarHidden: string[];
+  /** Footnotes (Lexical JSON). */
+  footnotes?: string;
+  replyTo?: string;
+  status: NewsletterEditionStatus;
+  /** Bumped on every content change; saves must name the version they edited. */
+  version: number;
+  approvals: EditionApproval[];
+  approvedVersion?: number;
+  approvalOverride?: { by: string; byName: string; reason: string; at: string; version: number };
+  comments: ContentComment[];
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  sentBy?: string;
+  sentAt?: string;
 }
 
 export interface FormField {
@@ -441,7 +579,8 @@ export type NotificationType =
   | 'ready_to_send'
   | 'comment_on_change'
   | 'comment_reply'
-  | 'changes_requested';
+  | 'changes_requested'
+  | 'newsletter_review';
 
 export interface AppNotification {
   id: string;
@@ -452,6 +591,8 @@ export interface AppNotification {
   submissionId?: string;
   submissionTitle?: string;
   actorName?: string;
+  /** Where the notification opens, when it isn't a request's review page. */
+  link?: string;
   read: boolean;
   createdAt: string;
 }

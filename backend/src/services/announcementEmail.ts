@@ -87,6 +87,11 @@ export async function approvedDocument(submission: ContentSubmission, changes: T
   return [submission.richTextContent, submission.content].find((c) => typeof c === 'string' && c.trim()) || '';
 }
 
+function renderHeadlineHtml(subject: string): string {
+  if (!subject) return '';
+  return `<h1 style="margin:0 0 16px 0;font-family:${EMAIL_FONT_FAMILY};font-size:28px;line-height:1.25;font-weight:bold;color:#7d5c00;">${escapeHtml(subject)}</h1>`;
+}
+
 function renderSignatureHtml(signature: string): string {
   if (!signature.trim()) return '';
   const lines = escapeHtml(signature.replace(/\r\n?/g, '\n').trim()).replace(/\n/g, '<br>');
@@ -115,7 +120,15 @@ export function wrapAnnouncementHtml(subject: string, bodyHtml: string, signatur
     + '</body></html>';
 }
 
-export async function buildAnnouncementEmail(submission: ContentSubmission, env: Env): Promise<AnnouncementEmail> {
+/**
+ * `headline`: start the HTML with the Subject as a heading (for the public web page, where
+ * there is no email subject line above it).
+ */
+export async function buildAnnouncementEmail(
+  submission: ContentSubmission,
+  env: Env,
+  options: { headline?: boolean } = {},
+): Promise<AnnouncementEmail> {
   const changes = await getTrackedChanges(submission.id, env);
 
   const subject = approvedFieldValue(changes, 'title', submission.title || '')
@@ -142,7 +155,7 @@ export async function buildAnnouncementEmail(submission: ContentSubmission, env:
     ...(replyToValue && !replyTo ? { replyToInvalid: replyToValue } : {}),
     audience,
     signature: signatureText,
-    html: wrapAnnouncementHtml(subject, body.html, signatureText),
+    html: wrapAnnouncementHtml(subject, (options.headline ? renderHeadlineHtml(subject) : '') + body.html, signatureText),
     text,
   };
 }
