@@ -19,7 +19,7 @@ import { UndoToast } from './review/UndoToast';
 import { changeIdAtPoint, revealChangeInEditor } from './editor/collab/changeReveal';
 import { locateChange } from './editor/collab/rejectRestore';
 import { describeChange, ChangeDescription } from '../utils/changeDescriptions';
-import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, countOpenEdits, pairMoves, pendingOnly } from '../utils/reviewItems';
+import { ChangeCard, HistoryEntry, OpenItem, buildHistory, buildOpenItems, commentChangeId, countOpenEdits, findMovePartner, pairMoves, pendingOnly } from '../utils/reviewItems';
 import { ApprovalGates } from '../types/content';
 import { originalDocument } from '../utils/originalContent';
 import { buildResolveHints } from '../utils/resolveHints';
@@ -160,6 +160,17 @@ function applyOverrides<T extends Change>(changes: T[], overrides: ReadonlyMap<s
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+/** The dry run of a move's reject (deletion, then insertion), each half with the other as its partner. */
+function moveRejectPlan(deletion: TrackedChange, insertion: TrackedChange) {
+  const docs = (c: TrackedChange) => (c.richTextOldValue && c.richTextNewValue
+    ? { before: c.richTextOldValue, after: c.richTextNewValue }
+    : undefined);
+  return [
+    { id: deletion.id, before: deletion.richTextOldValue, after: deletion.richTextNewValue, movePartner: docs(insertion) },
+    { id: insertion.id, before: insertion.richTextOldValue, after: insertion.richTextNewValue, movePartner: docs(deletion) },
+  ];
+}
 
 interface RealtimeNotification {
   id: string;
@@ -1382,6 +1393,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Set below: puts changes back to pending on the server (cascaded ones the document
   // couldn't revert).
   const restorePendingRef = useRef<(ids: string[]) => Promise<void>>(async () => {});
+  // Set below (with the sidebar's describe): the two documents of the other half of the
+  // move a change belongs to, for a reject by context (rejectRestore's movePartner: the
+  // partner's restored text is not taken for this change's, so an insertion whose text is
+  // already gone rejects as a no-op instead of removing the deletion's restored copy).
+  const movePartnerDocsRef = useRef<(changeId: string) => { before: string; after: string } | undefined>(() => undefined);
 
   // Handle change decision (approve/reject) — fully local, no network on hot path.
   // Returns false when a collaborative reject couldn't revert the document (the change
@@ -1433,6 +1449,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const resolveDetail: ResolveTrackedChangeDetail = {
       changeId, action: decision === 'approve' ? 'approve' : 'reject', deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds,
       richTextOldValue: change?.richTextOldValue, richTextNewValue: change?.richTextNewValue,
+      movePartner: isCollab && decision === 'reject' ? movePartnerDocsRef.current(changeId) : undefined,
     };
     window.dispatchEvent(new CustomEvent('resolve-tracked-change', { detail: resolveDetail }));
 
@@ -1542,7 +1559,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // Dry run first: a change that can't be reverted is left out, and so is the other half
     // of its move (reverting only one half would duplicate or drop the moved text).
     const failedIds: string[] = [];
-    const plan = dryRunRejects(getActiveTrackedChangesEditor(), all.map(c => ({ id: c.id, before: c.richTextOldValue, after: c.richTextNewValue })));
+    const plan = dryRunRejects(getActiveTrackedChangesEditor(), all.map(c => ({
+      id: c.id, before: c.richTextOldValue, after: c.richTextNewValue, movePartner: movePartnerDocsRef.current(c.id),
+    })));
     all.forEach(c => { if (plan.get(c.id) === false) failedIds.push(c.id); });
     for (const card of pairMoves(all)) {
       if (card.type === 'move' && card.ids.some(id => failedIds.includes(id))) {
@@ -1555,7 +1574,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     for (const c of cascaded) {
       const detail: ResolveTrackedChangeDetail = {
         changeId: c.id, action: 'reject', deletedTexts: [], pendingAuthorIds: c.changedBy ? [c.changedBy] : undefined,
-        richTextOldValue: c.richTextOldValue, richTextNewValue: c.richTextNewValue,
+        richTextOldValue: c.richTextOldValue, richTextNewValue: c.richTextNewValue, movePartner: movePartnerDocsRef.current(c.id),
       };
       window.dispatchEvent(new CustomEvent('resolve-tracked-change', { detail }));
       // Often the first reject removed its text along with its own (then it is found
@@ -1906,6 +1925,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     return description;
   }, []);
 
+  movePartnerDocsRef.current = (changeId: string) => {
+    const partner = findMovePartner(allTrackedChangesRef.current, changeId, describe);
+    return partner?.richTextOldValue && partner.richTextNewValue
+      ? { before: partner.richTextOldValue, after: partner.richTextNewValue }
+      : undefined;
+  };
+
   // Document position of each pending change (and of changes with comments), from the
   // reject locator run against the live document. Field changes (subject, ...) come first.
   // Debounced: it diffs whole documents.
@@ -2014,9 +2040,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // reverted (its text was edited since), nothing is decided: rejecting only the
     // deletion would put the text back while the pasted copy stays.
     if (isCollab && decision === 'reject' && card.type === 'move') {
-      const plan = dryRunRejects(getActiveTrackedChangesEditor(), [card.deletion, card.insertion].map(c => ({
-        id: c.id, before: c.richTextOldValue, after: c.richTextNewValue,
-      })));
+      const plan = dryRunRejects(getActiveTrackedChangesEditor(), moveRejectPlan(card.deletion, card.insertion));
       if (plan.size > 0 && !Array.from(plan.values()).every(Boolean)) {
         failedRejectRef.current.clear();
         showErrorToast("Couldn't revert this move automatically: its text has been edited since. It is still pending. Edit the text by hand.");
@@ -2041,7 +2065,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const ids = openItemsRef.current.flatMap(item => {
       if (item.type === 'comment') return [];
       if (editor && item.type === 'move') {
-        const plan = dryRunRejects(editor, [item.deletion, item.insertion].map(c => ({ id: c.id, before: c.richTextOldValue, after: c.richTextNewValue })));
+        const plan = dryRunRejects(editor, moveRejectPlan(item.deletion, item.insertion));
         if (!Array.from(plan.values()).every(Boolean)) {
           console.warn(`[RESOLVE] Reject all: the move ${item.ids.join(' + ')} can't be reverted as a whole; left pending`);
           return [];

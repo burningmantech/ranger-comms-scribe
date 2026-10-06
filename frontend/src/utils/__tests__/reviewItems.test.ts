@@ -6,6 +6,7 @@ import {
   buildHistory,
   buildOpenItems,
   countOpenEdits,
+  findMovePartner,
   orderByPosition,
   pairMoves,
   pendingOnly,
@@ -171,5 +172,31 @@ describe('countOpenEdits (the Open tab and conditions popover count)', () => {
   it('counts only pending change records', () => {
     expect(countOpenEdits([change('c1', DOC, CUT), change('c2', CUT, PASTED, { status: 'rejected' })])).toBe(1);
     expect(countOpenEdits([])).toBe(0);
+  });
+});
+
+describe('findMovePartner', () => {
+  it('finds the other half of a pending move', () => {
+    const list = [change('c1', DOC, CUT), change('c2', CUT, PASTED)];
+    expect(findMovePartner(list, 'c1')?.id).toBe('c2');
+    expect(findMovePartner(list, 'c2')?.id).toBe('c1');
+  });
+
+  it('finds it when the halves disagree (the deletion rejected, the insertion pending)', () => {
+    const list = [change('c1', DOC, CUT, { status: 'rejected' }), change('c2', CUT, PASTED)];
+    expect(findMovePartner(list, 'c2')?.id).toBe('c1');
+  });
+
+  it('prefers the pending pairing (as the Open list shows it)', () => {
+    // An older rejected deletion of the same text, and the pending move.
+    const list = [change('c1', DOC, CUT, { status: 'rejected' }), change('c3', DOC, CUT), change('c4', CUT, PASTED)];
+    expect(findMovePartner(list, 'c4')?.id).toBe('c3');
+  });
+
+  it('is undefined for a change that is not half of a move', () => {
+    const list = [change('c1', 'a', 'ab'), change('c2', DOC, CUT)];
+    expect(findMovePartner(list, 'c1')).toBeUndefined();
+    expect(findMovePartner(list, 'c2')).toBeUndefined();
+    expect(findMovePartner(list, 'missing')).toBeUndefined();
   });
 });

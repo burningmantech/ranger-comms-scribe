@@ -134,6 +134,78 @@ describe('move (cut a section, paste it elsewhere): reject both halves', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A move's insertion when its deletion is already rejected (movePartner)
+// ---------------------------------------------------------------------------
+
+describe('move: the insertion with its deletion rejected (movePartner)', () => {
+  // The dev-site document: a bold heading with a line break and its list, cut (an empty
+  // paragraph is left) and pasted over the empty paragraph before "General Info:".
+  const R = p('Rangers Ticketing Team');
+  const C = p('The Clubhouse Ticketing is now open. Read everything below.');
+  const NEW = p(t('New for 2026:', 1), ' ', LB);
+  const L2 = list('Special Price Tickets will cost $250 plus fees.', 'All Setup Access Passes are sent in one email.');
+  const K = p('Key Things to Know for 2026:');
+  const L1 = list('Only claim a Vehicle Pass if you need one.', 'Make sure you pay for both in one cart.');
+  const GI = p('General Info:');
+  const LAST = p('Last paragraph text. Typed by A.');
+  const original = doc(R, C, NEW, L2, K, L1, EMPTY, GI, LAST);
+  const cut = doc(R, C, EMPTY, K, L1, EMPTY, GI, LAST);
+  const pasted = doc(R, C, EMPTY, K, L1, NEW, L2, GI, LAST);
+  const deletion = { before: original, after: cut };
+  const insertion = { before: cut, after: pasted };
+
+  const plan = (live: Doc, partner?: { before: Doc; after: Doc }) =>
+    planRejectRestore(insertion.before, insertion.after, live.root.children, partner ? { movePartner: partner } : {});
+
+  it('without the partner, the insertion is matched to the restored copy (why the option exists)', () => {
+    // The deletion's restored text looks like the insertion's: the reject would remove it.
+    const result = plan(original);
+    expect(result.ok && result.replacements.length > 0).toBe(true);
+  });
+
+  it('its text gone and the deletion rejected: rejecting it changes nothing', () => {
+    expect(plan(original, deletion)).toEqual({ ok: true, replacements: [] });
+  });
+
+  it('the deletion rejected first, then the insertion: the original document', () => {
+    const mid = rejectOk(deletion.before, deletion.after, pasted);
+    const result = plan(mid, deletion);
+    if (!result.ok) throw new Error(result.reason);
+    expectSame(doc(...applyBlockReplacements(mid.root.children, result.replacements)), original);
+  });
+
+  it('the deletion pending (the move intact): the pasted copy is removed as usual', () => {
+    const result = plan(pasted, deletion);
+    if (!result.ok) throw new Error(result.reason);
+    expectSame(doc(...applyBlockReplacements(pasted.root.children, result.replacements)), cut);
+  });
+
+  it('the partner is ignored when it is not where it was cut (no restored text to set aside)', () => {
+    // A doc with neither copy: the insertion is already gone, the deletion not restored.
+    expect(plan(cut, deletion)).toEqual({ ok: true, replacements: [] });
+  });
+
+  // The bug-report shapes: the same, with the partner given.
+  const shapes: Array<[string, Doc, Doc]> = [
+    ['cut whole paragraphs, paste mid-paragraph', doc1, pasteMid([W, T])],
+    ['cut leaves an empty paragraph, paste mid-paragraph', doc1Empty, pasteMid([W, EMPTY, T])],
+    ['cut whole paragraphs, paste as paragraphs', doc1, pasteBlocks([W, T])],
+    ['cut leaves an empty paragraph, paste as paragraphs', doc1Empty, pasteBlocks([W, EMPTY, T])],
+  ];
+  for (const [name, afterCut, afterPaste] of shapes) {
+    it(`${name}: deletion then insertion with the partner gives the original; the insertion again changes nothing`, () => {
+      const del = { before: doc0, after: afterCut };
+      const mid = rejectOk(del.before, del.after, afterPaste);
+      const r = planRejectRestore(afterCut, afterPaste, mid.root.children, { movePartner: del });
+      if (!r.ok) throw new Error(r.reason);
+      const end = doc(...applyBlockReplacements(mid.root.children, r.replacements));
+      expectSame(end, doc0);
+      expect(planRejectRestore(afterCut, afterPaste, end.root.children, { movePartner: del })).toEqual({ ok: true, replacements: [] });
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Single changes
 // ---------------------------------------------------------------------------
 

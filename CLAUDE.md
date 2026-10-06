@@ -176,7 +176,10 @@ WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST AP
 
 `backend/src/services/cacheService.ts` keeps a module-level in-memory TTL map in front of `env.STORE`.
 Listings (`__list__:<prefix>`) are cached in memory only; everything written with `putObject` also goes
-to the store. Always invalidate when updating entities.
+to the store. Always invalidate when updating entities. A store read that a write or invalidation of the
+same key overtakes is returned but not cached. Never `putObject` a copy derived from reads (e.g. a
+`change:` shadow or an array of all changes): a copy built from a read that raced a write keeps the old
+value in the store and hides the write. Tracked changes are read straight from their own keys.
 
 ### Service Layer Pattern
 
@@ -241,7 +244,7 @@ Read once at boot by `backend/src/config/env.ts` (full list in the contracts doc
 - `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` (CSV)
 - `BOOTSTRAP_ADMIN_EMAILS` (CSV), `GOOGLE_CLIENT_ID`, `TURNSTILESECRET`
 - `DEV_BYPASS_AUTH=true` for fake dev users (local only)
-- `STORE_DRIVER=memory` to skip S3 (tests, quick local runs)
+- `STORE_DRIVER=memory` to skip S3 (tests, quick local runs); `STORE_LATENCY_MS=<n>` adds random S3-like delays
 
 AWS credentials come from the default credential chain (task role on ECS; a profile or the MinIO keys locally).
 

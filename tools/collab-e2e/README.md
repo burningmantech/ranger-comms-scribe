@@ -35,12 +35,24 @@ node stray-marker.js      # the dev-site Moved card: deletion markers stamped on
                           # transaction, a paragraph + list moved over an empty paragraph rejects
                           # exactly; a move whose paste was rewritten is rejected all or nothing and
                           # a failed reject never carries over to another card
+node moved-cycles.js      # a Moved card through reject -> Undo (History) -> reject -> ... cycles, a plain change,
+                          # Accept + undo: at every step the server has both halves in the same state, matching
+                          # the document, the cards and History. Holds back one half's status PUT so they reach
+                          # the server apart, as on the dev site. Then forces the dev bug's leftover (deletion
+                          # rejected, insertion pending with its text gone) and rejects the lone insertion: a
+                          # no-op, no "Couldn't revert". Start the backend with STORE_LATENCY_MS=60 (below)
 node member.js            # a Member (dev-member): /requests loads with no redirect loop, New Request form
                           # (no early step errors, approver picked from the suggestions, no /api/admin/
                           # calls), types on its request and it saves, no Finish review menu; dev-user2
                           # rejects the edit and the member's card goes live. Fails on any console error.
                           # Needs the backend started as below (it seeds an approver as a bootstrap admin)
 ```
+
+`STORE_LATENCY_MS=<n>` (with `STORE_DRIVER=memory`) delays every store call by a random 0..n ms, like S3 round
+trips. The in-memory store answers at once, which hides races that only S3's latency exposes: `moved-cycles.js`
+found a read-through cache race this way (a status read overtaken by a concurrent write, cached, hid the write).
+Use it for `moved-cycles.js` (it also passes without). Run `review-topbar.js` without it: it types as soon as the
+editor is editable, before a slowed first load has filled it.
 
 `member.js` stores an approved approver through the admin API, which needs a real admin session, so it
 registers and verifies a bootstrap admin first. Start the backend for it with Cloudflare's always-pass

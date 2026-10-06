@@ -50,46 +50,17 @@ export interface ChangeComment {
 // Get all tracked changes for a submission
 export const getTrackedChanges = async (submissionId: string, env: Env): Promise<TrackedChange[]> => {
   try {
-    // Cache key for all tracked changes for this submission
-    const cacheKey = `tracked_changes:submission:${submissionId}`;
-    
-    // Try to get from cache first
-    let changes = await getObject<TrackedChange[]>(cacheKey, env);
-    
-    // If not in cache, fetch from R2
-    if (!changes) {
-      // List all objects with the tracked-changes/submission/ prefix
-      const objects = await listObjects(`tracked-changes/submission/${submissionId}/`, env);
-      
-      // Create a list of promises to get each change's content
-      const changePromises = objects.objects.map(async (object: { key: string }) => {
-        // Check cache for individual change
-        const changeCacheKey = `change:${object.key}`;
-        const cachedChange = await getObject<TrackedChange>(changeCacheKey, env);
-        
-        if (cachedChange) {
-          return cachedChange;
-        }
-        
-        // If not in cache, get from R2
-        const changeObject = await env.STORE.get(object.key);
-        if (!changeObject) return null;
-        
-        const change = await changeObject.json() as TrackedChange;
-        
-        // Cache individual change
-        await putObject(changeCacheKey, change, env, undefined, 3600); // Cache for 1 hour
-        
-        return change;
-      });
-      
-      // Wait for all promises to resolve and filter out null values
-      changes = (await Promise.all(changePromises)).filter((change: any): change is TrackedChange => change !== null);
-      
-      // Cache all changes for this submission
-      await putObject(cacheKey, changes, env, undefined, 300); // Cache for 5 minutes
-    }
-    
+    // Every change through the read-through cache (cacheService), which never caches a
+    // read that a concurrent write overtook. No derived copies: a `change:<key>` shadow or
+    // a cached array of all changes, rebuilt from reads that raced a status write, kept the
+    // old status (in the store, too) and hid the write: a Moved card's insertion stayed
+    // pending on the server after its reject (the deletion's PUT read it meanwhile).
+    // Legacy `change:` / `tracked_changes:submission:` objects in the store are ignored.
+    const objects = await listObjects(`tracked-changes/submission/${submissionId}/`, env);
+    const changes = (await Promise.all(
+      objects.objects.map((object: { key: string }) => getObject<TrackedChange>(object.key, env))
+    )).filter((change: TrackedChange | null): change is TrackedChange => change !== null);
+
     // Sort changes by timestamp (newest first)
     return changes.sort((a: TrackedChange, b: TrackedChange) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch (error) {
@@ -319,16 +290,9 @@ export const createTrackedChange = async (
       regionMap
     };
 
-    // Store the change in R2 and cache
+    // Store the change (putObject also updates the cache and the cached listing)
     const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
     await putObject(changeKey, newChange, env);
-    
-    // Also cache it individually
-    const cacheKey = `change:${changeKey}`;
-    await putObject(cacheKey, newChange, env, undefined, 3600); // Cache for 1 hour
-    
-    // Invalidate the submission's tracked changes cache
-    await deleteObject(`tracked_changes:submission:${submissionId}`, env);
 
     // The cached proposed document predates this change, so drop it and let the next
     // read recompute it (a stale copy reseeds the editor without this edit).
@@ -376,15 +340,8 @@ export const updateChangeStatus = async (
       richTextNewValue: status === 'approved' ? change.richTextNewValue : change.richTextNewValue
     };
     
-    // Store the updated change in R2 and cache
+    // Store the updated change (putObject also updates the cache)
     await putObject(changeKey, updatedChange, env);
-    
-    // Also cache it individually
-    const cacheKey = `change:${changeKey}`;
-    await putObject(cacheKey, updatedChange, env, undefined, 3600); // Cache for 1 hour
-    
-    // Invalidate the submission's tracked changes cache
-    await deleteObject(`tracked_changes:submission:${change.submissionId}`, env);
 
     // Invalidate the cached proposed versions so they're recomputed on next fetch
     await deleteObject(`proposed_versions/${change.submissionId}`, env);
@@ -1070,16 +1027,8 @@ export const undoChange = async (
       ...(targetChange.status === 'rejected' ? { reappliedAt: new Date().toISOString() } : {}),
     };
     
-    // Save the updated change
+    // Save the updated change (putObject also updates the cache)
     await putObject(changeKey, updatedChange, env);
-    
-    // Clear cache for this change
-    const changeCacheKey = `change:${changeKey}`;
-    await deleteObject(changeCacheKey, env);
-    
-    // Clear cache for the submission's tracked changes
-    const submissionCacheKey = `tracked_changes:submission:${targetChange.submissionId}`;
-    await deleteObject(submissionCacheKey, env);
 
     // Invalidate the cached proposed versions so they're recomputed on next fetch
     await deleteObject(`proposed_versions/${targetChange.submissionId}`, env);
@@ -1113,13 +1062,8 @@ export const deleteChange = async (
     // Delete the change from R2 and cache
     await deleteObject(changeKey, env);
 
-    // Also remove the individual cache entry
-    const changeCacheKey = `change:${changeKey}`;
-    await deleteObject(changeCacheKey, env);
-
-    // Invalidate the submission's tracked changes cache
-    const submissionCacheKey = `tracked_changes:submission:${submissionId}`;
-    await deleteObject(submissionCacheKey, env);
+    // Also remove the legacy shadow copy, if one was stored
+    await deleteObject(`change:${changeKey}`, env);
 
     // Invalidate the cached proposed versions so they're recomputed on next fetch
     await deleteObject(`proposed_versions/${submissionId}`, env);
@@ -1281,16 +1225,11 @@ export const batchCreateTrackedChanges = async (
       const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
       await putObject(changeKey, newChange, env);
 
-      // Cache individually
-      const cacheKey = `change:${changeKey}`;
-      await putObject(cacheKey, newChange, env, undefined, 3600);
-
       createdChanges.push(newChange);
       createdKeys.push(changeKey);
     }
 
-    // Invalidate the submission's tracked changes cache and the cached proposed document
-    await deleteObject(`tracked_changes:submission:${submissionId}`, env);
+    // Invalidate the cached proposed document
     await deleteObject(`proposed_versions/${submissionId}`, env);
 
     return createdChanges;
