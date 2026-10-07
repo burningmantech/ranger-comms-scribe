@@ -356,9 +356,9 @@ Replaces the Comms "Announce Messages and Comms Queue" spreadsheet (`/comms-cale
   `commsCadre`) from the Remind buttons in the approval conditions popover. Reviewers and the submitter, while
   `submitted`/`in_review`; once per target per 20 hours; email plus an in-app notification, not to the sender;
   logged in `submission.reminders`
-- **Admin** is only People (`PeopleManagement.tsx`): access, plus Add people (`/admin/bulk-create-users`, then
-  the access PUT for a role). The old Groups, Bulk add, Reminders and Templates tabs are gone. Admin routes
-  don't take the `DEV_BYPASS_AUTH` sessions
+- **Admin** is People (`PeopleManagement.tsx`: access, each person's feedback tab, plus Add people
+  (`/admin/bulk-create-users`, then the access PUT for a role)) and Feedback (`FeedbackAdmin.tsx`, below). The old
+  Groups, Bulk add, Reminders and Templates tabs are gone. Admin routes don't take the `DEV_BYPASS_AUTH` sessions
 
 ## Annual dates
 
@@ -386,6 +386,25 @@ Things that happen every year, so requests can follow them (`docs/plans/2026-10-
   tracked change in the body, or an unsaved blurb edit.
 - Anyone signed in adds entries. Comms Calendar editors (and the entry's creator) change and delete them.
   The table is the Annual dates tab on `/comms-calendar`.
+
+## Feedback tab
+
+A tab on the right edge of every page (`components/FeedbackCarrot.tsx`) opens a small panel to say what happened:
+- **Who sees it**: the person's `feedbackEnabled` (true/false) if set, else the global switch at `settings/feedback`
+  (off by default). `GET /api/feedback/config` answers for the signed-in person; the tab re-reads it on focus.
+  Admins set the global switch on Admin → Feedback (`PUT /api/admin/feedback/settings`) and a person's on People
+  (`PUT /api/admin/people/:id/feedback {enabled: true|false|null}`; not access, so not the access PUT)
+- **What's sent**: the message, a JPEG of the window (`utils/screenshot.ts`, html2canvas-pro, loaded on open; the
+  tab is `data-feedback-ignore`), and `collectDiagnostics()` from `utils/diagnostics.ts`, installed in `index.tsx`
+  before render: ring buffers of fetch/XHR calls (status, timing, the calling stack, failed response bodies),
+  console, uncaught errors and rejections with stacks, navigation and clicks (never typed text), WebSockets,
+  slow/failed resources, browser and page. Session IDs are stripped from URLs and scrubbed from the result; no
+  request headers or bodies. Send with `rawFetch` so the send isn't logged
+- `POST /api/feedback` (`services/feedbackService.ts`): 403 when off for the person, 20 per hour, stores
+  `feedback/<id>` and `feedback_screenshots/<id>.jpg`, then emails every Admin (Reply-To the sender, screenshot
+  inline, diagnostics JSON attached). An email failure is recorded on the report, never fails the send
+- Admin → Feedback (`/admin?tab=feedback&id=<id>`, linked from the email) lists reports, shows one with its
+  screenshot, network, errors and steps, and marks it handled with notes
 
 ## Notifications
 

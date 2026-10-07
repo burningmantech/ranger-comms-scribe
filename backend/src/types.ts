@@ -62,6 +62,8 @@ export interface User {
     notifyOnReplies: boolean; // Notify when someone replies to posts or comments
     notifyOnGroupContent: boolean; // Notify when content is posted in groups
   };
+  /** The feedback tab: true/false for this person, or unset/null to follow the global switch (services/feedbackService.ts). */
+  feedbackEnabled?: boolean | null;
 }
 
 export interface Group {
@@ -220,6 +222,35 @@ export interface SubmissionReminder {
   by: string;
   byName: string;
   at: string;
+}
+
+/** The feedback tab's global switch, at settings/feedback (Admin → Feedback). */
+export interface FeedbackSettings {
+  /** On for everyone whose own setting is unset. */
+  enabled: boolean;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+/** Feedback sent from the tab on the right edge, at feedback/<id>; its screenshot is at feedback_screenshots/<id>.jpg. */
+export interface FeedbackReport {
+  id: string;
+  createdAt: string;
+  user: { id: string; email: string; name: string };
+  message: string;
+  /** The page the person was on (the browser strips session IDs). */
+  url: string;
+  hasScreenshot: boolean;
+  /** What the browser collected: network, console, errors with stacks, navigation (frontend/src/utils/diagnostics.ts). */
+  diagnostics: Record<string, any>;
+  clientIp?: string;
+  handled: boolean;
+  handledBy?: string;
+  handledAt?: string;
+  notes?: string;
+  /** The Admins it was emailed to, or why it wasn't. */
+  emailedTo: string[];
+  emailError?: string;
 }
 
 /** A mailing list approved announcements can be sent to (Requests → Settings). */

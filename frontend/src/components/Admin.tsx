@@ -1,23 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { API_URL } from '../config';
 import './Admin.css';
 import './RoleManagement.css';
 import Navbar from './Navbar';
 import { PeopleManagement } from './PeopleManagement';
+import { FeedbackAdmin } from './FeedbackAdmin';
 
 interface AdminProps {
   skipNavbar?: boolean;
 }
 
 /**
- * The admin area: People (who can sign in, and their roles). Mailing lists and request templates
- * are under Requests → Lists & templates; approval reminders are on each request's review page.
+ * The admin area: People (who can sign in, their roles, their feedback tab) and Feedback (the
+ * feedback tab's global switch, and what people sent: `?tab=feedback&id=<id>` opens one, as the
+ * email links). Mailing lists and request templates are under Requests → Lists & templates;
+ * approval reminders are on each request's review page.
  */
 const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
   const [status, setStatus] = useState<'checking' | 'admin' | 'denied'>('checking');
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'feedback' ? 'feedback' : 'people';
+  const feedbackId = params.get('id');
 
   useEffect(() => {
     const sessionId = localStorage.getItem('sessionId');
@@ -51,7 +57,15 @@ const Admin: React.FC<AdminProps> = ({ skipNavbar }) => {
     <div className="admin-container">
       {!skipNavbar && <Navbar />}
       <div className="admin-content">
-        <PeopleManagement />
+        <div className="admin-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'people'} className={`admin-tab ${tab === 'people' ? 'active' : ''}`} onClick={() => setParams({})}>People</button>
+          <button type="button" role="tab" aria-selected={tab === 'feedback'} className={`admin-tab ${tab === 'feedback' ? 'active' : ''}`} onClick={() => setParams({ tab: 'feedback' })}>Feedback</button>
+        </div>
+        {tab === 'people' ? (
+          <PeopleManagement />
+        ) : (
+          <FeedbackAdmin selectedId={feedbackId} onSelect={(id) => setParams(id ? { tab: 'feedback', id } : { tab: 'feedback' })} />
+        )}
       </div>
     </div>
   );

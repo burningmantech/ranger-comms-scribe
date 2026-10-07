@@ -137,5 +137,7 @@ export function personView(user: User, env: Env) {
     email: user.email,
     verified: user.verified === true,
     ...accessView(user, env),
+    /** The feedback tab: true/false, or null to follow the global switch. */
+    feedbackEnabled: typeof user.feedbackEnabled === 'boolean' ? user.feedbackEnabled : null,
   };
 }

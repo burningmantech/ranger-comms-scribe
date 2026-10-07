@@ -13,6 +13,8 @@ export interface Person {
   commsCadre: boolean;
   /** The one council role held, or null. */
   councilRole: string | null;
+  /** The feedback tab: true/false for this person, or null to follow the global switch (Admin → Feedback). */
+  feedbackEnabled: boolean | null;
 }
 
 type AccessChange = Partial<Pick<Person, 'isAdmin' | 'commsCadre' | 'councilRole'>>;
@@ -166,7 +168,15 @@ export const PeopleManagement: React.FC = () => {
   const [filter, setFilter] = useState<Filter>('all');
   const [editingName, setEditingName] = useState<{ id: string; value: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [feedbackForEveryone, setFeedbackForEveryone] = useState<boolean | null>(null);
   const me = (storedUser()?.email || '').toLowerCase();
+
+  useEffect(() => {
+    fetch(`${API_URL}/admin/feedback/settings`, { headers: authHeaders() })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => setFeedbackForEveryone(body?.settings?.enabled ?? null))
+      .catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -195,6 +205,27 @@ export const PeopleManagement: React.FC = () => {
         method: 'PUT',
         headers: authHeaders(true),
         body: JSON.stringify(patch),
+      });
+      if (!response.ok) throw new Error(await errorText(response, 'Could not save'));
+      replace((await response.json()).person);
+    } catch (err) {
+      replace(person);
+      setRowError((e) => ({ ...e, [person.id]: err instanceof Error ? err.message : 'Could not save' }));
+    } finally {
+      setSaving((s) => ({ ...s, [person.id]: false }));
+    }
+  };
+
+  // The feedback tab isn't access, so it has its own endpoint
+  const changeFeedback = async (person: Person, enabled: boolean | null) => {
+    setSaving((s) => ({ ...s, [person.id]: true }));
+    setRowError((e) => ({ ...e, [person.id]: '' }));
+    replace({ ...person, feedbackEnabled: enabled });
+    try {
+      const response = await fetch(`${API_URL}/admin/people/${encodeURIComponent(person.id)}/feedback`, {
+        method: 'PUT',
+        headers: authHeaders(true),
+        body: JSON.stringify({ enabled }),
       });
       if (!response.ok) throw new Error(await errorText(response, 'Could not save'));
       replace((await response.json()).person);
@@ -281,6 +312,7 @@ export const PeopleManagement: React.FC = () => {
               <th scope="col">Comms Cadre</th>
               <th scope="col">Council role</th>
               <th scope="col">Admin</th>
+              <th scope="col" title="The feedback tab on the right edge of every page">Feedback</th>
               <th scope="col"><span className="visually-hidden">Remove</span></th>
             </tr>
           </thead>
@@ -333,6 +365,19 @@ export const PeopleManagement: React.FC = () => {
                       <input type="checkbox" checked={p.isAdmin} disabled={isMe && p.isAdmin} onChange={(e) => change(p, { isAdmin: e.target.checked })} aria-label={`${p.email} Admin`} />
                       <span>{p.isAdmin ? 'Yes' : 'No'}</span>
                     </label>
+                  </td>
+                  <td data-label="Feedback">
+                    <select
+                      className={`people-council ${typeof p.feedbackEnabled === 'boolean' ? 'held' : ''}`}
+                      value={typeof p.feedbackEnabled !== 'boolean' ? 'default' : p.feedbackEnabled ? 'on' : 'off'}
+                      aria-label={`${p.email} feedback tab`}
+                      title="Default follows the switch on the Feedback tab"
+                      onChange={(e) => changeFeedback(p, e.target.value === 'default' ? null : e.target.value === 'on')}
+                    >
+                      <option value="default">Default{feedbackForEveryone === null ? '' : feedbackForEveryone ? ' (on)' : ' (off)'}</option>
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                    </select>
                   </td>
                   <td className="people-actions">
                     {!isMe && (confirmDelete === p.id ? (
