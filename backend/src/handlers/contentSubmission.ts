@@ -12,6 +12,7 @@ import { Access, accessOf, approverCounts, derivedRoles, derivedUserType, isAdmi
 import { accessByEmail, peopleByEmail, peopleWhere } from '../services/peopleService';
 import { listMailingLists, suggestedListIds } from '../services/mailingListService';
 import { getUser } from '../services/userService';
+import { askForApproval, becomesSubmitted, createdLive, notifyRequestSubmitted, notifySubmitter } from '../services/workflowNotifications';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
 import { getEdition } from '../services/newsletterService';
@@ -102,6 +103,7 @@ export async function syncSubmissionStatus(
       await recomputeApprovalStatus(submission, env);
     }
     const changed = submission.status !== before;
+    let nowApproved: ContentSubmission | null = null;
     if (changed) {
       // Write only the status fields, onto a fresh copy: the reads above take a while, and
       // a concurrent write (another decision, an autosave) must keep its content.
@@ -113,6 +115,7 @@ export async function syncSubmissionStatus(
       if (submission.approvalOverride !== undefined) fresh.approvalOverride = submission.approvalOverride;
       await putObject(`content_submissions/${submissionId}`, fresh, env);
       await deleteObject('content_submissions/list', env);
+      if (fresh.status === 'approved') nowApproved = fresh;
     }
     // Open review pages show the gates ("N/4 conditions met") and the status (Send): tell
     // the room either way, `status_changed` when the status changed, else `approval_state`.
@@ -127,6 +130,7 @@ export async function syncSubmissionStatus(
         approvalGates: await computeApprovalGates(submission, env),
       },
     }, env);
+    if (nowApproved) await notifySubmitter(nowApproved, 'approved', actor, env);
     return submission;
   } catch (err) {
     console.error(`Failed to sync the status of submission ${submissionId}:`, err);
@@ -254,7 +258,7 @@ function cleanNewsletterFields(input: any): Pick<ContentSubmission, 'audiences' 
 const PUT_IGNORED_FIELDS = [
   'newsletter', 'keyDates', 'writingHelp', 'dateLinks',
   'newsletterEditionId', 'newsletterSentIn', 'publicSlug', 'publicPublishedAt',
-  'sentTo', 'reminders', 'requiredApprovers',
+  'sentTo', 'reminders', 'requiredApprovers', 'submittedNotifiedAt',
 ] as const;
 
 // Create a new content submission
@@ -300,6 +304,9 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
   if (newSubmission.richTextContent !== undefined) {
     newSubmission.originalRichTextContent = newSubmission.richTextContent;
   }
+  // A request created live (the request form creates it in review) tells the people who act on it, once
+  const tellPeople = createdLive(newSubmission.status);
+  if (tellPeople) newSubmission.submittedNotifiedAt = new Date().toISOString();
 
   // Store in cache with appropriate key
   await putObject(`content_submissions/${newSubmission.id}`, newSubmission, env);
@@ -318,6 +325,8 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
       console.warn('Could not link the new request to the Comms Calendar:', err);
     }
   }
+
+  if (tellPeople) await notifyRequestSubmitted(newSubmission, user, env);
 
   return json(newSubmission);
 });
@@ -512,12 +521,17 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     if (submission[key] === undefined) delete (updatedSubmission as any)[key];
     else (updatedSubmission as any)[key] = submission[key];
   }
+  // Leaving draft tells the people who act on the request, once (the field is the server's)
+  const tellPeople = !submission.submittedNotifiedAt && becomesSubmitted(submission.status, updatedSubmission.status);
+  if (tellPeople) updatedSubmission.submittedNotifiedAt = new Date().toISOString();
 
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);
   if (updatedSubmission.status === 'sent' && submission.status !== 'sent') {
     await recordInCommsCalendar(updatedSubmission, env, { by: user.email });
+    await notifySubmitter(updatedSubmission, 'sent', user, env);
   }
+  if (tellPeople) await notifyRequestSubmitted(updatedSubmission, user, env);
   
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
@@ -768,19 +782,27 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     }
   }, env);
 
-  // Notify submitter of approval/rejection
-  try {
-    const { notifyApprovalDecision } = await import('../services/notificationService');
-    await notifyApprovalDecision(
-      id,
-      submission.title,
-      submission.submittedBy,
-      status,
-      user.name || user.email,
-      env
-    );
-  } catch (err) {
-    console.error('Error sending approval notification:', err);
+  // Notify submitter: a decline by email and in the app, an approval in the app only
+  if (status === 'rejected') {
+    await notifySubmitter(submission, 'declined', user, env, { comment });
+  } else {
+    try {
+      const { notifyApprovalDecision } = await import('../services/notificationService');
+      await notifyApprovalDecision(
+        id,
+        submission.title,
+        submission.submittedBy,
+        status,
+        user.name || user.email,
+        env
+      );
+    } catch (err) {
+      console.error('Error sending approval notification:', err);
+    }
+  }
+  // The last approval made it approved
+  if (statusBefore !== 'approved' && submission.status === 'approved') {
+    await notifySubmitter(submission, 'approved', user, env);
   }
 
   const response: any = { ...approval };
@@ -813,6 +835,7 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
+  const statusBefore = submission.status;
   submission.status = 'approved';
   submission.finalApprovalDate = new Date().toISOString();
   submission.approvalOverride = true;
@@ -830,6 +853,8 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
     userEmail: user.email,
     data: { status: submission.status, title: submission.title }
   }, env);
+
+  if (statusBefore !== 'approved' && statusBefore !== 'sent') await notifySubmitter(submission, 'approved', user, env);
 
   return json(submission);
 });
@@ -877,21 +902,8 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   await putObject(`content_submissions/${id}`, submission, env);
   await deleteObject('content_submissions/list', env);
 
-  // Notify submitter
-  try {
-    const { createInAppNotification } = await import('../services/notificationService');
-    await createInAppNotification({
-      userId: submission.submittedBy,
-      type: 'changes_requested',
-      title: 'Changes requested',
-      message: `${user.name || user.email} requested changes on "${submission.title}"`,
-      submissionId: id,
-      submissionTitle: submission.title,
-      actorName: user.name || user.email,
-    }, env);
-  } catch (err) {
-    console.error('Error sending changes-requested notification:', err);
-  }
+  // Notify submitter, by email and in the app
+  await notifySubmitter(submission, 'changes_requested', user, env, { comment: newComment.content });
 
   // Broadcast via WebSocket
   await broadcastToSubmissionRoom(id, {
@@ -1054,6 +1066,7 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
 
   // Must be approved first; a sent one again only where resending is allowed (dev)
   const resend = submission.status === 'sent' && env.ALLOW_ANNOUNCEMENT_RESEND === true;
+  const wasSent = submission.status === 'sent';
   if (submission.status !== 'approved' && !resend) {
     return json({ error: submission.status === 'sent' ? 'Already sent' : 'Submission not approved yet' }, { status: 400 });
   }
@@ -1118,60 +1131,14 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
       data: { status: submission.status, title: submission.title }
     }, env);
 
+    // The submitter hears it once; a resend (dev) is not news
+    if (!wasSent) await notifySubmitter(submission, 'sent', user, env);
+
     return json({ success: true, sentTo: submission.sentTo });
   } catch (e: any) {
     return json({ error: e.message || 'Failed to send email' }, { status: 500 });
   }
 });
-
-/**
- * Ask people to approve a request: an email (through COMMS_EMAIL_OVERRIDE on dev and staging)
- * and an in-app notification each. `kind` 'added': they were just added as an approver;
- * 'reminder': someone reminded them. Throws if the email can't be sent.
- */
-async function askForApproval(
-  submission: ContentSubmission,
-  emails: string[],
-  actor: User,
-  kind: 'added' | 'reminder',
-  env: any
-): Promise<void> {
-  let origin = '';
-  try {
-    origin = new URL(env.FRONTEND_URL || env.PUBLIC_URL).origin;
-  } catch {
-    origin = '';
-  }
-  const link = `${origin}/tracked-changes/${submission.id}`;
-  const by = actor.name || actor.email;
-  const subject = kind === 'added'
-    ? `Your approval is needed for "${submission.title}"`
-    : `Reminder: your approval is needed for "${submission.title}"`;
-  const said = kind === 'added'
-    ? `${by} added you as an approver of "${submission.title}".`
-    : `${by} asked for your approval of "${submission.title}".`;
-  const { sendEmail, commsRecipients } = await import('../utils/email');
-  const delivery = commsRecipients(emails, subject, env);
-  await sendEmail(delivery.to, delivery.subject, `${said}\n\nOpen it here: ${link}\n\nThanks!`, env);
-  try {
-    const { createInAppNotification } = await import('../services/notificationService');
-    for (const email of emails) {
-      const person = await getUser(email, env).catch(() => null);
-      if (!person) continue;
-      await createInAppNotification({
-        userId: person.id,
-        type: 'submission_waiting',
-        title: 'Your approval is needed',
-        message: said,
-        submissionId: submission.id,
-        submissionTitle: submission.title,
-        actorName: by,
-      }, env);
-    }
-  } catch (err) {
-    console.error('Could not add approval notifications:', err);
-  }
-}
 
 const looksLikeEmail = (value: string) => /^[^\s@<>,;]+@[^\s@<>,;]+$/.test(value);
 

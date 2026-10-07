@@ -59,8 +59,8 @@ export interface User {
   passwordHash?: string; // Added for email/password authentication
   verified?: boolean; // Added for email verification
   notificationSettings?: {
-    notifyOnReplies: boolean; // Notify when someone replies to posts or comments
-    notifyOnGroupContent: boolean; // Notify when content is posted in groups
+    notifyOnReplies: boolean; // Email when someone replies to posts or comments
+    submitterUpdates: boolean; // Email when the person's requests change (changes requested, approved, sent)
   };
   /** The feedback tab: true/false for this person, or unset/null to follow the global switch (services/feedbackService.ts). */
   feedbackEnabled?: boolean | null;
@@ -209,6 +209,8 @@ export interface ContentSubmission {
   newsletterSentIn?: number;
   /** The mailing lists the announcement was sent to (send-email). */
   sentTo?: Array<{ id: string; name: string; address: string }>;
+  /** When the people who act on this request were told it was submitted (set once, by the server). */
+  submittedNotifiedAt?: string;
   /** Approval reminders sent (POST /submissions/:id/remind), newest last. */
   reminders?: SubmissionReminder[];
   updatedAt?: string;
@@ -775,7 +777,11 @@ export type NotificationType =
   | 'comment_on_change'
   | 'comment_reply'
   | 'changes_requested'
-  | 'newsletter_review';
+  | 'newsletter_review'
+  | 'reminder_digest'
+  | 'request_submitted'
+  | 'request_approved'
+  | 'request_sent';
 
 export interface AppNotification {
   id: string;

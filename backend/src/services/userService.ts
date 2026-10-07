@@ -521,45 +521,51 @@ export async function initializeFirstAdmin(env: Env): Promise<void> {
   }
 }
 
+export interface NotificationSettings {
+  /** Email about replies to the person's blog and gallery posts and comments. */
+  notifyOnReplies: boolean;
+  /** Email when their requests change: changes requested, approved, sent. */
+  submitterUpdates: boolean;
+}
+
 // Update a user's notification settings
 export async function updateUserNotificationSettings(
-  userId: string, 
-  notificationSettings: {
-    notifyOnReplies: boolean;
-    notifyOnGroupContent: boolean;
-  },
+  userId: string,
+  notificationSettings: NotificationSettings,
   env: Env
 ): Promise<User | null> {
   const user = await getUser(userId, env);
   if (!user) return null;
-  
-  // Update notification settings
-  user.notificationSettings = notificationSettings;
+
+  // Only the two current settings are kept (the old notifyOnGroupContent is dropped)
+  user.notificationSettings = {
+    notifyOnReplies: notificationSettings.notifyOnReplies,
+    submitterUpdates: notificationSettings.submitterUpdates,
+  };
   await saveUser(user, env);
 
   return user;
+}
+
+// Settings of a loaded user, with defaults (both on) for anything missing
+export function notificationSettingsOf(user: User | null | undefined): NotificationSettings {
+  return {
+    notifyOnReplies: user?.notificationSettings?.notifyOnReplies ?? true,
+    submitterUpdates: user?.notificationSettings?.submitterUpdates ?? true,
+  };
 }
 
 // Get a user's notification settings (with defaults if not set)
 export async function getUserNotificationSettings(
   userId: string,
   env: Env
-): Promise<{ notifyOnReplies: boolean; notifyOnGroupContent: boolean }> {
-  const user = await getUser(userId, env);
-  
-  // Default settings if user not found or no settings exist
-  if (!user || !user.notificationSettings) {
-    return {
-      notifyOnReplies: true,
-      notifyOnGroupContent: true
-    };
-  }
-  
-  // Return user's settings with defaults for any missing properties
-  return {
-    notifyOnReplies: user.notificationSettings.notifyOnReplies ?? true,
-    notifyOnGroupContent: user.notificationSettings.notifyOnGroupContent ?? true
-  };
+): Promise<NotificationSettings> {
+  return notificationSettingsOf(await getUser(userId, env));
+}
+
+/** Whether to email this person when their requests change (default yes). Takes an email or user id. */
+export async function wantsSubmitterUpdates(env: Env, userIdOrEmail: string): Promise<boolean> {
+  return (await getUserNotificationSettings(userIdOrEmail, env)).submitterUpdates;
 }
 
 // Add or update user password

@@ -35,6 +35,8 @@ export interface BackendEnv {
   NUDGE_EMAIL_OVERRIDE?: string;
   /** Sends to mailing lists and approval reminders go only to this address. Outside production. */
   COMMS_EMAIL_OVERRIDE?: string;
+  /** "off" stops the daily reminder digest (e.g. until a dry run on a new environment looks right). */
+  REMINDER_DIGEST?: string;
 }
 
 export interface UseExisting {

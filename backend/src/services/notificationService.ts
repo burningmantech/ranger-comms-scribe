@@ -1,9 +1,8 @@
 import { Env } from '../utils/sessionManager';
-import { getUserNotificationSettings, getUser, getAllUsers } from './userService';
-import { getGroup } from './userService';
-import { sendReplyNotification, sendGroupContentNotification } from '../utils/email';
-import { User, Group, AppNotification, NotificationType } from '../types';
-import { putObject, getObject } from './cacheService';
+import { getUserNotificationSettings, getUser } from './userService';
+import { sendReplyNotification } from '../utils/email';
+import { AppNotification, NotificationType } from '../types';
+import { putObject } from './cacheService';
 
 // Links in emails point at the frontend (FRONTEND_URL), defaulting to production.
 const frontendUrl = (env: Env): string => env.FRONTEND_URL || 'https://scrivenly.com';
@@ -75,89 +74,12 @@ export async function notifyAboutReply(
   }
 }
 
-/**
- * Send notifications to group members about new content
- */
-export async function notifyGroupAboutNewContent(
-  groupId: string,
-  authorId: string,
-  authorName: string,
-  contentType: 'post' | 'gallery',
-  contentId: string,
-  contentTitle: string,
-  contentSnippet: string,
-  env: Env
-): Promise<{ success: boolean; emailsSent: number }> {
-  try {
-    // Get the group
-    const group = await getGroup(groupId, env);
-    if (!group) {
-      console.log(`Cannot send notification: Group ${groupId} not found`);
-      return { success: false, emailsSent: 0 };
-    }
-
-    // Prepare the content URL
-    const contentUrl = contentType === 'post' 
-      ? `${frontendUrl(env)}/blog/post/${contentId}`
-      : `${frontendUrl(env)}/gallery/item/${contentId}`;
-
-    // Truncate content snippet if it's too long
-    const truncatedSnippet = contentSnippet.length > 150 ? `${contentSnippet.substring(0, 147)}...` : contentSnippet;
-
-    // Count emails successfully sent
-    let emailsSent = 0;
-
-    // For each group member, check their notification settings and send email if enabled
-    for (const memberId of group.members) {
-      // Skip the author of the content
-      if (memberId === authorId) continue;
-
-      // Check if the member has notification settings enabled for group content
-      const memberSettings = await getUserNotificationSettings(memberId, env);
-      if (!memberSettings.notifyOnGroupContent) {
-        console.log(`Skipping group notification for ${memberId} as notifications are disabled`);
-        continue;
-      }
-
-      // Get the member's email
-      const member = await getUser(memberId, env);
-      if (!member || !member.email) {
-        console.log(`Cannot send notification: User ${memberId} not found or has no email`);
-        continue;
-      }
-
-      try {
-        // Send the notification email
-        await sendGroupContentNotification(
-          member.email,
-          authorName,
-          group.name,
-          contentType,
-          contentTitle,
-          truncatedSnippet,
-          contentUrl,
-          env
-        );
-
-        console.log(`Group content notification sent to ${member.email}`);
-        emailsSent++;
-      } catch (emailError) {
-        console.error(`Error sending email to ${member.email}:`, emailError);
-      }
-    }
-
-    return { success: true, emailsSent };
-  } catch (error) {
-    console.error('Error sending group content notifications:', error);
-    return { success: false, emailsSent: 0 };
-  }
-}
-
 // =============================================================================
 // In-App Notifications
 // =============================================================================
 
 interface CreateNotificationParams {
+  /** The recipient's email, or their user id (looked up for the email). */
   userId: string;
   type: NotificationType;
   title: string;
@@ -169,14 +91,30 @@ interface CreateNotificationParams {
   link?: string;
 }
 
+/** Notifications are stored per person, under their lowercased email. */
+export const NOTIFICATIONS_PREFIX = 'notifications/';
+
+async function recipientEmail(userIdOrEmail: string, env: Env): Promise<string | null> {
+  const value = (userIdOrEmail || '').trim();
+  if (!value) return null;
+  if (value.includes('@')) return value.toLowerCase();
+  const user = await getUser(value, env);
+  return user?.email ? user.email.toLowerCase() : null;
+}
+
 export async function createInAppNotification(
   params: CreateNotificationParams,
   env: Env
 ): Promise<AppNotification | null> {
   try {
+    const email = await recipientEmail(params.userId, env);
+    if (!email) {
+      console.error(`Cannot create notification: no user found for ${params.userId}`);
+      return null;
+    }
     const notification: AppNotification = {
       id: crypto.randomUUID(),
-      userId: params.userId,
+      userId: email,
       type: params.type,
       title: params.title,
       message: params.message,
@@ -188,7 +126,7 @@ export async function createInAppNotification(
       createdAt: new Date().toISOString(),
     };
 
-    await putObject(`notifications/${params.userId}/${notification.id}`, notification, env);
+    await putObject(`${NOTIFICATIONS_PREFIX}${email}/${notification.id}`, notification, env);
     return notification;
   } catch (error) {
     console.error('Error creating in-app notification:', error);
@@ -215,42 +153,5 @@ export async function notifyApprovalDecision(
     submissionId,
     submissionTitle,
     actorName,
-  }, env);
-}
-
-export async function notifyTrackedChanges(
-  submissionId: string,
-  submissionTitle: string,
-  submittedBy: string,
-  changerName: string,
-  changeCount: number,
-  env: Env
-): Promise<void> {
-  await createInAppNotification({
-    userId: submittedBy,
-    type: 'changes_made',
-    title: 'Changes made',
-    message: `${changerName} made ${changeCount} edit${changeCount !== 1 ? 's' : ''} to "${submissionTitle}"`,
-    submissionId,
-    submissionTitle,
-    actorName: changerName,
-  }, env);
-}
-
-export async function notifyAssignedAsApprover(
-  submissionId: string,
-  submissionTitle: string,
-  approverEmail: string,
-  assignerName: string,
-  env: Env
-): Promise<void> {
-  await createInAppNotification({
-    userId: approverEmail,
-    type: 'assigned_as_approver',
-    title: 'Review requested',
-    message: `${assignerName} requested your review on "${submissionTitle}"`,
-    submissionId,
-    submissionTitle,
-    actorName: assignerName,
   }, env);
 }

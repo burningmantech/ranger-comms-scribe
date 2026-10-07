@@ -147,6 +147,7 @@ export function backendEnvironment(config: ScribeConfig): Record<string, string>
   if (config.backendEnv.ALLOW_ANNOUNCEMENT_RESEND) env.ALLOW_ANNOUNCEMENT_RESEND = config.backendEnv.ALLOW_ANNOUNCEMENT_RESEND;
   if (config.backendEnv.NUDGE_EMAIL_OVERRIDE) env.NUDGE_EMAIL_OVERRIDE = config.backendEnv.NUDGE_EMAIL_OVERRIDE;
   if (config.backendEnv.COMMS_EMAIL_OVERRIDE) env.COMMS_EMAIL_OVERRIDE = config.backendEnv.COMMS_EMAIL_OVERRIDE;
+  if (config.backendEnv.REMINDER_DIGEST) env.REMINDER_DIGEST = config.backendEnv.REMINDER_DIGEST;
   return env;
 }
 

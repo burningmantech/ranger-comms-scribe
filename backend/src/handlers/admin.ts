@@ -34,6 +34,7 @@ import {
   setPersonFeedback,
   updateFeedback,
 } from '../services/feedbackService';
+import { runReminderDigest } from '../services/reminderDigest';
 
 export const router = AutoRouter({ base: '/api/admin' });
 
@@ -145,6 +146,20 @@ router.delete('/feedback/:id', withAdminCheck, async (request: Request, env: Env
   if (!FEEDBACK_ID.test(id)) return json({ error: 'Feedback not found' }, { status: 404 });
   await deleteFeedback(id, env);
   return json({ success: true });
+});
+
+// Work out (dryRun, the default) or send the daily reminder digest now: { dryRun?: boolean }
+router.post('/reminder-digest', withAdminCheck, async (request: Request, env: Env) => {
+  let body: any = {};
+  try {
+    body = (await request.json()) || {};
+  } catch {
+    // no body: a dry run
+  }
+  if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+    return json({ error: 'dryRun must be true or false' }, { status: 400 });
+  }
+  return json(await runReminderDigest(env, { dryRun: body.dryRun !== false }));
 });
 
 // Update a user's name - Endpoint for frontend compatibility

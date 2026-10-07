@@ -148,7 +148,7 @@ describe('reminders', () => {
     // Already approved: nothing to remind
     expect((await call(contentRouter, 'POST', '/api/content/submissions/r1/remind', 'cadre', { target: 'done@x.org' })).status).toBe(409);
     // An in-app notification for the approver
-    const notes = (await env.STORE.list('notifications/id-approver/')).objects;
+    const notes = (await env.STORE.list('notifications/approver@x.org/')).objects;
     expect(notes).toHaveLength(1);
   });
 

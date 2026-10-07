@@ -28,6 +28,8 @@ export interface Env {
     NUDGE_EMAIL_OVERRIDE?: string;
     /** Sends to mailing lists and approval reminders all go here instead (dev); see utils/email.ts commsRecipients. */
     COMMS_EMAIL_OVERRIDE?: string;
+    /** "off" turns the daily reminder digest off (REMINDER_DIGEST); anything else leaves it on. */
+    REMINDER_DIGEST?: string;
     /** Emails (lowercased) that are promoted to Admin on register/login. */
     BOOTSTRAP_ADMIN_EMAILS?: string[];
     /**
