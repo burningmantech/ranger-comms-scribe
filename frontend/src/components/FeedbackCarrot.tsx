@@ -98,7 +98,7 @@ export const FeedbackCarrot: React.FC<{ signedInAs: string | null }> = ({ signed
           message: message.trim(),
           url: redactUrl(window.location.href),
           screenshot: includeScreenshot ? screenshot : null,
-          diagnostics: collectDiagnostics(),
+          diagnostics: safeDiagnostics(),
         }),
       });
       if (!response.ok) {
@@ -209,9 +209,23 @@ export const FeedbackCarrot: React.FC<{ signedInAs: string | null }> = ({ signed
   );
 };
 
+/** The diagnostics, or why they couldn't be collected: the message still goes. */
+function safeDiagnostics(): Record<string, unknown> {
+  try {
+    return collectDiagnostics() as unknown as Record<string, unknown>;
+  } catch (err) {
+    return { unavailable: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /** The counts of what would be sent right now. */
 const FeedbackPreview: React.FC = () => {
-  const d = collectDiagnostics();
+  let d: ReturnType<typeof collectDiagnostics>;
+  try {
+    d = collectDiagnostics();
+  } catch {
+    return null;
+  }
   const failed = d.network.filter((n) => n.error || (n.status !== undefined && n.status >= 400)).length;
   return (
     <p className="feedback-counts">

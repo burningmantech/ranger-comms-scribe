@@ -99,6 +99,15 @@ describe('who sees the feedback tab', () => {
     expect(byEmail).toMatchObject({ 'tester@x.org': true, 'member@x.org': null });
   });
 
+  it('keeps a person\'s setting when their access or name changes', async () => {
+    await call('PUT', '/api/admin/people/tester%40x.org/feedback', 'admin', { enabled: true });
+    expect((await call('PUT', '/api/admin/people/tester%40x.org/access', 'admin', { commsCadre: true, councilRole: 'IntakeManager' })).status).toBe(200);
+    expect((await call('POST', '/api/admin/update-user-name', 'admin', { userId: 'tester@x.org', name: 'Tess' })).status).toBe(200);
+    clearMemoryCache();
+    expect((await getUser('tester@x.org', env))!.feedbackEnabled).toBe(true);
+    expect(await enabledFor('tester')).toBe(true);
+  });
+
   it('only Admins change the switches', async () => {
     expect((await call('PUT', '/api/admin/feedback/settings', 'member', { enabled: true })).status).toBe(403);
     expect((await call('PUT', '/api/admin/people/member%40x.org/feedback', 'member', { enabled: true })).status).toBe(403);

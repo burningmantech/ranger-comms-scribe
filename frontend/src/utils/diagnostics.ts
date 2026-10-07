@@ -127,24 +127,45 @@ function callerStack(skip = 2): string | undefined {
   return frames.slice(skip, skip + 10).map((line) => line.trim()).join('\n') || undefined;
 }
 
+/**
+ * A copy of a logged value small enough to keep: a few levels, keys and items deep. The app logs
+ * whole messages and editor states, so nothing here may walk all of one.
+ */
+function bounded(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return clip(value, 200);
+  if (value === null || typeof value !== 'object') return typeof value === 'function' ? '[function]' : value;
+  if (typeof Node !== 'undefined' && value instanceof Node) return `[${value.nodeName}]`;
+  if (depth >= 3) return Array.isArray(value) ? `[${value.length} items]` : '[object]';
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 5).map((item) => bounded(item, depth + 1));
+    return value.length > 5 ? [...items, `… ${value.length - 5} more`] : items;
+  }
+  const out: Record<string, unknown> = {};
+  let count = 0;
+  for (const key in value) {
+    if (count++ >= 10) {
+      out['…'] = 'more keys';
+      break;
+    }
+    try {
+      out[key] = bounded((value as Record<string, unknown>)[key], depth + 1);
+    } catch {
+      out[key] = '[unreadable]';
+    }
+  }
+  return out;
+}
+
 /** One console argument as text. */
 export function describeValue(value: unknown): string {
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return clip(value);
   if (value instanceof Error) return `${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ''}`;
   if (value === undefined) return 'undefined';
   if (typeof value === 'function') return `[function ${value.name || 'anonymous'}]`;
   try {
-    const seen = new WeakSet<object>();
-    return clip(JSON.stringify(value, (_key, v) => {
-      if (typeof v === 'object' && v !== null) {
-        if (seen.has(v)) return '[circular]';
-        seen.add(v);
-        if (typeof Node !== 'undefined' && v instanceof Node) return `[${v.nodeName}]`;
-      }
-      return v;
-    }) ?? String(value), 500);
+    return clip(JSON.stringify(bounded(value)) ?? String(value), 500);
   } catch {
-    return String(value);
+    return '[unprintable]';
   }
 }
 
@@ -441,7 +462,13 @@ export function collectDiagnostics(): Diagnostics {
     websockets: sockets.slice(),
     resources: safe(resources),
   };
-  return JSON.parse(redactText(JSON.stringify(raw)));
+  const text = JSON.stringify(raw);
+  try {
+    return JSON.parse(redactText(text));
+  } catch {
+    // A scrub that broke the JSON: the URLs and entries were already redacted one by one
+    return JSON.parse(text);
+  }
 }
 
 /** For tests: forget everything collected. */

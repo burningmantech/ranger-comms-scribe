@@ -1,4 +1,4 @@
-import { collectDiagnostics, describeElement, installDiagnostics, rawFetch, redactText, redactUrl, resetDiagnostics } from '../diagnostics';
+import { collectDiagnostics, describeElement, describeValue, installDiagnostics, rawFetch, redactText, redactUrl, resetDiagnostics } from '../diagnostics';
 
 const SESSION = 'sess-1234567890abcdef';
 let underlying: jest.Mock;
@@ -34,6 +34,16 @@ describe('redaction', () => {
   it('strips bearer tokens, password fields and the session ID from text', () => {
     const text = `Authorization: Bearer abc.def {"password":"hunter2","name":"Pat"} id=${SESSION}`;
     expect(redactText(text)).toBe('Authorization: Bearer REDACTED {"password":"REDACTED","name":"Pat"} id=REDACTED');
+  });
+
+  it('keeps only a small part of a large logged value', () => {
+    const big = { root: { children: Array.from({ length: 1000 }, (_, i) => ({ type: 'text', text: `word ${i}`.repeat(50) })) } };
+    const text = describeValue(big);
+    expect(text.length).toBeLessThan(600);
+    expect(text).toContain('995 more');
+    const cyclic: any = { a: 1 };
+    cyclic.self = cyclic;
+    expect(describeValue(cyclic)).toContain('"a":1');
   });
 
   it('describes what was clicked, never what was typed', () => {
