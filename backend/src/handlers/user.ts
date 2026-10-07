@@ -2,13 +2,17 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env, GetSession } from '../utils/sessionManager';
 import { withAuth } from '../authWrappers';
+import { User } from '../types';
 import { getUserNotificationSettings, updateUserNotificationSettings, getAllUsers } from '../services/userService';
 
 // Extend the Request interface to include user property
 interface ExtendedRequest extends Request {
-  user?: string;
+  user?: string; // typed as a string for Request; withAuth sets the whole User (see userEmail)
   params: Record<string, string>;
 }
+
+// withAuth puts the signed-in User on request.user
+const userEmail = (request: ExtendedRequest): string => String((request.user as unknown as User).email || '').toLowerCase();
 
 export const router = AutoRouter({ base: '/api/user' });
 
@@ -49,13 +53,13 @@ router.get('/settings', withAuth, async (request: ExtendedRequest, env: Env) => 
       return json({ error: 'User not authenticated' }, { status: 401 });
     }
 
-    console.log(`GET /user/settings called for user ${request.user}`);
+    console.log(`GET /user/settings called for user ${userEmail(request)}`);
     
     // Get the user's notification settings
-    const notificationSettings = await getUserNotificationSettings(request.user, env);
+    const notificationSettings = await getUserNotificationSettings(userEmail(request), env);
     
     return json({
-      userId: request.user,
+      userId: userEmail(request),
       notificationSettings
     });
   } catch (error) {
@@ -71,12 +75,12 @@ router.put('/settings', withAuth, async (request: ExtendedRequest, env: Env) => 
       return json({ error: 'User not authenticated' }, { status: 401 });
     }
 
-    console.log(`PUT /user/settings called for user ${request.user}`);
+    console.log(`PUT /user/settings called for user ${userEmail(request)}`);
 
     const { notificationSettings } = await request.json() as {
       notificationSettings: {
-        notifyOnReplies: boolean;
-        notifyOnGroupContent: boolean;
+        notifyOnReplies?: boolean;
+        submitterUpdates?: boolean;
       }
     };
 
@@ -84,15 +88,16 @@ router.put('/settings', withAuth, async (request: ExtendedRequest, env: Env) => 
       return json({ error: 'Notification settings are required' }, { status: 400 });
     }
 
-    // Ensure all required properties are present, using defaults if missing
+    // A setting left out keeps its current value
+    const current = await getUserNotificationSettings(userEmail(request), env);
     const updatedSettings = {
-      notifyOnReplies: notificationSettings.notifyOnReplies ?? true,
-      notifyOnGroupContent: notificationSettings.notifyOnGroupContent ?? true
+      notifyOnReplies: typeof notificationSettings.notifyOnReplies === 'boolean' ? notificationSettings.notifyOnReplies : current.notifyOnReplies,
+      submitterUpdates: typeof notificationSettings.submitterUpdates === 'boolean' ? notificationSettings.submitterUpdates : current.submitterUpdates
     };
 
     // Update the user's notification settings
     const updatedUser = await updateUserNotificationSettings(
-      request.user,
+      userEmail(request),
       updatedSettings,
       env
     );
@@ -103,7 +108,7 @@ router.put('/settings', withAuth, async (request: ExtendedRequest, env: Env) => 
 
     return json({
       message: 'User settings updated successfully',
-      userId: request.user,
+      userId: userEmail(request),
       notificationSettings: updatedSettings
     });
   } catch (error) {

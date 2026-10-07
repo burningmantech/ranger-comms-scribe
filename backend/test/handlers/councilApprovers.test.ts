@@ -95,7 +95,7 @@ describe('changing approvers', () => {
     expect(sent().Destination?.ToAddresses).toEqual(['council@x.org']);
     expect(sent().Content?.Simple?.Subject?.Data).toBe('Your approval is needed for "Request s1"');
     expect(sent().Content?.Simple?.Body?.Text?.Data).toContain('cadre added you as an approver');
-    expect((await env.STORE.list('notifications/id-council/')).objects).toHaveLength(1);
+    expect((await env.STORE.list('notifications/council@x.org/')).objects).toHaveLength(1);
     // The room hears the new gates
     expect((broadcastToSubmissionRoom as jest.Mock).mock.calls.some(([, m]) => m.type === 'approval_state')).toBe(true);
   });
@@ -138,7 +138,10 @@ describe('changing approvers', () => {
     }), env);
     const res = await setApprovers('cadre', ['council@x.org']);
     expect(res.body.submission.status).toBe('approved');
-    expect(sendSpy).not.toHaveBeenCalled(); // council@ had already approved: nobody new to ask
+    // council@ had already approved: nobody new to ask; only the submitter hears it is approved
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sent().Destination?.ToAddresses).toEqual(['member@x.org']);
+    expect(sent().Content?.Simple?.Subject?.Data).toBe('"Request s1" is approved');
   });
 
   it("keeps an override approval when the approvers change", async () => {

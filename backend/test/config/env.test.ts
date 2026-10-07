@@ -63,6 +63,11 @@ describe('loadConfig', () => {
       .toBeUndefined();
   });
 
+  it('reads REMINDER_DIGEST (on unless "off")', () => {
+    expect(loadConfig({ ...REQUIRED, DATA_BUCKET: 'b' }).env.REMINDER_DIGEST).toBeUndefined();
+    expect(loadConfig({ ...REQUIRED, DATA_BUCKET: 'b', REMINDER_DIGEST: ' Off ' }).env.REMINDER_DIGEST).toBe('off');
+  });
+
   it('applies defaults', () => {
     const { env, port, storeDriver } = loadConfig({ ...REQUIRED, DATA_BUCKET: 'bucket' });
     expect(port).toBe(8080);

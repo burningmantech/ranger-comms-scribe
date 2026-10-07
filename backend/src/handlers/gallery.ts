@@ -6,7 +6,7 @@ import { MediaItem, GalleryComment, User } from '../types';
 import { withAdminCheck, withAuth } from '../authWrappers';
 import { canAccessGroup, getUserNotificationSettings, getUser } from '../services/userService';
 import { getGalleryComments, addGalleryComment, deleteGalleryComment } from '../services/galleryCommentService';
-import { notifyAboutReply, notifyGroupAboutNewContent } from '../services/notificationService';
+import { notifyAboutReply } from '../services/notificationService';
 import { sendReplyNotification } from '../utils/email';
 import { CustomRequest } from '../types';
 

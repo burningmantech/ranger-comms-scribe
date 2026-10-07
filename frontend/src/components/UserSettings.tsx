@@ -15,9 +15,9 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
-  // Default to true for both notification settings
+  // Both notification settings default to on
   const [notifyOnReplies, setNotifyOnReplies] = useState<boolean>(true);
-  const [notifyOnGroupContent, setNotifyOnGroupContent] = useState<boolean>(true);
+  const [submitterUpdates, setSubmitterUpdates] = useState<boolean>(true);
   
   const navigate = useNavigate();
 
@@ -66,14 +66,14 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
       
       // Set notification preferences from user data or default to true if not set
       setNotifyOnReplies(data.notificationSettings?.notifyOnReplies ?? true);
-      setNotifyOnGroupContent(data.notificationSettings?.notifyOnGroupContent ?? true);
+      setSubmitterUpdates(data.notificationSettings?.submitterUpdates ?? true);
       
       // Update the user state with the latest data
       setUser(prevUser => ({
         ...prevUser!,
         notificationSettings: {
           notifyOnReplies: data.notificationSettings?.notifyOnReplies ?? true,
-          notifyOnGroupContent: data.notificationSettings?.notifyOnGroupContent ?? true
+          submitterUpdates: data.notificationSettings?.submitterUpdates ?? true
         }
       }));
       
@@ -83,7 +83,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
       
       // If we can't fetch settings, default to true for both
       setNotifyOnReplies(true);
-      setNotifyOnGroupContent(true);
+      setSubmitterUpdates(true);
       
       // Don't show error, just use defaults
       setLoading(false);
@@ -110,7 +110,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
         body: JSON.stringify({
           notificationSettings: {
             notifyOnReplies,
-            notifyOnGroupContent
+            submitterUpdates
           }
         }),
       });
@@ -126,7 +126,7 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
           ...user,
           notificationSettings: {
             notifyOnReplies,
-            notifyOnGroupContent
+            submitterUpdates
           }
         };
         
@@ -170,8 +170,8 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
             <h2>Notification Preferences</h2>
           </div>
           <div className="card-body">
-            <p>Manage how you receive email notifications from the platform.</p>
-            
+            <p>Manage which email notifications you receive from the platform.</p>
+
             <div className="form-group">
               <div className="custom-checkbox">
                 <input
@@ -181,24 +181,21 @@ const UserSettings: React.FC<UserSettingsProps> = ({ skipNavbar = false }) => {
                   onChange={(e) => setNotifyOnReplies(e.target.checked)}
                 />
                 <span className="checkbox-icon"></span>
-                <label htmlFor="notifyOnReplies">Notify me when someone replies to my content</label>
+                <label htmlFor="notifyOnReplies">Email me about replies to my blog and gallery posts and comments</label>
               </div>
-              <p className="mb-2 text-medium">
-                Receive email notifications when someone replies to your posts, comments, or gallery items.
-              </p>
-              
+
               <div className="custom-checkbox">
                 <input
                   type="checkbox"
-                  id="notifyOnGroupContent"
-                  checked={notifyOnGroupContent}
-                  onChange={(e) => setNotifyOnGroupContent(e.target.checked)}
+                  id="submitterUpdates"
+                  checked={submitterUpdates}
+                  onChange={(e) => setSubmitterUpdates(e.target.checked)}
                 />
                 <span className="checkbox-icon"></span>
-                <label htmlFor="notifyOnGroupContent">Notify me about new content in my groups</label>
+                <label htmlFor="submitterUpdates">Email me when my requests change: changes requested, approved, sent</label>
               </div>
               <p className="text-medium">
-                Receive email notifications when new content is posted in groups you belong to.
+                Requests to approve something and reminders always come by email. Everything also shows under the bell.
               </p>
             </div>
           </div>

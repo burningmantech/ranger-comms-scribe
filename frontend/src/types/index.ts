@@ -18,8 +18,8 @@ export interface User {
     roles: string[];
     groups?: string[]; // Array of group IDs the user belongs to
     notificationSettings?: {
-        notifyOnReplies: boolean; // Notify when someone replies to posts or comments
-        notifyOnGroupContent: boolean; // Notify when content is posted in groups
+        notifyOnReplies: boolean; // Email when someone replies to posts or comments
+        submitterUpdates: boolean; // Email when the person's requests change
     };
 }
 

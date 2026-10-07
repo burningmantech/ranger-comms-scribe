@@ -80,6 +80,7 @@ export interface ObjectStore {
 | `EMAIL_BCC` | no | comma-separated; default empty (no BCC) |
 | `ANNOUNCE_EMAIL_TO` | no | announcement list for approved submissions; unset disables sending (production: `rangers-announce@burningman.org`) |
 | `NUDGE_EMAIL_OVERRIDE` | no | Comms Calendar nudges go only to this address instead of the team contacts (set in dev and staging, never in production) |
+| `REMINDER_DIGEST` | no | `off` stops the daily reminder digest (8am Pacific); on when unset |
 | `BOOTSTRAP_ADMIN_EMAILS` | no | comma-separated, case-insensitive |
 | `GOOGLE_CLIENT_ID` | yes | the frontend's OAuth client ID |
 | `TURNSTILESECRET` | yes | secret, injected through the ECS task definition's `secrets` |

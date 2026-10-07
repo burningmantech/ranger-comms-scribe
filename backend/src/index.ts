@@ -25,6 +25,7 @@ import { getUser, initializeFirstAdmin } from './services/userService';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
 import { migratePeopleAccess } from './migrations/peopleAccess';
+import { migrateNotificationsByEmail } from './migrations/notificationsByEmail';
 
 declare global {
     interface Request {
@@ -128,6 +129,9 @@ export const initializeApp = async (env: Env): Promise<void> => {
 
     // Once: move everyone's access onto their record (docs/plans/2026-10-06-people-and-roles.md)
     await migratePeopleAccess(env);
+
+    // Once: in-app notifications stored under a user id move to the person's email
+    await migrateNotificationsByEmail(env);
 
     // Promote any BOOTSTRAP_ADMIN_EMAILS users that already exist
     await initializeFirstAdmin(env);

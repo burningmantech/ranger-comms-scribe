@@ -286,6 +286,7 @@ Read once at boot by `backend/src/config/env.ts` (full list in the contracts doc
 - `DATA_BUCKET`, `S3_ENDPOINT` (MinIO), `AWS_REGION`
 - `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` (CSV)
 - `ANNOUNCE_EMAIL_TO` (unset disables announcements), `NUDGE_EMAIL_OVERRIDE` (dev/staging: every Comms Calendar nudge goes here)
+- `REMINDER_DIGEST=off` stops the daily reminder digest
 - `COMMS_EMAIL_OVERRIDE` (dev/staging): announcement sends to mailing lists and approval reminders go only here, with
   `[for <real recipients>] ` before the subject (`commsRecipients()` in `utils/email.ts`); sign-in emails are unaffected
 - `BOOTSTRAP_ADMIN_EMAILS` (CSV), `GOOGLE_CLIENT_ID`, `TURNSTILESECRET`
@@ -389,10 +390,25 @@ Things that happen every year, so requests can follow them (`docs/plans/2026-10-
 
 ## Notifications
 
-Email notifications (`backend/src/services/notificationService.ts`):
-- Sends via AWS SES v2 (`EMAIL_FROM`, `EMAIL_BCC`, `SES_REGION`)
-- User notification preferences stored per user
-- Notification types: replies, group content, approvals
+Email via AWS SES v2 (`EMAIL_FROM`, `EMAIL_BCC`, `SES_REGION`); every workflow email goes through
+`sendWorkflowEmail` (`services/workflowEmail.ts`, HTML + text, always via `commsRecipients()`, so
+`COMMS_EMAIL_OVERRIDE` redirects it on dev/staging). The logic is in `services/workflowNotifications.ts`:
+- **In-app (the bell)**: `createInAppNotification` stores at `notifications/<lowercased email>/<id>` (takes an
+  email or a user id). Older ones stored under user ids were moved by `migrations/notificationsByEmail.ts`
+- **Submitted** (`notifyRequestSubmitted`): once per request (`submittedNotifiedAt`, server-only), when it's created
+  live (the form creates it `in_review`) or a PUT moves it out of draft. Listed approvers are asked to approve;
+  the Comms Cadre get one "New request" email (saying when no council approver is listed)
+- **Approvers added / Remind**: `askForApproval` (see Reminders above)
+- **Submitter updates** (`notifySubmitter`): changes requested, declined, fully approved (approve, override,
+  `syncSubmissionStatus`), sent (send-email, PUT to sent, newsletter edition). Never to the person who acted
+- **Ask log** `approval_asks/<submissionId>` (`{email: {first, last}}`): when each person was first and last asked to act (added, at submit, Remind); the digest gates on `last` and shows "waiting since" `first`, and never writes it
+- **Daily reminder digest** (`services/reminderDigest.ts`): from 8am Pacific, one email per person listing every
+  submitted/in-review request that has waited on them (pending approval, a Comms Cadre approval, or choosing a
+  council approver) since an earlier day and 12h+, by Publish By. Run by an in-process hourly timer started in
+  `server.ts`; marker `jobs/reminder-digest` makes it once a day. `REMINDER_DIGEST=off` stops it;
+  `POST /api/admin/reminder-digest {dryRun}` (default dry run) shows or sends it now
+- **Preferences** (`notificationSettings`): `notifyOnReplies` (blog/gallery replies) and `submitterUpdates`;
+  approval requests, the Cadre's new-request emails and digests can't be turned off
 
 ## Common Gotchas
 

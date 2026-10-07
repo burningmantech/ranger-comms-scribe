@@ -31,6 +31,7 @@ import {
 } from '../utils/newsletterInput';
 import { getActiveCommsCadreEmails, getCommsManagerEmails, isAdminUser, isCommsCadre, isCommsManager } from './commsCadreService';
 import { syncCalendarFromSubmission } from './commsCalendarService';
+import { notifySubmitter } from './workflowNotifications';
 
 /**
  * Newsletter editions ("Black Rock Ranger News"): built by the Comms Cadre from approved
@@ -732,7 +733,7 @@ async function notifyReviewers(edition: NewsletterEdition, actor: User, env: Env
       const recipient = await getUser(email, env);
       if (!recipient) continue;
       await createInAppNotification({
-        userId: recipient.id,
+        userId: recipient.email,
         type: 'newsletter_review',
         title: `Ranger News #${edition.number} is ready for approval`,
         message: `${actor.name || actor.email} asked for approval of "${edition.subject || `Ranger News #${edition.number}`}".`,
@@ -943,6 +944,7 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
     edition.sentBy = userKey(user);
     await putObject(editionKey(edition.id), edition, env);
 
+    const newlySent: ContentSubmission[] = [];
     for (const section of edition.sections) {
       if (!section.sourceSubmissionId) continue;
       const changes = await getTrackedChanges(section.sourceSubmissionId, env);
@@ -955,6 +957,7 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
           submission.status = 'sent';
           submission.sentAt = sentAt;
           submission.sentBy = userKey(user);
+          if (!newlySent.some((s) => s.id === submission.id)) newlySent.push(submission);
         }
         return true;
       });
@@ -974,6 +977,11 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
       } catch (error) {
         console.error(`Comms Calendar: could not record ${section.sourceSubmissionId} from edition ${edition.number}:`, error);
       }
+    }
+
+    // Tell each submitter whose request this edition finished (never fails the send)
+    for (const submission of newlySent) {
+      await notifySubmitter(submission, 'sent', user, env, { edition: edition.number });
     }
     return edition;
   });

@@ -263,6 +263,12 @@ describe('newsletter editions', () => {
     expect(html).toContain('All the Dust that Fits Under Your Hat! • #11');
     expect(html).toContain(`https://dev.scrivenly.com/news/${slug}`);
 
+    // The submitter hears about the request this edition finished (not the one that also goes out on its own)
+    const toMember = sendSpy.mock.calls.map((c) => (c[0] as SendEmailCommand).input).filter((i) => i.Destination?.ToAddresses?.includes('member@localhost'));
+    expect(toMember).toHaveLength(1);
+    expect(toMember[0].Content?.Simple?.Subject?.Data).toBe('"Join the Operators!" was sent');
+    expect(toMember[0].Content?.Simple?.Body?.Text?.Data).toContain('went out in Ranger News #11');
+
     // Sent: frozen, and the requests know where they went
     expect((await nl(env, 'PUT', `/editions/${id}`, CADRE, { version: res.body.edition.version, subject: 'x' })).status).toBe(409);
     expect((await nl(env, 'POST', `/editions/${id}/send`, CADRE)).status).toBe(409);

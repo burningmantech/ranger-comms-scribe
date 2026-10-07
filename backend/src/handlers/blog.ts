@@ -15,7 +15,7 @@ import {
     unblockUser,
     getBlockedUsers
 } from '../services/blogService';
-import { notifyAboutReply, notifyGroupAboutNewContent } from '../services/notificationService';
+import { notifyAboutReply } from '../services/notificationService';
 
 const { preflight } = cors();
 
@@ -112,26 +112,6 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
         );
         
         if (result.success) {
-            // If this is a group post and it's published, notify group members
-            if (groupId && (published ?? false) && result.post) {
-                try {
-                    // Send notifications to group members
-                    await notifyGroupAboutNewContent(
-                        groupId,
-                        request.user,
-                        userName,
-                        'post',
-                        result.post.id,
-                        title,
-                        content.substring(0, 200), // truncate long content
-                        env
-                    );
-                } catch (notifyError) {
-                    console.error('Error sending group notifications:', notifyError);
-                    // Continue even if notification fails
-                }
-            }
-            
             return json(result, { status: 201 });
         } else {
             return json(result, { status: 400 });

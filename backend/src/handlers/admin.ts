@@ -23,6 +23,7 @@ import { accessView, publicUser, rolesResponse } from '../services/access';
 import { getObject, putObject, removeFromCache } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { getDevUserForRequest } from '../utils/devUsers';
+import { runReminderDigest } from '../services/reminderDigest';
 
 export const router = AutoRouter({ base: '/api/admin' });
 
@@ -68,6 +69,20 @@ router.put('/people/:id/access', withAdminCheck, async (request: Request, env: E
     if (err instanceof AccessChangeError) return json({ error: err.message }, { status: err.status });
     throw err;
   }
+});
+
+// Work out (dryRun, the default) or send the daily reminder digest now: { dryRun?: boolean }
+router.post('/reminder-digest', withAdminCheck, async (request: Request, env: Env) => {
+  let body: any = {};
+  try {
+    body = (await request.json()) || {};
+  } catch {
+    // no body: a dry run
+  }
+  if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+    return json({ error: 'dryRun must be true or false' }, { status: 400 });
+  }
+  return json(await runReminderDigest(env, { dryRun: body.dryRun !== false }));
 });
 
 // Update a user's name - Endpoint for frontend compatibility

@@ -26,6 +26,10 @@ const NOTIFICATION_ICONS: Record<string, string> = {
   comment_reply: 'fas fa-reply',
   changes_requested: 'fas fa-exclamation-circle',
   newsletter_review: 'fas fa-newspaper',
+  request_submitted: 'fas fa-inbox',
+  request_approved: 'fas fa-check-double',
+  request_sent: 'fas fa-paper-plane',
+  reminder_digest: 'fas fa-bell',
 };
 
 function formatRelativeTime(date: Date): string {

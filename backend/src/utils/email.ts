@@ -154,41 +154,6 @@ Comms Scribe Team
 	return await sendEmail(toEmail, subject, message, config);
 }
 
-// Function to send new group content notification emails
-export async function sendGroupContentNotification(
-	toEmail: string,
-	authorName: string,
-	groupName: string,
-	contentType: 'post' | 'gallery',
-	contentTitle: string,
-	contentSnippet: string,
-	contentUrl: string,
-	config: EmailConfig
-): Promise<number> {
-	const contentTypeStr = contentType === 'post' ? 'blog post' : 'gallery item';
-	const subject = `New ${contentTypeStr} in ${groupName} on Comms Scribe`;
-	
-	const message = `
-Hello,
-
-${authorName} has posted a new ${contentTypeStr} in the ${groupName} group on Comms Scribe.
-
-${contentTitle ? `Title: ${contentTitle}` : ''}
-
-${contentSnippet ? `Preview: "${contentSnippet}"` : ''}
-
-Click here to view the content:
-${contentUrl}
-
-If you don't want to receive these notifications in the future, you can update your settings in your account preferences.
-
-Thank you,
-Comms Scribe Team
-	`;
-	
-	return await sendEmail(toEmail, subject, message, config);
-}
-
 /**
  * Where a comms email (to mailing lists, or an approval reminder) actually goes: the real
  * recipients, or only COMMS_EMAIL_OVERRIDE (dev and staging), with the real recipients named in

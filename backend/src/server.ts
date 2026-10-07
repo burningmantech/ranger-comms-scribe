@@ -6,6 +6,7 @@
 import { loadConfig } from './config/env';
 import { configureCors, initializeApp } from './index';
 import { createAppServer } from './httpServer';
+import { startReminderDigestSchedule } from './services/reminderDigest';
 
 async function main(): Promise<void> {
   const { env, port, storeDriver, maxBodyBytes, wsMaxPayloadBytes } = loadConfig();
@@ -27,6 +28,7 @@ async function main(): Promise<void> {
   const app = createAppServer(env, { maxBodyBytes, wsMaxPayloadBytes });
   app.server.listen(port, () => {
     console.log(`Comms Scribe backend listening on port ${port} (store: ${storeDriver})`);
+    startReminderDigestSchedule(env);
   });
 
   let shuttingDown = false;
