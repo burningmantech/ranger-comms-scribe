@@ -1,5 +1,6 @@
 import { loadConfig, parseCollabMode, parseCsv, parsePort, DEFAULT_EMAIL_FROM } from '../../src/config/env';
 import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
+import { LatencyObjectStore } from '../../src/storage/latencyObjectStore';
 import { S3ObjectStore } from '../../src/storage/s3ObjectStore';
 
 const REQUIRED = {
@@ -104,6 +105,15 @@ describe('loadConfig', () => {
     const { env, storeDriver } = loadConfig({ ...REQUIRED, STORE_DRIVER: 'memory' });
     expect(storeDriver).toBe('memory');
     expect(env.STORE).toBeInstanceOf(MemoryObjectStore);
+  });
+
+  it('wraps the memory store with STORE_LATENCY_MS (local testing) and rejects garbage', async () => {
+    const { env } = loadConfig({ ...REQUIRED, STORE_DRIVER: 'memory', STORE_LATENCY_MS: '20' });
+    expect(env.STORE).toBeInstanceOf(LatencyObjectStore);
+    await env.STORE.put('k', '{"a":1}');
+    expect(await (await env.STORE.get('k'))!.json()).toEqual({ a: 1 });
+    expect(loadConfig({ ...REQUIRED, STORE_DRIVER: 'memory', STORE_LATENCY_MS: '0' }).env.STORE).toBeInstanceOf(MemoryObjectStore);
+    expect(() => loadConfig({ ...REQUIRED, STORE_DRIVER: 'memory', STORE_LATENCY_MS: 'slow' })).toThrow('Invalid STORE_LATENCY_MS');
   });
 
   it('lists every missing required variable', () => {

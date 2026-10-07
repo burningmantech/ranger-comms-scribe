@@ -1,3 +1,4 @@
+import { isReviewer } from '../services/access';
 import { CustomRequest } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { AutoRouter } from 'itty-router';
@@ -14,11 +15,16 @@ import {
   deleteChange,
   getCascadeDependencies,
   batchCreateTrackedChanges,
+  freshProposedVersions,
+  FORM_FIELD_CHANGE_FIELDS,
+  currentFormFieldValue,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
 import { getObject, putObject } from '../services/cacheService';
+import { broadcastToSubmissionRoom } from './websocket';
 import { mergeTextIntoLexicalJson } from '../services/trackedChangesService';
+import { syncSubmissionStatus } from './contentSubmission';
 
 
 /**
@@ -245,6 +251,22 @@ async function recomputeContentAfterResolution(
   return { content: result, richText };
 }
 
+/**
+ * True when no non-rejected change in the field is newer than `change`, and no rejection
+ * of another change was undone after it was made. Only then is the change's own snapshot
+ * (richTextNewValue) the whole proposed document; otherwise it lacks the newer edits, or
+ * the text an undone reject put back (the editor's state, sent with the decision, has it).
+ */
+function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]): boolean {
+  const at = new Date(change.timestamp).getTime();
+  return !allChanges.some(c =>
+    c.id !== change.id &&
+    c.field === change.field &&
+    c.status !== 'rejected' &&
+    (new Date(c.timestamp).getTime() > at || (!!c.reappliedAt && new Date(c.reappliedAt).getTime() > at))
+  );
+}
+
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
@@ -258,9 +280,7 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     // For now, we'll assume the user has access if they're authenticated
 
     // Check if user has access
-    const hasAccess = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager' ||
+    const hasAccess = isReviewer(request.user) ||
       true; // TODO: Check if user is the submitter
 
     if (!hasAccess) {
@@ -289,8 +309,11 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     const proposedVersions: Record<string, string> = {};
     const proposedVersionsRichText: Record<string, string> = {};
 
-    // First, try to get saved proposed versions from cache
-    const savedProposedVersions = await getObject(`proposed_versions/${submissionId}`, env) as any;
+    // First, try the saved proposed versions (unless a change is newer than them)
+    const savedProposedVersions = freshProposedVersions(
+      await getObject(`proposed_versions/${submissionId}`, env),
+      changes
+    );
 
     if (savedProposedVersions) {
       if (savedProposedVersions.proposedVersionsRichText) {
@@ -303,6 +326,13 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
 
     // Fall back to calculating from changes if no saved versions
     for (const field of fields) {
+      // A form field's proposed value is a whole value: the newest change that isn't
+      // rejected, accepted ones included (the submission record keeps the submitted value)
+      if (FORM_FIELD_CHANGE_FIELDS.has(field)) {
+        const current = currentFormFieldValue(changes, field);
+        if (current !== null) proposedVersions[field] = current;
+        continue;
+      }
       if (!proposedVersions[field]) {
         const completeVersion = await getCompleteProposedVersion(submissionId, field, env);
         if (completeVersion) {
@@ -381,6 +411,21 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
       { diffAgainstOldValue: diffAgainstOldValue === true }
     );
 
+    // A new pending change: an approved submission goes back to review
+    await syncSubmissionStatus(submissionId, env, request.user, { onlyDemote: true });
+
+    // A Subject, Audience, Reply-To or Signature change isn't in the shared document, so
+    // tell the room: the other reviewers' pages refetch their change lists
+    if (FORM_FIELD_CHANGE_FIELDS.has(field)) {
+      await broadcastToSubmissionRoom(submissionId, {
+        type: 'field_change_created',
+        userId: request.user.id || request.user.email,
+        userName: request.user.name,
+        userEmail: request.user.email,
+        data: { changeId: newChange.id, field },
+      }, env);
+    }
+
     return new Response(JSON.stringify(newChange), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -392,6 +437,9 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
 
 // Approve or reject a tracked change
 export async function updateChangeStatusHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { changeId } = request.params!;
 
   if (!request.user) {
@@ -406,9 +454,7 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
     }
 
     // Check permissions: privileged roles always allowed
-    let hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    let hasPermission = isReviewer(request.user);
 
     // Also allow the submission author to accept/reject changes to their content
     if (!hasPermission && submissionId) {
@@ -454,52 +500,9 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
       );
     }
 
-    // After accepting or rejecting, recompute the submission content from the
-    // stored original + non-rejected changes so the persisted state is correct.
-    try {
-      const recomputed = await recomputeContentAfterResolution(submissionId, updatedChange.field, env);
-      if (recomputed) {
-        const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
-        if (submission) {
-          // For accepts with richTextNewValue, prefer it over mergeTextIntoLexicalJson
-          // because it preserves formatting.  Only use it when there are no rejections
-          // (otherwise the recomputed plain text is authoritative).
-          const allChanges = await getTrackedChanges(submissionId, env);
-          const hasRejections = allChanges.some((c: any) => c.field === updatedChange.field && c.status === 'rejected');
-
-          if (!hasRejections && status === 'approved' && updatedChange.richTextNewValue) {
-            submission.content = recomputed.content;
-            submission.richTextContent = cleanLexicalJson(updatedChange.richTextNewValue);
-          } else {
-            submission.content = recomputed.content;
-            // If the client provided the reverted rich text (from the Lexical editor
-            // after format revert), use it directly. The server-side recomputation
-            // can't preserve inline format changes (bold/italic) that were reverted
-            // client-side via Lexical node.setFormat().
-            if (revertedRichText && typeof revertedRichText === 'string' && revertedRichText.includes('"root"')) {
-              submission.richTextContent = revertedRichText;
-            } else {
-              submission.richTextContent = recomputed.richText;
-            }
-          }
-          await putObject(`content_submissions/${submissionId}`, submission, env);
-
-          // Update proposed_versions cache
-          await putObject(`proposed_versions/${submissionId}`, {
-            proposedVersionsContent: submission.content,
-            proposedVersionsRichText: submission.richTextContent,
-            proposedVersionsFields: [updatedChange.field],
-            lastUpdatedAt: new Date().toISOString(),
-            lastUpdatedBy: request.user.id,
-          }, env);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to update submission content after change resolution:', err);
-    }
-
     // Server-side cascade rejection: when a change is rejected, also reject
-    // all dependent changes whose regions overlap with this change.
+    // all dependent changes whose regions overlap with this change. Done before the
+    // recompute below, so the stored content leaves the dependents out too.
     let cascadeRejectedIds: string[] = [];
     if (status === 'rejected') {
       const dependentIds = await getCascadeDependencies(
@@ -529,6 +532,62 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
       }
     }
 
+    // After accepting or rejecting, recompute the submission content from the
+    // stored original + non-rejected changes so the persisted state is correct.
+    // Not for a form-field change (Subject, Reply-To, ...): its value isn't the document,
+    // and the recompute would write it (or, on a reject, the as-submitted snapshot) over it.
+    try {
+      const recomputed = FORM_FIELD_CHANGE_FIELDS.has(updatedChange.field)
+        ? null
+        : await recomputeContentAfterResolution(submissionId, updatedChange.field, env);
+      if (recomputed) {
+        const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+        if (submission) {
+          // For accepts with richTextNewValue, prefer it over mergeTextIntoLexicalJson
+          // because it preserves formatting.  Only use it when there are no rejections
+          // (otherwise the recomputed plain text is authoritative).
+          const allChanges = await getTrackedChanges(submissionId, env);
+          const hasRejections = allChanges.some((c: any) => c.field === updatedChange.field && c.status === 'rejected');
+
+          // The accepted change's snapshot is the whole document only if no newer change
+          // exists; otherwise it would drop the newer changes' edits.
+          if (!hasRejections && status === 'approved' && updatedChange.richTextNewValue &&
+              isNewestActiveChange(updatedChange, allChanges)) {
+            submission.content = recomputed.content;
+            submission.richTextContent = cleanLexicalJson(updatedChange.richTextNewValue);
+          } else {
+            submission.content = recomputed.content;
+            // If the client provided the reverted rich text (from the Lexical editor
+            // after format revert), use it directly. The server-side recomputation
+            // can't preserve inline format changes (bold/italic) that were reverted
+            // client-side via Lexical node.setFormat(). Not after a cascade: the
+            // client's state was read before it and still has the dependents' text
+            // (a collaborative client sends its state again once it has reverted them).
+            if (cascadeRejectedIds.length === 0 && revertedRichText && typeof revertedRichText === 'string' && revertedRichText.includes('"root"')) {
+              submission.richTextContent = revertedRichText;
+            } else {
+              submission.richTextContent = recomputed.richText;
+            }
+          }
+          await putObject(`content_submissions/${submissionId}`, submission, env);
+
+          // Update proposed_versions cache
+          await putObject(`proposed_versions/${submissionId}`, {
+            proposedVersionsContent: submission.content,
+            proposedVersionsRichText: submission.richTextContent,
+            proposedVersionsFields: [updatedChange.field],
+            lastUpdatedAt: requestStartedAt,
+            lastUpdatedBy: request.user.id,
+          }, env);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update submission content after change resolution:', err);
+    }
+
+    // The last pending change resolved may complete the approval (cascade included)
+    await syncSubmissionStatus(submissionId, env, request.user);
+
     return new Response(JSON.stringify({ success: true, cascadeRejectedIds }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -538,14 +597,19 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
   }
 }
 
-// Batch update status for multiple tracked changes
+// Batch update status for multiple tracked changes. `revertedRichText` (optional) is the
+// editor's Lexical state after all the reverts; like the single-change handler, it is
+// stored instead of the server's recomputed rich text when the batch isn't a plain accept.
 export async function batchUpdateStatusHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   if (!request.user) {
     return new Response('Unauthorized', { status: 401 });
   }
 
   try {
-    const { changeIds, status, comment, submissionId } = await request.json();
+    const { changeIds, status, comment, submissionId, revertedRichText } = await request.json();
 
     if (!Array.isArray(changeIds) || changeIds.length === 0) {
       return new Response(JSON.stringify({ error: 'changeIds array required' }), {
@@ -558,9 +622,7 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
       });
     }
 
-    let hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    let hasPermission = isReviewer(request.user);
 
     // Also allow the submission author to accept/reject changes to their content
     if (!hasPermission && submissionId) {
@@ -614,11 +676,14 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
 
     // After batch resolution, recompute submission content from original + non-rejected changes.
     try {
-      // Determine which fields were affected
+      const clientRichText: string | undefined =
+        typeof revertedRichText === 'string' && revertedRichText.includes('"root"') ? revertedRichText : undefined;
+      // Determine which document fields were affected (form-field changes such as the
+      // Subject never rewrite the document; see the single-change handler)
       const allChanges = await getTrackedChanges(submissionId, env);
       const affectedFields = [...new Set(
         allChanges.filter((c: any) => changeIds.includes(c.id)).map((c: any) => c.field)
-      )];
+      )].filter((field) => !FORM_FIELD_CHANGE_FIELDS.has(field));
 
       for (const field of affectedFields) {
         const recomputed = await recomputeContentAfterResolution(submissionId, field, env);
@@ -632,23 +697,26 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
                 .filter((c: any) => changeIds.includes(c.id) && c.status === 'approved' && c.field === field)
                 .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
               const latestApproved = justApproved[0];
-              if (latestApproved?.richTextNewValue) {
+              // Only when it's the newest change: an older snapshot lacks newer edits
+              if (latestApproved?.richTextNewValue && isNewestActiveChange(latestApproved, allChanges)) {
                 submission.content = recomputed.content;
                 submission.richTextContent = cleanLexicalJson(latestApproved.richTextNewValue);
               } else {
                 submission.content = recomputed.content;
-                submission.richTextContent = recomputed.richText;
+                submission.richTextContent = clientRichText ?? recomputed.richText;
               }
             } else {
               submission.content = recomputed.content;
-              submission.richTextContent = recomputed.richText;
+              // The editor's state after the reverts: the recompute can't reproduce
+              // reverts done in the editor (format changes, reject by context).
+              submission.richTextContent = clientRichText ?? recomputed.richText;
             }
             await putObject(`content_submissions/${submissionId}`, submission, env);
             await putObject(`proposed_versions/${submissionId}`, {
               proposedVersionsContent: submission.content,
               proposedVersionsRichText: submission.richTextContent,
               proposedVersionsFields: affectedFields,
-              lastUpdatedAt: new Date().toISOString(),
+              lastUpdatedAt: requestStartedAt,
               lastUpdatedBy: 'batch',
             }, env);
           }
@@ -657,6 +725,8 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
     } catch (err) {
       console.error('Failed to update submission content after batch resolution:', err);
     }
+
+    await syncSubmissionStatus(submissionId, env, request.user);
 
     return new Response(JSON.stringify({ results }), {
       headers: { 'Content-Type': 'application/json' }
@@ -700,6 +770,16 @@ export async function addChangeCommentHandler(request: CustomRequest, env: any):
       env
     );
 
+    // Tell the submission's room, like a submission comment (comment_added), so other
+    // reviewers see it without reloading. The message carries the change id.
+    await broadcastToSubmissionRoom(change.submissionId, {
+      type: 'comment_added',
+      userId: request.user.id || request.user.email,
+      userName: request.user.name,
+      userEmail: request.user.email,
+      data: { comment: newComment, changeId },
+    }, env);
+
     return new Response(JSON.stringify(newComment), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -711,7 +791,7 @@ export async function addChangeCommentHandler(request: CustomRequest, env: any):
 
 // Get change history for analytics
 export async function getChangeHistoryHandler(request: CustomRequest, env: any): Promise<Response> {
-  if (!request.user || !['Admin', 'CommsCadre', 'CouncilManager'].includes(request.user.userType)) {
+  if (!request.user || !isReviewer(request.user)) {
     return new Response('Forbidden', { status: 403 });
   }
 
@@ -731,6 +811,9 @@ export async function getChangeHistoryHandler(request: CustomRequest, env: any):
 
 // Undo a change decision
 export async function undoChangeHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the stored document with the request's start, like the status handlers: a
+  // change created while this request runs is then newer than it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { changeId } = request.params!;
 
   if (!request.user) {
@@ -738,17 +821,23 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
   }
 
   try {
-    // Check permissions - same as approve/reject
-    const hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    // Get submissionId (and, optionally, the editor's document after the undo) from the body
+    const body = await request.json().catch(() => ({}));
+    const { submissionId, proposedVersionsRichText } = body || {};
+
+    // Check permissions - same as approve/reject: privileged roles, or the submission's author
+    let hasPermission = isReviewer(request.user);
+    if (!hasPermission && submissionId) {
+      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
+      if (submission && submission.submittedBy === request.user.id) {
+        hasPermission = true;
+      }
+    }
 
     if (!hasPermission) {
       return new Response('Forbidden', { status: 403 });
     }
 
-    // Get submissionId from request body
-    const { submissionId } = await request.json();
     if (!submissionId) {
       return new Response('submissionId is required', { status: 400 });
     }
@@ -765,6 +854,33 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
     // We don't update submission.content here because the change is no
     // longer resolved — it needs to be re-accepted or rejected.
 
+    // undoChange drops the stored proposed version (to be recomputed). The editor sends
+    // its document after the undo (an undone reject re-applies the change's text, which
+    // no change record holds), so store that instead, as the status handlers store the
+    // editor's state sent with a reject (revertedRichText). In collaborative mode the
+    // document is the source of truth. Without it, GET recomputes from the changes. The
+    // change's reappliedAt (set by undoChange) keeps an accept from storing a snapshot
+    // made while it was rejected (isNewestActiveChange).
+    if (typeof proposedVersionsRichText === 'string' && proposedVersionsRichText.includes('"root"')) {
+      let proposedVersionsContent: string | undefined;
+      try {
+        proposedVersionsContent = extractPlainTextFromLexicalJson(JSON.parse(proposedVersionsRichText));
+      } catch {
+        proposedVersionsContent = undefined;
+      }
+      await putObject(`proposed_versions/${submissionId}`, {
+        submissionId,
+        proposedVersionsRichText,
+        ...(proposedVersionsContent !== undefined ? { proposedVersionsContent } : {}),
+        proposedVersionsFields: [updatedChange.field],
+        lastUpdatedBy: request.user.id,
+        lastUpdatedAt: requestStartedAt,
+      }, env);
+    }
+
+    // The change is pending again: an approved submission goes back to review
+    await syncSubmissionStatus(submissionId, env, request.user);
+
     return new Response(JSON.stringify({ success: true, change: updatedChange }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -776,6 +892,9 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
 
 // Update proposed versions for a submission
 export async function updateProposedVersionsHandler(request: CustomRequest, env: any): Promise<Response> {
+  // Stamp the cached copy with the request's start: a change created while this request
+  // runs is then newer than it, and GET ignores it (freshProposedVersions).
+  const requestStartedAt = new Date().toISOString();
   const { submissionId } = request.params!;
 
   if (!request.user) {
@@ -796,9 +915,7 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
     });
 
     // Check permissions
-    const hasPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager' ||
+    const hasPermission = isReviewer(request.user) ||
       true; // TODO: Check if user is the submitter
 
     if (!hasPermission) {
@@ -811,7 +928,7 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
       proposedVersionsRichText,
       proposedVersionsContent,
       lastUpdatedBy: request.user.id,
-      lastUpdatedAt: new Date().toISOString()
+      lastUpdatedAt: requestStartedAt
     };
 
     console.log('🔍 updateProposedVersionsHandler - saving data:', {
@@ -856,9 +973,7 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
 
     // Allow deletion if user is the change author OR has elevated permissions
     const isAuthor = change.changedBy === request.user.id;
-    const hasElevatedPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    const hasElevatedPermission = isReviewer(request.user);
 
     if (!isAuthor && !hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
@@ -869,6 +984,9 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
     if (!result) {
       return new Response('Change not found', { status: 404 });
     }
+
+    // Deleting the last pending change (an author's undo of their own edit) may complete the approval
+    await syncSubmissionStatus(submissionId, env, request.user);
 
     return new Response(JSON.stringify({ success: true, submissionId: result.submissionId }), {
       headers: { 'Content-Type': 'application/json' }
@@ -888,9 +1006,7 @@ export async function deleteAllChangesHandler(request: CustomRequest, env: any):
   }
 
   try {
-    const hasElevatedPermission = request.user.userType === 'Admin' ||
-      request.user.userType === 'CommsCadre' ||
-      request.user.userType === 'CouncilManager';
+    const hasElevatedPermission = isReviewer(request.user);
 
     if (!hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
@@ -908,6 +1024,8 @@ export async function deleteAllChangesHandler(request: CustomRequest, env: any):
     // Delete proposed versions cache
     await deleteObject(`proposed_versions/${submissionId}`, env);
     await deleteObject(`tracked_changes:submission:${submissionId}`, env);
+
+    await syncSubmissionStatus(submissionId, env, request.user);
 
     return new Response(JSON.stringify({ success: true, count: objects.objects.length }), {
       headers: { 'Content-Type': 'application/json' }
@@ -991,6 +1109,8 @@ export async function batchCreateHandler(request: CustomRequest, env: any): Prom
     }));
 
     const createdChanges = await batchCreateTrackedChanges(submissionId, changesData, env);
+
+    await syncSubmissionStatus(submissionId, env, request.user, { onlyDemote: true });
 
     return new Response(JSON.stringify({ success: true, changes: createdChanges }), {
       headers: { 'Content-Type': 'application/json' }

@@ -165,6 +165,8 @@ interface CreateNotificationParams {
   submissionId?: string;
   submissionTitle?: string;
   actorName?: string;
+  /** Where the notification opens, when it isn't a request's review page. */
+  link?: string;
 }
 
 export async function createInAppNotification(
@@ -181,6 +183,7 @@ export async function createInAppNotification(
       submissionId: params.submissionId,
       submissionTitle: params.submissionTitle,
       actorName: params.actorName,
+      ...(params.link ? { link: params.link } : {}),
       read: false,
       createdAt: new Date().toISOString(),
     };

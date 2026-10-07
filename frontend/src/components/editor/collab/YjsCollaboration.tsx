@@ -38,6 +38,7 @@ import { registerCaretPreservation } from './caretPreservation';
 import { createLocalEditTracker, LocalEditTracker } from './localEditTracker';
 import { getProvenance, trackProvenance } from './provenance';
 import { isLexicalJson } from '../../../utils/lexicalUtils';
+import { $settlePendingImages } from '../nodes/ImageNode';
 
 /**
  * Tag for the editor reset before a new Yjs session binds (see YjsCollaboration). It's
@@ -102,6 +103,10 @@ export function $populateRootFromSavedContent(editor: LexicalEditor, content: st
       root.append(paragraph);
     }
   }
+
+  // Nobody is uploading anything yet: leftover placeholders from saved JSON are orphans, and
+  // images in saved HTML keep their original address (no upload on load).
+  $settlePendingImages(root);
 
   if (root.getChildrenSize() === 0) {
     root.append($createParagraphNode());

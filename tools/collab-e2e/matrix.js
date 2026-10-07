@@ -208,7 +208,7 @@ async function closePair(p) {
           const del = changes.find((c) => c.field === 'content' && c.status === 'pending' && c.oldValue.includes('Third'));
           assert(del, 'no deletion change on the server');
           await expandGroups(b);
-          const btn = await b.page.waitForSelector(`.change-item[data-change-id="${del.id}"] button[title="Accept this change"], .change-item[data-change-id="${del.id}"] button[title="Approve this change"]`, { timeout: 10000 });
+          const btn = await b.page.waitForSelector(`.change-item[data-change-ids~="${del.id}"] button[title="Accept"]`, { timeout: 10000 });
           await btn.click();
           await L.waitFor(async () => (await a.page.$$(`${L.EDITOR} .tracked-deletion`)).length === 0 && (await b.page.$$(`${L.EDITOR} .tracked-deletion`)).length === 0, 'markers gone on both');
           const x = await L.converged(a, b);
@@ -225,8 +225,8 @@ async function closePair(p) {
           assert(target, 'no tracked change for Rejectme');
           // B's sidebar picks the change up from A's transaction_settled (sidebar-only refetch)
           const sentBefore = b.roomSent.length;
-          await L.waitFor(async () => { await expandGroups(b); return (await b.page.$(`.change-item[data-change-id="${target.id}"]`)) !== null; }, 'change in B sidebar');
-          const btn = await b.page.waitForSelector(`.change-item[data-change-id="${target.id}"] button[title="Reject this change"]`, { timeout: 10000 });
+          await L.waitFor(async () => { await expandGroups(b); return (await b.page.$(`.change-item[data-change-ids~="${target.id}"]`)) !== null; }, 'change in B sidebar');
+          const btn = await b.page.waitForSelector(`.change-item[data-change-ids~="${target.id}"] button[title="Reject"]`, { timeout: 10000 });
           await btn.click();
           const x = await L.waitFor(async () => {
             const [xa, xb] = [await L.blocks(a), await L.blocks(b)];

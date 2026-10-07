@@ -18,7 +18,11 @@ import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
+import { $exportNodeJSON, $reapplyByContext, $rejectByContext, applyBlockReplacements, ChangeDocs, planRejectRestore } from '../collab/rejectRestore';
 import { getUserColorIndex, getUserColor, getChangeColorIndex, getChangeColor } from '../../../utils/userColors';
+
+/** The change id of a deletion marker whose transaction hasn't been saved yet. */
+const PENDING_DELETION = '__pending_deletion__';
 
 export interface TrackedChange {
   id: string;
@@ -975,7 +979,13 @@ export default function TrackedChangesPlugin({
   useEffect(() => {
     const handleCommit = (e: Event) => {
       const customEvent = e as CustomEvent;
-      const { newId, authorId } = customEvent.detail;
+      const { newId, authorId, pendingKeys } = customEvent.detail;
+      if (newId && Array.isArray(pendingKeys)) {
+        // Collaborative mode: stamp exactly the markers the saved transaction created.
+        if (pendingKeys.length === 0) return;
+        editor.update(() => $stampPendingMarkers(newId, pendingKeys), { tag: 'tracked-changes-decoration' });
+        return;
+      }
       if (newId) {
         editor.update(() => {
           const deletions = $nodesOfType(DeletedTextNode);
@@ -997,326 +1007,36 @@ export default function TrackedChangesPlugin({
     return () => window.removeEventListener('commit-pending-deletion', handleCommit);
   }, [editor]);
 
+  // Collaborative mode: remove orphaned pending deletion markers (see
+  // $hasOrphanPendingMarkers), checked after the document settles: on load and after edits.
+  useEffect(() => {
+    if (!isCollab) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const check = () => {
+      timer = null;
+      if (!editor.getEditorState().read($hasOrphanPendingMarkers)) return;
+      editor.update(() => { $removeOrphanPendingMarkers(); }, { tag: 'tracked-changes-decoration' });
+    };
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(check, ORPHAN_MARKER_CHECK_DELAY_MS);
+    };
+    schedule();
+    const unregister = editor.registerMutationListener(DeletedTextNode, schedule);
+    return () => {
+      unregister();
+      if (timer) clearTimeout(timer);
+    };
+  }, [editor, isCollab]);
+
   // Listen for resolve-tracked-change events from TrackedChangesEditor
   useEffect(() => {
     const handleResolve = (e: Event) => {
-      const customEvent = e as CustomEvent;
-      const { changeId, action, deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds } = customEvent.detail;
-      if (changeId && action) {
-        editor.update(() => {
-          const deletions = $nodesOfType(DeletedTextNode);
-
-          // Track which deletedTexts have been matched (for __pending_deletion__ fallback)
-          const matchedTexts = new Set<string>();
-
-          for (const node of deletions) {
-            const nodeChangeId = node.getChangeId();
-            const nodeDeletedText = node.getDeletedText();
-            let match = nodeChangeId === changeId;
-
-            // Fallback: match __pending_deletion__ nodes by their deleted text content.
-            // DeletedTextNodes loaded from saved content often have __pending_deletion__
-            // instead of the real change ID because commit-pending-deletion may not
-            // have fired before the content was persisted.
-            // Collaborative mode passes the change author's IDs: a pending marker made by
-            // someone else (it carries their authorId) is never theirs to resolve.
-            const authorMismatch = Array.isArray(pendingAuthorIds) && node.getAuthorId() !== undefined &&
-              !pendingAuthorIds.includes(node.getAuthorId());
-            if (!match && !authorMismatch && nodeChangeId === '__pending_deletion__' &&
-                Array.isArray(deletedTexts) && deletedTexts.length > 0) {
-              if (deletedTexts.includes(nodeDeletedText) && !matchedTexts.has(nodeDeletedText)) {
-                match = true;
-                matchedTexts.add(nodeDeletedText);
-              }
-            }
-
-            if (match) {
-              if (action === 'approve') {
-                node.remove();
-              } else if (action === 'reject') {
-                const textNode = $createTextNode(nodeDeletedText);
-                node.replace(textNode);
-
-                // For replacement changes (delete+insert pair), also remove the
-                // inserted text from the adjacent sibling. Without this, both the
-                // restored old text and the added new text remain in the document.
-                // Check both next AND previous siblings because the inserted text
-                // may appear on either side depending on cursor position when typed.
-                if (Array.isArray(replacementPairs)) {
-                  const pair = replacementPairs.find(
-                    (p: { deleted: string; inserted: string }) => p.deleted === nodeDeletedText
-                  );
-                  if (pair) {
-                    let removed = false;
-                    // Check next sibling first (inserted text prepended to it)
-                    const nextSibling = textNode.getNextSibling();
-                    if (nextSibling && $isTextNode(nextSibling)) {
-                      const content = nextSibling.getTextContent();
-                      if (content.startsWith(pair.inserted)) {
-                        const remaining = content.substring(pair.inserted.length);
-                        if (remaining) {
-                          nextSibling.setTextContent(remaining);
-                        } else {
-                          nextSibling.remove();
-                        }
-                        removed = true;
-                      }
-                    }
-                    // Check previous sibling (inserted text in a separate node before)
-                    if (!removed) {
-                      const prevSibling = textNode.getPreviousSibling();
-                      if (prevSibling && $isTextNode(prevSibling)) {
-                        const content = prevSibling.getTextContent();
-                        if (content.endsWith(pair.inserted)) {
-                          const remaining = content.substring(0, content.length - pair.inserted.length);
-                          if (remaining) {
-                            prevSibling.setTextContent(remaining);
-                          } else {
-                            prevSibling.remove();
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-          // Handle pure insertions (additions with no corresponding DeletedTextNode).
-          // These are text additions tracked by CSS highlights, not by special nodes.
-          // On reject, find and remove the inserted text from TextNodes.
-          if (action === 'reject' && Array.isArray(insertedTexts) && insertedTexts.length > 0) {
-            const allTextNodes = $nodesOfType(TextNode);
-            for (const insertion of insertedTexts) {
-              const { text, beforeContext, afterContext } = insertion;
-              let found = false;
-
-              // Strategy 1: search with both before+after context for precise matching
-              if (beforeContext || afterContext) {
-                const searchStr = (beforeContext || '') + text + (afterContext || '');
-                for (const textNode of allTextNodes) {
-                  const content = textNode.getTextContent();
-                  const idx = content.indexOf(searchStr);
-                  if (idx !== -1) {
-                    const beforeLen = (beforeContext || '').length;
-                    const newContent = content.substring(0, idx + beforeLen) +
-                                       content.substring(idx + beforeLen + text.length);
-                    if (newContent) {
-                      textNode.setTextContent(newContent);
-                    } else {
-                      textNode.remove();
-                    }
-                    found = true;
-                    break;
-                  }
-                }
-              }
-
-              // Strategy 2: search with just text+afterContext
-              if (!found && afterContext) {
-                const searchStr = text + afterContext;
-                for (const textNode of allTextNodes) {
-                  const content = textNode.getTextContent();
-                  const idx = content.indexOf(searchStr);
-                  if (idx !== -1) {
-                    const newContent = content.substring(0, idx) +
-                                       content.substring(idx + text.length);
-                    if (newContent) {
-                      textNode.setTextContent(newContent);
-                    } else {
-                      textNode.remove();
-                    }
-                    found = true;
-                    break;
-                  }
-                }
-              }
-
-              // Strategy 3: search with beforeContext+text
-              if (!found && beforeContext) {
-                const searchStr = beforeContext + text;
-                for (const textNode of allTextNodes) {
-                  const content = textNode.getTextContent();
-                  const idx = content.indexOf(searchStr);
-                  if (idx !== -1) {
-                    const newContent = content.substring(0, idx + beforeContext.length) +
-                                       content.substring(idx + beforeContext.length + text.length);
-                    if (newContent) {
-                      textNode.setTextContent(newContent);
-                    } else {
-                      textNode.remove();
-                    }
-                    found = true;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-
-          // Handle formatting changes (block type + inline format reversions)
-          if (action === 'reject' && Array.isArray(formatChanges) && formatChanges.length > 0) {
-            console.log('[FORMAT-REVERT] Starting format revert for', formatChanges.length, 'changes:', JSON.stringify(formatChanges));
-            const root = $getRoot();
-            const blocks = root.getChildren();
-
-            for (const fc of formatChanges) {
-              if (fc.type === 'inline' && fc.fromFormat !== undefined && fc.toFormat !== undefined) {
-                // Inline format revert: find the text containing fc.text and
-                // restore the original format.  Lexical SPLITS nodes when adding
-                // format (bold "nothing" → 3 nodes) and MERGES them when removing
-                // format (unbold → 1 node).  So the target text may be an exact
-                // node OR a substring within a larger merged node.
-                //
-                // Search recursively through the entire tree to handle nested
-                // structures (list items, links, etc.) where text nodes aren't
-                // direct children of root blocks.
-                let found = false;
-
-                const searchAndRevertFormat = (nodes: LexicalNode[]): void => {
-                  for (const node of nodes) {
-                    if (found) break;
-
-                    if ($isTextNode(node)) {
-                      const content = node.getTextContent();
-
-                      // Case 1: exact match (node was split for this format span)
-                      if (content === fc.text) {
-                        console.log(`[FORMAT-REVERT] Case 1: Exact match "${fc.text}" — setFormat(${fc.fromFormat}), was format=${node.getFormat()}`);
-                        node.setFormat(fc.fromFormat);
-                        found = true;
-                        return;
-                      }
-
-                      // Case 2: substring match (node was merged after format removal)
-                      const idx = content.indexOf(fc.text);
-                      if (idx !== -1) {
-                        console.log(`[FORMAT-REVERT] Case 2: Substring match "${fc.text}" in "${content}" at idx=${idx} — splitting and setFormat(${fc.fromFormat})`);
-                        const splitPoints: number[] = [];
-                        if (idx > 0) splitPoints.push(idx);
-                        splitPoints.push(idx + fc.text.length);
-                        const parts = node.splitText(...splitPoints);
-                        const targetIdx = idx > 0 ? 1 : 0;
-                        if (parts[targetIdx]) {
-                          parts[targetIdx].setFormat(fc.fromFormat);
-                        }
-                        found = true;
-                        return;
-                      }
-                    }
-
-                    // Recurse into element nodes (paragraphs, list items, links, etc.)
-                    if ($isElementNode(node)) {
-                      searchAndRevertFormat(node.getChildren());
-                    }
-                  }
-                };
-
-                searchAndRevertFormat(blocks);
-                if (!found) {
-                  console.warn(`[FORMAT-REVERT] NOT FOUND: text="${fc.text}" in any block`);
-                }
-              } else if (fc.type === 'indent' && fc.fromIndent !== undefined && fc.toIndent !== undefined) {
-                // Indent revert: find the element by text content and restore indent
-                let found = false;
-                const searchAndRevertIndent = (nodes: LexicalNode[]) => {
-                  for (const node of nodes) {
-                    if (found) break;
-                    if (!$isElementNode(node)) continue;
-                    const nodeText = node.getTextContent();
-                    if (nodeText === fc.text && typeof node.setIndent === 'function') {
-                      console.log(`[FORMAT-REVERT] Indent revert: "${fc.text}" indent ${fc.toIndent} → ${fc.fromIndent}`);
-                      node.setIndent(fc.fromIndent!);
-                      found = true;
-                      break;
-                    }
-                    // Recurse into children (e.g. list items inside lists)
-                    searchAndRevertIndent(node.getChildren());
-                  }
-                };
-                searchAndRevertIndent(blocks);
-                if (!found) {
-                  console.warn(`[FORMAT-REVERT] Indent revert NOT FOUND: text="${fc.text}"`);
-                }
-              } else {
-                // Block type revert: find the block by matching text content,
-                // with fallback to normalized text and block index matching.
-                const normalizeText = (s: string) => s.replace(/\s+/g, ' ').trim();
-
-                const revertBlock = (block: ElementNode) => {
-                  let newBlock: ElementNode;
-                  if (fc.fromType === 'heading' && fc.fromTag) {
-                    newBlock = $createHeadingNode(fc.fromTag as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
-                  } else {
-                    newBlock = $createParagraphNode();
-                  }
-                  const children = block.getChildren();
-                  for (const child of children) {
-                    newBlock.append(child);
-                  }
-                  block.replace(newBlock);
-                };
-
-                const matchesTag = (block: ElementNode): boolean => {
-                  if (fc.toType === 'heading' && 'getTag' in block) {
-                    return (block as any).getTag() === fc.toTag;
-                  }
-                  return true;
-                };
-
-                // Pass 1: Exact text + type match (most reliable)
-                let found = false;
-                for (const block of blocks) {
-                  if (!$isElementNode(block)) continue;
-                  if (block.getType() === fc.toType && block.getTextContent() === fc.text && matchesTag(block)) {
-                    console.log(`[FORMAT-REVERT] Block exact match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
-                    revertBlock(block);
-                    found = true;
-                    break;
-                  }
-                }
-
-                // Pass 2: Normalized text match (handles whitespace/linebreak differences)
-                if (!found && fc.text) {
-                  const normalizedTarget = normalizeText(fc.text);
-                  for (const block of blocks) {
-                    if (!$isElementNode(block)) continue;
-                    if (block.getType() === fc.toType && normalizeText(block.getTextContent()) === normalizedTarget && matchesTag(block)) {
-                      console.log(`[FORMAT-REVERT] Block normalized match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
-                      revertBlock(block);
-                      found = true;
-                      break;
-                    }
-                  }
-                }
-
-                // Pass 3: Block index fallback (if text changed since snapshot).
-                // Re-read blocks from root since prior replacements make the original array stale.
-                if (!found && fc.blockIndex !== undefined) {
-                  const freshBlocks = root.getChildren();
-                  if (fc.blockIndex < freshBlocks.length) {
-                    const block = freshBlocks[fc.blockIndex];
-                    if ($isElementNode(block) && block.getType() === fc.toType && matchesTag(block)) {
-                      console.log(`[FORMAT-REVERT] Block index fallback [${fc.blockIndex}]: "${block.getTextContent().substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
-                      revertBlock(block);
-                      found = true;
-                    }
-                  }
-                }
-
-                if (!found) {
-                  console.warn(`[FORMAT-REVERT] Block revert NOT FOUND: text="${fc.text.substring(0, 40)}" type=${fc.toType} tag=${fc.toTag} blockIndex=${fc.blockIndex}`);
-                }
-              }
-            }
-          }
-        }, { tag: 'tracked-changes-resolve' });
-      }
+      resolveTrackedChange(editor, (e as CustomEvent<ResolveTrackedChangeDetail>).detail, isCollab);
     };
     window.addEventListener('resolve-tracked-change', handleResolve);
     return () => window.removeEventListener('resolve-tracked-change', handleResolve);
-  }, [editor]);
+  }, [editor, isCollab]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1329,6 +1049,525 @@ export default function TrackedChangesPlugin({
   }, []);
 
   return null;
+}
+
+// ---- Resolving a change (approve / reject) ----
+
+/** Detail of the 'resolve-tracked-change' window event (dispatched by TrackedChangesEditor). */
+export interface ResolveTrackedChangeDetail {
+  changeId: string;
+  action: 'approve' | 'reject';
+  deletedTexts?: string[];
+  replacementPairs?: Array<{ deleted: string; inserted: string }>;
+  insertedTexts?: Array<{ text: string; beforeContext: string; afterContext: string }>;
+  formatChanges?: Array<any>;
+  /** Collaborative mode: the change author's IDs (pending markers of other users are not theirs). */
+  pendingAuthorIds?: string[];
+  /** The change's whole document before and after (Lexical JSON), for a reject by context. */
+  richTextOldValue?: string;
+  richTextNewValue?: string;
+  /**
+   * The other half of the change's move, if it is one (its two documents). Its restored
+   * text is not taken for this change's (rejectRestore's movePartner).
+   */
+  movePartner?: { before: string; after: string };
+  /**
+   * Set synchronously by the handler for a collaborative reject: whether the document was
+   * reverted, and how. `restored: false` means nothing in the document was changed.
+   */
+  result?: { restored: boolean; method: 'marker' | 'context'; reason?: string };
+}
+
+/**
+ * Collaborative mode: give the markers with these pending keys (the ones the saved
+ * transaction's own edits created) the change id. A marker that already has an id, or
+ * that another transaction created, is never touched.
+ */
+export function $stampPendingMarkers(changeId: string, pendingKeys: string[]): number {
+  const keys = new Set(pendingKeys);
+  let stamped = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    const key = node.getPendingKey();
+    if (key !== undefined && keys.has(key) && node.getChangeId() === PENDING_DELETION) {
+      node.setChangeId(changeId);
+      stamped++;
+    }
+  }
+  return stamped;
+}
+
+/** Delay before checking for orphaned pending markers after a marker change. */
+const ORPHAN_MARKER_CHECK_DELAY_MS = 1500;
+
+/**
+ * An orphaned pending marker: a deletion marker that still has the placeholder id and no
+ * pending key. Every marker created in collaborative mode now has a pending key until its
+ * transaction stamps it, so one without is left over from before (its transaction was
+ * saved without stamping it, or never saved): it belongs to no change, and nothing will
+ * ever stamp or resolve it. A pending marker with a pending key may still be waiting for
+ * its transaction's save (on another client too), so it is left alone.
+ */
+function isOrphanPendingMarker(node: DeletedTextNode): boolean {
+  return node.getChangeId() === PENDING_DELETION && node.getPendingKey() === undefined;
+}
+
+export function $hasOrphanPendingMarkers(): boolean {
+  return $nodesOfType(DeletedTextNode).some(isOrphanPendingMarker);
+}
+
+/** Remove orphaned pending markers (collaborative mode). Returns how many. */
+export function $removeOrphanPendingMarkers(): number {
+  let removed = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    if (isOrphanPendingMarker(node)) {
+      node.remove();
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Collaborative mode: the markers stamped with this change's id. Rejected: each becomes
+ * its deleted text again. Approved: removed. Returns how many there were.
+ */
+function $resolveOwnMarkers(changeId: string, action: 'approve' | 'reject'): number {
+  let count = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    if (node.getChangeId() !== changeId) continue;
+    if (action === 'approve') node.remove();
+    else node.replace($createTextNode(node.getDeletedText()));
+    count++;
+  }
+  return count;
+}
+
+/** Remove the markers stamped with this change's id. Returns how many. */
+function $removeMarkersOf(changeId: string): number {
+  let count = 0;
+  for (const node of $nodesOfType(DeletedTextNode)) {
+    if (node.getChangeId() === changeId) {
+      node.remove();
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Apply an approve or reject to the editor tree.
+ *
+ * Collaborative mode:
+ * - Reject of a change with rich text: reverted by context ($rejectByContext): the
+ *   change's own before/after documents locate its region in the live document, and the
+ *   old content replaces it. The change's own deletion markers are in its after-state, so
+ *   the restore turns them back into text. A marker that still carries the change's id
+ *   afterwards was not made by the change (a stray pending marker an earlier session left,
+ *   stamped by mistake): it stands for text that was never in a saved version, so it is
+ *   removed. On failure nothing changes.
+ * - Reject without rich text: only the markers stamped with the change's id are turned back
+ *   into text; nothing is changed when there are none.
+ * - Approve: the markers stamped with the change's id are removed.
+ * The index-based text and format heuristics never run in collaborative mode.
+ * `detail.result` reports a reject's outcome; the update is discrete, so the result and
+ * the committed state are both available when this returns.
+ *
+ * Legacy mode: markers, then the text and format heuristics ($resolveWithMarkers).
+ */
+export function resolveTrackedChange(editor: LexicalEditor, detail: ResolveTrackedChangeDetail, collab: boolean): void {
+  if (!detail || !detail.changeId || !detail.action) return;
+  if (collab) {
+    const { changeId, action } = detail;
+    const before = detail.richTextOldValue;
+    const after = detail.richTextNewValue;
+    editor.update(() => {
+      if (action === 'approve') {
+        $resolveOwnMarkers(changeId, 'approve');
+        return;
+      }
+      if (before && after) {
+        const outcome = $rejectByContext(before, after, detail.movePartner ? { movePartner: detail.movePartner } : {});
+        if (outcome.ok) {
+          $removeMarkersOf(changeId);
+          detail.result = { restored: true, method: 'context' };
+        } else {
+          detail.result = { restored: false, method: 'context', reason: outcome.reason };
+          console.warn(`[RESOLVE] reject by context failed for ${changeId}: ${outcome.reason}`);
+        }
+        return;
+      }
+      const unwrapped = $resolveOwnMarkers(changeId, 'reject');
+      detail.result = unwrapped > 0
+        ? { restored: true, method: 'marker' }
+        : { restored: false, method: 'marker', reason: 'the change has no rich text' };
+    }, { tag: 'tracked-changes-resolve', discrete: true });
+    return;
+  }
+  editor.update(() => $resolveWithMarkers(detail), { tag: 'tracked-changes-resolve' });
+}
+
+/**
+ * Whether each change could be rejected by context, in the order given, against the live
+ * document (a dry run: nothing changes). Each one that could is applied to the working copy
+ * before the next is planned, like a real sequence of rejects. Used to reject a move (two
+ * changes) all or nothing, and to leave out cascaded changes that can't be reverted.
+ */
+export function dryRunRejects(
+  editor: LexicalEditor | null,
+  changes: Array<{ id: string; before?: string; after?: string; movePartner?: { before: string; after: string } }>,
+): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  if (!editor) return result;
+  let blocks: any[] = editor.getEditorState().read(() => $getRoot().getChildren().map($exportNodeJSON));
+  for (const c of changes) {
+    if (!c.before || !c.after) {
+      result.set(c.id, false);
+      continue;
+    }
+    const plan = planRejectRestore(c.before, c.after, blocks, c.movePartner ? { movePartner: c.movePartner } : {});
+    result.set(c.id, plan.ok);
+    if (plan.ok) blocks = applyBlockReplacements(blocks, plan.replacements);
+  }
+  return result;
+}
+
+/** The editor the mounted TrackedChangesPlugin is attached to (the proposed version). */
+export function getActiveTrackedChangesEditor(): LexicalEditor | null {
+  return activeEditorRef;
+}
+
+/**
+ * Undo of a reject: re-apply rejected changes to the document by context (the reject's
+ * locator with the change's two documents swapped), oldest first, in one synced update
+ * tagged like a resolve (bookkeeping: never a tracked edit). All or nothing; the result is
+ * reported synchronously. Collaborative mode also puts back each change's own deletion
+ * markers (only their author's edit creates them, so nothing else would).
+ */
+export function reapplyRejectedChanges(
+  editor: LexicalEditor | null,
+  changes: ChangeDocs[],
+  collab: boolean,
+): { ok: true } | { ok: false; reason: string } {
+  if (!editor) return { ok: false, reason: 'the editor is not ready' };
+  let result: { ok: true } | { ok: false; reason: string } = { ok: false, reason: 'the editor did not run the update' };
+  editor.update(() => {
+    const outcome = $reapplyByContext(changes, { keepMarkers: collab });
+    result = outcome.ok ? { ok: true } : { ok: false, reason: outcome.reason };
+  }, { tag: 'tracked-changes-resolve', discrete: true });
+  return result;
+}
+
+/** Resolve through deletion markers, then the inserted-text and format heuristics. */
+function $resolveWithMarkers(detail: ResolveTrackedChangeDetail): void {
+  const { action, deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds } = detail;
+  const changeId = detail.changeId;
+  const deletions = $nodesOfType(DeletedTextNode);
+
+  // Track which deletedTexts have been matched (for __pending_deletion__ fallback)
+  const matchedTexts = new Set<string>();
+
+  for (const node of deletions) {
+    const nodeChangeId = node.getChangeId();
+    const nodeDeletedText = node.getDeletedText();
+    let match = nodeChangeId === changeId;
+
+    // Fallback: match __pending_deletion__ nodes by their deleted text content.
+    // DeletedTextNodes loaded from saved content often have __pending_deletion__
+    // instead of the real change ID because commit-pending-deletion may not
+    // have fired before the content was persisted.
+    // Collaborative mode passes the change author's IDs: a pending marker made by
+    // someone else (it carries their authorId) is never theirs to resolve.
+    const authorMismatch = Array.isArray(pendingAuthorIds) && node.getAuthorId() !== undefined &&
+      !pendingAuthorIds.includes(node.getAuthorId() as string);
+    if (!match && !authorMismatch && nodeChangeId === '__pending_deletion__' &&
+        Array.isArray(deletedTexts) && deletedTexts.length > 0) {
+      if (deletedTexts.includes(nodeDeletedText) && !matchedTexts.has(nodeDeletedText)) {
+        match = true;
+        matchedTexts.add(nodeDeletedText);
+      }
+    }
+
+    if (match) {
+      if (action === 'approve') {
+        node.remove();
+      } else if (action === 'reject') {
+        const textNode = $createTextNode(nodeDeletedText);
+        node.replace(textNode);
+
+        // For replacement changes (delete+insert pair), also remove the
+        // inserted text from the adjacent sibling. Without this, both the
+        // restored old text and the added new text remain in the document.
+        // Check both next AND previous siblings because the inserted text
+        // may appear on either side depending on cursor position when typed.
+        if (Array.isArray(replacementPairs)) {
+          const pair = replacementPairs.find(
+            (p: { deleted: string; inserted: string }) => p.deleted === nodeDeletedText
+          );
+          if (pair) {
+            let removed = false;
+            // Check next sibling first (inserted text prepended to it)
+            const nextSibling = textNode.getNextSibling();
+            if (nextSibling && $isTextNode(nextSibling)) {
+              const content = nextSibling.getTextContent();
+              if (content.startsWith(pair.inserted)) {
+                const remaining = content.substring(pair.inserted.length);
+                if (remaining) {
+                  nextSibling.setTextContent(remaining);
+                } else {
+                  nextSibling.remove();
+                }
+                removed = true;
+              }
+            }
+            // Check previous sibling (inserted text in a separate node before)
+            if (!removed) {
+              const prevSibling = textNode.getPreviousSibling();
+              if (prevSibling && $isTextNode(prevSibling)) {
+                const content = prevSibling.getTextContent();
+                if (content.endsWith(pair.inserted)) {
+                  const remaining = content.substring(0, content.length - pair.inserted.length);
+                  if (remaining) {
+                    prevSibling.setTextContent(remaining);
+                  } else {
+                    prevSibling.remove();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Handle pure insertions (additions with no corresponding DeletedTextNode).
+  // These are text additions tracked by CSS highlights, not by special nodes.
+  // On reject, find and remove the inserted text from TextNodes.
+  if (action === 'reject' && Array.isArray(insertedTexts) && insertedTexts.length > 0) {
+    const allTextNodes = $nodesOfType(TextNode);
+    for (const insertion of insertedTexts) {
+      const { text, beforeContext, afterContext } = insertion;
+      let found = false;
+
+      // Strategy 1: search with both before+after context for precise matching
+      if (beforeContext || afterContext) {
+        const searchStr = (beforeContext || '') + text + (afterContext || '');
+        for (const textNode of allTextNodes) {
+          const content = textNode.getTextContent();
+          const idx = content.indexOf(searchStr);
+          if (idx !== -1) {
+            const beforeLen = (beforeContext || '').length;
+            const newContent = content.substring(0, idx + beforeLen) +
+                               content.substring(idx + beforeLen + text.length);
+            if (newContent) {
+              textNode.setTextContent(newContent);
+            } else {
+              textNode.remove();
+            }
+            found = true;
+            break;
+          }
+        }
+      }
+
+      // Strategy 2: search with just text+afterContext
+      if (!found && afterContext) {
+        const searchStr = text + afterContext;
+        for (const textNode of allTextNodes) {
+          const content = textNode.getTextContent();
+          const idx = content.indexOf(searchStr);
+          if (idx !== -1) {
+            const newContent = content.substring(0, idx) +
+                               content.substring(idx + text.length);
+            if (newContent) {
+              textNode.setTextContent(newContent);
+            } else {
+              textNode.remove();
+            }
+            found = true;
+            break;
+          }
+        }
+      }
+
+      // Strategy 3: search with beforeContext+text
+      if (!found && beforeContext) {
+        const searchStr = beforeContext + text;
+        for (const textNode of allTextNodes) {
+          const content = textNode.getTextContent();
+          const idx = content.indexOf(searchStr);
+          if (idx !== -1) {
+            const newContent = content.substring(0, idx + beforeContext.length) +
+                               content.substring(idx + beforeContext.length + text.length);
+            if (newContent) {
+              textNode.setTextContent(newContent);
+            } else {
+              textNode.remove();
+            }
+            found = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Handle formatting changes (block type + inline format reversions)
+  if (action === 'reject' && Array.isArray(formatChanges) && formatChanges.length > 0) {
+    console.log('[FORMAT-REVERT] Starting format revert for', formatChanges.length, 'changes:', JSON.stringify(formatChanges));
+    const root = $getRoot();
+    const blocks = root.getChildren();
+
+    for (const fc of formatChanges) {
+      if (fc.type === 'inline' && fc.fromFormat !== undefined && fc.toFormat !== undefined) {
+        // Inline format revert: find the text containing fc.text and
+        // restore the original format.  Lexical SPLITS nodes when adding
+        // format (bold "nothing" → 3 nodes) and MERGES them when removing
+        // format (unbold → 1 node).  So the target text may be an exact
+        // node OR a substring within a larger merged node.
+        //
+        // Search recursively through the entire tree to handle nested
+        // structures (list items, links, etc.) where text nodes aren't
+        // direct children of root blocks.
+        let found = false;
+
+        const searchAndRevertFormat = (nodes: LexicalNode[]): void => {
+          for (const node of nodes) {
+            if (found) break;
+
+            if ($isTextNode(node)) {
+              const content = node.getTextContent();
+
+              // Case 1: exact match (node was split for this format span)
+              if (content === fc.text) {
+                console.log(`[FORMAT-REVERT] Case 1: Exact match "${fc.text}" — setFormat(${fc.fromFormat}), was format=${node.getFormat()}`);
+                node.setFormat(fc.fromFormat);
+                found = true;
+                return;
+              }
+
+              // Case 2: substring match (node was merged after format removal)
+              const idx = content.indexOf(fc.text);
+              if (idx !== -1) {
+                console.log(`[FORMAT-REVERT] Case 2: Substring match "${fc.text}" in "${content}" at idx=${idx} — splitting and setFormat(${fc.fromFormat})`);
+                const splitPoints: number[] = [];
+                if (idx > 0) splitPoints.push(idx);
+                splitPoints.push(idx + fc.text.length);
+                const parts = node.splitText(...splitPoints);
+                const targetIdx = idx > 0 ? 1 : 0;
+                if (parts[targetIdx]) {
+                  parts[targetIdx].setFormat(fc.fromFormat);
+                }
+                found = true;
+                return;
+              }
+            }
+
+            // Recurse into element nodes (paragraphs, list items, links, etc.)
+            if ($isElementNode(node)) {
+              searchAndRevertFormat(node.getChildren());
+            }
+          }
+        };
+
+        searchAndRevertFormat(blocks);
+        if (!found) {
+          console.warn(`[FORMAT-REVERT] NOT FOUND: text="${fc.text}" in any block`);
+        }
+      } else if (fc.type === 'indent' && fc.fromIndent !== undefined && fc.toIndent !== undefined) {
+        // Indent revert: find the element by text content and restore indent
+        let found = false;
+        const searchAndRevertIndent = (nodes: LexicalNode[]) => {
+          for (const node of nodes) {
+            if (found) break;
+            if (!$isElementNode(node)) continue;
+            const nodeText = node.getTextContent();
+            if (nodeText === fc.text && typeof node.setIndent === 'function') {
+              console.log(`[FORMAT-REVERT] Indent revert: "${fc.text}" indent ${fc.toIndent} → ${fc.fromIndent}`);
+              node.setIndent(fc.fromIndent!);
+              found = true;
+              break;
+            }
+            // Recurse into children (e.g. list items inside lists)
+            searchAndRevertIndent(node.getChildren());
+          }
+        };
+        searchAndRevertIndent(blocks);
+        if (!found) {
+          console.warn(`[FORMAT-REVERT] Indent revert NOT FOUND: text="${fc.text}"`);
+        }
+      } else {
+        // Block type revert: find the block by matching text content,
+        // with fallback to normalized text and block index matching.
+        const normalizeText = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+        const revertBlock = (block: ElementNode) => {
+          let newBlock: ElementNode;
+          if (fc.fromType === 'heading' && fc.fromTag) {
+            newBlock = $createHeadingNode(fc.fromTag as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
+          } else {
+            newBlock = $createParagraphNode();
+          }
+          const children = block.getChildren();
+          for (const child of children) {
+            newBlock.append(child);
+          }
+          block.replace(newBlock);
+        };
+
+        const matchesTag = (block: ElementNode): boolean => {
+          if (fc.toType === 'heading' && 'getTag' in block) {
+            return (block as any).getTag() === fc.toTag;
+          }
+          return true;
+        };
+
+        // Pass 1: Exact text + type match (most reliable)
+        let found = false;
+        for (const block of blocks) {
+          if (!$isElementNode(block)) continue;
+          if (block.getType() === fc.toType && block.getTextContent() === fc.text && matchesTag(block)) {
+            console.log(`[FORMAT-REVERT] Block exact match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+            revertBlock(block);
+            found = true;
+            break;
+          }
+        }
+
+        // Pass 2: Normalized text match (handles whitespace/linebreak differences)
+        if (!found && fc.text) {
+          const normalizedTarget = normalizeText(fc.text);
+          for (const block of blocks) {
+            if (!$isElementNode(block)) continue;
+            if (block.getType() === fc.toType && normalizeText(block.getTextContent()) === normalizedTarget && matchesTag(block)) {
+              console.log(`[FORMAT-REVERT] Block normalized match: "${fc.text.substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+              revertBlock(block);
+              found = true;
+              break;
+            }
+          }
+        }
+
+        // Pass 3: Block index fallback (if text changed since snapshot).
+        // Re-read blocks from root since prior replacements make the original array stale.
+        if (!found && fc.blockIndex !== undefined) {
+          const freshBlocks = root.getChildren();
+          if (fc.blockIndex < freshBlocks.length) {
+            const block = freshBlocks[fc.blockIndex];
+            if ($isElementNode(block) && block.getType() === fc.toType && matchesTag(block)) {
+              console.log(`[FORMAT-REVERT] Block index fallback [${fc.blockIndex}]: "${block.getTextContent().substring(0, 40)}" ${fc.toType}→${fc.fromType}`);
+              revertBlock(block);
+              found = true;
+            }
+          }
+        }
+
+        if (!found) {
+          console.warn(`[FORMAT-REVERT] Block revert NOT FOUND: text="${fc.text.substring(0, 40)}" type=${fc.toType} tag=${fc.toTag} blockIndex=${fc.blockIndex}`);
+        }
+      }
+    }
+  }
 }
 
 /**

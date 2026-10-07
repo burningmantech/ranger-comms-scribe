@@ -124,18 +124,6 @@ export const TrackedChangesDemo: React.FC = () => {
 
   };
 
-  const handleUndo = (changeId: string) => {
-    setSubmission(prev => ({
-      ...prev,
-      changes: prev.changes.map(change => 
-        change.id === changeId 
-          ? { ...change, status: 'pending', approvedBy: undefined, rejectedBy: undefined }
-          : change
-      )
-    }));
-
-  };
-
   const handleRefreshNeeded = () => {
 
   };
@@ -150,7 +138,6 @@ export const TrackedChangesDemo: React.FC = () => {
         onApprove={handleApprove}
         onReject={handleReject}
         onSuggestion={handleSuggestion}
-        onUndo={handleUndo}
         onRefreshNeeded={handleRefreshNeeded}
       />
     </div>

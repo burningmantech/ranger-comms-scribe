@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { deleteChangeHandler, batchCreateHandler } from '../../src/handlers/trackedChanges';
+import { deleteChangeHandler, batchCreateHandler, batchUpdateStatusHandler, undoChangeHandler } from '../../src/handlers/trackedChanges';
 import { CustomRequest } from '../../src/types';
-import { clearMemoryCache } from '../../src/services/cacheService';
+import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
+import { createMockObjectStore } from '../helpers/mockObjectStore';
 
 // Helper to create a mock CustomRequest
 function createMockRequest(overrides: {
@@ -231,6 +232,153 @@ describe('trackedChanges handlers', () => {
 
       const response = await batchCreateHandler(request, mockEnv);
 
+      expect(response.status).toBe(400);
+    });
+  });
+
+  describe('batchUpdateStatusHandler revertedRichText', () => {
+    const lexical = (text: string, extra: Record<string, unknown> = {}) => JSON.stringify({
+      root: {
+        type: 'root', version: 1, direction: null, format: '', indent: 0, ...extra,
+        children: [{
+          type: 'paragraph', version: 1, direction: null, format: '', indent: 0,
+          children: [{ type: 'text', version: 1, detail: 0, format: 0, mode: 'normal', style: '', text }],
+        }],
+      },
+    });
+    const admin = { id: 'admin-user-id', name: 'Admin User', userType: 'Admin' };
+    let counter = 0;
+
+    // A submission with an original and two pending changes, in a memory-backed store.
+    // Unique ids per test: the cache is module-level.
+    async function setup() {
+      const env: any = { STORE: createMockObjectStore() };
+      const submissionId = `batch-sub-${++counter}`;
+      const original = lexical('Hello world');
+      await putObject(`original_content/${submissionId}`, { content: 'Hello world', richTextContent: original }, env);
+      await putObject(`content_submissions/${submissionId}`, {
+        id: submissionId, content: 'Hello big bright world', richTextContent: lexical('Hello big bright world'),
+      }, env);
+      const change = (id: string, oldValue: string, newValue: string, at: string) => ({
+        id, submissionId, field: 'content', oldValue, newValue, completeProposedVersion: newValue,
+        richTextOldValue: lexical(oldValue), richTextNewValue: lexical(newValue),
+        changedBy: 'author', changedByName: 'Author', timestamp: at, status: 'pending',
+      });
+      await putObject(`tracked-changes/submission/${submissionId}/c1`,
+        change('c1', 'Hello world', 'Hello big world', '2026-10-05T10:00:00Z'), env);
+      await putObject(`tracked-changes/submission/${submissionId}/c2`,
+        change('c2', 'Hello big world', 'Hello big bright world', '2026-10-05T10:00:05Z'), env);
+      return { env, submissionId, original };
+    }
+
+    async function batchReject(env: any, submissionId: string, extra: Record<string, unknown> = {}) {
+      const request = createMockRequest({
+        user: admin,
+        body: { changeIds: ['c1', 'c2'], status: 'rejected', submissionId, ...extra },
+      });
+      const response = await batchUpdateStatusHandler(request, env);
+      expect(response.status).toBe(200);
+      // Read back from the store, not the in-memory cache
+      clearMemoryCache();
+      return {
+        submission: await getObject<any>(`content_submissions/${submissionId}`, env),
+        proposed: await getObject<any>(`proposed_versions/${submissionId}`, env),
+      };
+    }
+
+    it('stores the editor state sent with a batch reject', async () => {
+      const { env, submissionId } = await setup();
+      // Differs from the server's recompute (an extra root field), as an editor-side revert would
+      const editorState = lexical('Hello world', { editorSide: true });
+
+      const { submission, proposed } = await batchReject(env, submissionId, { revertedRichText: editorState });
+
+      expect(submission.richTextContent).toBe(editorState);
+      expect(submission.content).toBe('Hello world');
+      expect(proposed.proposedVersionsRichText).toBe(editorState);
+    });
+
+    it('stores the recompute when no revertedRichText is sent', async () => {
+      const { env, submissionId, original } = await setup();
+
+      const { submission, proposed } = await batchReject(env, submissionId);
+
+      expect(submission.richTextContent).toBe(original);
+      expect(proposed.proposedVersionsRichText).toBe(original);
+    });
+
+    it('ignores a revertedRichText that is not Lexical JSON', async () => {
+      const { env, submissionId, original } = await setup();
+
+      const { submission } = await batchReject(env, submissionId, { revertedRichText: 'plain text' });
+
+      expect(submission.richTextContent).toBe(original);
+    });
+  });
+
+  describe('undoChangeHandler', () => {
+    const lexical = (text: string) => JSON.stringify({
+      root: { type: 'root', version: 1, children: [{ type: 'paragraph', version: 1, children: [{ type: 'text', version: 1, text }] }] },
+    });
+    let counter = 0;
+
+    async function setup(status: 'approved' | 'rejected', submittedBy = 'author-id') {
+      const env: any = { STORE: createMockObjectStore() };
+      const submissionId = `undo-sub-${++counter}`;
+      await putObject(`content_submissions/${submissionId}`, { id: submissionId, submittedBy }, env);
+      await putObject(`tracked-changes/submission/${submissionId}/c1`, {
+        id: 'c1', submissionId, field: 'content', oldValue: 'a', newValue: 'ab', changedBy: 'author-id',
+        timestamp: '2026-10-05T10:00:00Z', status, rejectedBy: 'reviewer', rejectedByName: 'Reviewer',
+      }, env);
+      await putObject(`proposed_versions/${submissionId}`, { proposedVersionsRichText: lexical('a') }, env);
+      return { env, submissionId };
+    }
+
+    async function undo(env: any, user: any, body: Record<string, unknown>) {
+      const request = createMockRequest({ params: { changeId: 'c1' }, user, body });
+      const response = await undoChangeHandler(request, env);
+      clearMemoryCache();
+      return response;
+    }
+
+    it('sets the change back to pending and stores the document sent with it', async () => {
+      const { env, submissionId } = await setup('rejected');
+      const doc = lexical('ab');
+
+      const response = await undo(env, { id: 'reviewer', userType: 'CommsCadre' }, { submissionId, proposedVersionsRichText: doc });
+
+      expect(response.status).toBe(200);
+      const change = await getObject<any>(`tracked-changes/submission/${submissionId}/c1`, env);
+      expect(change.status).toBe('pending');
+      expect(change.rejectedBy).toBeUndefined();
+      const proposed = await getObject<any>(`proposed_versions/${submissionId}`, env);
+      expect(proposed.proposedVersionsRichText).toBe(doc);
+    });
+
+    it("drops the stored proposed version when no document is sent (as before)", async () => {
+      const { env, submissionId } = await setup('approved');
+
+      const response = await undo(env, { id: 'reviewer', userType: 'Admin' }, { submissionId });
+
+      expect(response.status).toBe(200);
+      expect(await getObject<any>(`proposed_versions/${submissionId}`, env)).toBeNull();
+    });
+
+    it("lets the submission's author undo, like accept and reject", async () => {
+      const { env, submissionId } = await setup('rejected', 'author-id');
+      const response = await undo(env, { id: 'author-id', userType: 'Member' }, { submissionId });
+      expect(response.status).toBe(200);
+    });
+
+    it('refuses other members', async () => {
+      const { env, submissionId } = await setup('rejected', 'author-id');
+      const response = await undo(env, { id: 'someone-else', userType: 'Member' }, { submissionId });
+      expect(response.status).toBe(403);
+    });
+
+    it('requires the submission id', async () => {
+      const { env } = await setup('rejected');
+      const response = await undo(env, { id: 'reviewer', userType: 'Admin' }, {});
       expect(response.status).toBe(400);
     });
   });

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import ApprovalTracker from './ApprovalTracker';
+import React from 'react';
+import ConditionsPopover from './ConditionsPopover';
+import FinishReviewMenu from './FinishReviewMenu';
 import QueueNavigator from './QueueNavigator';
-import { ApprovalGates } from '../types/content';
+import { ApprovalGates, SubmissionReminder } from '../types/content';
 import './ReviewTopBar.css';
 
 interface ReviewTopBarProps {
@@ -11,12 +12,22 @@ interface ReviewTopBarProps {
   submittedAt: Date;
   isUrgent: boolean;
   approvalGates?: ApprovalGates;
+  /** Edits still to accept or reject, one per review card (the conditions popover's count). */
+  pendingEdits?: number;
+  /** Approval reminders sent, and how to send one (omit to hide Remind). */
+  reminders?: SubmissionReminder[];
+  onRemind?: (target: string) => Promise<SubmissionReminder[]>;
+  /** Shows "Finish review" (Approve / Request changes / Decline). */
   canApprove: boolean;
+  /** Shows the queue pager (see QueueNavigator). */
+  isReviewer: boolean;
+  /** The reviewer's current vote on the request, shown on the Finish review button. */
+  myDecision?: 'approved' | 'rejected' | null;
   onBack: () => void;
   onApprove: () => void;
   onRequestChanges: () => void;
+  /** Declines the whole request. */
   onReject: () => void;
-  onReset?: () => void;
   onNavigate: (submissionId: string) => void;
 }
 
@@ -27,16 +38,18 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
   submittedAt,
   isUrgent,
   approvalGates,
+  pendingEdits,
+  reminders,
+  onRemind,
   canApprove,
+  isReviewer,
+  myDecision = null,
   onBack,
   onApprove,
   onRequestChanges,
   onReject,
-  onReset,
   onNavigate,
 }) => {
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-
   const formatDate = (date: Date) => {
     return date.toLocaleDateString(undefined, {
       month: 'short',
@@ -48,8 +61,8 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
   return (
     <div className="review-top-bar">
       <div className="review-top-bar__left">
-        <button className="review-top-bar__back" onClick={onBack} title="Back to queue">
-          <i className="fas fa-arrow-left" />
+        <button type="button" className="review-top-bar__back" onClick={onBack} title="Back to requests" aria-label="Back to requests">
+          <i className="fas fa-arrow-left" aria-hidden="true" />
         </button>
         <div className="review-top-bar__info">
           <div className="review-top-bar__title-row">
@@ -65,70 +78,24 @@ const ReviewTopBar: React.FC<ReviewTopBarProps> = ({
       </div>
 
       <div className="review-top-bar__center">
-        {approvalGates && (
-          <ApprovalTracker
-            variant="compact"
-            gates={approvalGates}
-          />
-        )}
+        {approvalGates && <ConditionsPopover gates={approvalGates} pendingEdits={pendingEdits} reminders={reminders} onRemind={onRemind} />}
       </div>
 
       <div className="review-top-bar__right">
-        {canApprove && (
-          <div className="review-top-bar__actions">
-            <button
-              className="review-top-bar__action-btn review-top-bar__action-btn--approve"
-              onClick={onApprove}
-            >
-              <i className="fas fa-check" />
-              <span>Approve</span>
-            </button>
-            <button
-              className="review-top-bar__action-btn review-top-bar__action-btn--request-changes"
-              onClick={onRequestChanges}
-              title="Ask the submitter to revise this submission"
-            >
-              <i className="fas fa-comment-dots" />
-              <span>Request Changes</span>
-            </button>
-            <button
-              className="review-top-bar__action-btn review-top-bar__action-btn--reject"
-              onClick={onReject}
-            >
-              <i className="fas fa-times" />
-              <span>Reject</span>
-            </button>
-            {onReset && (
-              <button
-                className="review-top-bar__action-btn review-top-bar__action-btn--reset"
-                onClick={() => setShowResetConfirm(true)}
-                style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fca5a5' }}
-              >
-                <i className="fas fa-undo" />
-                <span>Reset</span>
-              </button>
-            )}
-          </div>
-        )}
         <QueueNavigator
           currentSubmissionId={submissionId}
           onNavigate={onNavigate}
+          isReviewer={isReviewer}
         />
+        {canApprove && (
+          <FinishReviewMenu
+            decision={myDecision}
+            onApprove={onApprove}
+            onRequestChanges={onRequestChanges}
+            onDecline={onReject}
+          />
+        )}
       </div>
-      {showResetConfirm && (
-        <div className="request-changes-overlay" onClick={() => setShowResetConfirm(false)}>
-          <div className="request-changes-dialog" onClick={e => e.stopPropagation()}>
-            <h3>Reset Document</h3>
-            <p style={{ margin: '12px 0', color: '#666' }}>
-              Are you sure you want to reset this document to its original state and delete all tracked changes? This cannot be undone.
-            </p>
-            <div className="request-changes-actions">
-              <button className="btn btn-neutral" onClick={() => setShowResetConfirm(false)}>Cancel</button>
-              <button className="btn btn-danger" onClick={() => { setShowResetConfirm(false); onReset?.(); }}>Reset</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

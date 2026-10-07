@@ -202,6 +202,26 @@ function attributesOf(type: Y.AbstractType<any>): Record<string, unknown> {
 const isType = (item: Y.Item, ctor: any) => item.content instanceof Y.ContentType && (item.content as any).type instanceof ctor;
 
 /**
+ * A line break (CollabLineBreakNode: a Y.Map embed with __type 'linebreak'), not a
+ * text-node boundary. Reads the raw attribute, so it works for deleted items too.
+ */
+const isLineBreak = (item: Y.Item) => {
+  if (!isType(item, Y.Map)) return false;
+  const attr = (item.content as any).type._map.get('__type') as Y.Item | undefined;
+  const values = attr ? attr.content.getContent() : [];
+  return values[values.length - 1] === 'linebreak';
+};
+
+/** Line breaks directly in a block (deleted ones included: for a deleted, replaced block). */
+function lineBreaksIn(container: Y.Item): number {
+  let count = 0;
+  for (let item = ((container.content as any).type as Y.AbstractType<any>)._start; item !== null; item = item.right) {
+    if (isLineBreak(item)) count++;
+  }
+  return count;
+}
+
+/**
  * The document state without the session's edits (a Yjs snapshot of every struct with an
  * adjusted delete set) plus the structural fixes to apply after conversion.
  */
@@ -222,12 +242,15 @@ export function baselineDoc(
 
   // Pass 1: this user's new types that stay (blocks; the first text-node boundary in a block).
   const keptTypes = new Set<Y.Item>();
+  // Line breaks aren't text-node boundaries: this user's new ones are hidden, so they
+  // don't count here either.
   const firstLiveEmbed = (item: Y.Item) => {
     for (let left = item.left; left !== null; left = left.left) {
-      if (!left.deleted && left.countable && isType(left, Y.Map)) return false;
+      if (!left.deleted && left.countable && isType(left, Y.Map) && !(isLineBreak(left) && isMineItem(left))) return false;
     }
     return true;
   };
+  const keptBreaks = new Map<Y.Item, number>();
   const allItems: Y.Item[] = [];
   doc.store.clients.forEach((structs) => {
     for (const s of structs as Array<Y.Item | Y.GC>) if (s instanceof Y.Item) allItems.push(s);
@@ -240,8 +263,21 @@ export function baselineDoc(
       // and formats included: keep them all. Elsewhere a new boundary is a format split
       // to undo, except the first one in a block (its text needs a node).
       const parentItem = (item.parent as Y.AbstractType<any>)._item;
-      const inReplacement = !!(parentItem && provenance && provenance.replacedContainer(parentItem));
-      if (inReplacement || firstLiveEmbed(item)) keptTypes.add(item);
+      const replacedBlock = parentItem && provenance ? provenance.replacedContainer(parentItem) : null;
+      if (isLineBreak(item)) {
+        // A new line break is this user's content, hidden, unless it is a copy in a
+        // replacement block: as many as the replaced block had are kept. (A block that
+        // only looks like a replacement, e.g. pasted over an empty paragraph, had none.)
+        if (parentItem && replacedBlock) {
+          const used = keptBreaks.get(parentItem) || 0;
+          if (used < lineBreaksIn(replacedBlock)) {
+            keptTypes.add(item);
+            keptBreaks.set(parentItem, used + 1);
+          }
+        }
+        continue;
+      }
+      if (replacedBlock || firstLiveEmbed(item)) keptTypes.add(item);
     }
   }
 

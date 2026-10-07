@@ -1,3 +1,15 @@
+import { KeyDate, NewsletterRequest, WritingHelp } from './newsletter';
+import { DateLink } from './annualDates';
+
+/** A reminder to approve: to one required approver (target = email), or 'council' / 'commsCadre'. */
+export interface SubmissionReminder {
+  target: string;
+  to: string[];
+  by: string;
+  byName: string;
+  at: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -36,6 +48,12 @@ export interface ContentSubmission {
   title: string;
   content: string;
   richTextContent?: string;
+  /**
+   * The content as submitted (set at creation, never changed; see originalDocument() in
+   * utils/originalContent.ts). content / richTextContent follow accepted and rejected changes.
+   */
+  originalContent?: string;
+  originalRichTextContent?: string;
   status: SubmissionStatus;
   submittedBy: string;
   submittedAt: Date;
@@ -56,6 +74,30 @@ export interface ContentSubmission {
   approvalOverrideBy?: string;
   approvalOverrideReason?: string;
   approvalOverrideAt?: Date;
+  /** Audience keys ('newsletter', 'singular', ...); older requests only have formFields.audience. */
+  audiences?: string[];
+  writingHelp?: WritingHelp;
+  /** The newsletter item (when the audience includes the newsletter). */
+  newsletter?: NewsletterRequest;
+  keyDates?: KeyDate[];
+  /** Dates in the body or blurb linked to annual dates (PUT /submissions/:id/date-links). */
+  dateLinks?: DateLink[];
+  /** Imported from this Google Doc (a past message, for the Comms Calendar). */
+  importedFrom?: string;
+  /** The request this one was started from ("New request"). */
+  copiedFrom?: string;
+  /** On create: the Comms Calendar entry to link it to (Comms Calendar editors). */
+  calendarEntryId?: string;
+  publicSlug?: string;
+  publicPublishedAt?: string;
+  newsletterEditionId?: string;
+  newsletterSentIn?: number;
+  /** The mailing lists it was sent to. */
+  sentTo?: Array<{ id: string; name: string; address: string }>;
+  /** Approval reminders sent (POST /content/submissions/:id/remind). */
+  reminders?: SubmissionReminder[];
+  /** Set by GET /content/submissions/:id when the item is in an edition. */
+  newsletterPlacement?: { editionId: string; number: number; status: string };
 }
 
 export type SubmissionStatus =
@@ -103,6 +145,10 @@ export interface Comment {
   createdAt: Date;
   type: 'COMMENT' | 'SUGGESTION';
   resolved: boolean;
+  /** Who resolved the thread (email, else id), their name, and when (cleared on reopen). */
+  resolvedBy?: string;
+  resolvedByName?: string;
+  resolvedAt?: Date | string;
   suggestedEdit?: SuggestedEdit;
 }
 
@@ -124,7 +170,9 @@ export interface Change {
   timestamp: Date;
   status?: 'pending' | 'approved' | 'rejected';
   approvedBy?: string;
+  approvedByName?: string;
   rejectedBy?: string;
+  rejectedByName?: string;
   approvedAt?: Date;
   rejectedAt?: Date;
   isIncremental?: boolean;
@@ -143,19 +191,33 @@ export interface ApprovalGateDetail {
   comment?: string;
 }
 
+/** One person on a request's approvers list and their decision. */
+export interface ApproverDetail {
+  email: string;
+  name?: string;
+  status: 'approved' | 'rejected' | 'pending';
+  date?: string;
+  /** Their council role, for a council member. */
+  councilRole?: string;
+}
+
+/**
+ * The approval gates (backend computeApprovalGates). The approvers list holds both kinds of
+ * approver: its council members are the Council gate (at least one listed, all approved), the
+ * rest `requiredApprovers` ("other approvers": all approved, met when there are none).
+ */
 export interface ApprovalGates {
-  councilManager: ApprovalGateDetail;
+  councilManager: ApprovalGateDetail & {
+    /** The council members on the approvers list; none means the Comms Cadre still has to pick one. */
+    approvers?: ApproverDetail[];
+  };
   commsCadre: ApprovalGateDetail;
   requiredApprovers: {
     met: boolean;
     approved: number;
     total: number;
-    details: Array<{
-      email: string;
-      name?: string;
-      status: 'approved' | 'rejected' | 'pending';
-      date?: string;
-    }>;
+    /** The approvers on the list who are not on Council. */
+    details: ApproverDetail[];
   };
   trackedChanges: {
     met: boolean;

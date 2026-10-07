@@ -38,6 +38,7 @@ import QuotePlugin from './plugins/QuotePlugin';
 import { SuggestionNode } from './nodes/SuggestionNode';
 import { DeletedTextNode } from './nodes/DeletedTextNode';
 import SuggestionPlugin from './plugins/SuggestionPlugin';
+import EditorReadyPlugin from './plugins/EditorReadyPlugin';
 import './LexicalEditor.css';
 import './styles/TableControlsPlugin.css';
 import './styles/IndentationStyles.css';
@@ -56,6 +57,8 @@ interface EditorProps {
   placeholder?: string;
   readOnly?: boolean;
   showToolbar?: boolean;
+  /** Focus the editor when it mounts (off for pages with several editors). */
+  autoFocus?: boolean;
   onChange?: (editor: LexicalEditor, json: string) => void;
   className?: string;
   onImageSelect?: () => void;
@@ -69,6 +72,8 @@ interface EditorProps {
   isCollaborative?: boolean;
   remoteCursors?: RemoteCursor[];
   onCursorUpdate?: (position: CursorPosition) => void;
+  /** The editor instance, for changes made from outside it (e.g. updating a linked date). */
+  onEditorReady?: (editor: LexicalEditor | null) => void;
 }
 
 const LexicalEditorComponent: React.FC<EditorProps> = ({
@@ -78,6 +83,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   placeholder = 'Enter content...',
   readOnly = false,
   showToolbar = true,
+  autoFocus = true,
   onChange,
   className = '',
   onImageSelect,
@@ -91,6 +97,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
   isCollaborative = false,
   remoteCursors = [],
   onCursorUpdate,
+  onEditorReady,
 }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -325,6 +332,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
       <div className="lexical-editor">
         <LexicalComposer initialConfig={initialConfig}>
           <EditorInitPlugin />
+          {onEditorReady && <EditorReadyPlugin onReady={onEditorReady} />}
           {showToolbar && !readOnly && <ToolbarPlugin />}
           <div className="editor-content-wrapper">
             <RichTextPlugin
@@ -343,7 +351,7 @@ const LexicalEditorComponent: React.FC<EditorProps> = ({
             {!readOnly && <TableControlsPlugin />}
           </div>
           <TransactionHistoryPlugin transactionManager={null} />
-          {!readOnly && <AutoFocusPlugin />}
+          {!readOnly && autoFocus && <AutoFocusPlugin />}
           <OnChangePlugin onChange={handleChange} />
           <ListPlugin />
           <TablePlugin />

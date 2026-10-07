@@ -5,29 +5,72 @@
 #   1. build the backend image (bin/deploy builds comms-scribe:local)
 #   2. bin/deploy staging with CI=true and AWS_ECR_IMAGE_NAME=<repo>:dev against the dev
 #      cluster and service (ranger-deploy's deploy_aws_ecs), then force a new deployment
-#   3. build the frontend
-#   4. upload it to the SPA bucket and invalidate CloudFront (bin/publish-frontend)
+#   3. build the frontend (in the background, while 1-2 run)
+#   4. upload it to the SPA bucket and invalidate CloudFront (bin/publish-frontend), once the
+#      new backend is serving
 #
-#   SCRIBE_ALEX_DEV_ACCOUNT=123456789012 AWS_PROFILE=<profile> bin/dev-deploy [--backend-only|--frontend-only]
+#   SCRIBE_ALEX_DEV_ACCOUNT=123456789012 AWS_PROFILE=<profile> bin/dev-deploy [--all|--backend-only|--frontend-only]
+#
+# With no option, a half whose files (backend/ or frontend/, committed or not) are the same as
+# at its last deploy from this machine is skipped. --all deploys both anyway (e.g. after a
+# deploy from somewhere else). The fingerprints are kept in ~/.cache/comms-scribe/.
 #
 # Why the forced deployment: the :dev tag never changes, so ranger-deploy sees an unchanged task
 # definition after the first deploy, logs "Image name is unchanged. Nothing to deploy." and leaves
 # the running task alone. The image is still pushed; update-service --force-new-deployment makes
-# ECS start a task that pulls it.
+# ECS start a task that pulls it. Dev overlaps deployments (infra/config/alex-dev.ts
+# overlapDeploys), so the old task serves until the new one passes its health checks.
 
 set -euo pipefail
 
 # shellcheck source=bin/.dev-common.sh
 . "$(dirname "$0")/.dev-common.sh"
 
-do_backend=1
-do_frontend=1
+mode=auto
 case "${1:-}" in
     "") ;;
-    --backend-only) do_frontend=0 ;;
-    --frontend-only) do_backend=0 ;;
-    *) echo "usage: $0 [--backend-only|--frontend-only]" >&2; exit 64 ;;
+    --all) mode=all ;;
+    --backend-only) mode=backend ;;
+    --frontend-only) mode=frontend ;;
+    *) echo "usage: $0 [--all|--backend-only|--frontend-only]" >&2; exit 64 ;;
 esac
+
+started=${SECONDS}
+elapsed() { printf '%dm%02ds' $(((SECONDS - started) / 60)) $(((SECONDS - started) % 60)); }
+
+# A fingerprint of a directory's files as they are now: HEAD's tree, uncommitted changes and
+# untracked (not ignored) files.
+fingerprint() {
+    (
+        cd "${repo_root}"
+        git rev-parse "HEAD:$1"
+        git diff HEAD -- "$1"
+        git ls-files --others --exclude-standard -z -- "$1" | xargs -0 shasum 2> /dev/null || true
+    ) | shasum | cut -d' ' -f1
+}
+state_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/comms-scribe"
+state_file() { echo "${state_dir}/dev-deploy-${config}-$1"; }
+changed() { [ "$(cat "$(state_file "$1")" 2> /dev/null || true)" != "$2" ]; }
+record() { mkdir -p "${state_dir}" && echo "$2" > "$(state_file "$1")"; }
+
+backend_fp="$(fingerprint backend)"
+frontend_fp="$(fingerprint frontend)"
+do_backend=0
+do_frontend=0
+case "${mode}" in
+    all) do_backend=1; do_frontend=1 ;;
+    backend) do_backend=1 ;;
+    frontend) do_frontend=1 ;;
+    auto)
+        if changed backend "${backend_fp}"; then do_backend=1; fi
+        if changed frontend "${frontend_fp}"; then do_frontend=1; fi
+        ;;
+esac
+
+if [ "${do_backend}" = 0 ] && [ "${do_frontend}" = 0 ]; then
+    echo "Nothing changed since the last deploy from here (bin/dev-deploy --all deploys anyway)."
+    exit 0
+fi
 
 cluster="$(get_param cluster-name)"
 service="$(get_param service-name)"
@@ -39,10 +82,14 @@ echo "Plan:"
 if [ "${do_backend}" = 1 ]; then
     echo "  1. Build comms-scribe:local from backend/Dockerfile"
     echo "  2. ranger-deploy staging: push ${repo_uri}:dev, update ${cluster}/${service}, force a new deployment"
+else
+    echo "  -  Backend unchanged: skipped"
 fi
 if [ "${do_frontend}" = 1 ]; then
-    echo "  3. Build the frontend"
+    echo "  3. Build the frontend$([ "${do_backend}" = 1 ] && echo " (alongside 1-2)")"
     echo "  4. Sync frontend/build to s3://${bucket} and invalidate ${distribution_id}"
+else
+    echo "  -  Frontend unchanged: skipped"
 fi
 echo
 
@@ -53,23 +100,12 @@ if [ "${do_backend}" = 1 ]; then
         echo "Service ${cluster}/${service} is not running (dev is asleep?). Run bin/dev-up first." >&2
         exit 1
     fi
-
-    CI=true \
-    AWS_ECR_IMAGE_NAME="${repo_uri}:dev" \
-    AWS_ECS_CLUSTER_STAGING="${cluster}" \
-    AWS_ECS_SERVICE_STAGING="${service}" \
-    PROJECT_NAME="Comms Scribe (${config})" \
-        "${repo_root}/bin/deploy" staging
-
-    echo "==> Forcing a new deployment so the task pulls the new :dev image"
-    aws ecs update-service --cluster "${cluster}" --service "${service}" --force-new-deployment \
-        --query 'service.deployments[0].id' --output text
-    echo "==> Waiting for ${service} to become stable (a few minutes)"
-    aws ecs wait services-stable --cluster "${cluster}" --services "${service}"
 fi
 
+build_pid=""
 if [ "${do_frontend}" = 1 ]; then
-    echo "==> Building the frontend"
+    build_log="$(mktemp -t scribe-frontend-build)"
+    echo "==> Building the frontend in the background (log: ${build_log})"
     (
         cd "${repo_root}/frontend"
         if [ ! -d node_modules ]; then
@@ -77,10 +113,63 @@ if [ "${do_frontend}" = 1 ]; then
         fi
         # CI=false: Create React App treats lint warnings as errors when CI=true.
         CI=false npm run build
-    )
+    ) > "${build_log}" 2>&1 &
+    build_pid=$!
+fi
+# Don't leave the build running if the backend half fails
+trap '[ -n "${build_pid}" ] && kill "${build_pid}" 2> /dev/null || true' EXIT
+
+if [ "${do_backend}" = 1 ]; then
+    CI=true \
+    AWS_ECR_IMAGE_NAME="${repo_uri}:dev" \
+    AWS_ECS_CLUSTER_STAGING="${cluster}" \
+    AWS_ECS_SERVICE_STAGING="${service}" \
+    PROJECT_NAME="Comms Scribe (${config})" \
+        "${repo_root}/bin/deploy" staging
+
+    echo "==> [$(elapsed)] Forcing a new deployment so a task pulls the new :dev image"
+    deployment_id="$(aws ecs update-service --cluster "${cluster}" --service "${service}" \
+        --force-new-deployment --query "service.deployments[?status=='PRIMARY'].id | [0]" --output text)"
+    echo "    ${deployment_id}"
+    echo "==> [$(elapsed)] Waiting for the new task to take over (about 2 minutes)"
+    deadline=$((SECONDS + 900))
+    while :; do
+        rollout="$(aws ecs describe-services --cluster "${cluster}" --services "${service}" \
+            --query "services[0].deployments[?id=='${deployment_id}'].rolloutState | [0]" --output text)"
+        case "${rollout}" in
+            COMPLETED) break ;;
+            FAILED | None)
+                echo "Deployment ${deployment_id} failed (the circuit breaker rolls back to the previous task)." >&2
+                aws ecs describe-services --cluster "${cluster}" --services "${service}" \
+                    --query 'services[0].events[0:5].message' --output text >&2
+                exit 1
+                ;;
+        esac
+        if [ "${SECONDS}" -ge "${deadline}" ]; then
+            echo "Deployment ${deployment_id} still ${rollout} after 15 minutes." >&2
+            exit 1
+        fi
+        sleep 5
+    done
+    record backend "${backend_fp}"
+    echo "==> [$(elapsed)] Backend deployed"
+fi
+
+if [ "${do_frontend}" = 1 ]; then
+    echo "==> [$(elapsed)] Waiting for the frontend build"
+    if ! wait "${build_pid}"; then
+        build_pid=""
+        tail -40 "${build_log}" >&2
+        echo "Frontend build failed (full log: ${build_log})." >&2
+        exit 1
+    fi
+    build_pid=""
+    grep -E '^ +[0-9.]+ kB' "${build_log}" || true
     "${repo_root}/bin/publish-frontend" "${bucket}" "${distribution_id}"
+    record frontend "${frontend_fp}"
+    rm -f "${build_log}"
 fi
 
 echo
-echo "Deployed to https://$(aws cloudfront get-distribution --id "${distribution_id}" \
+echo "[$(elapsed)] Deployed to https://$(aws cloudfront get-distribution --id "${distribution_id}" \
     --query 'Distribution.DistributionConfig.Aliases.Items[0]' --output text)"

@@ -2,10 +2,12 @@ import { DeleteSessionsForUser, Env } from '../utils/sessionManager';
 import { User, UserType, Group } from '../types';
 import { hashPassword, verifyPassword } from '../utils/password';
 import { getObject, getObjectStrict, putObject, deleteObject, listObjects } from './cacheService';
-import { DEFAULT_ROLES, Role } from './roleService';
+import { accessOf, hasAccessFields, withDerivedAccess } from './access';
 
-// Persist a user to R2 + cache (keyed by email, with UUID index)
+// Persist a user to R2 + cache (keyed by email, with UUID index). A record that holds the
+// access fields gets its legacy userType / roles / isAdmin derived from them (services/access.ts).
 export async function saveUser(user: User, env: Env): Promise<void> {
+  if (hasAccessFields(user)) Object.assign(user, withDerivedAccess(user, accessOf(user)));
   await putObject(`user/${user.email}`, user, env, {
     contentType: 'application/json',
     metadata: { userId: user.id }
@@ -41,11 +43,13 @@ export async function getOrCreateUser({ name, email, password }: { name: string;
     id: crypto.randomUUID(),
     email,
     name: name || email.split('@')[0],
-    userType: UserType.Public,
-    approved: false,
+    userType: UserType.Member,
     isAdmin: false,
+    commsCadre: false,
+    councilRole: null,
+    accessVersion: 1,
     groups: [],
-    roles: ['Public'] // Initialize with Public role
+    roles: ['Member'] // derived from the access fields on save
   };
 
   // If password is provided, hash it and store it
@@ -125,16 +129,6 @@ function ensureUserDefaults(user: User): User {
   return user;
 }
 
-export async function approveUser(id: string, env: Env): Promise<User | null> {
-  const user = await getUser(id, env);
-  if (!user) return null;
-  
-  user.approved = true;
-  await saveUser(user, env);
-
-  return user;
-}
-
 export async function getAllUsers(env: Env): Promise<User[]> {
   const objects = await listObjects('user/', env);
   const users: User[] = [];
@@ -150,107 +144,6 @@ export async function getAllUsers(env: Env): Promise<User[]> {
   return users;
 }
 
-export async function makeAdmin(id: string, env: Env): Promise<User | null> {
-  const user = await getUser(id, env);
-  if (!user) return null;
-  
-  user.isAdmin = true;
-  user.userType = UserType.Admin;
-  await saveUser(user, env);
-
-  return user;
-}
-
-// Change a user's type
-export async function changeUserType(id: string, userType: UserType, env: Env): Promise<User | null> {
-  console.log('🔄 Starting changeUserType for:', { id, userType });
-  const user = await getUser(id, env);
-  console.log('👤 Retrieved user:', user);
-  
-  if (!user) {
-    console.error('❌ User not found:', id);
-    return null;
-  }
-  
-  // Get all groups to find the role group
-  const groups = await getAllGroups(env);
-  console.log('👥 Available groups:', groups);
-  
-  // Map user type to role name
-  const roleName = userType === UserType.CouncilManager ? 'CouncilManager' :
-                  userType === UserType.CommsCadre ? 'CommsCadre' :
-                  userType === UserType.Admin ? 'Admin' :
-                  'Public';
-  console.log('🎭 Mapped role name:', roleName);
-  
-  // Remove user from any existing role groups
-  if (user.groups) {
-    console.log('🔄 Removing user from existing role groups');
-    const roleGroups = groups.filter(g => DEFAULT_ROLES.some(role => role.name === g.name));
-    for (const group of roleGroups) {
-      if (group.members.includes(id)) {
-        console.log('👋 Removing from group:', group.name);
-        await removeUserFromGroup(id, group.id, env);
-      }
-    }
-  }
-  
-  // If changing to Public, we're done - no need to add to any role group
-  if (userType === UserType.Public) {
-    console.log('👤 Setting user to Public type');
-    user.userType = userType;
-    if (user.isAdmin) {
-      user.isAdmin = false;
-    }
-    // Clear roles array for public users
-    user.roles = [];
-    
-    console.log('💾 Updating user:', user);
-    await saveUser(user, env);
-
-    return user;
-  }
-
-  // For other types, find or create the role group
-  let roleGroup = groups.find(group => group.name === roleName);
-  console.log('🔍 Found role group:', roleGroup);
-  
-  // If role group doesn't exist, create it
-  if (!roleGroup) {
-    console.log('📝 Creating new role group for:', roleName);
-    const role = DEFAULT_ROLES.find(r => r.name === roleName);
-    if (role) {
-      const newGroup = await createGroup(
-        role.name,
-        `Group for role: ${role.description}`,
-        'admin@burningman.org',
-        env
-      );
-      if (newGroup) {
-        roleGroup = newGroup;
-        console.log('✅ Created new role group:', newGroup);
-      }
-    }
-  }
-  
-  // Add user to the new role group if it exists
-  if (roleGroup) {
-    console.log('➕ Adding user to role group:', roleGroup.name);
-    await addUserToGroup(id, roleGroup.id, env);
-  }
-
-  // Update user type, roles, and isAdmin flag
-  console.log('🔄 Updating user type and roles');
-  user.userType = userType;
-  user.roles = [roleName]; // Set the roles array based on the role name
-  user.isAdmin = (userType === UserType.Admin);
-  
-  console.log('💾 Saving updated user:', user);
-  await saveUser(user, env);
-
-  console.log('✅ Successfully updated user type and roles');
-  return user;
-}
 
 // Add a group to a user's groups array
 async function addGroupToUser(userId: string, groupId: string, env: Env): Promise<boolean> {
@@ -286,11 +179,11 @@ export async function createGroup(
   env: Env
 ): Promise<Group | null> {
   try {
-    // Verify the creator is allowed to create groups (admin or lead)
+    // Only Admins create groups
     const user = await getUser(createdBy, env);
     if (!user) return null;
-    
-    if (!user.isAdmin && user.userType !== UserType.Lead) {
+
+    if (!accessOf(user).isAdmin) {
       return null;
     }
     
@@ -358,9 +251,8 @@ export async function getGroup(id: string, env: Env): Promise<Group | null> {
 }
 
 // Get all groups.
-// Strict: a group that fails to load throws instead of being skipped. Callers
-// (changeUserType, getAllRoles, createGroupsForExistingRoles) create a role group
-// when they don't find one by name, so a silently skipped group would be duplicated.
+// Strict: a group that fails to load throws instead of being skipped, so a caller never
+// takes a missing group for "no such group".
 export async function getAllGroups(env: Env): Promise<Group[]> {
   const objects = await listObjects('group/', env);
   const groups: Group[] = [];
@@ -518,7 +410,7 @@ export async function canAccessGroup(userId: string, groupId: string, env: Env):
     const user = await getUser(userId, env);
     if (!user) return false;
     
-    if (user.isAdmin || user.userType === UserType.Admin) return true;
+    if (accessOf(user).isAdmin) return true;
     
     // Check if the group exists
     const group = await getGroup(groupId, env);
@@ -534,7 +426,7 @@ export async function canAccessGroup(userId: string, groupId: string, env: Env):
 
 export async function isAdmin(id: string, env: Env): Promise<boolean> {
   const user = await getUser(id, env);
-  return user ? (user.isAdmin || user.userType === UserType.Admin) : false;
+  return user ? accessOf(user, env).isAdmin : false;
 }
 
 /** True when `email` is listed in BOOTSTRAP_ADMIN_EMAILS (case-insensitive). */
@@ -560,8 +452,7 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
   if (user.verified !== true) return user;
 
   const roles = user.roles || [];
-  const alreadyAdmin = user.userType === UserType.Admin && user.isAdmin === true &&
-    user.approved === true && roles.includes('Admin');
+  const alreadyAdmin = accessOf(user).isAdmin && roles.includes('Admin');
   if (alreadyAdmin) return user;
 
   console.log(`👑 Bootstrap admin: promoting ${user.email}`);
@@ -572,8 +463,7 @@ export async function applyBootstrapAdmin(user: User, env: Env): Promise<User> {
     ...user,
     userType: UserType.Admin,
     isAdmin: true,
-    approved: true,
-    roles: roles.includes('Admin') ? roles : [...roles.filter((r) => r !== 'Public'), 'Admin'],
+    roles: roles.includes('Admin') ? roles : [...roles.filter((r) => r !== 'Public' && r !== 'Member'), 'Admin'],
   };
   await saveUser(promoted, env);
   return promoted;
@@ -606,7 +496,7 @@ export async function markVerifiedByGoogle(user: User, env: Env): Promise<User> 
  */
 export async function promoteAfterEmailVerification(user: User, env: Env): Promise<User> {
   if (!isBootstrapAdminEmail(user.email, env) || user.verified !== true) return user;
-  if (user.userType === UserType.Admin && user.isAdmin === true) return user;
+  if (accessOf(user).isAdmin) return user;
   let candidate = user;
   if (user.passwordHash) {
     const { passwordHash: _unproven, ...rest } = user;

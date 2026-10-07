@@ -28,6 +28,12 @@ export interface DeletedTextPayload {
    * their author. Omitted from the JSON when unset.
    */
   authorId?: string;
+  /**
+   * Collaborative mode: a unique key the creating client gives a new marker, so the save
+   * of the transaction that made it stamps exactly this marker with the change id (see
+   * collab/pendingMarkers.ts). Omitted from the JSON when unset.
+   */
+  pendingKey?: string;
 }
 
 export type SerializedDeletedTextNode = Spread<
@@ -39,6 +45,7 @@ export type SerializedDeletedTextNode = Spread<
     isBlockLevel?: boolean;
     formattedSegments?: FormattedSegment[];
     authorId?: string;
+    pendingKey?: string;
     type: 'deleted-text';
     version: 1;
   },
@@ -53,6 +60,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
   __isBlockLevel: boolean;
   __formattedSegments?: FormattedSegment[];
   __authorId?: string;
+  __pendingKey?: string;
 
   static getType(): string {
     return 'deleted-text';
@@ -68,6 +76,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       node.__formattedSegments,
       node.__key,
       node.__authorId,
+      node.__pendingKey,
     );
   }
 
@@ -80,6 +89,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     formattedSegments?: FormattedSegment[],
     key?: NodeKey,
     authorId?: string,
+    pendingKey?: string,
   ) {
     super(key);
     this.__changeId = changeId;
@@ -89,6 +99,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     this.__isBlockLevel = isBlockLevel;
     this.__formattedSegments = formattedSegments;
     this.__authorId = authorId;
+    this.__pendingKey = pendingKey;
   }
 
   static importJSON(serializedNode: SerializedDeletedTextNode): DeletedTextNode {
@@ -100,6 +111,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       isBlockLevel: serializedNode.isBlockLevel,
       formattedSegments: serializedNode.formattedSegments,
       authorId: serializedNode.authorId,
+      pendingKey: serializedNode.pendingKey,
     });
   }
 
@@ -112,6 +124,7 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
       isBlockLevel: this.__isBlockLevel,
       formattedSegments: this.__formattedSegments,
       ...(this.__authorId !== undefined ? { authorId: this.__authorId } : {}),
+      ...(this.__pendingKey !== undefined ? { pendingKey: this.__pendingKey } : {}),
       type: 'deleted-text',
       version: 1,
     } as SerializedDeletedTextNode;
@@ -130,7 +143,10 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
     return element;
   }
 
-  updateDOM(): false {
+  updateDOM(prevNode: DeletedTextNode, dom: HTMLElement): false {
+    // A pending marker gets its change id when its transaction is saved: keep the
+    // wrapper's data-change-id (used to find a change's markers in the DOM) in step.
+    if (prevNode.__changeId !== this.__changeId) dom.setAttribute('data-change-id', this.__changeId);
     return false;
   }
 
@@ -162,6 +178,10 @@ export class DeletedTextNode extends DecoratorNode<React.ReactElement> {
 
   getAuthorId(): string | undefined {
     return this.__authorId;
+  }
+
+  getPendingKey(): string | undefined {
+    return this.__pendingKey;
   }
 
   getFormattedSegments(): FormattedSegment[] | undefined {
@@ -287,6 +307,7 @@ export function $createDeletedTextNode(payload: DeletedTextPayload): DeletedText
     payload.formattedSegments,
     undefined,
     payload.authorId,
+    payload.pendingKey,
   );
 }
 

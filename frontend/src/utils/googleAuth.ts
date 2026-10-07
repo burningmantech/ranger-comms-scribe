@@ -46,19 +46,8 @@ export const handleGoogleCredentialResponse = async (
     const data = await res.json();
     console.log('Response from backend:', data);
 
-    const userData = { 
-        id: data.id,
-        email: data.email, 
-        name: data.name,
-        isAdmin: data.isAdmin || false,
-        approved: data.approved || false,
-        roles: data.isAdmin ? ['ADMIN', ...(data.roles || [])] : (data.roles || []),
-        userType: data.isAdmin ? UserType.Admin : (data.roles?.includes('Lead') ? UserType.Lead : (data.roles?.includes('Member') ? UserType.Member : UserType.Public))
-    };
-
-    // Use handleUserLogin instead of directly setting localStorage
-    // This will both update localStorage and dispatch the login event
-    await handleUserLogin(userData, data.sessionId);
+    // Stores the person's record from the server (with their access) and signs them in
+    const userData = await handleUserLogin({ email: data.email, name: data.name, isAdmin: !!data.isAdmin }, data.sessionId);
 
     // Update local state
     setUser(userData);

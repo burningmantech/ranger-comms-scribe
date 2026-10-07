@@ -26,7 +26,9 @@ export type TransactionEvent =
   | 'save-error'
   | 'transaction-undone'
   | 'transaction-redone'
-  | 'save-status-changed';
+  | 'save-status-changed'
+  /** A transaction started, settled or was discarded (see hasActiveTransaction). */
+  | 'active-transaction-changed';
 
 export interface RegionRange {
   start: number;
@@ -271,6 +273,8 @@ export class TransactionManager {
     // Starting a new transaction clears the redo stack
     this.redoStack = [];
 
+    this.emit('active-transaction-changed', true);
+
     return transaction;
   }
 
@@ -351,11 +355,52 @@ export class TransactionManager {
     this.activeTransaction = null;
 
     this.emit('transaction-settled', tx);
+    this.emit('active-transaction-changed', false);
 
     // Trigger autosave (fire-and-forget — errors are handled internally)
     this.autosave(tx);
 
     return tx;
+  }
+
+  /**
+   * Settle the active transaction now, with the latest state reported through
+   * notifyActivity: what the pause timer would do, without waiting for it. Used when
+   * the page is hidden, unloaded or the editor unmounts. Returns the settled
+   * transaction, or null when there was nothing to settle.
+   */
+  flush(): Transaction | null {
+    if (!this.activeTransaction || this.latestAfterLexicalState == null) return null;
+    return this.settleTransaction(this.latestAfterLexicalState);
+  }
+
+  /**
+   * Save again every transaction whose autosave failed (status 'failed'), oldest first.
+   * Clears the error state first; it comes back if a retry fails too.
+   *
+   * Legacy mode: the server takes the newest change's rich text as the proposed version,
+   * so re-sending an old transaction's after-state once a newer edit is saved would roll
+   * the document back to it. There each retried transaction carries the newest
+   * after-state instead (its own diff may then come out empty; the content stays right).
+   * Collaborative mode keeps each transaction's own states: the server diffs them
+   * against their own before-state, and the live document is the Yjs doc.
+   */
+  async retryFailedSaves(): Promise<void> {
+    const failed = this.undoStack.filter((tx) => tx.status === 'failed');
+    this.hasError = false;
+    if (failed.length === 0) {
+      this.emitSaveStatus();
+      return;
+    }
+    const newest = this.undoStack[this.undoStack.length - 1];
+    for (const tx of failed) {
+      if (!this.diffAgainstOldValue && tx !== newest && newest.afterSnapshot) {
+        tx.afterSnapshot = newest.afterSnapshot;
+        tx.regionMap = this.computeRegionMap(tx.field, tx.beforeSnapshot.text, newest.afterSnapshot.text);
+      }
+      tx.status = 'settled';
+      await this.autosave(tx);
+    }
   }
 
   /**
@@ -573,7 +618,10 @@ export class TransactionManager {
     this.latestAfterLexicalState = null;
     // Discard the active transaction — the editor state is about to be
     // mutated programmatically and shouldn't be captured as a user edit.
-    this.activeTransaction = null;
+    if (this.activeTransaction) {
+      this.activeTransaction = null;
+      this.emit('active-transaction-changed', false);
+    }
   }
 
   /**

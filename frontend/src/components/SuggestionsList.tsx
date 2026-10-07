@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { SuggestedEdit, User } from '../types/content';
+import { isCommsCadre, isCouncil } from '../utils/access';
 
 interface SuggestionsListProps {
   suggestions: SuggestedEdit[];
@@ -24,8 +25,7 @@ export const SuggestionsList: React.FC<SuggestionsListProps> = ({
   } | null>(null);
   const [reason, setReason] = useState('');
 
-  const canReviewSuggestions = currentUser.roles.includes('CommsCadre') ||
-                            currentUser.roles.includes('CouncilManager');
+  const canReviewSuggestions = isCommsCadre(currentUser) || isCouncil(currentUser);
 
   const getUserName = (userId: string) => {
     const user = users.find(u => u.id === userId);

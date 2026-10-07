@@ -9,6 +9,7 @@ import { WebSocketMessage } from '../services/websocketService';
 import { API_URL } from '../config';
 import { useContent } from '../contexts/ContentContext';
 import { UserName } from './UserName';
+import { isCommsCadre as accessIsCommsCadre, isCouncil, isReviewer, reviewerPermissions } from '../utils/access';
 
 interface ContentSubmissionComponentProps {
   submission: ContentSubmissionType;
@@ -100,15 +101,8 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
           // Store permissions in localStorage
           localStorage.setItem('userPermissions', JSON.stringify(data.permissions));
         } else {
-          // If no permissions in response, calculate them based on roles
-          const permissions = {
-            canEdit: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-            canApprove: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-            canCreateSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-            canApproveSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-            canReviewSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-            canViewFilteredSubmissions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre')
-          };
+          // If no permissions in response, reviewers get them all (utils/access.ts)
+          const permissions = reviewerPermissions(isReviewer(currentUser));
           setUserPermissions(permissions);
           localStorage.setItem('userPermissions', JSON.stringify(permissions));
         }
@@ -120,7 +114,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
     };
 
     fetchUserPermissions();
-  }, [currentUser.roles]);
+  }, [currentUser]);
 
   // Fetch proposedVersions data from tracked changes API
   useEffect(() => {
@@ -161,14 +155,7 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   const parsedPermissions = storedPermissions ? JSON.parse(storedPermissions) : null;
   
   // Calculate permissions based on roles if stored permissions are not available
-  const roleBasedPermissions = {
-    canEdit: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
-    canApprove: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
-    canCreateSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
-    canApproveSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
-    canReviewSuggestions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre'),
-    canViewFilteredSubmissions: currentUser.roles.includes('Admin') || currentUser.roles.includes('CouncilManager') || currentUser.roles.includes('CommsCadre')
-  };
+  const roleBasedPermissions = reviewerPermissions(isReviewer(currentUser));
 
   // Use stored permissions if available, otherwise use role-based permissions
   const effectivePermissions = parsedPermissions || roleBasedPermissions;
@@ -200,10 +187,10 @@ export const ContentSubmission: React.FC<ContentSubmissionComponentProps> = ({
   ) ?? false;
 
   // Check roles
-  const isCommsCadre = currentUser.roles.includes('CommsCadre');
-  const isCouncilManager = currentUser.roles.includes('CouncilManager');
+  const isCommsCadre = accessIsCommsCadre(currentUser);
+  const isCouncilManager = isCouncil(currentUser);
   const isSubmitter = currentUser.id === submission.submittedBy || currentUser.email === submission.submittedBy;
-  const canEditRequiredApprovers = isSubmitter || isCommsCadre || isCouncilManager || currentUser.roles.includes('Admin');
+  const canEditRequiredApprovers = isSubmitter || isReviewer(currentUser);
 
   // Determine if current user is Communications Manager (Council role)
   const isCommunicationsManager = useMemo(() => {

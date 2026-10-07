@@ -114,7 +114,6 @@ describe('TrackedChangesEditor - Collapsible Sidebar', () => {
     onApprove: jest.fn(),
     onReject: jest.fn(),
     onSuggestion: jest.fn(),
-    onUndo: jest.fn(),
     onApproveProposedVersion: jest.fn(),
     onRejectProposedVersion: jest.fn(),
     onRefreshNeeded: jest.fn()

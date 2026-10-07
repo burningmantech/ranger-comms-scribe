@@ -1,3 +1,4 @@
+import { isAdmin } from './access';
 import { 
   CollaborativeDocument, 
   DocumentPermissions, 
@@ -173,7 +174,7 @@ export async function deleteDocument(documentId: string, user: User, env: Env): 
   }
 
   // Check permissions (only owner or admin can delete)
-  if (document.permissions.owner !== (user.id || user.email) && user.userType !== UserType.Admin) {
+  if (document.permissions.owner !== (user.id || user.email) && !isAdmin(user)) {
     throw new Error('Insufficient permissions to delete document');
   }
 
@@ -479,7 +480,7 @@ export async function getComments(documentId: string, env: Env): Promise<Documen
 export function canViewDocument(document: CollaborativeDocument, user: User): boolean {
   if (document.isPublic) return true;
   if (document.permissions.owner === (user.id || user.email)) return true;
-  if (user.userType === UserType.Admin) return true;
+  if (isAdmin(user)) return true;
   
   const userId = user.id || user.email;
   return document.permissions.editors.includes(userId) ||
@@ -489,7 +490,7 @@ export function canViewDocument(document: CollaborativeDocument, user: User): bo
 
 export function canEditDocument(document: CollaborativeDocument, user: User): boolean {
   if (document.permissions.owner === (user.id || user.email)) return true;
-  if (user.userType === UserType.Admin) return true;
+  if (isAdmin(user)) return true;
   
   const userId = user.id || user.email;
   return document.permissions.editors.includes(userId);
@@ -498,7 +499,7 @@ export function canEditDocument(document: CollaborativeDocument, user: User): bo
 export function canCommentOnDocument(document: CollaborativeDocument, user: User): boolean {
   if (!document.permissions.allowComments) return false;
   if (document.permissions.owner === (user.id || user.email)) return true;
-  if (user.userType === UserType.Admin) return true;
+  if (isAdmin(user)) return true;
   
   const userId = user.id || user.email;
   return document.permissions.editors.includes(userId) ||
@@ -507,7 +508,7 @@ export function canCommentOnDocument(document: CollaborativeDocument, user: User
 
 export function canManageCollaborators(document: CollaborativeDocument, user: User): boolean {
   if (document.permissions.owner === (user.id || user.email)) return true;
-  if (user.userType === UserType.Admin) return true;
+  if (isAdmin(user)) return true;
   
   const userId = user.id || user.email;
   return document.permissions.editors.includes(userId);

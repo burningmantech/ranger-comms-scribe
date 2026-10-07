@@ -1,9 +1,11 @@
 // Two-browser harness: real app at localhost:3000, real backend at localhost:8080 (dev bypass).
+// Override with E2E_APP_URL / E2E_API_URL (e.g. to run a second stack on other ports) and CHROME.
+// E2E_APP / E2E_API are accepted as older aliases; the *_URL names win when both are set.
 const puppeteer = require('puppeteer-core');
 
-const API = 'http://localhost:8080/api';
-const APP = 'http://localhost:3000';
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const API = process.env.E2E_API_URL || process.env.E2E_API || 'http://localhost:8080/api';
+const APP = process.env.E2E_APP_URL || process.env.E2E_APP || 'http://localhost:3000';
+const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,6 +63,9 @@ async function openUser(browser, name, session, submissionId) {
     if (/\[YJS\]|Collaboration connected|TransactionManager|\[TrackedChangesEditor\] transaction-saved|\[DBG\]/.test(t)) user.logs.push(t.slice(0, 300));
   });
   page.on('pageerror', (err) => user.errors.push(`pageerror: ${err.message}`));
+  // The editor asks to confirm leaving while an edit is unsaved; reloads and navigations in
+  // the tests always leave.
+  page.on('dialog', (d) => { if (d.type() === 'beforeunload') d.accept().catch(() => {}); });
   const cdp = await page.createCDPSession();
   await cdp.send('Network.enable');
   const sockets = new Map();
@@ -74,8 +79,12 @@ async function openUser(browser, name, session, submissionId) {
   });
   user.sockets = sockets;
   user.changePosts = [];
+  user.changeUrls = [];
   cdp.on('Network.requestWillBeSent', ({ request }) => {
-    if (request.method === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(request.url)) user.changePosts.push(request.postData || '');
+    if (request.method === 'POST' && /\/tracked-changes\/submission\/[^/]+$/.test(request.url)) {
+      user.changePosts.push(request.postData || '');
+      user.changeUrls.push(request.url);
+    }
   });
   // Keep every WebSocket the page opens, so tests can drop connections (a real outage).
   await page.evaluateOnNewDocument(() => {
@@ -207,4 +216,38 @@ async function converged(a, b) {
 
 const count = (hay, needle) => hay.split(needle).length - 1;
 
-module.exports = { api, createSubmission, launch, openUser, blocks, html, caret, select, waitFor, converged, count, sleep, EDITOR, API };
+const TURNSTILE_TEST_TOKEN = 'XXXX.DUMMY.TOKEN.XXXX';
+
+/**
+ * A real admin session for the bootstrap admin E2E_ADMIN_EMAIL (default e2e-admin@example.com),
+ * for admin routes that check a real session (no dev bypass). Registers, verifies and sets a
+ * password with the tokens a DEV_BYPASS_AUTH backend returns when it can't send email, then
+ * logs in. Needs the backend setup in README.md (member.js).
+ */
+async function adminSession() {
+  const email = process.env.E2E_ADMIN_EMAIL || 'e2e-admin@example.com';
+  const password = 'E2e-Seed-Admin-7!pass';
+  const turnstileToken = TURNSTILE_TEST_TOKEN;
+  const post = (path, body, session) => api(path, { method: 'POST', body, session });
+  const debugToken = (res, what) => {
+    const m = /token: (\S+)/.exec(res.debug || '');
+    if (!m) throw new Error(`no ${what} token in ${JSON.stringify(res)} (is DEV_BYPASS_AUTH=true?)`);
+    return m[1];
+  };
+  try {
+    const reg = await post('/auth/register', { name: 'E2E Admin', email, password, turnstileToken }, 'none');
+    const resent = await post('/auth/resend-verification', undefined, reg.sessionId);
+    await post('/auth/verify-email', { token: debugToken(resent, 'verification') }, 'none');
+  } catch (e) {
+    if (!/: 409 /.test(e.message)) throw e; // registered by an earlier run on this store
+  }
+  // Verifying a bootstrap admin clears its password; set one with a reset token.
+  const forgot = await post('/auth/forgot-password', { email, turnstileToken }, 'none');
+  await post('/auth/reset-password', { token: debugToken(forgot, 'reset'), password, turnstileToken }, 'none');
+  const login = await post('/auth/login', { email, password, turnstileToken }, 'none');
+  if (!login.isAdmin) throw new Error(`${email} is not an admin after login; start the backend with BOOTSTRAP_ADMIN_EMAILS=${email}`);
+  return login.sessionId;
+}
+
+
+module.exports = { api, adminSession, createSubmission, launch, openUser, blocks, html, caret, select, waitFor, converged, count, sleep, EDITOR, API, APP };

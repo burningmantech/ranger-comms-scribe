@@ -314,6 +314,48 @@ describe('trackedChangesService', () => {
   });
 
   describe('getCascadeDependencies', () => {
+    describe('a move (cut a section, paste it elsewhere) recorded as two changes', () => {
+      const submissionId = 'move-submission';
+      const section = 'New for 2026: early arrival passes are available. Passes are limited to one per camp.';
+      // The cut: a pure deletion; its region is a zero-width range at the cut point.
+      const cut = (at: number): TrackedChange => ({
+        id: 'cut', submissionId, field: 'content', oldValue: section, newValue: '',
+        changedBy: 'a', changedByName: 'A', timestamp: '2026-10-05T10:00:00Z', status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: at, end: at }] },
+      });
+      // The paste after "$75.": an insertion covering the pasted text (in the later document).
+      const paste = (at: number): TrackedChange => ({
+        id: 'paste', submissionId, field: 'content', oldValue: '$75.When', newValue: `$75.${section} When`,
+        changedBy: 'a', changedByName: 'A', timestamp: '2026-10-05T10:00:05Z', status: 'pending',
+        regionMap: { field: 'content', ranges: [{ start: at, end: at + section.length }] },
+      });
+      const useChanges = (changes: TrackedChange[]) => {
+        mockEnv.STORE.list = jest.fn().mockResolvedValue({
+          objects: changes.map((c) => ({ key: `tracked-changes/submission/${submissionId}/${c.id}` })),
+        });
+        mockEnv.STORE.get = jest.fn().mockImplementation((key: string) => {
+          const c = changes.find((x) => key.endsWith(`/${x.id}`));
+          return Promise.resolve(c ? { json: () => Promise.resolve(c) } : null);
+        });
+      };
+
+      it('rejecting the cut does not cascade when the paste lands after the cut point', async () => {
+        useChanges([cut(60), paste(400)]);
+        expect(await getCascadeDependencies(submissionId, 'cut', mockEnv)).toEqual([]);
+      });
+
+      it('rejecting the paste never cascades to the earlier cut', async () => {
+        useChanges([cut(60), paste(400)]);
+        expect(await getCascadeDependencies(submissionId, 'paste', mockEnv)).toEqual([]);
+      });
+
+      it('rejecting the cut cascades to the paste when the pasted range covers the cut point (the client reverts both)', async () => {
+        // A short move upwards: the zero-width cut range falls inside the pasted range.
+        useChanges([cut(60), paste(40)]);
+        expect(await getCascadeDependencies(submissionId, 'cut', mockEnv)).toEqual(['paste']);
+      });
+    });
+
     it('should return empty array when target change has no regionMap', async () => {
       const submissionId = 'test-submission-id';
       const changeId = 'change-1';
@@ -746,8 +788,8 @@ describe('trackedChangesService', () => {
       let putCallCount = 0;
       mockEnv.STORE.put = jest.fn().mockImplementation(() => {
         putCallCount++;
-        // Fail on the third put call (second change's store write, after the first change's store + cache writes)
-        if (putCallCount >= 3) {
+        // Fail on the second put call (the second change's store write)
+        if (putCallCount >= 2) {
           return Promise.reject(new Error('store write failed'));
         }
         return Promise.resolve(undefined);

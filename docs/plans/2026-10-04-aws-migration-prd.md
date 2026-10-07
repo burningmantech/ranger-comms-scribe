@@ -549,6 +549,16 @@ The editor syncs by sending the whole document, and the last write wins. When tw
   - Remote status and undo events update the sidebar only.
 - **Undo.** A Yjs UndoManager that captures only the local user's own edits takes Ctrl+Z/Ctrl+Y. CollaborationPlugin's own manager would also undo the seed, approve/reject and marker renames.
   - Undoing a saved change's text leaves its sidebar entry, which can be rejected.
+- **Reject by context** (`collab/rejectRestore.ts`, added 2026-10-05). Before this, rejecting a cut or a paste changed nothing in the shared document, though the sidebar showed it as rejected. A cut makes no deletion marker, and a multi-paragraph paste never fits in one text node.
+  - Each change record holds the whole document before and after the edit. A reject applies the patch from after to before onto the live document.
+  - All three documents become unit sequences: one unit per block, per character (with its format and link) and per inline node. Lists and tables are one unit each.
+  - Each hunk is found in the live document through a diff of after against live. A hunk whose units are all still present and contiguous is used as is.
+  - Small edits around or inside a hunk are tolerated within thresholds, judged on the context still in place and the similarity of the text. Text that was moved or rewritten fails.
+  - Only the top-level blocks that differ are replaced, in one synced update. Everyone's edits elsewhere stay.
+  - A change with its own deletion markers in the document still takes the marker path.
+  - Rejecting both halves of a move restores the original in either order. The server can cascade from the cut to the paste (when the pasted range covers the cut point); the client then reverts the cascaded change too, newest first, and stores the document again.
+  - If the change can't be located (or has no rich text), nothing changes. The reviewer sees a toast and the change stays pending. A second reject marks it rejected without touching the document.
+  - A batch reject sends only the changes it reverted to `/batch-status`, with the document after all the reverts (`revertedRichText`). The server stores that document, as the single-change PUT does.
 
 **Verified locally:**
 - headless convergence tests against the real server (`frontend/src/__integration__`);
@@ -558,6 +568,9 @@ The editor syncs by sending the whole document, and the last write wins. When tw
 - **Caret repair needs context.** The caret is repaired only while the editor has focus, and the search needs at least 3 characters of left context in the caret's block. A caret at the very start of a block keeps the Yjs position.
 - **In-flight characters** are moved back only if they were typed in the last 5 s and sit right after the moved (deleted) text.
 - **Saved content.** The persisted proposed content is the last saver's full document, as before (see the §14.3 known limit).
+- **Reject by context.**
+  - It replaces whole top-level blocks. An edit another user makes inside such a block at that moment is lost, and their caret moves.
+  - A change inside a list or table replaces the whole list or table.
 
 ### 14.6 Results on the dev site (2026-10-05)
 

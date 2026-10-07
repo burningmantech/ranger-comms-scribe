@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Form } from 'react-bootstrap';
-import { useForm } from 'react-hook-form';
+import { FieldErrors, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useContent } from '../contexts/ContentContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ContentSubmission } from '../types/content';
 import LexicalEditorComponent from './editor/LexicalEditor';
 import { User } from '../types';
@@ -12,12 +12,25 @@ import { API_URL } from '../config';
 import TemplatePicker from './TemplatePicker';
 import AudienceCard from './AudienceCard';
 import FormSummarySidebar from './FormSummarySidebar';
+import NewsletterItemFields, { cleanNewsletterItem, newsletterItemError } from './newsletter/NewsletterItemFields';
+import KeyDatesEditor, { filledKeyDates, keyDatesError } from './newsletter/KeyDatesEditor';
+import { EMPTY_NEWSLETTER_REQUEST, KeyDate, NewsletterRequest, isBlankRichText } from '../types/newsletter';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import './CommsRequest.css';
+import { LexicalEditor } from 'lexical';
+import DatesPanel, { DateSource } from './dates/DatesPanel';
+import { useAnnualDates } from './dates/useAnnualDates';
+import { DateLink } from '../types/annualDates';
+import { annualDatesService } from '../services/annualDatesService';
+import { blockTextFromLexical, replaceNthInLexical } from '../utils/lexicalUtils';
+import { replaceTextInEditor } from './editor/utils/replaceText';
+import { todayIso } from './newsletter/dates';
 
 const commsRequestSchema = z.object({
-  email: z.string().email('Please enter a valid email address'),
+  // The signed-in user's address, shown read-only and not sent with the request (the server
+  // records the submitter from the session), so its format must not block the form.
+  email: z.string(),
   owner: z.string().min(1, 'Owner is required'),
   publishBy: z.string().min(1, 'Publish date is required'),
   urgentRequest: z.boolean().optional(),
@@ -33,11 +46,27 @@ const commsRequestSchema = z.object({
 
 type CommsRequestFormData = z.infer<typeof commsRequestSchema>;
 
+/** The schema fields each step owns (Next validates only these). */
+const STEP_FIELDS: (keyof CommsRequestFormData)[][] = [
+  ['suggestedSubjectLine', 'description', 'signatureText', 'text', 'notes'],
+  ['audience', 'otherAudienceText', 'owner', 'urgentRequest', 'publishBy', 'replyToAddress', 'email'],
+  [],
+];
+
 const STEPS = [
   { label: 'Content', number: 1 },
   { label: 'Audience & Timing', number: 2 },
   { label: 'Approvers', number: 3 },
 ];
+
+/** YYYY-MM-DD of `d` in the user's time zone (toISOString() would give the UTC date). */
+const toLocalIsoDate = (d: Date) => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+/** Loose check for an approver address (the dev users are user@localhost, so no TLD rule). */
+const looksLikeEmail = (v: string) => /^[^\s@]+@[^\s@]+$/.test(v);
 
 const AUDIENCE_LABELS: Record<string, string> = {
   newsletter: 'Include in Ranger Newsletter (sent over Ranger Announce)',
@@ -68,6 +97,28 @@ export const CommsRequest: React.FC = () => {
   const { saveSubmission } = useContent();
   const navigate = useNavigate();
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // "New request" from a past message: /comms-request?from=<request>&entry=<calendar entry>&publishBy=<date>
+  const [searchParams] = useSearchParams();
+  const copyFrom = searchParams.get('from');
+  const copyEntryId = searchParams.get('entry');
+  const copyPublishBy = searchParams.get('publishBy');
+  const [copySource, setCopySource] = useState<{ id: string; title: string; sentAt?: string } | null>(null);
+  // The copied body, given to the editor once it has loaded (it only takes initialContent at mount)
+  const [copiedBody, setCopiedBody] = useState<string | undefined>(undefined);
+  const submittingRef = useRef(false);
+  // Newsletter item, key dates and writing help (outside react-hook-form: nested lists)
+  const [newsletterItem, setNewsletterItem] = useState<NewsletterRequest>(EMPTY_NEWSLETTER_REQUEST);
+  const [helpWithBlurb, setHelpWithBlurb] = useState(false);
+  const [helpWithDocument, setHelpWithDocument] = useState(false);
+  const [keyDates, setKeyDates] = useState<KeyDate[]>([]);
+  const [dateLinks, setDateLinks] = useState<DateLink[]>([]);
+  const bodyEditorRef = useRef<LexicalEditor | null>(null);
+  const setBodyEditor = useCallback((editor: LexicalEditor | null) => {
+    bodyEditorRef.current = editor;
+  }, []);
+  const annualDates = useAnnualDates();
+  // Bumped when a draft is restored, so the blurb editor shows it
+  const [blurbEditorKey, setBlurbEditorKey] = useState(0);
 
   const userJson = localStorage.getItem('user');
   const user = userJson ? JSON.parse(userJson) : null;
@@ -77,13 +128,13 @@ export const CommsRequest: React.FC = () => {
   const getDefaultPublishBy = () => {
     const d = new Date();
     d.setDate(d.getDate() + 7);
-    return d.toISOString().split('T')[0];
+    return toLocalIsoDate(d);
   };
 
   const {
     register,
     handleSubmit,
-    formState: { errors },
+    formState: { errors, isSubmitting },
     reset,
     setValue,
     getValues,
@@ -104,9 +155,11 @@ export const CommsRequest: React.FC = () => {
   const audienceValue = watch('audience');
   const urgentRequestValue = watch('urgentRequest');
 
-  // Auto-save draft on field changes (debounced 2s)
+  // Auto-save draft on field changes (debounced 2s). Not for a copy of a past message: that would
+  // overwrite the draft the person had going.
   const watchedValues = watch();
   useEffect(() => {
+    if (copyFrom) return undefined;
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(() => {
       try {
@@ -114,14 +167,20 @@ export const CommsRequest: React.FC = () => {
           ...watchedValues,
           editorContent,
           selectedTemplateId,
+          newsletterItem,
+          helpWithBlurb,
+          helpWithDocument,
+          keyDates,
+          dateLinks,
         }));
       } catch { /* ignore quota errors */ }
     }, 2000);
     return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
-  }, [watchedValues, editorContent, selectedTemplateId]);
+  }, [watchedValues, editorContent, selectedTemplateId, newsletterItem, helpWithBlurb, helpWithDocument, keyDates, dateLinks, copyFrom]);
 
-  // Restore draft on mount
+  // Restore draft on mount (not when starting from a past message)
   useEffect(() => {
+    if (copyFrom) return;
     try {
       const saved = localStorage.getItem('commsRequestDraft');
       if (saved) {
@@ -131,6 +190,17 @@ export const CommsRequest: React.FC = () => {
             setEditorContent(value as string);
           } else if (key === 'selectedTemplateId') {
             setSelectedTemplateId(value as string | null);
+          } else if (key === 'newsletterItem' && value && typeof value === 'object') {
+            setNewsletterItem({ ...EMPTY_NEWSLETTER_REQUEST, ...(value as NewsletterRequest) });
+            setBlurbEditorKey((k) => k + 1);
+          } else if (key === 'helpWithBlurb') {
+            setHelpWithBlurb(value === true);
+          } else if (key === 'helpWithDocument') {
+            setHelpWithDocument(value === true);
+          } else if (key === 'keyDates' && Array.isArray(value)) {
+            setKeyDates(value as KeyDate[]);
+          } else if (key === 'dateLinks' && Array.isArray(value)) {
+            setDateLinks(value as DateLink[]);
           } else if (key === 'email') {
             // Always use current user's email, not stale draft value
             setValue('email', userEmail);
@@ -140,7 +210,51 @@ export const CommsRequest: React.FC = () => {
         });
       }
     } catch { /* ignore parse errors */ }
-  }, [setValue]);
+  }, [setValue, copyFrom]);
+
+  // Start from a past message: its subject, text (images and all), newsletter item, key dates and
+  // linked dates, and its details where it had them. Its dates are still the old ones until updated
+  // in "Dates in this request".
+  useEffect(() => {
+    if (!copyFrom) return undefined;
+    let cancelled = false;
+    annualDatesService.getSubmission(copyFrom)
+      .then((source) => {
+        if (cancelled) return;
+        const field = (id: string) => {
+          const value = source.formFields?.find((f) => f.id === id)?.value;
+          return typeof value === 'string' ? value : '';
+        };
+        setValue('suggestedSubjectLine', source.title || '');
+        setValue('description', field('description') || `Based on “${source.title}”`);
+        if (field('owner')) setValue('owner', field('owner'));
+        if (field('replyToAddress')) setValue('replyToAddress', field('replyToAddress'));
+        if (field('signatureText')) setValue('signatureText', field('signatureText'));
+        if (source.audiences?.length) setValue('audience', source.audiences as CommsRequestFormData['audience']);
+        const body = source.proposedVersions?.richTextContent || source.richTextContent || '';
+        if (body) {
+          setEditorContent(body);
+          setCopiedBody(body);
+          setValue('text', body);
+        }
+        if (source.newsletter) {
+          setNewsletterItem({ ...EMPTY_NEWSLETTER_REQUEST, ...source.newsletter });
+          setBlurbEditorKey((k) => k + 1);
+        }
+        setKeyDates(source.keyDates || []);
+        setDateLinks(source.dateLinks || []);
+        if (source.requiredApprovers?.length) setApproverEmails(source.requiredApprovers);
+        const tomorrow = toLocalIsoDate(new Date(Date.now() + 86_400_000));
+        if (copyPublishBy && /^\d{4}-\d{2}-\d{2}$/.test(copyPublishBy) && copyPublishBy >= tomorrow) {
+          setValue('publishBy', copyPublishBy);
+        }
+        setCopySource({ id: source.id, title: source.title, sentAt: source.sentAt ? String(source.sentAt) : undefined });
+      })
+      .catch((err) => !cancelled && setFormError(`Couldn't load the request to start from: ${err instanceof Error ? err.message : err}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [copyFrom, copyPublishBy, setValue]);
 
   const getTomorrow = () => {
     const d = new Date();
@@ -277,41 +391,23 @@ export const CommsRequest: React.FC = () => {
     }
   };
 
-  const handleSuggestionClick = async (index: number, email: string) => {
+  // Picking a suggestion only fills in the approver, exactly as typing the address does.
+  // (It used to PUT /api/admin/council-managers to make the person a CommunicationsManager,
+  // which is admin-only, so it failed for Members, and for admins it silently promoted
+  // every picked approver to a council manager.)
+  const handleSuggestionClick = (index: number, email: string) => {
     const newEmails = [...approverEmails];
     newEmails[index] = email;
     setApproverEmails(newEmails);
     setSuggestions((prev) => ({ ...prev, [index]: [] }));
-
-    const isCouncilManager = councilManagers.some((m) => m.email === email);
-    if (!isCouncilManager) {
-      try {
-        const sessionId = localStorage.getItem('sessionId');
-        if (!sessionId) return;
-        const response = await fetch(`${API_URL}/admin/council-managers`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${sessionId}`,
-          },
-          body: JSON.stringify({ email, role: 'CommunicationsManager', action: 'add' }),
-        });
-        if (response.ok) {
-          const managersResponse = await fetch(`${API_URL}/council/members`, {
-            headers: { Authorization: `Bearer ${sessionId}` },
-          });
-          if (managersResponse.ok) {
-            setCouncilManagers(await managersResponse.json());
-          }
-        }
-      } catch (error) {
-        console.error('Error updating council manager:', error);
-      }
-    }
+    setFormError(null);
   };
 
   const handleEmailKeyDown = (index: number, e: React.KeyboardEvent<any>) => {
-    if (!suggestions[index] || suggestions[index].length === 0) return;
+    if (!suggestions[index] || suggestions[index].length === 0) {
+      if (e.key === 'Enter') e.preventDefault();
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActiveSuggestionIndex((prev) => ({
@@ -356,25 +452,13 @@ export const CommsRequest: React.FC = () => {
     setFormError(null);
 
     if (currentStep === 1) {
-      const fieldsToValidate: (keyof CommsRequestFormData)[] = [
-        'description',
-        'suggestedSubjectLine',
-        'signatureText',
-      ];
-      const valid = await trigger(fieldsToValidate);
+      const valid = await trigger(STEP_FIELDS[0]);
       if (!valid) setFormError('Please fill in all required fields before continuing.');
       return valid;
     }
 
     if (currentStep === 2) {
-      const fieldsToValidate: (keyof CommsRequestFormData)[] = [
-        'email',
-        'replyToAddress',
-        'owner',
-        'publishBy',
-        'audience',
-      ];
-      const valid = await trigger(fieldsToValidate);
+      const valid = await trigger(STEP_FIELDS[1]);
 
       const currentAudience = getValues('audience') || [];
       if (currentAudience.includes('other')) {
@@ -384,11 +468,51 @@ export const CommsRequest: React.FC = () => {
           return false;
         }
       }
-      if (!valid) setFormError('Please fill in all required fields before continuing.');
-      return valid;
+      if (!valid) {
+        setFormError('Please fill in all required fields before continuing.');
+        return false;
+      }
+      const extraError = newsletterAndDatesError();
+      if (extraError) {
+        setFormError(extraError);
+        return false;
+      }
+      return true;
     }
 
     return true;
+  };
+
+  const hasDocument = helpWithDocument || !isBlankRichText(editorContent);
+  const wantsNewsletter = (audienceValue || []).includes('newsletter');
+
+  // Dates written in the text and blurb, for "Dates in this request"
+  const blurb = newsletterItem.blurb || '';
+  const dateSources: DateSource[] = React.useMemo(() => [
+    { field: 'body' as const, label: 'the text', text: blockTextFromLexical(editorContent) },
+    ...(wantsNewsletter && !helpWithBlurb ? [{ field: 'blurb' as const, label: 'the blurb', text: blockTextFromLexical(blurb) }] : []),
+  ], [editorContent, blurb, wantsNewsletter, helpWithBlurb]);
+
+  const replaceDateText = async (
+    field: DateLink['field'], search: string, replacement: string, occurrence: number,
+  ): Promise<boolean> => {
+    if (field === 'body') {
+      return bodyEditorRef.current ? replaceTextInEditor(bodyEditorRef.current, search, replacement, occurrence) : false;
+    }
+    const next = replaceNthInLexical(blurb, search, replacement, occurrence);
+    if (next === blurb || !blurb) return false;
+    setNewsletterItem((item) => ({ ...item, blurb: next }));
+    setBlurbEditorKey((k) => k + 1);
+    return true;
+  };
+
+  /** The newsletter item's and the key dates' first problem, or null. */
+  const newsletterAndDatesError = (): string | null => {
+    if ((getValues('audience') || []).includes('newsletter')) {
+      const itemError = newsletterItemError(newsletterItem, { helpWithBlurb, hasDocument });
+      if (itemError) return itemError;
+    }
+    return keyDatesError(keyDates);
   };
 
   const goNext = async () => {
@@ -401,13 +525,49 @@ export const CommsRequest: React.FC = () => {
 
   const goBack = () => setStep((s) => Math.max(s - 1, 1));
 
+  /** The approver addresses to send: trimmed, known users' stored spelling, no duplicates. */
+  const collectApprovers = (): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of approverEmails) {
+      const typed = raw.trim();
+      if (!typed) continue;
+      const known = allUsers.find((u) => u.email.toLowerCase() === typed.toLowerCase());
+      const email = known ? known.email : typed;
+      if (seen.has(email.toLowerCase())) continue;
+      seen.add(email.toLowerCase());
+      out.push(email);
+    }
+    return out;
+  };
+
   const onSubmit = async (data: CommsRequestFormData) => {
+    if (submittingRef.current) return;
+    setFormError(null);
+    const validApprovers = skipApprovers ? [] : collectApprovers();
+    if (!skipApprovers && validApprovers.length === 0) {
+      setFormError('Please add at least one approver, or select "I don\'t know who should approve this"');
+      return;
+    }
+    const badApprover = validApprovers.find((e) => !looksLikeEmail(e));
+    if (badApprover) {
+      setFormError(`"${badApprover}" is not an email address. Pick a suggestion or type a full address.`);
+      return;
+    }
+
+    const extraError = newsletterAndDatesError();
+    if (extraError) {
+      setStep(2);
+      setFormError(extraError);
+      return;
+    }
+
+    submittingRef.current = true;
     try {
-      const validApprovers = skipApprovers ? [] : approverEmails.filter((e) => e.trim() !== '');
-      if (!skipApprovers && validApprovers.length === 0) {
-        setFormError('Please add at least one approver, or select "I don\'t know who should approve this"');
-        return;
-      }
+      const writingHelp = {
+        ...(helpWithDocument ? { document: true } : {}),
+        ...(data.audience.includes('newsletter') && helpWithBlurb ? { blurb: true } : {}),
+      };
 
       const submission: Partial<ContentSubmission> = {
         id: crypto.randomUUID(),
@@ -435,6 +595,12 @@ export const CommsRequest: React.FC = () => {
         assignedReviewers: [],
         assignedCouncilManagers: [],
         requiredApprovers: validApprovers,
+        audiences: data.audience,
+        ...(Object.keys(writingHelp).length ? { writingHelp } : {}),
+        ...(data.audience.includes('newsletter') ? { newsletter: cleanNewsletterItem(newsletterItem) } : {}),
+        ...(filledKeyDates(keyDates).length ? { keyDates: filledKeyDates(keyDates) } : {}),
+        ...(dateLinks.length ? { dateLinks } : {}),
+        ...(copySource ? { copiedFrom: copySource.id, ...(copyEntryId ? { calendarEntryId: copyEntryId } : {}) } : {}),
       };
 
       await saveSubmission(submission as ContentSubmission);
@@ -443,11 +609,31 @@ export const CommsRequest: React.FC = () => {
       reset();
       setEditorContent('');
       setApproverEmails(['']);
+      setSkipApprovers(false);
+      setSuggestions({});
       setSelectedTemplateId(null);
+      setNewsletterItem(EMPTY_NEWSLETTER_REQUEST);
+      setHelpWithBlurb(false);
+      setHelpWithDocument(false);
+      setKeyDates([]);
+      setDateLinks([]);
+      setBlurbEditorKey((k) => k + 1);
       setStep(1);
     } catch (error) {
       console.error('Error submitting form:', error);
+      setFormError('Your request could not be submitted. Please try again in a moment.');
+    } finally {
+      submittingRef.current = false;
     }
+  };
+
+  // Submit found an invalid field (e.g. a restored draft changed after its step was checked):
+  // go back to the first step with an error so the user can see it.
+  const onInvalid = (fieldErrors: FieldErrors<CommsRequestFormData>) => {
+    const failed = Object.keys(fieldErrors) as (keyof CommsRequestFormData)[];
+    const firstStep = STEP_FIELDS.findIndex((fields) => fields.some((f) => failed.includes(f))) + 1;
+    if (firstStep > 0) setStep(firstStep);
+    setFormError('Please fill in all required fields before submitting.');
   };
 
   const handleViewSubmissions = () => {
@@ -530,7 +716,22 @@ export const CommsRequest: React.FC = () => {
             placeholder="Start typing or paste your content..."
             className="h-64"
             currentUserId={userId}
+            onEditorReady={setBodyEditor}
+            content={copiedBody}
           />
+          <label className={`urgent-checkbox-label nl-help-check ${helpWithDocument ? 'checked' : ''}`} style={{ marginTop: 10 }}>
+            <input
+              type="checkbox"
+              checked={helpWithDocument}
+              onChange={(e) => setHelpWithDocument(e.target.checked)}
+            />
+            <span>Please help me write this</span>
+          </label>
+          {helpWithDocument && (
+            <div className="field-hint">
+              Comms will write or polish the text with you. Put what you know above or in Notes.
+            </div>
+          )}
         </div>
 
         <div className="form-field">
@@ -602,6 +803,26 @@ export const CommsRequest: React.FC = () => {
           {errors.audience && <div className="field-error">{errors.audience.message}</div>}
         </div>
 
+        {wantsNewsletter && (
+          <section className="nl-panel" aria-label="Newsletter item">
+            <h4 className="nl-panel-title"><i className="fas fa-newspaper" aria-hidden="true" /> Newsletter item</h4>
+            <p className="nl-panel-intro">
+              What goes in the next Ranger newsletter. The Comms Cadre may edit it to fit the issue.
+            </p>
+            <NewsletterItemFields
+              value={newsletterItem}
+              onChange={setNewsletterItem}
+              helpWithBlurb={helpWithBlurb}
+              onHelpWithBlurbChange={setHelpWithBlurb}
+              hasDocument={hasDocument}
+              singularSelected={(audienceValue || []).includes('singular')}
+              userId={userId}
+              uploader={user?.name || userEmail}
+              editorKey={`blurb-${blurbEditorKey}`}
+            />
+          </section>
+        )}
+
         <div className="form-field">
           <label>Owner <span className="required">*</span></label>
           <Form.Control
@@ -643,8 +864,7 @@ export const CommsRequest: React.FC = () => {
             selected={publishByDate}
             onChange={(date: Date | null) => {
               if (date) {
-                const iso = date.toISOString().split('T')[0];
-                setValue('publishBy', iso, { shouldValidate: true });
+                setValue('publishBy', toLocalIsoDate(date), { shouldValidate: true });
               }
             }}
             minDate={getTomorrow()}
@@ -658,6 +878,28 @@ export const CommsRequest: React.FC = () => {
           </div>
           {errors.publishBy && <div className="field-error">{errors.publishBy.message}</div>}
         </div>
+
+        <div className="form-field">
+          <label>Key dates</label>
+          <KeyDatesEditor
+            value={keyDates}
+            onChange={setKeyDates}
+            hint="Deadlines and events your announcement mentions. They go in the newsletter's “Mark your calendar!” table."
+            annualDates={annualDates.entries}
+            onAnnualDateAdded={annualDates.added}
+            referenceYmd={publishByValue || undefined}
+          />
+        </div>
+
+        <DatesPanel
+          sources={dateSources}
+          links={dateLinks}
+          onLinksChange={setDateLinks}
+          referenceYmd={publishByValue || todayIso()}
+          annualDates={annualDates.entries}
+          onAnnualDateAdded={annualDates.added}
+          onReplaceText={replaceDateText}
+        />
 
         <div className="form-row">
           <div className="form-field">
@@ -685,8 +927,8 @@ export const CommsRequest: React.FC = () => {
     <>
       <div className="wizard-card">
         <div className="wizard-card-header">
-          <h3>Required Approvers</h3>
-          <p>Add approvers who should review this request, or let Comms Cadre assign them later.</p>
+          <h3>Approvers</h3>
+          <p>Add the council manager who should approve this (and anyone else who must), or let the Comms Cadre choose. A message from all of Council needs every council manager.</p>
         </div>
 
         <div className="form-field">
@@ -710,7 +952,7 @@ export const CommsRequest: React.FC = () => {
           </label>
           {skipApprovers && (
             <div className="field-hint" style={{ marginTop: 8 }}>
-              No problem — Comms Cadre will assign approvers after submission.
+              No problem: the Comms Cadre will choose a council approver after you submit.
             </div>
           )}
         </div>
@@ -802,18 +1044,21 @@ export const CommsRequest: React.FC = () => {
         <p>
           Ranger Communications can write, edit, and help you get your message out.
         </p>
+        {copySource && (
+          <div className="wizard-copy-note" role="status">
+            <i className="fas fa-copy" aria-hidden="true" /> Starting from <strong>{copySource.title}</strong>
+            {copySource.sentAt ? ` (sent ${new Date(copySource.sentAt).toLocaleDateString()})` : ''}. Its dates are still
+            the old ones: update them under “Dates in this request” on the Audience &amp; Timing step.
+          </div>
+        )}
       </div>
 
       {renderStepper()}
 
       <div className={`wizard-body${step >= 2 ? ' has-sidebar' : ''}`}>
-        <Form
-          className="wizard-main"
-          onSubmit={handleSubmit(
-            (data) => onSubmit(data),
-            () => {}
-          )}
-        >
+        {/* The form never submits itself: Enter in a field or a stray submit event does
+            nothing. Only the final step's Submit button sends the request. */}
+        <Form className="wizard-main" noValidate onSubmit={(e) => e.preventDefault()}>
           <div style={{ display: step === 1 ? undefined : 'none' }}>
             {renderStep1()}
           </div>
@@ -839,13 +1084,22 @@ export const CommsRequest: React.FC = () => {
               <div />
             )}
 
+            {/* Distinct keys: React must not turn the clicked Next node into the Submit
+                button. In a browser the re-render after Next lands before the click's default
+                action, and a node that had just become type="submit" would submit the form. */}
             {step < 3 ? (
-              <button type="button" className="btn-next" onClick={goNext}>
+              <button key="next" type="button" className="btn-next" onClick={goNext}>
                 Next
               </button>
             ) : (
-              <button type="submit" className="btn-submit">
-                Submit Request
+              <button
+                key="submit"
+                type="button"
+                className="btn-submit"
+                disabled={isSubmitting}
+                onClick={handleSubmit(onSubmit, onInvalid)}
+              >
+                {isSubmitting ? 'Submitting…' : 'Submit Request'}
               </button>
             )}
           </div>

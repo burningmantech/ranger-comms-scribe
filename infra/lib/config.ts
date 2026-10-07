@@ -29,6 +29,12 @@ export interface BackendEnv {
   WS_MAX_PAYLOAD_BYTES?: string;
   /** Real-time editing mode served by GET /api/config: 'yjs' (merged editing) or 'legacy'. Omit for the backend default ('legacy'). */
   COLLAB_MODE?: 'yjs' | 'legacy';
+  /** 'true' lets a sent announcement be sent again. Dev only, for testing email rendering. */
+  ALLOW_ANNOUNCEMENT_RESEND?: 'true';
+  /** Comms Calendar nudges go only to this address instead of the team contacts. Outside production. */
+  NUDGE_EMAIL_OVERRIDE?: string;
+  /** Sends to mailing lists and approval reminders go only to this address. Outside production. */
+  COMMS_EMAIL_OVERRIDE?: string;
 }
 
 export interface UseExisting {
@@ -109,6 +115,16 @@ export interface ScribeConfig {
     /** Fargate CPU units (256 = 0.25 vCPU). */
     cpu: number;
     memoryMiB: number;
+    /**
+     * Start the new task before stopping the old one (min 100%, max 200%), so a deploy has no
+     * outage: traffic moves once the new task passes its health checks. For those seconds two
+     * tasks run, each with its own rooms and cache (clients of the old one reconnect to the
+     * new one, as after any restart). Unset: the old task stops first, then the new one starts
+     * (about 2 minutes with no backend).
+     */
+    overlapDeploys?: boolean;
+    /** ALB health check interval in seconds (default 15); two passing checks mark a task healthy. */
+    healthCheckIntervalSeconds?: number;
   };
 
   ses: {

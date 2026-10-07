@@ -26,4 +26,81 @@ node outage.js            # offline, reconnect, fresh doc after 20 s
 node remount.js           # tab switch, moving between submissions
 node undo2.js             # undo only affects your own edits
 node legacy.js            # COLLAB_MODE unset: old behaviour unchanged (restart the backend without COLLAB_MODE)
+node review-topbar.js     # review header: Finish review menu, conditions popover, view switch, Send, save
+                          # status (incl. error + Retry), saving on unmount / page hide, queue pager, author
+                          # view; works in both modes. STRICT=1 adds a reload after the Yjs room is dropped
+node review-ui.js         # review sidebar: one "Moved" card for a cut + paste, reject (live for both users),
+                          # Undo from the toast, accept, History, clicking a card scrolls to its text
+node stray-marker.js      # the dev-site Moved card: deletion markers stamped only by their own
+                          # transaction, a paragraph + list moved over an empty paragraph rejects
+                          # exactly; a move whose paste was rewritten is rejected all or nothing and
+                          # a failed reject never carries over to another card
+node moved-cycles.js      # a Moved card through reject -> Undo (History) -> reject -> ... cycles, a plain change,
+                          # Accept + undo: at every step the server has both halves in the same state, matching
+                          # the document, the cards and History. Holds back one half's status PUT so they reach
+                          # the server apart, as on the dev site. Then forces the dev bug's leftover (deletion
+                          # rejected, insertion pending with its text gone) and rejects the lone insertion: a
+                          # no-op, no "Couldn't revert". Start the backend with STORE_LATENCY_MS=60 (below)
+node member.js            # a Member (dev-member): /requests loads with no redirect loop, New Request form
+                          # (no early step errors, approver picked from the suggestions, no /api/admin/
+                          # calls), types on its request and it saves, no Finish review menu; dev-user2
+                          # rejects the edit and the member's card goes live. Fails on any console error.
+                          # Needs the backend started as below (it seeds an approver as a bootstrap admin)
+node approval-flow.js     # the status follows the tracked changes, live: all approvals first, then the last
+                          # edit accepted -> approved, 4/4 and Send in both browsers without a reload; a new
+                          # edit -> back to in_review, Send hidden; a comment resolved moves to History for
+                          # the other user ("All caught up"), Reopen brings it back. Seeds dev@localhost as a
+                          # Comms Cadre member and council manager: needs the member.js backend, run it last
+node newsletter.js        # the newsletter: a Member's request with a newsletter item (blurb, photo, link,
+                          # Read more, key date); a second asks Comms to write the blurb; both approved; dev-user2
+                          # builds edition #N from the tray, writes the blurb, adds a photo section and a calendar
+                          # row (autosave), approves; the admin overrides; reopening keeps it approved; test send,
+                          # send; signed out, the archive, edition and Read more pages; the review page says
+                          # where it went. Needs ANNOUNCE_EMAIL_TO and a fake SES (below). PHOTO=<a .jpg> to
+                          # upload photos; E2E_SHOTS=<dir> for the screenshots
+```
+
+`STORE_LATENCY_MS=<n>` (with `STORE_DRIVER=memory`) delays every store call by a random 0..n ms, like S3 round
+trips. The in-memory store answers at once, which hides races that only S3's latency exposes: `moved-cycles.js`
+found a read-through cache race this way (a status read overtaken by a concurrent write, cached, hid the write).
+Use it for `moved-cycles.js` (it also passes without). Run `review-topbar.js` without it: it types as soon as the
+editor is editable, before a slowed first load has filled it.
+
+`member.js` stores an approver through the admin API, which needs a real admin session, so it
+registers and verifies a bootstrap admin first. Start the backend for it with Cloudflare's always-pass
+Turnstile test secret, the bootstrap address, and AWS keys that can't send email (the backend then
+returns the verification and reset tokens instead of mailing them); it needs network access to
+challenges.cloudflare.com:
+
+```bash
+cd backend && env -u AWS_PROFILE PORT=8080 STORE_DRIVER=memory DEV_BYPASS_AUTH=true COLLAB_MODE=yjs \
+  GOOGLE_CLIENT_ID=x TURNSTILESECRET=1x0000000000000000000000000000000AA \
+  BOOTSTRAP_ADMIN_EMAILS=e2e-admin@example.com AWS_ACCESS_KEY_ID=AKIAINVALIDLOCALE2E \
+  AWS_SECRET_ACCESS_KEY=invalid AWS_EC2_METADATA_DISABLED=true PUBLIC_URL=http://localhost:8080/api \
+  FRONTEND_URL=http://localhost:3000 npm run dev
+```
+
+The dev-bypass users (`backend/src/utils/devUsers.ts`) are picked by the session ID: `dev-admin-session`
+(or any other) is `dev-admin` (Admin), `dev-user2-session` is `dev-user2` (CommsCadre) and
+`dev-member-session` is `dev-member` (`member@localhost`, Member). `X-Dev-User: user2|member` (REST) and
+`testUser=user2|member` (WebSocket) do the same. Names on review cards come from `/user/directory`, which
+only lists stored users, so the dev users show as their ids.
+
+To run against a second stack on other ports (e.g. a second checkout running in parallel), set
+`E2E_APP_URL` and `E2E_API_URL` (defaults `http://localhost:3000` and `http://localhost:8080/api`);
+`CHROME` overrides the browser path. `E2E_APP` / `E2E_API` still work as aliases.
+
+```bash
+E2E_APP_URL=http://localhost:3002 E2E_API_URL=http://localhost:8082/api node review-ui.js
+```
+
+For `newsletter.js`, point SES at a fake so nothing is sent: any local HTTP server that answers
+`POST /v2/email/outbound-emails` with `{"MessageId":"x"}` (and records the body if you want to read the email), and
+fake credentials so a real SES call could not succeed either:
+
+```bash
+ANNOUNCE_EMAIL_TO=announce-test@example.org AWS_ENDPOINT_URL_SESV2=http://localhost:4599 \
+  AWS_ACCESS_KEY_ID=fake AWS_SECRET_ACCESS_KEY=fake AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_REGION=us-east-1 \
+  STORE_DRIVER=memory DEV_BYPASS_AUTH=true PUBLIC_URL=http://localhost:8080/api \
+  FRONTEND_URL=http://localhost:3000 GOOGLE_CLIENT_ID=x TURNSTILESECRET=x npm run dev
 ```

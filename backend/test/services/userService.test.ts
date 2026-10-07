@@ -7,10 +7,8 @@ jest.mock('../../src/services/cacheService', () => createCacheServiceMock());
 import {
   getOrCreateUser,
   getUser,
-  approveUser,
   getAllUsers,
-  makeAdmin,
-  changeUserType,
+  saveUser,
   createGroup,
   getGroup,
   getAllGroups,
@@ -25,6 +23,15 @@ import {
 import { mockEnv } from './test-helpers';
 import { UserType } from '../../src/types';
 import { hashPassword } from '../../src/utils/password';
+
+// Make someone an Admin (the People page does it through peopleService.setAccess)
+async function makeAdmin(id: string, env: any) {
+  const user = await getUser(id, env);
+  if (!user) return null;
+  user.isAdmin = true;
+  await saveUser(user, env);
+  return user;
+}
 
 // Import the mocked cacheService functions for use in tests
 import {
@@ -98,9 +105,10 @@ describe('User Service', () => {
       expect(user.id).toBeDefined(); // User id is a UUID, not the email
       expect(user.name).toBe('Test User');
       expect(user.email).toBe('test@example.com');
-      expect(user.approved).toBe(false);
+      expect(user.approved).toBeUndefined(); // anyone signed in can submit requests: no approval step
       expect(user.isAdmin).toBe(false);
-      expect(user.userType).toBe(UserType.Public);
+      expect(user.councilRole).toBeNull();
+      expect(user.userType).toBe(UserType.Member);
       
       // Verify the user was stored in cache
       expect(putObject).toHaveBeenCalled();
@@ -142,7 +150,7 @@ describe('User Service', () => {
       const user = await getOrCreateUser(adminData, env);
 
       expect(user.isAdmin).toBe(false);
-      expect(user.userType).toBe(UserType.Public);
+      expect(user.userType).toBe(UserType.Member);
     });
   });
 
@@ -192,40 +200,6 @@ describe('User Service', () => {
     
     it('should return null for non-existent users', async () => {
       const user = await getUser('nonexistent@example.com', env);
-      
-      expect(user).toBeNull();
-    });
-  });
-
-  describe('approveUser', () => {
-    it('should approve a user', async () => {
-      // Create a user first
-      const userData = {
-        name: 'Test User',
-        email: 'test@example.com'
-      };
-      
-      await getOrCreateUser(userData, env);
-      
-      // Clear the mock to reset call count
-      (putObject as jest.Mock).mockClear();
-      
-      // Approve the user
-      const user = await approveUser('test@example.com', env);
-      
-      expect(user).toBeDefined();
-      expect(user?.approved).toBe(true);
-      
-      // Verify the user was updated in cache
-      expect(putObject).toHaveBeenCalled();
-      const callArgs = (putObject as jest.Mock).mock.calls.find(
-        call => call[0] === 'user/test@example.com'
-      );
-      expect(callArgs).toBeDefined();
-    });
-    
-    it('should return null for non-existent users', async () => {
-      const user = await approveUser('nonexistent@example.com', env);
       
       expect(user).toBeNull();
     });
@@ -287,106 +261,6 @@ describe('User Service', () => {
       const users = await getAllUsers(env);
       
       expect(users).toEqual([]);
-    });
-  });
-
-  describe('makeAdmin', () => {
-    it('should make a user an admin', async () => {
-      // Set up a mock user
-      const regularUser = await setupMockUser(
-        'regular@example.com',
-        'Regular User',
-        false,
-        UserType.Member,
-        true,
-        []
-      );
-      
-      // Reset the putObject mock after setup
-      (putObject as jest.Mock).mockClear();
-      
-      const result = await makeAdmin('regular@example.com', env);
-      
-      expect(result).toBeDefined();
-      expect(result?.isAdmin).toBe(true);
-      expect(result?.userType).toBe(UserType.Admin);
-      
-      // Verify putObject was called once to update the user
-      expect(putObject).toHaveBeenCalled();
-      const callArgs = (putObject as jest.Mock).mock.calls.find(
-        call => call[0] === 'user/regular@example.com'
-      );
-      expect(callArgs).toBeDefined();
-    });
-    
-    it('should return null for non-existent users', async () => {
-      const admin = await makeAdmin('nonexistent@example.com', env);
-      
-      expect(admin).toBeNull();
-    });
-  });
-
-  describe('changeUserType', () => {
-    it('should change a user type to Lead', async () => {
-      // Create a regular user first
-      const userData = {
-        name: 'Regular User',
-        email: 'regular@example.com'
-      };
-      
-      await getOrCreateUser(userData, env);
-      
-      // Change user type to Lead
-      const lead = await changeUserType('regular@example.com', UserType.Lead, env);
-      
-      expect(lead).toBeDefined();
-      expect(lead?.userType).toBe(UserType.Lead);
-      expect(lead?.isAdmin).toBe(false); // Should not be an admin
-    });
-    
-    it('should make user an admin when changing to Admin type', async () => {
-      // Create a regular user first
-      const userData = {
-        name: 'Regular User',
-        email: 'regular@example.com'
-      };
-      
-      await getOrCreateUser(userData, env);
-      
-      // Change user type to Admin
-      const admin = await changeUserType('regular@example.com', UserType.Admin, env);
-      
-      expect(admin).toBeDefined();
-      expect(admin?.userType).toBe(UserType.Admin);
-      expect(admin?.isAdmin).toBe(true); // Should be set to admin
-    });
-    
-    it('should return null for non-existent users', async () => {
-      const result = await changeUserType('nonexistent@example.com', UserType.Member, env);
-      
-      expect(result).toBeNull();
-    });
-    
-    it('should remove isAdmin flag when demoting from Admin', async () => {
-      // Create an admin user first
-      const userData = {
-        name: 'Admin User',
-        email: 'admin@example.com'
-      };
-      
-      await getOrCreateUser(userData, env);
-      await makeAdmin('admin@example.com', env);
-      
-      // Verify user is admin
-      const adminUser = await getUser('admin@example.com', env);
-      expect(adminUser?.isAdmin).toBe(true);
-      
-      // Change user type to Member (demote)
-      const member = await changeUserType('admin@example.com', UserType.Member, env);
-      
-      expect(member).toBeDefined();
-      expect(member?.userType).toBe(UserType.Member);
-      expect(member?.isAdmin).toBe(false); // Should no longer be admin
     });
   });
 
@@ -497,23 +371,6 @@ describe('User Service', () => {
       // Verify admin user has the group in their groups array
       const adminUser = await getUser('admin@example.com', env);
       expect(adminUser?.groups).toContain(group?.id);
-    });
-    
-    it('should allow leads to create a group', async () => {
-      // Create a lead user
-      const leadData = {
-        name: 'Lead User',
-        email: 'lead@example.com'
-      };
-      
-      await getOrCreateUser(leadData, env);
-      await changeUserType('lead@example.com', UserType.Lead, env);
-      
-      // Create a group
-      const group = await createGroup('Lead Group', 'A lead group', 'lead@example.com', env);
-      
-      expect(group).toBeDefined();
-      expect(group?.name).toBe('Lead Group');
     });
     
     it('should not allow regular members to create a group', async () => {
@@ -840,12 +697,10 @@ describe('User Service', () => {
       await getOrCreateUser({ name: 'Admin User', email: 'admin@example.com' }, env);
       await makeAdmin('admin@example.com', env);
       
-      // Create a regular user who will create the group
-      await getOrCreateUser({ name: 'Lead User', email: 'lead@example.com' }, env);
-      await changeUserType('lead@example.com', UserType.Lead, env);
-      
-      // Create a group with the lead user
-      const group = await createGroup('Test Group', 'A test group', 'lead@example.com', env);
+      // Another Admin creates the group
+      await getOrCreateUser({ name: 'Creator', email: 'creator@example.com' }, env);
+      await makeAdmin('creator@example.com', env);
+      const group = await createGroup('Test Group', 'A test group', 'creator@example.com', env);
       
       // Check if admin can access the group (even though not a member)
       const canAccess = await canAccessGroup('admin@example.com', group!.id, env);

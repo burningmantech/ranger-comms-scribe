@@ -37,7 +37,7 @@ const post = (path: string, body: unknown) =>
   });
 
 function expectAdmin(user: User | null) {
-  expect(user).toMatchObject({ userType: UserType.Admin, isAdmin: true, approved: true, verified: true });
+  expect(user).toMatchObject({ userType: UserType.Admin, isAdmin: true, verified: true });
   expect(user!.roles).toContain('Admin');
 }
 
@@ -66,11 +66,11 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
 
   it('promotes and persists a listed, verified user, leaves others alone', async () => {
     const boss = { ...(await getOrCreateUser({ name: 'Boss', email: 'boss@example.com' }, env)), verified: true };
-    expect(boss.userType).toBe(UserType.Public);
+    expect(boss.userType).toBe(UserType.Member);
 
     const promoted = await applyBootstrapAdmin(boss, env);
     expectAdmin(promoted);
-    expect(promoted.roles).not.toContain('Public');
+    expect(promoted.roles).toEqual(['Admin']);
 
     clearMemoryCache();
     expectAdmin(await getUser('boss@example.com', env));
@@ -119,9 +119,9 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
     }), env);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body).toMatchObject({ isAdmin: false, approved: false, verified: false });
+    expect(body).toMatchObject({ isAdmin: false, verified: false });
     const session = await GetSession(body.sessionId, env);
-    expect(session!.data).toMatchObject({ isAdmin: false, userType: UserType.Public });
+    expect(session!.data).toMatchObject({ isAdmin: false, userType: UserType.Member });
 
     // A password login before verification doesn't promote either
     const early = await authRouter.fetch(post('/login', {
@@ -188,7 +188,7 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
       name: 'Pat', email: 'pat@example.com', password: STRONG_PASSWORD, turnstileToken: 't',
     }), env);
     const body = await res.json() as any;
-    expect(body).toMatchObject({ isAdmin: false, approved: false, verified: false });
+    expect(body).toMatchObject({ isAdmin: false, verified: false });
   });
 
   it('refuses to register over an existing account (no session for password-less users)', async () => {
@@ -214,7 +214,7 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
     }), env);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body).toMatchObject({ isAdmin: true, approved: true });
+    expect(body).toMatchObject({ isAdmin: true });
     expectAdmin(await getUser('boss@example.com', env));
   });
 
@@ -223,7 +223,7 @@ describe('first-admin bootstrap (BOOTSTRAP_ADMIN_EMAILS)', () => {
     const res = await authRouter.fetch(post('/loginGoogleToken', { token: 'google-token' }), env);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
-    expect(body).toMatchObject({ isAdmin: true, approved: true });
+    expect(body).toMatchObject({ isAdmin: true });
     const session = await GetSession(body.sessionId, env);
     expect(session!.data).toMatchObject({ isAdmin: true, userType: UserType.Admin });
     expectAdmin(await getUser('boss@example.com', env));

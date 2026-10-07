@@ -454,3 +454,77 @@ export function stripDeletedTextNodes(lexicalJson: string | object): string {
 function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 } 
+/**
+ * Replace the `occurrence`th (from 0) `searchText` in Lexical JSON, counting matches within single
+ * text nodes in document order. Returns the JSON unchanged when there is no such match.
+ */
+export function replaceNthInLexical(
+  lexicalJson: string,
+  searchText: string,
+  replaceText: string,
+  occurrence: number,
+): string {
+  if (!lexicalJson || !searchText) return lexicalJson;
+  try {
+    const data = JSON.parse(lexicalJson);
+    let seen = 0;
+    let replaced = false;
+    const visit = (node: any) => {
+      if (replaced || !node) return;
+      if (node.type === 'text' && typeof node.text === 'string') {
+        for (let at = node.text.indexOf(searchText); at !== -1; at = node.text.indexOf(searchText, at + 1)) {
+          if (seen++ === occurrence) {
+            node.text = node.text.slice(0, at) + replaceText + node.text.slice(at + searchText.length);
+            replaced = true;
+            return;
+          }
+        }
+      }
+      if (Array.isArray(node.children)) node.children.forEach(visit);
+    };
+    visit(data.root);
+    return replaced ? JSON.stringify(data) : lexicalJson;
+  } catch {
+    return lexicalJson;
+  }
+}
+
+/**
+ * Plain text of Lexical JSON with a line break between blocks at every level (paragraphs, headings,
+ * quotes, list items, table cells), so neighbouring list items don't run together. Only text nodes
+ * count, like the editor's own text runs (deletion markers and other decorators add nothing).
+ */
+export function blockTextFromLexical(lexicalJson: string): string {
+  if (!lexicalJson) return '';
+  try {
+    const data = JSON.parse(lexicalJson);
+    const blocks: string[] = [];
+    let current = '';
+    const flush = () => {
+      if (current) blocks.push(current);
+      current = '';
+    };
+    const visit = (node: any) => {
+      if (!node) return;
+      if (node.type === 'text' && typeof node.text === 'string') {
+        current += node.text;
+        return;
+      }
+      if (node.type === 'linebreak') {
+        current += '\n';
+        return;
+      }
+      if (!Array.isArray(node.children)) return;
+      // Inline elements (links and the like) continue the text; everything else is its own block
+      const inline = node.type === 'link' || node.type === 'autolink' || node.type === 'mark';
+      if (!inline) flush();
+      node.children.forEach(visit);
+      if (!inline) flush();
+    };
+    visit(data.root);
+    flush();
+    return blocks.join('\n');
+  } catch {
+    return '';
+  }
+}

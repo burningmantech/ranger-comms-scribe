@@ -12,12 +12,12 @@ interface ExtendedRequest extends Request {
 
 export const router = AutoRouter({ base: '/api/user' });
 
-// Get approved users (name + email only) for approver suggestions
+// Everyone who has signed in or been added (name + email only), for approver suggestions
 router.get('/approvers', withAuth, async (request: ExtendedRequest, env: Env) => {
   try {
     const users = await getAllUsers(env);
     const approvers = users
-      .filter(u => u.approved)
+      .filter(u => u && u.email)
       .map(u => ({ name: u.name, email: u.email }));
     return json({ users: approvers });
   } catch (error) {

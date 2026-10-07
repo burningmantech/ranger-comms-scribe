@@ -2,6 +2,7 @@ import { CollabMode, Env } from '../utils/sessionManager';
 import { ObjectStore } from '../storage/objectStore';
 import { S3ObjectStore } from '../storage/s3ObjectStore';
 import { MemoryObjectStore } from '../storage/memoryObjectStore';
+import { LatencyObjectStore } from '../storage/latencyObjectStore';
 
 /**
  * Builds the runtime `Env` from process environment variables.
@@ -18,6 +19,9 @@ import { MemoryObjectStore } from '../storage/memoryObjectStore';
  *   EMAIL_FROM              default "Comms Scribe <alex@scrivenly.com>"
  *   EMAIL_BCC               CSV; default empty (no BCC)
  *   ANNOUNCE_EMAIL_TO       recipient for approved-submission announcements; unset disables sending
+ *   ALLOW_ANNOUNCEMENT_RESEND "true" lets a sent announcement be sent again (dev only)
+ *   COMMS_EMAIL_OVERRIDE    list sends and approval reminders all go to this address instead (dev)
+ *   NUDGE_EMAIL_OVERRIDE    Comms Calendar nudges go only to this address (dev and staging)
  *   BOOTSTRAP_ADMIN_EMAILS  CSV, case-insensitive
  *   GOOGLE_CLIENT_ID        required
  *   TURNSTILESECRET         required
@@ -29,6 +33,9 @@ import { MemoryObjectStore } from '../storage/memoryObjectStore';
  * Local/test only:
  *   STORE_DRIVER            "memory" uses an in-process MemoryObjectStore instead of S3.
  *                           Data is lost on restart. Default "s3".
+ *   STORE_LATENCY_MS        with STORE_DRIVER=memory: delay every store call by a random
+ *                           0..N ms, like S3 round trips (exposes races the instant in-memory
+ *                           store hides). Ignored for S3. Default 0.
  *
  * AWS credentials always come from the default credential chain.
  */
@@ -138,7 +145,11 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
   if (options.store) {
     store = options.store;
   } else if (storeDriver === 'memory') {
-    store = new MemoryObjectStore();
+    const latencyMs = Number(nonEmpty(source.STORE_LATENCY_MS) || 0);
+    if (!Number.isFinite(latencyMs) || latencyMs < 0) {
+      throw new Error(`Invalid STORE_LATENCY_MS: ${source.STORE_LATENCY_MS} (expected a number of milliseconds)`);
+    }
+    store = latencyMs > 0 ? new LatencyObjectStore(new MemoryObjectStore(), latencyMs) : new MemoryObjectStore();
   } else {
     store = new S3ObjectStore({
       bucket: nonEmpty(source.DATA_BUCKET)!,
@@ -159,6 +170,9 @@ export function loadConfig(source: Source = process.env, options: { store?: Obje
     EMAIL_FROM: nonEmpty(source.EMAIL_FROM) || DEFAULT_EMAIL_FROM,
     EMAIL_BCC: parseCsv(source.EMAIL_BCC),
     ANNOUNCE_EMAIL_TO: nonEmpty(source.ANNOUNCE_EMAIL_TO),
+    ALLOW_ANNOUNCEMENT_RESEND: source.ALLOW_ANNOUNCEMENT_RESEND === 'true',
+    NUDGE_EMAIL_OVERRIDE: nonEmpty(source.NUDGE_EMAIL_OVERRIDE),
+    COMMS_EMAIL_OVERRIDE: nonEmpty(source.COMMS_EMAIL_OVERRIDE),
     BOOTSTRAP_ADMIN_EMAILS: parseCsv(source.BOOTSTRAP_ADMIN_EMAILS).map((email) => email.toLowerCase()),
     COLLAB_MODE: collabMode,
   };

@@ -31,6 +31,9 @@ const config: ScribeConfig = {
     serviceName: 'scribe-dev',
     cpu: 256,
     memoryMiB: 512,
+    // Dev deploys without an outage and marks a new task healthy in ~10 s
+    overlapDeploys: true,
+    healthCheckIntervalSeconds: 5,
   },
 
   ses: {
@@ -53,12 +56,19 @@ const config: ScribeConfig = {
     EMAIL_FROM: 'Comms Scribe <alex@scrivenly.com>',
     // No BCC in dev. Set SCRIBE_ALEX_DEV_EMAIL_BCC to get a copy of every email while testing.
     EMAIL_BCC: process.env.SCRIBE_ALEX_DEV_EMAIL_BCC ?? '',
-    // Never the real announcement list in dev; set a test address to try the send-email flow.
-    ANNOUNCE_EMAIL_TO: process.env.SCRIBE_ALEX_DEV_ANNOUNCE_EMAIL_TO ?? '',
+    // Never the real announcement list in dev: approved announcements go to Alex.
+    // SCRIBE_ALEX_DEV_ANNOUNCE_EMAIL_TO overrides it (set it to '' to disable sending).
+    ANNOUNCE_EMAIL_TO: process.env.SCRIBE_ALEX_DEV_ANNOUNCE_EMAIL_TO ?? 'alexander.young@gmail.com',
     BOOTSTRAP_ADMIN_EMAILS: process.env.SCRIBE_ALEX_DEV_BOOTSTRAP_ADMIN_EMAILS || 'alexander.young@gmail.com',
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
     // Merged real-time editing (Yjs, PRD §14) is on in dev; the Rangers environments keep the default 'legacy'.
     COLLAB_MODE: 'yjs',
+    // Sent announcements can be sent again, to test email rendering (they only go to Alex)
+    ALLOW_ANNOUNCEMENT_RESEND: 'true',
+    // Comms Calendar nudges go to Alex, never to the team contacts on imported entries
+    NUDGE_EMAIL_OVERRIDE: process.env.SCRIBE_ALEX_DEV_NUDGE_EMAIL_OVERRIDE || 'alexander.young@gmail.com',
+    // Sends to mailing lists (e.g. a cadre's list) and approval reminders go to Alex, never the real list or person
+    COMMS_EMAIL_OVERRIDE: process.env.SCRIBE_ALEX_DEV_COMMS_EMAIL_OVERRIDE || 'alexander.young@gmail.com',
   },
 
   // SSM SecureString you create by hand (infra/README.md, first-time setup).

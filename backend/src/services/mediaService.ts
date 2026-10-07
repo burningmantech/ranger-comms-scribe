@@ -1,3 +1,4 @@
+import { isAdmin } from './access';
 import { GetSession, Env } from '../utils/sessionManager';
 import { MediaItem, UserType, User } from '../types';
 import { getUser, canAccessGroup } from '../services/userService';
@@ -236,7 +237,7 @@ export const getMedia = async (env: Env, userId?: string): Promise<MediaItem[]> 
             const user = await getUser(userId, env);
             
             // If user is admin, they can see all media
-            if (user && user.userType === UserType.Admin) {
+            if (user && isAdmin(user)) {
                 // No filtering needed, admins see everything
             } else {
                 // Filter media based on access
@@ -510,20 +511,3 @@ async function removeExistenceCache(key: string, env: Env): Promise<void> {
     }
 }
 
-// Check if a user is an admin
-export const isUserAdmin = async (userId: string, env: Env): Promise<boolean> => {
-    try {
-        // Get the user's data using cacheService
-        const userKey = `user/${userId}`;
-        const userData = await getObject(userKey, env) as User;
-        
-        if (!userData) {
-            return false;
-        }
-        
-        return userData.isAdmin === true;
-    } catch (error) {
-        console.error('Error checking admin status:', error);
-        return false;
-    }
-};

@@ -1,3 +1,4 @@
+import { isAdmin, isCommsCadre } from '../services/access';
 import { AutoRouter } from 'itty-router';
 import { SubmissionTemplate } from '../types';
 import { Env } from '../utils/sessionManager';
@@ -19,10 +20,10 @@ router.get('/', withAuth, async (request: Request, env: Env) => {
   });
 });
 
-// GET /api/templates/admin — list all templates (admin only)
+// GET /api/templates/admin — list all templates (Comms Cadre and Admins)
 router.get('/admin', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!(isAdmin(user, env) || isCommsCadre(user))) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
@@ -35,10 +36,10 @@ router.get('/admin', withAuth, async (request: Request, env: Env) => {
   });
 });
 
-// POST /api/templates — create template (admin only)
+// POST /api/templates — create template (Comms Cadre and Admins)
 router.post('/', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!(isAdmin(user, env) || isCommsCadre(user))) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
@@ -74,10 +75,10 @@ router.post('/', withAuth, async (request: Request, env: Env) => {
   });
 });
 
-// PUT /api/templates/:id — update template (admin only)
+// PUT /api/templates/:id — update template (Comms Cadre and Admins)
 router.put('/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!(isAdmin(user, env) || isCommsCadre(user))) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
@@ -111,10 +112,10 @@ router.put('/:id', withAuth, async (request: Request, env: Env) => {
   });
 });
 
-// DELETE /api/templates/:id — delete template (admin only)
+// DELETE /api/templates/:id — delete template (Comms Cadre and Admins)
 router.delete('/:id', withAuth, async (request: Request, env: Env) => {
   const user = (request as any).user;
-  if (user.userType !== 'Admin') {
+  if (!(isAdmin(user, env) || isCommsCadre(user))) {
     return new Response(JSON.stringify({ error: 'Forbidden' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },

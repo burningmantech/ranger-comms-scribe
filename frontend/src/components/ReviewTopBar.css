@@ -87,7 +87,7 @@
   flex-shrink: 0;
 }
 
-/* Right section: actions + queue nav */
+/* Right section: queue pager + Finish review */
 .review-top-bar__right {
   display: flex;
   align-items: center;
@@ -95,76 +95,8 @@
   flex-shrink: 0;
 }
 
-.review-top-bar__actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.review-top-bar__action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
-  border: 1px solid var(--border-color, #dadce0);
-  border-radius: var(--radius-sm, 4px);
-  background: #fff;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-}
-
-.review-top-bar__action-btn span {
-  font-family: 'Poppins', sans-serif;
-}
-
-.review-top-bar__action-btn i {
-  font-size: 11px;
-}
-
-/* Approve */
-.review-top-bar__action-btn--approve {
-  color: #15803d;
-  border-color: #bbf7d0;
-}
-
-.review-top-bar__action-btn--approve:hover {
-  background: #f0fdf4;
-  border-color: #86efac;
-}
-
-/* Request Changes */
-.review-top-bar__action-btn--request-changes {
-  color: var(--accent-teal, #0d9488);
-  border-color: #99f6e4;
-}
-
-.review-top-bar__action-btn--request-changes:hover {
-  background: #f0fdfa;
-  border-color: #5eead4;
-}
-
-/* Reject */
-.review-top-bar__action-btn--reject {
-  color: var(--danger, #dc2626);
-  border-color: #fecaca;
-}
-
-.review-top-bar__action-btn--reject:hover {
-  background: #fef2f2;
-  border-color: #fca5a5;
-}
-
 /* Responsive */
 @media (max-width: 1024px) {
-  .review-top-bar__action-btn span {
-    display: none;
-  }
-  .review-top-bar__action-btn {
-    padding: 6px 8px;
-  }
   .review-top-bar__title {
     max-width: 200px;
   }
@@ -179,4 +111,40 @@
     order: 3;
     width: 100%;
   }
+}
+
+/* "You approved this request" etc. after a Finish-review decision (non-blocking) */
+.review-decision-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 8px;
+  background: #323232;
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  max-width: 90vw;
+}
+
+.review-decision-toast--error {
+  background: #d93025;
+}
+
+.review-decision-toast__close {
+  padding: 0 0 0 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.review-decision-toast__close:hover {
+  opacity: 1;
 }

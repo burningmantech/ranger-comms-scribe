@@ -1,162 +1,212 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, UserType, User, Group, CouncilRole, ApprovalGates } from '../types';
-import { Role } from '../services/roleService';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates, ApproverDetail } from '../types';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
-import { uploadMedia, absolutizeMediaUrls } from '../services/mediaService';
+import { uploadMedia } from '../services/mediaService';
+import { buildAnnouncementEmail, embedGalleryImages } from '../services/announcementEmail';
+import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
-import { getCouncilManagersForRole } from '../services/councilManagerService';
-import { getTrackedChanges } from '../services/trackedChangesService';
+import { Access, accessOf, approverCounts, derivedRoles, derivedUserType, isAdmin, isCommsCadre, isCommsManager, isReviewer, normalizeEmail } from '../services/access';
+import { accessByEmail, peopleByEmail, peopleWhere } from '../services/peopleService';
+import { listMailingLists, suggestedListIds } from '../services/mailingListService';
+import { getUser } from '../services/userService';
+import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
+import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
+import { getEdition } from '../services/newsletterService';
+import { cleanDateLinks, DateLinkError } from '../utils/dateLinks';
+import { getTrackedChanges, ChangeComment } from '../services/trackedChangesService';
+import { canEditCalendar, linkCopyToCalendar, syncCalendarFromSubmission } from '../services/commsCalendarService';
 
 export const router = AutoRouter({ base: '/api/content' });
 
-// Helper: recompute approval status using unique latest decisions and membership lists
+// Record a sent submission in the Comms Calendar. Never fails the caller: the email has
+// already gone, and an error here would invite sending it again.
+async function recordInCommsCalendar(submission: ContentSubmission, env: Env, options: Parameters<typeof syncCalendarFromSubmission>[2]) {
+  try {
+    await syncCalendarFromSubmission(submission, env, options);
+  } catch (error) {
+    console.error(`Comms Calendar: could not record submission ${submission.id}:`, error);
+  }
+}
+
+// Who each approval counts for: the roles the approver held when approving (the snapshot on
+// the approval) or holds now (their record; services/access.ts). One store read per approver.
+async function approvalCounter(approvals: ContentApproval[], env: any) {
+  const current: Map<string, Access> = await accessByEmail(approvals.map((a) => a.approverEmail || ''), env);
+  return (a: ContentApproval) => approverCounts(a, current.get(normalizeEmail(a.approverEmail)));
+}
+
+/** Every approval gate met (the request can be approved). */
+export function allGatesMet(gates: ApprovalGates): boolean {
+  return gates.councilManager.met && gates.commsCadre.met && gates.requiredApprovers.met && gates.trackedChanges.met;
+}
+
+// Recompute approval status from the gates. Promotes to 'approved' only; never demotes
+// (syncSubmissionStatus does that) and never touches a 'sent' submission.
 export async function recomputeApprovalStatus(submission: ContentSubmission, env: any): Promise<ContentSubmission> {
-  // Deduplicate by latest decision per approver
-  const approvalsByApprover = new Map<string, ContentApproval>();
-  for (const a of submission.approvals || []) {
-    const key = (a.approverEmail || a.approverId || '').trim().toLowerCase();
-    if (!key) continue;
-    const prev = approvalsByApprover.get(key);
-    if (!prev) {
-      approvalsByApprover.set(key, a);
-    } else {
-      const prevTime = new Date(prev.updatedAt || prev.createdAt).getTime();
-      const currTime = new Date(a.updatedAt || a.createdAt).getTime();
-      approvalsByApprover.set(key, currTime >= prevTime ? a : prev);
-    }
-  }
-  const uniqueApprovals = Array.from(approvalsByApprover.values());
-
-  // Normalize required approvers
-  const required = (submission.requiredApprovers || []).map(e => (e || '').trim().toLowerCase());
-
-  const allRequiredApproversApproved = required.length > 0 && required.every(email =>
-    uniqueApprovals.some(a => (a.approverEmail || '').trim().toLowerCase() === email && a.status === 'approved')
-  );
-
-  // Load comms cadre active list
-  const commsCadreList = (await getObject<any[]>('comms_cadre:active', env)) || [];
-  const commsCadreEmails = new Set((commsCadreList.filter(m => m.active).map(m => (m.email || '').trim().toLowerCase())));
-
-  // Load all council manager emails across roles
-  const councilEmails = new Set<string>();
-  for (const role of Object.values(CouncilRole)) {
-    try {
-      const members = await getCouncilManagersForRole(role as CouncilRole, env);
-      for (const m of members || []) {
-        if (m && m.email) councilEmails.add(m.email.trim().toLowerCase());
-      }
-    } catch {}
-  }
-
-  // Check that a council manager specifically approved (not just that they exist AND someone approved)
-  const hasCouncilApproval = uniqueApprovals.some(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCouncil = (a.approverType === UserType.CouncilManager) || (a.approverRoles || []).includes('CouncilManager') || councilEmails.has(email);
-    return isCouncil && a.status === 'approved';
-  });
-
-  const hasCommsCadreApproval = uniqueApprovals.some(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCommsCadre = (a.approverType === UserType.CommsCadre) || (a.approverRoles || []).includes('CommsCadre') || commsCadreEmails.has(email);
-    return isCommsCadre && a.status === 'approved';
-  });
-
-  if (allRequiredApproversApproved && hasCouncilApproval && hasCommsCadreApproval) {
-    // Gate: all tracked changes must be resolved before approval
-    const changes = await getTrackedChanges(submission.id, env);
-    const pendingChanges = changes.filter(c => c.status === 'pending');
-    if (pendingChanges.length > 0) {
-      return submission; // Don't approve until all tracked changes are resolved
-    }
-
+  if (submission.status === 'sent') return submission;
+  if (allGatesMet(await computeApprovalGates(submission, env))) {
     submission.status = 'approved';
     submission.finalApprovalDate = submission.finalApprovalDate || new Date().toISOString();
   }
-
   return submission;
 }
 
-// Compute structured approval gate data for the frontend approval tracker
-export async function computeApprovalGates(submission: ContentSubmission, env: any): Promise<ApprovalGates> {
-  // Deduplicate by latest decision per approver (same logic as recomputeApprovalStatus)
-  const approvalsByApprover = new Map<string, ContentApproval>();
+/**
+ * Keep a submission's status in step with its tracked changes. Called last by every
+ * handler that creates, resolves, undoes or deletes tracked changes (handlers/trackedChanges.ts).
+ *
+ * The rule:
+ *  - `sent` never changes: the announcement has gone out.
+ *  - `approved` with a pending tracked change drops back to `in_review`: the approved
+ *    content has changed (a new edit, or an undo that made a change pending again).
+ *    `finalApprovalDate` is cleared and an override approval (`approvalOverride`) no longer
+ *    holds; its audit fields (`approvalOverrideBy/Reason/At`) stay. It becomes `approved`
+ *    again only when the approval gates are met (recomputeApprovalStatus) or after a new
+ *    override.
+ *  - Anything else becomes `approved` when recomputeApprovalStatus says so: every required
+ *    approver, a council manager and a Comms Cadre member approved, and no tracked change
+ *    is pending (e.g. the last change was resolved after the approvals).
+ *  - Only pending changes demote. An approver changing their vote does not (as before), so
+ *    an override approval survives accepting or rejecting changes.
+ *
+ * Re-reads the submission (the caller may just have written it) and writes it only when
+ * the status changes. Always tells the room, with the approval gates: `status_changed` when
+ * the status changed, else `approval_state`. `onlyDemote` skips the promotion check (a newly
+ * created change can only make a change pending). `approversChanged` (the approvers list was
+ * edited) also demotes an `approved` request whose gates are no longer met, e.g. a new council
+ * approver who hasn't approved yet; an override approval still holds.
+ */
+export async function syncSubmissionStatus(
+  submissionId: string,
+  env: any,
+  actor?: { id?: string; email?: string; name?: string },
+  options: { onlyDemote?: boolean; approversChanged?: boolean } = {}
+): Promise<ContentSubmission | null> {
+  try {
+    const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
+    if (!submission || submission.status === 'sent') return submission;
+    const before = submission.status;
+    if (before === 'approved') {
+      const changes = await getTrackedChanges(submissionId, env);
+      const gatesFail = options.approversChanged && !submission.approvalOverride &&
+        !allGatesMet(await computeApprovalGates(submission, env));
+      if (changes.some(c => c.status === 'pending') || gatesFail) {
+        submission.status = 'in_review';
+        delete submission.finalApprovalDate;
+        if (submission.approvalOverride) submission.approvalOverride = false;
+      }
+    } else if (!options.onlyDemote) {
+      await recomputeApprovalStatus(submission, env);
+    }
+    const changed = submission.status !== before;
+    if (changed) {
+      // Write only the status fields, onto a fresh copy: the reads above take a while, and
+      // a concurrent write (another decision, an autosave) must keep its content.
+      const fresh = (await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env)) || submission;
+      if (fresh.status === 'sent') return fresh;
+      fresh.status = submission.status;
+      if (submission.finalApprovalDate) fresh.finalApprovalDate = submission.finalApprovalDate;
+      else delete fresh.finalApprovalDate;
+      if (submission.approvalOverride !== undefined) fresh.approvalOverride = submission.approvalOverride;
+      await putObject(`content_submissions/${submissionId}`, fresh, env);
+      await deleteObject('content_submissions/list', env);
+    }
+    // Open review pages show the gates ("N/4 conditions met") and the status (Send): tell
+    // the room either way, `status_changed` when the status changed, else `approval_state`.
+    await broadcastToSubmissionRoom(submissionId, {
+      type: changed ? 'status_changed' : 'approval_state',
+      userId: actor?.id || actor?.email || 'system',
+      userName: actor?.name || '',
+      userEmail: actor?.email || '',
+      data: {
+        status: submission.status,
+        ...(changed ? { previousStatus: before, title: submission.title, reason: options.approversChanged ? 'approvers_changed' : 'tracked_changes' } : {}),
+        approvalGates: await computeApprovalGates(submission, env),
+      },
+    }, env);
+    return submission;
+  } catch (err) {
+    console.error(`Failed to sync the status of submission ${submissionId}:`, err);
+    return null;
+  }
+}
+
+/** Who may see a submission (GET /submissions/:id); also who may resolve its comments. */
+export function canViewSubmission(user: User, submission: ContentSubmission): boolean {
+  return isReviewer(user) ||
+    submission.submittedBy === user.id ||
+    !!(submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
+    !!(submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+}
+
+/** The latest decision of each approver (by email, else id). */
+function latestDecisions(submission: ContentSubmission): ContentApproval[] {
+  const byApprover = new Map<string, ContentApproval>();
   for (const a of submission.approvals || []) {
     const key = (a.approverEmail || a.approverId || '').trim().toLowerCase();
     if (!key) continue;
-    const prev = approvalsByApprover.get(key);
-    if (!prev) {
-      approvalsByApprover.set(key, a);
-    } else {
-      const prevTime = new Date(prev.updatedAt || prev.createdAt).getTime();
-      const currTime = new Date(a.updatedAt || a.createdAt).getTime();
-      approvalsByApprover.set(key, currTime >= prevTime ? a : prev);
-    }
+    const prev = byApprover.get(key);
+    const time = (x: ContentApproval) => new Date(x.updatedAt || x.createdAt).getTime();
+    if (!prev || time(a) >= time(prev)) byApprover.set(key, a);
   }
-  const uniqueApprovals = Array.from(approvalsByApprover.values());
+  return Array.from(byApprover.values());
+}
 
-  // --- Required approvers gate ---
-  const required = (submission.requiredApprovers || []).map(e => (e || '').trim().toLowerCase());
-  const requiredDetails = required.map(email => {
-    const approval = uniqueApprovals.find(
-      a => (a.approverEmail || '').trim().toLowerCase() === email
-    );
-    return {
+/**
+ * The approval gates (also sent to the review page). The approvers list holds both kinds of
+ * approver: the council members on it are the Council gate (at least one must be listed, and
+ * all of them must approve; a council member who isn't listed doesn't count), the rest the
+ * required approvers gate (met when all approved, or there are none). Someone is a council
+ * member by their stored access, or (for someone with no stored record, e.g. a dev user) by
+ * the role recorded on their approval here. One person on the list who is also Comms Cadre
+ * meets the Comms Cadre gate with the same approval.
+ */
+export async function computeApprovalGates(submission: ContentSubmission, env: any): Promise<ApprovalGates> {
+  const decisions = latestDecisions(submission);
+  const decisionOf = (email: string) => decisions.find((a) => normalizeEmail(a.approverEmail) === email);
+
+  const listed = Array.from(new Set((submission.requiredApprovers || []).map(normalizeEmail).filter(Boolean)));
+  const people = await peopleByEmail(listed, env);
+  const council: ApproverDetail[] = [];
+  const others: ApproverDetail[] = [];
+  for (const email of listed) {
+    const decision = decisionOf(email);
+    const person = people.get(email);
+    const stored = person?.access;
+    const isCouncil = stored ? stored.council : !!decision && approverCounts(decision).council;
+    const detail: ApproverDetail = {
       email,
-      name: approval?.approverName,
-      status: (approval ? approval.status : 'pending') as 'approved' | 'rejected' | 'pending',
-      date: approval ? (approval.updatedAt || approval.createdAt) : undefined,
+      name: person?.name || decision?.approverName,
+      status: (decision ? decision.status : 'pending') as ApproverDetail['status'],
+      date: decision ? (decision.updatedAt || decision.createdAt) : undefined,
+      ...(isCouncil && stored?.councilRole ? { councilRole: stored.councilRole } : {}),
     };
-  });
-  const approvedCount = requiredDetails.filter(d => d.status === 'approved').length;
-
-  // --- Council manager gate ---
-  const councilEmails = new Set<string>();
-  for (const role of Object.values(CouncilRole)) {
-    try {
-      const members = await getCouncilManagersForRole(role as CouncilRole, env);
-      for (const m of members || []) {
-        if (m && m.email) councilEmails.add(m.email.trim().toLowerCase());
-      }
-    } catch {}
+    (isCouncil ? council : others).push(detail);
   }
+  const othersApproved = others.filter((d) => d.status === 'approved').length;
+  const councilMet = council.length > 0 && council.every((d) => d.status === 'approved');
+  const lastCouncil = council
+    .filter((d) => d.status === 'approved')
+    .sort((x, y) => new Date(y.date || 0).getTime() - new Date(x.date || 0).getTime())[0];
+  const lastCouncilDecision = lastCouncil ? decisionOf(lastCouncil.email) : undefined;
 
-  const councilApproval = uniqueApprovals.find(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCouncil = (a.approverType === UserType.CouncilManager) ||
-      (a.approverRoles || []).includes('CouncilManager') ||
-      councilEmails.has(email);
-    return isCouncil && a.status === 'approved';
-  });
+  const counts = await approvalCounter(decisions, env);
+  const commsCadreApproval = decisions.find(a => a.status === 'approved' && counts(a).commsCadre);
 
-  // --- Comms cadre gate ---
-  const commsCadreList = (await getObject<any[]>('comms_cadre:active', env)) || [];
-  const commsCadreEmails = new Set(
-    commsCadreList.filter(m => m.active).map(m => (m.email || '').trim().toLowerCase())
-  );
-
-  const commsCadreApproval = uniqueApprovals.find(a => {
-    const email = (a.approverEmail || '').trim().toLowerCase();
-    const isCommsCadre = (a.approverType === UserType.CommsCadre) ||
-      (a.approverRoles || []).includes('CommsCadre') ||
-      commsCadreEmails.has(email);
-    return isCommsCadre && a.status === 'approved';
-  });
-
-  // --- Tracked changes gate ---
   const changes = await getTrackedChanges(submission.id, env);
   const pendingChanges = changes.filter(c => c.status === 'pending');
 
   return {
     councilManager: {
-      met: !!councilApproval,
-      approver: councilApproval?.approverEmail,
-      approverName: councilApproval?.approverName,
-      date: councilApproval ? (councilApproval.updatedAt || councilApproval.createdAt) : undefined,
-      comment: councilApproval?.comment,
+      met: councilMet,
+      approver: councilMet ? lastCouncil?.email : undefined,
+      approverName: councilMet ? council.map((d) => d.name || d.email).join(', ') : undefined,
+      date: councilMet ? lastCouncil?.date : undefined,
+      comment: councilMet ? lastCouncilDecision?.comment : undefined,
+      approvers: council,
     },
     commsCadre: {
       met: !!commsCadreApproval,
@@ -166,10 +216,10 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
       comment: commsCadreApproval?.comment,
     },
     requiredApprovers: {
-      met: required.length > 0 && approvedCount === required.length,
-      approved: approvedCount,
-      total: required.length,
-      details: requiredDetails,
+      met: othersApproved === others.length,
+      approved: othersApproved,
+      total: others.length,
+      details: others,
     },
     trackedChanges: {
       met: pendingChanges.length === 0,
@@ -179,10 +229,48 @@ export async function computeApprovalGates(submission: ContentSubmission, env: a
   };
 }
 
+/**
+ * The request form's newsletter fields, validated: audience keys, writing help, the
+ * newsletter item (only kept when the audience includes the newsletter) and key dates.
+ */
+function cleanNewsletterFields(input: any): Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'> {
+  const out: Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'> = {};
+  if (Array.isArray(input.audiences)) {
+    out.audiences = input.audiences.filter((a: unknown) => typeof a === 'string' && a.trim()).map((a: string) => a.trim()).slice(0, 20);
+  }
+  const writingHelp = cleanWritingHelp(input.writingHelp);
+  if (writingHelp.document || writingHelp.blurb) out.writingHelp = writingHelp;
+  const keyDates = cleanKeyDates(input.keyDates);
+  if (keyDates.length) out.keyDates = keyDates;
+  if (input.newsletter && (out.audiences || []).includes('newsletter')) {
+    out.newsletter = cleanNewsletterRequest(input.newsletter);
+  }
+  return out;
+}
+
+// Fields only this server sets (newsletter placement and public pages) or that have their own
+// endpoint (PATCH /submissions/:id/newsletter, PUT /submissions/:id/approvers); PUT bodies
+// often carry a stale loaded copy.
+const PUT_IGNORED_FIELDS = [
+  'newsletter', 'keyDates', 'writingHelp', 'dateLinks',
+  'newsletterEditionId', 'newsletterSentIn', 'publicSlug', 'publicPublishedAt',
+  'sentTo', 'reminders', 'requiredApprovers',
+] as const;
+
 // Create a new content submission
 router.post('/submissions', withAuth, async (request: Request, env: any) => {
   const submission: Partial<ContentSubmission> = await request.json();
   const user = (request as any).user as User;
+
+  let newsletterFields: Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'>;
+  let dateLinks: ContentSubmission['dateLinks'];
+  try {
+    newsletterFields = cleanNewsletterFields(submission);
+    dateLinks = cleanDateLinks(submission.dateLinks);
+  } catch (err) {
+    if (err instanceof InputError || err instanceof DateLinkError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
 
   const newSubmission: ContentSubmission = {
     id: crypto.randomUUID(),
@@ -199,14 +287,37 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     councilManagerApprovals: [],
     announcementSent: false,
     assignedCouncilManagers: submission.assignedCouncilManagers || [],
-    requiredApprovers: submission.requiredApprovers || []
+    requiredApprovers: submission.requiredApprovers || [],
+    ...newsletterFields,
+    ...(dateLinks.length ? { dateLinks } : {}),
+    ...(typeof (submission as any).copiedFrom === 'string' && (submission as any).copiedFrom
+      ? { copiedFrom: String((submission as any).copiedFrom).slice(0, 200) }
+      : {}),
   };
+  // The content as submitted, kept unchanged for the Original view (accept / reject
+  // rewrite content and richTextContent). A copy of exactly what is stored above.
+  newSubmission.originalContent = newSubmission.content;
+  if (newSubmission.richTextContent !== undefined) {
+    newSubmission.originalRichTextContent = newSubmission.richTextContent;
+  }
 
   // Store in cache with appropriate key
   await putObject(`content_submissions/${newSubmission.id}`, newSubmission, env);
   
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
+
+  // Started from a past message: this year's calendar entry now points at it (never fails the create)
+  if (newSubmission.copiedFrom) {
+    try {
+      const askedEntryId = typeof (submission as any).calendarEntryId === 'string' && (await canEditCalendar(user, env))
+        ? (submission as any).calendarEntryId as string
+        : undefined;
+      await linkCopyToCalendar(newSubmission, newSubmission.copiedFrom, env, askedEntryId);
+    } catch (err) {
+      console.warn('Could not link the new request to the Comms Calendar:', err);
+    }
+  }
 
   return json(newSubmission);
 });
@@ -226,32 +337,9 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   
   const allSubmissions = (await Promise.all(submissionPromises)).filter((sub): sub is ContentSubmission => sub !== null);
   
-  // Get user's groups and their associated roles
-  const userGroups = await Promise.all((user.groups || []).map(async (groupId: string) => {
-    const group = await getObject<Group>(`groups/${groupId}`, env);
-    if (!group) return null;
-    
-    // Get the role associated with this group
-    const role = await getObject<Role>(`roles/${group.name}`, env);
-    return { group, role };
-  }));
-  
-  // Check if user has any group with content management permissions
-  const hasContentManagementGroup = userGroups.some((groupData) => {
-    if (!groupData) return false;
-    const { role } = groupData;
-    return role && (
-      role.permissions.canEdit ||
-      role.permissions.canApprove ||
-      role.permissions.canCreateSuggestions ||
-      role.permissions.canApproveSuggestions ||
-      role.permissions.canReviewSuggestions
-    );
-  });
-  
-  // Filter based on user's groups and permissions
+  // Reviewers see everything; others their own, and the ones they approve
   let submissions;
-  if (hasContentManagementGroup || user.userType === UserType.Admin || user.userType === UserType.CouncilManager || user.userType === UserType.CommsCadre) {
+  if (isReviewer(user)) {
     submissions = allSubmissions;
   } else {
     submissions = allSubmissions.filter((sub: ContentSubmission) => 
@@ -283,26 +371,25 @@ router.get('/submissions/my-actions', withAuth, async (request: Request, env: an
   for (const submission of allSubmissions) {
     if (['sent', 'rejected', 'draft'].includes(submission.status)) continue;
 
-    const isRequiredApprover = (submission.requiredApprovers || []).includes(user.email);
+    const isRequiredApprover = (submission.requiredApprovers || []).some((e) => normalizeEmail(e) === normalizeEmail(user.email));
     const hasActed = (submission.approvals || []).some(
       (a: ContentApproval) =>
         a.approverEmail === user.email || a.approverId === user.id
     );
 
-    const isReviewer =
-      user.userType === UserType.CommsCadre ||
-      user.userType === UserType.CouncilManager ||
-      user.userType === UserType.Admin;
+    const access = accessOf(user);
+    const reviewer = isReviewer(user);
 
     const gates = await computeApprovalGates(submission, env);
 
+    // Council members act on the requests that list them; the Comms Cadre approve, and pick a
+    // council approver when none is listed yet
     if (isRequiredApprover && !hasActed) {
       needsAction.push({ ...submission, approvalGates: gates });
-    } else if (isReviewer && !hasActed) {
-      if (
-        (user.userType === UserType.CouncilManager && !gates.councilManager.met) ||
-        (user.userType === UserType.CommsCadre && !gates.commsCadre.met)
-      ) {
+    } else if (access.commsCadre && gates.councilManager.approvers.length === 0) {
+      needsAction.push({ ...submission, approvalGates: gates });
+    } else if (reviewer && !hasActed) {
+      if (access.commsCadre && !gates.commsCadre.met) {
         needsAction.push({ ...submission, approvalGates: gates });
       } else {
         inProgress.push({ ...submission, approvalGates: gates });
@@ -346,14 +433,7 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   }
 
   // Check if user has access to this submission
-  const hasAccess = user.userType === UserType.Admin ||
-                   submission.submittedBy === user.id ||
-                   user.userType === UserType.CouncilManager ||
-                   user.userType === UserType.CommsCadre ||
-                   (submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
-                   (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
-
-  if (!hasAccess) {
+  if (!canViewSubmission(user, submission)) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
@@ -364,9 +444,13 @@ router.get('/submissions/:id', withAuth, async (request: Request, env: any) => {
   const approvalGates = await computeApprovalGates(submission, env);
 
   // Merge proposed versions into submission if they exist
+  const placedIn = submission.newsletterEditionId ? await getEdition(submission.newsletterEditionId, env).catch(() => null) : null;
   const submissionWithProposedVersions = {
     ...submission,
     approvalGates,
+    ...(placedIn && placedIn.sections.some((s) => s.sourceSubmissionId === submission.id)
+      ? { newsletterPlacement: { editionId: placedIn.id, number: placedIn.number, status: placedIn.status } }
+      : {}),
     proposedVersions: savedProposedVersions ? {
       richTextContent: savedProposedVersions.proposedVersionsRichText,
       content: savedProposedVersions.proposedVersionsContent,
@@ -391,11 +475,9 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
-  // Check if user has permission to edit this submission
-  // Allow editing required approvers by submitter, Council, or Comms Cadre
-  const canEdit = user.userType === UserType.Admin ||
-                 user.userType === UserType.CouncilManager ||
-                 user.userType === UserType.CommsCadre ||
+  // Check if user has permission to edit this submission (the approvers have their own
+  // endpoint: PUT /submissions/:id/approvers)
+  const canEdit = isReviewer(user) ||
                  submission.submittedBy === user.id ||
                  (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
@@ -403,44 +485,39 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  // Update the submission
+  // Update the submission. proposedVersions is neither stored in the record nor written
+  // to proposed_versions/<id> here: it lives only in that object, whose one writer from a
+  // client is PUT /tracked-changes/submission/:id. Bodies here often carry a copy loaded
+  // earlier (the submission list, a stale record), which would hide every edit since.
+  // Comments and approvals are likewise left out: they change only through their own
+  // endpoints (comments, resolve, approve), and a loaded copy would undo those.
+  const {
+    proposedVersions: _ignoredProposedVersions,
+    comments: _ignoredComments,
+    approvals: _ignoredApprovals,
+    ...fieldUpdates
+  } = updates;
   const updatedSubmission = {
     ...submission,
-    ...updates,
+    ...fieldUpdates,
     updatedAt: new Date().toISOString()
   };
-
-  // If proposedVersions are included, also save them to the tracked changes system
-  if (updates.proposedVersions) {
-    try {
-      const { putObject } = await import('../services/cacheService');
-      const proposedVersionsData = {
-        submissionId: id,
-        proposedVersionsRichText: updates.proposedVersions.richTextContent,
-        proposedVersionsContent: updates.proposedVersions.content,
-        lastUpdatedBy: user.id,
-        lastUpdatedAt: new Date().toISOString()
-      };
-      
-      console.log('🔍 Content submission handler - saving proposed versions:', {
-        submissionId: id,
-        hasRichTextContent: !!updates.proposedVersions.richTextContent,
-        richTextContentLength: updates.proposedVersions.richTextContent?.length,
-        richTextContentIsLexical: updates.proposedVersions.richTextContent ? updates.proposedVersions.richTextContent.includes('"root"') : false,
-        hasContent: !!updates.proposedVersions.content,
-        contentLength: updates.proposedVersions.content?.length,
-        richTextContentPreview: updates.proposedVersions.richTextContent?.substring(0, 100)
-      });
-      
-      await putObject(`proposed_versions/${id}`, proposedVersionsData, env);
-      console.log('✅ Proposed versions saved from content submission update');
-    } catch (error) {
-      console.warn('Failed to save proposed versions:', error);
-    }
+  // The content as submitted never changes (bodies here can carry a whole loaded copy)
+  for (const key of ['originalContent', 'originalRichTextContent'] as const) {
+    if (submission[key] === undefined) delete (updatedSubmission as any)[key];
+    else (updatedSubmission as any)[key] = submission[key];
+  }
+  delete (updatedSubmission as any).proposedVersions;
+  for (const key of PUT_IGNORED_FIELDS) {
+    if (submission[key] === undefined) delete (updatedSubmission as any)[key];
+    else (updatedSubmission as any)[key] = submission[key];
   }
 
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);
+  if (updatedSubmission.status === 'sent' && submission.status !== 'sent') {
+    await recordInCommsCalendar(updatedSubmission, env, { by: user.email });
+  }
   
   // Invalidate the submissions list cache
   await deleteObject('content_submissions/list', env);
@@ -511,6 +588,98 @@ router.post('/submissions/:id/comments', withAuth, async (request: Request, env:
   return json(newComment);
 });
 
+/**
+ * Resolve or reopen a comment thread (Google Docs style): body `{ resolved: boolean }`.
+ * The thread is its root comment; replies (`@reply:<id>` in their content) follow it in the
+ * UI. Any user who can view the submission may resolve or reopen (posting a comment has no
+ * stricter rule). Looks in the submission's comments first, then in the change comments
+ * (POST /tracked-changes/change/:id/comment) of this submission; `changeId` in the body
+ * finds those directly. Broadcasts `comment_resolved` to the submission room.
+ */
+router.post('/submissions/:id/comments/:commentId/resolve', withAuth, async (request: Request, env: any) => {
+  const { id, commentId } = (request as any).params;
+  const user = (request as any).user as User;
+  let body: any = {};
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  if (typeof body?.resolved !== 'boolean') {
+    return json({ error: 'resolved (boolean) is required' }, { status: 400 });
+  }
+  const resolved: boolean = body.resolved;
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canViewSubmission(user, submission)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  const now = new Date().toISOString();
+  const apply = <C extends object>(comment: C): C => {
+    const next: any = { ...comment, resolved, updatedAt: now };
+    if (resolved) {
+      next.resolvedBy = user.email || user.id;
+      next.resolvedByName = user.name;
+      next.resolvedAt = now;
+    } else {
+      delete next.resolvedBy;
+      delete next.resolvedByName;
+      delete next.resolvedAt;
+    }
+    return next;
+  };
+
+  let updated: any;
+  let changeId: string | undefined;
+  const index = (submission.comments || []).findIndex(c => c.id === commentId);
+  if (index !== -1) {
+    updated = apply(submission.comments[index]);
+    submission.comments[index] = updated;
+    await putObject(`content_submissions/${id}`, submission, env);
+    await deleteObject('content_submissions/list', env);
+  } else {
+    // A change comment: stored per change under change-comments/change/<changeId>/<id>
+    const candidates: string[] = typeof body.changeId === 'string' && body.changeId
+      ? [body.changeId]
+      : (await getTrackedChanges(id, env)).map(c => c.id);
+    for (const candidate of candidates) {
+      const key = `change-comments/change/${candidate}/${commentId}`;
+      const stored = await getObject<ChangeComment>(key, env);
+      if (!stored || stored.submissionId !== id) continue;
+      updated = apply(stored);
+      changeId = candidate;
+      await putObject(key, updated, env);
+      await putObject(`comment:${key}`, updated, env, undefined, 3600);
+      await deleteObject(`change_comments:change:${candidate}`, env);
+      break;
+    }
+  }
+  if (!updated) {
+    return json({ error: 'Comment not found' }, { status: 404 });
+  }
+
+  await broadcastToSubmissionRoom(id, {
+    type: 'comment_resolved',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: {
+      commentId,
+      ...(changeId ? { changeId } : {}),
+      resolved,
+      resolvedBy: updated.resolvedBy,
+      resolvedByName: updated.resolvedByName,
+      resolvedAt: updated.resolvedAt,
+    },
+  }, env);
+
+  return json(updated);
+});
+
 // Approve or reject a submission
 router.post('/submissions/:id/approve', withAuth, async (request: Request, env: any) => {
   const { id } = (request as any).params;
@@ -523,8 +692,9 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     approverId: user.id,
     approverEmail: user.email,
     approverName: user.name,
-    approverType: user.userType,
-    approverRoles: user.roles || [],
+    // What they held when approving (approval gates also check what they hold now)
+    approverType: derivedUserType(accessOf(user)),
+    approverRoles: derivedRoles(accessOf(user)),
     status,
     comment,
     createdAt: new Date().toISOString(),
@@ -539,9 +709,7 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
 
   // Check if user has permission to approve this submission
   // Any required reviewer, Comms Cadre, or Council Manager can approve
-  const canApprove = user.userType === UserType.Admin ||
-                    user.userType === UserType.CouncilManager ||
-                    user.userType === UserType.CommsCadre ||
+  const canApprove = isReviewer(user) ||
                     (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
   if (!canApprove) {
@@ -594,7 +762,9 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
     data: {
       approval: approval,
       submissionStatus: submission.status,
-      title: submission.title
+      title: submission.title,
+      // Open review pages update their "N/4 conditions met" from this
+      approvalGates: await computeApprovalGates(submission, env),
     }
   }, env);
 
@@ -628,16 +798,8 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
   const { confirm, reason } = await request.json();
   const user = (request as any).user as User;
 
-  // Only Communications Manager (specific Council role) or Admin can override
-  let isCommsManagerRole = false;
-  try {
-    const commsManagers = await getCouncilManagersForRole(CouncilRole.CommunicationsManager, env);
-    isCommsManagerRole = commsManagers.some((m) => m.email === user.email || m.userId === user.id);
-  } catch (e) {
-    // Fallback: if user is CouncilManager and system cannot read council roles, deny unless Admin
-    isCommsManagerRole = false;
-  }
-  const canOverride = user.userType === UserType.Admin || isCommsManagerRole;
+  // Only the Communications Manager (council role) or an Admin can override
+  const canOverride = isAdmin(user, env) || isCommsManager(user);
   if (!canOverride) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
@@ -688,9 +850,7 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   }
 
   // Only reviewers can request changes
-  const canRequest = user.userType === UserType.Admin ||
-    user.userType === UserType.CouncilManager ||
-    user.userType === UserType.CommsCadre ||
+  const canRequest = isReviewer(user) ||
     (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
   if (!canRequest) {
@@ -745,6 +905,143 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   return json({ success: true, comment: newComment });
 });
 
+/** Who may edit the fields that aren't tracked changes (newsletter item, key dates, linked dates). */
+function canEditDirectFields(user: User, submission: ContentSubmission, env: any): boolean {
+  return isAdmin(user, env) ||
+    submission.submittedBy === user.id ||
+    (submission.requiredApprovers || []).some((e) => (e || '').toLowerCase() === (user.email || '').toLowerCase()) ||
+    isCommsCadre(user);
+}
+
+// The dates in the body and blurb linked to annual dates. Links only: the text itself changes
+// through tracked changes (body) or the newsletter PATCH (blurb), so status and approvals stay.
+// Comms Calendar editors may link them too (from the calendar's tracked announcements).
+router.put('/submissions/:id/date-links', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const body = await request.json().catch(() => ({}));
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canEditDirectFields(user, submission, env) && !(await canEditCalendar(user, env))) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+  try {
+    const dateLinks = cleanDateLinks(body?.dateLinks);
+    if (dateLinks.length) submission.dateLinks = dateLinks;
+    else delete submission.dateLinks;
+  } catch (err) {
+    if (err instanceof DateLinkError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
+  submission.updatedAt = new Date().toISOString();
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  await broadcastToSubmissionRoom(id, {
+    type: 'content_updated',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: { title: submission.title, status: submission.status, changes: { dateLinks: submission.dateLinks || [] } },
+  }, env);
+
+  return json({ dateLinks: submission.dateLinks || [], updatedAt: submission.updatedAt });
+});
+
+// The newsletter item, key dates and writing help. Not tracked changes: the submitter,
+// required approvers, the Comms Cadre and Admins edit them directly (the cadre may write the
+// blurb for someone who asked for help). Fixed once the item has gone out in an edition.
+router.patch('/submissions/:id/newsletter', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const body = await request.json().catch(() => ({}));
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canEditDirectFields(user, submission, env)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+  if (submission.newsletterSentIn) {
+    return json({ error: `This item went out in issue #${submission.newsletterSentIn} and can no longer change` }, { status: 409 });
+  }
+
+  try {
+    if ('newsletter' in body) {
+      if (body.newsletter) submission.newsletter = cleanNewsletterRequest(body.newsletter);
+      else delete submission.newsletter;
+    }
+    if ('keyDates' in body) {
+      const keyDates = cleanKeyDates(body.keyDates);
+      if (keyDates.length) submission.keyDates = keyDates;
+      else delete submission.keyDates;
+    }
+    if ('writingHelp' in body) {
+      const writingHelp = cleanWritingHelp(body.writingHelp);
+      if (writingHelp.document || writingHelp.blurb) submission.writingHelp = writingHelp;
+      else delete submission.writingHelp;
+    }
+  } catch (err) {
+    if (err instanceof InputError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
+  submission.updatedAt = new Date().toISOString();
+
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  await broadcastToSubmissionRoom(id, {
+    type: 'content_updated',
+    userId: user.id || user.email,
+    userName: user.name,
+    userEmail: user.email,
+    data: {
+      title: submission.title,
+      status: submission.status,
+      changes: { newsletter: submission.newsletter, keyDates: submission.keyDates, writingHelp: submission.writingHelp },
+    },
+  }, env);
+
+  return json({
+    newsletter: submission.newsletter || null,
+    keyDates: submission.keyDates || [],
+    writingHelp: submission.writingHelp || {},
+    updatedAt: submission.updatedAt,
+  });
+});
+
+// The announcement email as it would be sent: subject, recipient, Reply-To, HTML and text.
+// Built by the same code as send-email, so the review page's Send view shows exactly what goes
+// out. Anyone who can view the submission can preview it (in any status).
+router.get('/submissions/:id/email-preview', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) {
+    return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canViewSubmission(user, submission)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+
+  // The lists it can go to, with the ones its audience suggests ticked
+  const allLists = await listMailingLists(env);
+  return json({
+    ...(await buildAnnouncementEmail(submission, env)),
+    // Dev: a sent announcement can be sent again (Resend Email)
+    resendAllowed: env.ALLOW_ANNOUNCEMENT_RESEND === true,
+    lists: allLists.map((l) => ({ id: l.id, name: l.name, address: l.address, builtIn: !!l.builtIn })),
+    suggestedListIds: suggestedListIds(allLists, audienceKeys(submission, await getTrackedChanges(id, env))),
+    sentTo: submission.sentTo || [],
+    redirectedTo: env.COMMS_EMAIL_OVERRIDE || null,
+  });
+});
+
 // Send announcement email after full approval; Comms Cadre can send
 router.post('/submissions/:id/send-email', withAuth, async (request: Request, env: any) => {
   const { id } = (request as any).params;
@@ -755,26 +1052,54 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
     return json({ error: 'Submission not found' }, { status: 404 });
   }
 
-  // Must be approved first
-  if (submission.status !== 'approved') {
-    return json({ error: 'Submission not approved yet' }, { status: 400 });
+  // Must be approved first; a sent one again only where resending is allowed (dev)
+  const resend = submission.status === 'sent' && env.ALLOW_ANNOUNCEMENT_RESEND === true;
+  if (submission.status !== 'approved' && !resend) {
+    return json({ error: submission.status === 'sent' ? 'Already sent' : 'Submission not approved yet' }, { status: 400 });
   }
 
   // Only Comms Cadre or Admin can send
-  if (!(user.userType === UserType.CommsCadre || user.userType === UserType.Admin)) {
+  if (!(isCommsCadre(user) || isAdmin(user, env))) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
-  // The list comes from config so dev and staging can't email the real announcement list
-  const toAddress = env.ANNOUNCE_EMAIL_TO;
-  if (!toAddress) {
-    return json({ error: 'Announcement email address is not configured (ANNOUNCE_EMAIL_TO)' }, { status: 503 });
+  // A newsletter item goes out in a newsletter edition, not on its own
+  const audiences = audienceKeys(submission, await getTrackedChanges(id, env));
+  if (audiences.includes('newsletter') && !audiences.some((a) => STANDALONE_EMAIL_AUDIENCES.has(a))) {
+    return json({ error: 'This request goes out in the newsletter. Add it to an edition instead.' }, { status: 409 });
+  }
+
+  // Sending is switched on by ANNOUNCE_EMAIL_TO (unset in staging); the lists come from
+  // Requests → Settings, Ranger Announce from that address
+  if (!env.ANNOUNCE_EMAIL_TO) {
+    return json({ error: 'Sending is not configured here (ANNOUNCE_EMAIL_TO)' }, { status: 503 });
+  }
+  const body = await request.json().catch(() => ({})) as { listIds?: unknown };
+  const allLists = await listMailingLists(env);
+  const chosenIds = Array.isArray(body.listIds)
+    ? body.listIds.filter((x): x is string => typeof x === 'string')
+    : suggestedListIds(allLists, audiences);
+  const chosen = allLists.filter((l) => chosenIds.includes(l.id));
+  if (chosen.length === 0) {
+    return json({ error: 'Choose at least one mailing list to send to' }, { status: 400 });
   }
   try {
-    const { sendEmail } = await import('../utils/email');
-    // Media URLs are stored relative to the site; email clients need absolute ones.
-    await sendEmail(toAddress, submission.title, absolutizeMediaUrls(submission.content, env.PUBLIC_URL), env);
+    const { sendEmail, commsRecipients } = await import('../utils/email');
+    // The approved document rendered for email (absolute image URLs), with the approved
+    // Subject, Reply-To and signature: the same build as the email-preview endpoint.
+    const email = await buildAnnouncementEmail(submission, env);
+    // Gallery images go inside the email, so mail apps that block remote images show them
+    const embedded = await embedGalleryImages(email.html, env);
+    // On dev and staging (COMMS_EMAIL_OVERRIDE) the email goes to the override, not the lists
+    const delivery = commsRecipients(chosen.map((l) => l.address), email.subject, env);
+    await sendEmail(delivery.to, delivery.subject, email.text, env, {
+      html: embedded.html,
+      text: email.text,
+      attachments: embedded.attachments,
+      ...(email.replyTo ? { replyTo: email.replyTo } : {}),
+    });
 
+    submission.sentTo = chosen.map((l) => ({ id: l.id, name: l.name, address: l.address }));
     submission.status = 'sent';
     submission.sentBy = user.id || user.email;
     submission.sentAt = new Date().toISOString();
@@ -782,6 +1107,8 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
 
     await putObject(`content_submissions/${id}`, submission, env);
     await deleteObject('content_submissions/list', env);
+    // Announce, unless the request asked for the Newsletter too (the calendar shows Both)
+    await recordInCommsCalendar(submission, env, { subject: email.subject, fallbackMethod: 'Announce', by: user.email });
 
     await broadcastToSubmissionRoom(id, {
       type: 'status_changed',
@@ -791,10 +1118,171 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
       data: { status: submission.status, title: submission.title }
     }, env);
 
-    return json({ success: true });
+    return json({ success: true, sentTo: submission.sentTo });
   } catch (e: any) {
     return json({ error: e.message || 'Failed to send email' }, { status: 500 });
   }
+});
+
+/**
+ * Ask people to approve a request: an email (through COMMS_EMAIL_OVERRIDE on dev and staging)
+ * and an in-app notification each. `kind` 'added': they were just added as an approver;
+ * 'reminder': someone reminded them. Throws if the email can't be sent.
+ */
+async function askForApproval(
+  submission: ContentSubmission,
+  emails: string[],
+  actor: User,
+  kind: 'added' | 'reminder',
+  env: any
+): Promise<void> {
+  let origin = '';
+  try {
+    origin = new URL(env.FRONTEND_URL || env.PUBLIC_URL).origin;
+  } catch {
+    origin = '';
+  }
+  const link = `${origin}/tracked-changes/${submission.id}`;
+  const by = actor.name || actor.email;
+  const subject = kind === 'added'
+    ? `Your approval is needed for "${submission.title}"`
+    : `Reminder: your approval is needed for "${submission.title}"`;
+  const said = kind === 'added'
+    ? `${by} added you as an approver of "${submission.title}".`
+    : `${by} asked for your approval of "${submission.title}".`;
+  const { sendEmail, commsRecipients } = await import('../utils/email');
+  const delivery = commsRecipients(emails, subject, env);
+  await sendEmail(delivery.to, delivery.subject, `${said}\n\nOpen it here: ${link}\n\nThanks!`, env);
+  try {
+    const { createInAppNotification } = await import('../services/notificationService');
+    for (const email of emails) {
+      const person = await getUser(email, env).catch(() => null);
+      if (!person) continue;
+      await createInAppNotification({
+        userId: person.id,
+        type: 'submission_waiting',
+        title: 'Your approval is needed',
+        message: said,
+        submissionId: submission.id,
+        submissionTitle: submission.title,
+        actorName: by,
+      }, env);
+    }
+  } catch (err) {
+    console.error('Could not add approval notifications:', err);
+  }
+}
+
+const looksLikeEmail = (value: string) => /^[^\s@<>,;]+@[^\s@<>,;]+$/.test(value);
+
+// Change a request's approvers (the review page). Admins, the Comms Cadre and Council: the Cadre
+// picks or swaps the council approver(s), e.g. when the submitter didn't know who should approve.
+// People added are asked by email and in the app; the status is checked again (an approved
+// request whose new approvers haven't approved goes back to in review).
+router.put('/submissions/:id/approvers', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  if (!isReviewer(user, env)) {
+    return json({ error: 'Only the Comms Cadre, Council and Admins change who approves a request' }, { status: 403 });
+  }
+  const body = await request.json().catch(() => ({})) as { approvers?: unknown };
+  if (!Array.isArray(body.approvers) || body.approvers.some((e) => typeof e !== 'string')) {
+    return json({ error: 'Send approvers: a list of email addresses' }, { status: 400 });
+  }
+  const approvers = Array.from(new Set(body.approvers.map((e: string) => normalizeEmail(e)).filter(Boolean)));
+  const bad = approvers.find((e) => !looksLikeEmail(e));
+  if (bad) return json({ error: `"${bad}" is not an email address` }, { status: 400 });
+  if (approvers.length > 50) return json({ error: 'At most 50 approvers' }, { status: 400 });
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) return json({ error: 'Submission not found' }, { status: 404 });
+  if (submission.status === 'sent') return json({ error: 'This request has been sent' }, { status: 409 });
+
+  const before = new Set((submission.requiredApprovers || []).map(normalizeEmail));
+  submission.requiredApprovers = approvers;
+  submission.updatedAt = new Date().toISOString();
+  await putObject(`content_submissions/${id}`, submission, env);
+  await deleteObject('content_submissions/list', env);
+
+  // Ask the people just added, unless they already approved (or are the one adding them)
+  const approvedAlready = new Set(latestDecisions(submission).filter((a) => a.status === 'approved').map((a) => normalizeEmail(a.approverEmail)));
+  const added = approvers.filter((e) => !before.has(e) && e !== normalizeEmail(user.email) && !approvedAlready.has(e));
+  if (added.length > 0 && ['submitted', 'in_review', 'approved'].includes(submission.status)) {
+    try {
+      await askForApproval(submission, added, user, 'added', env);
+    } catch (err) {
+      console.error('Could not tell the new approvers:', err);
+    }
+  }
+
+  const synced = await syncSubmissionStatus(id, env, user, { approversChanged: true });
+  const fresh = synced || submission;
+  return json({ submission: { ...fresh, approvalGates: await computeApprovalGates(fresh, env) } });
+});
+
+// Remind approvers: one approver on the list (target = their email), the listed council members
+// still to approve ('council'), or the Comms Cadre ('commsCadre'). Email plus an in-app
+// notification, at most once a day per target on a request. Reviewers and the submitter may remind.
+const REMIND_INTERVAL_MS = 20 * 60 * 60 * 1000;
+router.post('/submissions/:id/remind', withAuth, async (request: Request, env: any) => {
+  const { id } = (request as any).params;
+  const user = (request as any).user as User;
+  const { target } = await request.json().catch(() => ({})) as { target?: unknown };
+  if (typeof target !== 'string' || !target.trim()) return json({ error: 'Say who to remind' }, { status: 400 });
+
+  const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
+  if (!submission) return json({ error: 'Submission not found' }, { status: 404 });
+  if (!(isReviewer(user, env) || submission.submittedBy === user.id || submission.submittedBy === user.email)) {
+    return json({ error: 'Access denied' }, { status: 403 });
+  }
+  if (submission.status !== 'in_review' && submission.status !== 'submitted') {
+    return json({ error: 'Only a request waiting for approval needs reminders' }, { status: 409 });
+  }
+
+  const gates = await computeApprovalGates(submission, env);
+  const key = target.trim() === 'commsCadre' ? 'commsCadre' : target.trim().toLowerCase();
+  let recipients: Array<{ email: string; name: string }>;
+  let who: string;
+  const listed = [...gates.councilManager.approvers, ...gates.requiredApprovers.details];
+  if (key === 'council') {
+    if (gates.councilManager.met) return json({ error: 'The council approvers have approved' }, { status: 409 });
+    if (gates.councilManager.approvers.length === 0) {
+      return json({ error: 'No council approver chosen yet: add one to the approvers first' }, { status: 409 });
+    }
+    recipients = gates.councilManager.approvers
+      .filter((d) => d.status !== 'approved')
+      .map((d) => ({ email: d.email, name: d.name || d.email }));
+    who = 'the council approvers';
+  } else if (key === 'commsCadre') {
+    if (gates.commsCadre.met) return json({ error: 'A Comms Cadre member has already approved' }, { status: 409 });
+    recipients = await peopleWhere(env, (a) => a.commsCadre);
+    who = 'the Comms Cadre';
+  } else {
+    const waiting = listed.find((d) => d.email === key && d.status !== 'approved');
+    if (!waiting) return json({ error: `${target} isn't an approver still to approve` }, { status: 409 });
+    recipients = [{ email: waiting.email, name: waiting.name || waiting.email }];
+    who = waiting.name || waiting.email;
+  }
+  recipients = recipients.filter((r) => normalizeEmail(r.email) !== normalizeEmail(user.email));
+  if (recipients.length === 0) return json({ error: `Nobody else to remind for ${who}` }, { status: 409 });
+
+  const last = [...(submission.reminders || [])].reverse().find((r) => r.target === key);
+  if (last && Date.now() - new Date(last.at).getTime() < REMIND_INTERVAL_MS) {
+    const when = new Date(last.at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', dateStyle: 'medium', timeStyle: 'short' });
+    return json({ error: `${who} was reminded ${when}; try again tomorrow`, lastReminder: last }, { status: 429 });
+  }
+
+  try {
+    await askForApproval(submission, recipients.map((r) => r.email), user, 'reminder', env);
+  } catch (e: any) {
+    return json({ error: e.message || 'Could not send the reminder' }, { status: 502 });
+  }
+
+  const reminder = { target: key, to: recipients.map((r) => r.email), by: user.email, byName: user.name || user.email, at: new Date().toISOString() };
+  const fresh = (await getObject<ContentSubmission>(`content_submissions/${id}`, env)) || submission;
+  fresh.reminders = [...(fresh.reminders || []), reminder].slice(-50);
+  await putObject(`content_submissions/${id}`, fresh, env);
+  return json({ reminder, reminders: fresh.reminders });
 });
 
 // Track changes to a submission
@@ -821,9 +1309,7 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
   }
 
   // Check if user has permission to track changes on this submission
-  const canTrackChanges = user.userType === UserType.Admin ||
-                         user.userType === UserType.CouncilManager ||
-                         user.userType === UserType.CommsCadre ||
+  const canTrackChanges = isReviewer(user) ||
                          submission.submittedBy === user.id ||
                          (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
 
@@ -856,9 +1342,7 @@ router.delete('/submissions/:id', withAuth, async (request: Request, env: any) =
   }
 
   // Check if user has permission to delete this submission
-  const canDelete = user.userType === UserType.Admin ||
-                   user.userType === UserType.CouncilManager ||
-                   user.userType === UserType.CommsCadre ||
+  const canDelete = isReviewer(user) ||
                    submission.submittedBy === user.id;
 
   if (!canDelete) {
@@ -911,85 +1395,38 @@ router.post('/editor-images/upload', withAuth, async (request: Request, env: any
   }
 });
 
-// Add the new proxy route for Google Docs images
-router.post('/editor-images/proxy-google-docs', withAuth, async (request: Request, env: any) => {
-  console.log('🔧 Proxy route handler called');
-  const user = (request as any).user;
-  console.log('👤 User from withAuth:', user);
-  
-  return await proxyGoogleDocsImage(request, env);
-});
-
-// Proxy endpoint for downloading Google Docs images
-export async function proxyGoogleDocsImage(request: Request, env: Env): Promise<Response> {
-  console.log('🔧 proxyGoogleDocsImage called');
-  
-  if (request.method !== 'POST') {
-    console.log('❌ Method not allowed:', request.method);
-    return new Response('Method not allowed', { status: 405 });
+// Import a public https image (pasted into the editor) so the browser can upload a copy to
+// the gallery. SSRF guards live in utils/imageImport. The old Google-Docs-only route is kept
+// as an alias for clients loaded before the rename.
+export async function importEditorImage(request: Request, options?: FetchPublicImageOptions): Promise<Response> {
+  let imageUrl: unknown;
+  try {
+    ({ imageUrl } = (await request.json()) as { imageUrl?: unknown });
+  } catch {
+    return json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (typeof imageUrl !== 'string' || !imageUrl || imageUrl.length > 8192) {
+    return json({ error: 'Invalid image URL' }, { status: 400 });
   }
 
   try {
-    console.log('📥 Parsing request JSON...');
-    const { imageUrl } = await request.json();
-    
-    if (!imageUrl || typeof imageUrl !== 'string') {
-      console.log('❌ Invalid image URL:', imageUrl);
-      return new Response('Invalid image URL', { status: 400 });
-    }
-
-    // Validate that it's a Google Docs/userusercontent URL for security
-    if (!imageUrl.includes('googleusercontent.com') && !imageUrl.includes('docs.google.com')) {
-      console.log('❌ Non-Google URL rejected:', imageUrl);
-      return new Response('Only Google Docs images are supported', { status: 400 });
-    }
-
-    console.log('🔄 Proxying Google Docs image:', imageUrl);
-
-    // Download the image from Google's servers
-    const imageResponse = await fetch(imageUrl, {
+    const { data, contentType } = await fetchPublicImage(imageUrl, options);
+    return new Response(new Uint8Array(data), {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
     });
-
-    console.log('📥 Google response status:', imageResponse.status);
-    console.log('📥 Google response content-type:', imageResponse.headers.get('content-type'));
-    console.log('📥 Google response content-length:', imageResponse.headers.get('content-length'));
-
-    if (!imageResponse.ok) {
-      console.error('❌ Failed to fetch image from Google:', imageResponse.status, imageResponse.statusText);
-      
-      // Try to get the response body for more details
-      try {
-        const errorText = await imageResponse.text();
-        console.error('❌ Google error response body:', errorText);
-      } catch (e) {
-        console.error('❌ Could not read Google error response');
-      }
-      
-      return new Response(`Failed to fetch image: ${imageResponse.status} ${imageResponse.statusText}`, { status: 400 });
-    }
-
-    // Get the image data
-    const imageData = await imageResponse.arrayBuffer();
-    const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
-
-    console.log('✅ Successfully proxied Google Docs image:', {
-      size: imageData.byteLength,
-      contentType
-    });
-
-    // Return the image data to the frontend
-    // Let the main router handle CORS via corsify
-    return new Response(imageData, {
-      headers: {
-        'Content-Type': contentType
-      }
-    });
-
   } catch (error) {
-    console.error('❌ Error proxying Google Docs image:', error);
-    return new Response('Internal server error', { status: 500 });
+    if (error instanceof ImageImportError) {
+      console.warn(`Editor image import refused (${error.status}): ${error.message}`);
+      return json({ error: error.message }, { status: error.status });
+    }
+    console.error('Editor image import failed:', error);
+    return json({ error: 'Could not import the image' }, { status: 502 });
   }
-} 
+}
+
+router.post('/editor-images/import', withAuth, (request: Request) => importEditorImage(request));
+router.post('/editor-images/proxy-google-docs', withAuth, (request: Request) => importEditorImage(request));

@@ -1,5 +1,6 @@
 import { json } from 'itty-router-extras';
 import { router as authRouter } from './handlers/auth';
+import { getDevUserForRequest } from './utils/devUsers';
 import { router as blogRouter } from './handlers/blog';
 import { router as galleryRouter } from './handlers/gallery';
 import { router as adminRouter } from './handlers/admin';
@@ -12,13 +13,18 @@ import { router as trackedChangesRouter } from './handlers/trackedChanges';
 import { timelineRouter } from './handlers/timeline';
 import { router as templatesRouter } from './handlers/templates';
 import { router as notificationsRouter } from './handlers/notifications';
+import { router as commsCalendarRouter } from './handlers/commsCalendar';
+import { router as annualDatesRouter } from './handlers/annualDates';
 import { router as websocketRouter } from './handlers/websocket';
+import { router as newsletterRouter } from './handlers/newsletter';
+import { router as mailingListsRouter } from './handlers/mailingLists';
+import { router as publicNewsRouter } from './handlers/publicNews';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { getUser, initializeFirstAdmin } from './services/userService';
 import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
-import { identifyCouncilManagers } from './services/councilManagerService';
+import { migratePeopleAccess } from './migrations/peopleAccess';
 
 declare global {
     interface Request {
@@ -67,16 +73,6 @@ export const router = AutoRouter({
     finally: [corsify]
 });
 
-// Dev bypass: detect user2 from X-Dev-User header or session token containing "user2"
-function getDevUser(request: Request) {
-    const devUser = request.headers.get('X-Dev-User');
-    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '') || '';
-    if (devUser === 'user2' || sessionId.includes('user2')) {
-        return { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre' as const, isAdmin: false, roles: ['CommsCadre'], groups: [] };
-    }
-    return { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin' as const, isAdmin: true, roles: ['Admin'], groups: [] };
-}
-
 /** Body of GET /api/config. Anything but an explicit 'yjs' is the legacy mode. */
 export function clientConfig(env: Env): { collabMode: 'yjs' | 'legacy' } {
     return { collabMode: env.COLLAB_MODE === 'yjs' ? 'yjs' : 'legacy' };
@@ -100,7 +96,7 @@ const withValidSession = async (request: Request, env: Env) => {
 
     // Fall back to dev bypass if no real session/user
     if (env.DEV_BYPASS_AUTH === 'true') {
-        (request as any).user = getDevUser(request);
+        (request as any).user = getDevUserForRequest(request); // utils/devUsers.ts
         return undefined;
     }
 
@@ -130,11 +126,11 @@ const withOptionalSession = async (request: Request, env: Env) => {
 export const initializeApp = async (env: Env): Promise<void> => {
     await initCache(env);
 
+    // Once: move everyone's access onto their record (docs/plans/2026-10-06-people-and-roles.md)
+    await migratePeopleAccess(env);
+
     // Promote any BOOTSTRAP_ADMIN_EMAILS users that already exist
     await initializeFirstAdmin(env);
-
-    // Identify Council managers from org chart
-    await identifyCouncilManagers(env);
 
     // Cache page slugs
     await cachePageSlugs(env);
@@ -169,6 +165,15 @@ router
     .all('/api/templates/*', templatesRouter.fetch) // Handle all template routes
     .all('/api/notifications/*', withValidSession) // Middleware to check session for notification routes
     .all('/api/notifications/*', notificationsRouter.fetch) // Handle all notification routes
+    .all('/api/mailing-lists/*', withValidSession) // Mailing lists (Requests → Settings)
+    .all('/api/mailing-lists/*', mailingListsRouter.fetch)
+    .all('/api/newsletter/*', withValidSession) // Middleware to check session for newsletter routes
+    .all('/api/newsletter/*', newsletterRouter.fetch) // Newsletter editions (Comms Cadre)
+    .all('/api/public/*', publicNewsRouter.fetch) // Public pages: sent editions and published documents (no session)
+    .all('/api/comms-calendar/*', withValidSession) // Middleware to check session for Comms Calendar routes
+    .all('/api/comms-calendar/*', commsCalendarRouter.fetch) // Handle all Comms Calendar routes
+    .all('/api/annual-dates/*', withValidSession) // Annual dates (fixed or from Labor Day) that requests link to
+    .all('/api/annual-dates/*', annualDatesRouter.fetch)
     .all('/api/ws/*', websocketRouter.fetch) // Room HTTP routes; WebSocket upgrades are handled in httpServer.ts
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);

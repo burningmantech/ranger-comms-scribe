@@ -99,15 +99,18 @@ export class ScribeService extends Construct {
       assignPublicIp: props.assignPublicIp,
       vpcSubnets: props.taskSubnets,
       securityGroups: [taskSecurityGroup],
-      // One task at a time: rooms and cache live in process memory (PRD §7.2).
-      minHealthyPercent: 0,
-      maxHealthyPercent: 100,
+      // One task at a time: rooms and cache live in process memory (PRD §7.2). With
+      // overlapDeploys the new task starts before the old one stops (no outage, a few
+      // seconds of two tasks).
+      minHealthyPercent: config.ecs.overlapDeploys ? 100 : 0,
+      maxHealthyPercent: config.ecs.overlapDeploys ? 200 : 100,
       circuitBreaker: { enable: true, rollback: true },
       healthCheckGracePeriod: Duration.seconds(60),
       platformVersion: ecs.FargatePlatformVersion.LATEST,
       propagateTags: ecs.PropagatedTagSource.SERVICE,
     });
 
+    const healthCheckInterval = config.ecs.healthCheckIntervalSeconds ?? 15;
     this.targetGroup = new elbv2.ApplicationTargetGroup(this, 'TargetGroup', {
       vpc: props.vpc,
       port: 8080,
@@ -117,8 +120,8 @@ export class ScribeService extends Construct {
       healthCheck: {
         path: '/healthz',
         healthyHttpCodes: '200',
-        interval: Duration.seconds(15),
-        timeout: Duration.seconds(5),
+        interval: Duration.seconds(healthCheckInterval),
+        timeout: Duration.seconds(Math.min(5, healthCheckInterval - 1)),
         healthyThresholdCount: 2,
         unhealthyThresholdCount: 3,
       },

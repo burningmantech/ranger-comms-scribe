@@ -67,6 +67,28 @@ describe('Email Utility', () => {
       expect(lastInput().Content?.Simple?.Body?.Text?.Data).toBe('Hello\nWorld\nAgain\nDone');
     });
 
+    it('sets Reply-To and sends prebuilt HTML and text bodies as is', async () => {
+      await sendEmail('list@example.org', 'Announcement', 'ignored', {}, {
+        replyTo: 'team@example.org',
+        html: '<!DOCTYPE html><p>Prebuilt</p>',
+        text: 'Prebuilt\n',
+      });
+      const input = lastInput();
+      expect(input.ReplyToAddresses).toEqual(['team@example.org']);
+      expect(input.Content?.Simple?.Body?.Html?.Data).toBe('<!DOCTYPE html><p>Prebuilt</p>');
+      expect(input.Content?.Simple?.Body?.Text?.Data).toBe('Prebuilt\n');
+    });
+
+    it('sends to several recipients', async () => {
+      await sendEmail(['a@example.org', 'b@example.org'], 'Subject', 'Body', {});
+      expect(lastInput().Destination?.ToAddresses).toEqual(['a@example.org', 'b@example.org']);
+    });
+
+    it('sends no Reply-To unless one is given', async () => {
+      await sendEmail('test@example.com', 'Subject', 'Body', {});
+      expect(lastInput()).not.toHaveProperty('ReplyToAddresses');
+    });
+
     it('throws when SES rejects the send', async () => {
       sendSpy.mockRejectedValueOnce(Object.assign(new Error('Email address is not verified.'), { name: 'MessageRejected' }));
       await expect(sendEmail('test@example.com', 'Subject', 'Body', {}))

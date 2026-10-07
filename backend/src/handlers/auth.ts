@@ -1,13 +1,16 @@
+import { accessOf, accessView, derivedUserType, publicUser } from '../services/access';
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getUserStrict, getOrCreateUser, approveUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
+import { getUser, getUserStrict, getOrCreateUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
 import { verifyGoogleIdToken } from '../utils/googleToken';
 import { getClientIp } from '../utils/clientIp';
+import { getDevUserForRequest } from '../utils/devUsers';
+import { withAdminCheck } from '../authWrappers';
 
 export const router = AutoRouter({ base : '/api/auth' });
 
@@ -16,9 +19,8 @@ async function createUserSession(user: User, env: Env): Promise<string> {
   return CreateSession(user.email, {
     email: user.email,
     name: user.name,
-    isAdmin: user.isAdmin,
-    userType: user.userType,
-    approved: user.approved,
+    isAdmin: accessOf(user, env).isAdmin,
+    userType: derivedUserType(accessOf(user, env)),
     verified: user.verified
   }, env);
 }
@@ -185,8 +187,7 @@ router.post('/register', async (request: Request, env) => {
             email,
             name,
             userId: user.email,
-            approved: user.approved,
-            isAdmin: user.isAdmin,
+            isAdmin: accessOf(user, env).isAdmin,
             verified: !!user.verified,
             sessionId,
         });
@@ -320,8 +321,7 @@ router.post('/login', async (request: Request, env) => {
             email: user.email,
             name: user.name,
             userId: user.email,
-            approved: user.approved,
-            isAdmin: user.isAdmin,
+            isAdmin: accessOf(user, env).isAdmin,
             sessionId,
         });
     } catch (error) {
@@ -531,8 +531,7 @@ router.post('/loginGoogleToken', async (request: Request, env) => {
             email,
             name,
             userId: user.email,
-            approved: user.approved,
-            isAdmin: user.isAdmin,
+            isAdmin: accessOf(user, env).isAdmin,
             sessionId,
         });
     } catch (error) {
@@ -554,11 +553,8 @@ router.get('/session', async (request: Request, env) => {
 
     // Fall back to dev bypass if no real session
     if (env.DEV_BYPASS_AUTH === 'true') {
-        const devUser = request.headers.get('X-Dev-User');
-        if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
-            return json({ message: 'Session retrieved', session: { userId: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer' } });
-        }
-        return json({ message: 'Session retrieved', session: { userId: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin' } });
+        const devUser = getDevUserForRequest(request);
+        return json({ message: 'Session retrieved', session: { userId: devUser.id, email: devUser.email, name: devUser.name } });
     }
 
     if (!sessionId) {
@@ -577,18 +573,16 @@ router.get('/me', async (request: Request, env) => {
         if (session) {
             const user = await getUser(session.userId, env);
             if (user) {
-                return json({ user });
+                // Without the password hash; with the access fields (services/access.ts)
+                return json({ user: { ...publicUser(user), ...accessView(user, env) } });
             }
         }
     }
 
     // Fall back to dev bypass if no real session/user
     if (env.DEV_BYPASS_AUTH === 'true') {
-        const devUser = request.headers.get('X-Dev-User');
-        if (devUser === 'user2' || (sessionId && sessionId.includes('user2'))) {
-            return json({ user: { id: 'dev-user2', email: 'user2@localhost', name: 'Test Reviewer', userType: 'CommsCadre', isAdmin: false, roles: ['CommsCadre'], groups: [] } });
-        }
-        return json({ user: { id: 'dev-admin', email: 'dev@localhost', name: 'Dev Admin', userType: 'Admin', isAdmin: true, roles: ['Admin'], groups: [] } });
+        const devUser = getDevUserForRequest(request);
+        return json({ user: { ...devUser, ...accessView(devUser, env) } });
     }
 
     if (!sessionId) {
@@ -605,21 +599,4 @@ router.post('/logout', async (request: Request, env) => {
 
     await DeleteSession(sessionId, env);
     return json({ message: 'Logged out successfully' });
-});
-
-// This route is now handled by the admin handler
-router.post('/approve', async (request: Request, env) => {
-  const body = await request.json() as { userId: string };
-  const { userId } = body;
-
-  if (!userId) {
-    return json({ error: 'User ID is required' }, { status: 400 });
-  }
-
-  const approvedUser = await approveUser(userId, env);
-  if (!approvedUser) {
-    return json({ error: 'User not found' }, { status: 404 });
-  }
-  
-  return json({ message: 'User approved', user: approvedUser });
 });

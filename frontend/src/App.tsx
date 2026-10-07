@@ -12,37 +12,21 @@ import { USER_LOGIN_EVENT } from './utils/userActions';
 import IndentationTest from './components/editor/tests/IndentationTest';
 import CheckboxTest from './components/editor/tests/CheckboxTest';
 import LexicalExtractionTest from './components/editor/tests/LexicalExtractionTest';
-import { ContentManagement } from './pages/ContentManagement';
 import { MySubmissions } from './pages/MySubmissions';
 import { TrackedChangesView } from './pages/TrackedChangesView';
 import { TrackedChangesDemo } from './pages/TrackedChangesDemo';
 import { ContentProvider } from './contexts/ContentContext';
 import CommsRequest from './components/CommsRequest';
-
-// Protected Route component
-const ProtectedRoute: React.FC<{
-  element: React.ReactElement;
-  allowedRoles: string[];
-}> = ({ element, allowedRoles }) => {
-  const userJson = localStorage.getItem('user');
-  if (!userJson) {
-    return <Navigate to="/login" replace />;
-  }
-
-  try {
-    const user = JSON.parse(userJson);
-    // Check if user is admin or has an allowed user type
-    const hasAllowedRole = user.isAdmin || allowedRoles.includes(user.userType);
-    return hasAllowedRole ? element : <Navigate to="/" replace />;
-  } catch (err) {
-    console.error('Error parsing user data:', err);
-    return <Navigate to="/login" replace />;
-  }
-};
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { NewsletterEditions } from './pages/NewsletterEditions';
+import { NewsletterEditor } from './pages/NewsletterEditor';
+import { NewsletterArchive, PublicEdition, PublicDocument } from './pages/PublicNewsletter';
+import { canSendAnnouncements, canUseNewsletter, isReviewer } from './utils/access';
+import { CommsCalendar } from './pages/CommsCalendar';
+import { RequestSettings } from './pages/RequestSettings';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -52,7 +36,6 @@ const App: React.FC = () => {
       try {
         const userData = JSON.parse(userJson) as User;
         setUser(userData);
-        setIsAdmin(userData.isAdmin === true || userData.userType === 'Admin');
       } catch (err) {
         console.error('Error parsing user data:', err);
       }
@@ -62,7 +45,6 @@ const App: React.FC = () => {
     const handleLoginStateChange = (event: CustomEvent<User | null>) => {
       const userData = event.detail;
       setUser(userData);
-      setIsAdmin(userData?.isAdmin === true || userData?.userType === 'Admin');
     };
 
     window.addEventListener(USER_LOGIN_EVENT, handleLoginStateChange as EventListener);
@@ -93,43 +75,25 @@ const App: React.FC = () => {
                 <Route path="/test-indentation" element={<IndentationTest />} />
                 <Route path="/checkbox-test" element={<CheckboxTest />} />
                 <Route path="/lexical-extraction-test" element={<LexicalExtractionTest />} />
-                <Route 
-                  path="/requests" 
-                  element={
-                    <ProtectedRoute 
-                      element={<MySubmissions />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
+                {/* Any signed-in user (Members and Leads included): the backend authorizes each request */}
+                <Route path="/requests" element={<ProtectedRoute element={<MySubmissions />} />} />
+                <Route path="/requests/settings" element={<ProtectedRoute element={<RequestSettings />} allow={canSendAnnouncements} />} />
+                <Route path="/comms-request" element={<ProtectedRoute element={<CommsRequest />} />} />
+                <Route path="/tracked-changes/:submissionId" element={<ProtectedRoute element={<TrackedChangesView />} />} />
+                <Route path="/tracked-changes-demo" element={<ProtectedRoute element={<TrackedChangesDemo />} />} />
+                {/* Newsletter editions: the Comms Cadre, the Communications Manager and Admins */}
+                <Route path="/newsletter/editions" element={<ProtectedRoute element={<NewsletterEditions />} allow={canUseNewsletter} />} />
+                <Route path="/newsletter/editions/:id" element={<ProtectedRoute element={<NewsletterEditor />} allow={canUseNewsletter} />} />
+                {/* Public (no sign-in): sent editions and their Read more pages */}
+                <Route path="/newsletter" element={<NewsletterArchive />} />
+                <Route path="/newsletter/:number" element={<PublicEdition />} />
+                <Route path="/news/:slug" element={<PublicDocument />} />
+                {/* Comms Cadre and Council; the backend decides who can edit */}
+                <Route
+                  path="/comms-calendar"
+                  element={<ProtectedRoute element={<CommsCalendar />} allow={isReviewer} />}
                 />
-                <Route 
-                  path="/comms-request" 
-                  element={
-                    <ProtectedRoute 
-                      element={<CommsRequest />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
-                />
-                <Route 
-                  path="/tracked-changes/:submissionId" 
-                  element={
-                    <ProtectedRoute 
-                      element={<TrackedChangesView />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
-                />
-                <Route 
-                  path="/tracked-changes-demo" 
-                  element={
-                    <ProtectedRoute 
-                      element={<TrackedChangesDemo />} 
-                      allowedRoles={['ADMIN', 'CommsCadre', 'CouncilManager', 'USER', 'Public']} 
-                    />
-                  } 
-                />
-                
+
                 {/* Final catch-all if nothing else matches */}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

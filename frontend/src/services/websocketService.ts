@@ -30,7 +30,7 @@ export interface CollaborativeDocumentState {
 }
 
 export interface WebSocketMessage {
-  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update' | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated';
+  type: 'user_joined' | 'user_left' | 'editing_started' | 'editing_stopped' | 'content_updated' | 'comment_added' | 'approval_added' | 'status_changed' | 'error' | 'room_state' | 'connected' | 'heartbeat_response' | 'ping' | 'pong' | 'cursor_position' | 'text_operation' | 'user_presence' | 'typing_start' | 'typing_stop' | 'realtime_content_update' | 'transaction_settled' | 'transaction_undone' | 'transaction_redone' | 'change_status_updated' | 'field_change_created' | 'comment_resolved' | 'approval_state';
   submissionId?: string; // Made optional to support document-level collaboration
   documentId?: string; // Added for document-level collaboration
   userId: string;
@@ -249,26 +249,7 @@ export class SubmissionWebSocketClient {
         this.ws = null;
         this.isConnecting = false;
 
-        if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.reconnectAttempts++;
-          const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
-          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-          setTimeout(() => this.connect(), delay);
-        } else if (!this.isIntentionallyClosed && this.reconnectAttempts >= this.maxReconnectAttempts) {
-          // Switch to slow-poll reconnection instead of giving up permanently
-          console.log('⏳ Rapid reconnection exhausted — switching to slow poll every 30s');
-          this._connectionLost = true;
-          this.emit('connection_lost', {
-            type: 'error',
-            submissionId: this.submissionId,
-            userId: this.userId,
-            userName: this.userName,
-            userEmail: this.userEmail,
-            data: { error: 'Connection lost — reconnecting in background' },
-            timestamp: new Date().toISOString()
-          } as WebSocketMessage);
-          this.startSlowPoll();
-        }
+        this.scheduleReconnect();
       };
 
       this.ws.onerror = (error) => {
@@ -321,8 +302,10 @@ export class SubmissionWebSocketClient {
       });
       return response.ok;
     } catch (error) {
-      console.error('Session validation failed:', error);
-      return false;
+      // A network failure (offline, DNS) says nothing about the session: report it as such,
+      // so the caller doesn't announce an expired session (the caller retries with backoff).
+      console.warn('Session check failed (network):', error);
+      throw new Error('Network unavailable');
     }
   }
 
@@ -479,7 +462,10 @@ export class SubmissionWebSocketClient {
     const jitter = Math.random() * 1000;
     setTimeout(() => {
       if (!this.isIntentionallyClosed) {
-        this.connect();
+        this.connect().catch((err) => {
+          console.warn('Reconnect attempt failed:', err);
+          this.scheduleReconnect();
+        });
       }
     }, 1000 + jitter);
   }
@@ -502,6 +488,38 @@ export class SubmissionWebSocketClient {
     this.connect().catch(err => {
       console.error('Reconnect failed:', err);
     });
+  }
+
+  /**
+   * Retry with backoff after a lost connection or a failed attempt, then fall back to the
+   * slow poll. A failed attempt that never opened a socket gets no onclose, so its catch
+   * calls this too; otherwise retrying would stop after one failure.
+   */
+  private scheduleReconnect(): void {
+    if (this.isIntentionallyClosed) return;
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
+      console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      setTimeout(() => this.connect().catch((err) => {
+        console.warn('Reconnect attempt failed:', err);
+        this.scheduleReconnect();
+      }), delay);
+    } else {
+      // Switch to slow-poll reconnection instead of giving up permanently
+      console.log('⏳ Rapid reconnection exhausted — switching to slow poll every 30s');
+      this._connectionLost = true;
+      this.emit('connection_lost', {
+        type: 'error',
+        submissionId: this.submissionId,
+        userId: this.userId,
+        userName: this.userName,
+        userEmail: this.userEmail,
+        data: { error: 'Connection lost — reconnecting in background' },
+        timestamp: new Date().toISOString()
+      } as WebSocketMessage);
+      this.startSlowPoll();
+    }
   }
 
   private startSlowPoll(): void {
@@ -672,8 +690,11 @@ export class SubmissionWebSocketClient {
    * Remote clients use this to update the change status in their sidebar
    * and remove resolved decorations from the editor.
    */
-  sendChangeStatusUpdate(changeId: string, status: 'approved' | 'rejected'): void {
-    this.send({ type: 'change_status_updated', data: { changeId, status } });
+  sendChangeStatusUpdate(changeId: string, status: 'approved' | 'rejected', cascadeRejectedIds?: string[]): void {
+    const data: Record<string, unknown> = { changeId, status };
+    // Changes the server rejected along with this one (reject cascade)
+    if (cascadeRejectedIds && cascadeRejectedIds.length > 0) data.cascadeRejectedIds = cascadeRejectedIds;
+    this.send({ type: 'change_status_updated', data });
   }
 
   get isConnected(): boolean {
@@ -875,14 +896,7 @@ export class CollaborativeWebSocketClient {
         this.ws = null;
         this.isConnecting = false;
         
-        if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.reconnectAttempts++;
-          const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
-          console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-          setTimeout(() => this.connect(), delay);
-        } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-          console.error('❌ Max reconnection attempts reached. WebSocket connection failed permanently.');
-        }
+        this.scheduleReconnect();
       };
 
       this.ws.onerror = (error) => {
@@ -897,6 +911,22 @@ export class CollaborativeWebSocketClient {
     }
   }
 
+  /** Retry with backoff; also called when an attempt fails before opening a socket. */
+  private scheduleReconnect(): void {
+    if (this.isIntentionallyClosed) return;
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 10000);
+      console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      setTimeout(() => this.connect().catch((err) => {
+        console.warn('Reconnect attempt failed:', err);
+        this.scheduleReconnect();
+      }), delay);
+    } else {
+      console.error('❌ Max reconnection attempts reached. WebSocket connection failed permanently.');
+    }
+  }
+
   private async validateSession(sessionId: string): Promise<boolean> {
     try {
       const response = await fetch(`${API_URL}/auth/session`, {
@@ -908,8 +938,10 @@ export class CollaborativeWebSocketClient {
       });
       return response.ok;
     } catch (error) {
-      console.error('Session validation failed:', error);
-      return false;
+      // A network failure (offline, DNS) says nothing about the session: report it as such,
+      // so the caller doesn't announce an expired session (the caller retries with backoff).
+      console.warn('Session check failed (network):', error);
+      throw new Error('Network unavailable');
     }
   }
 
@@ -1065,7 +1097,10 @@ export class CollaborativeWebSocketClient {
     const jitter = Math.random() * 1000;
     setTimeout(() => {
       if (!this.isIntentionallyClosed) {
-        this.connect();
+        this.connect().catch((err) => {
+          console.warn('Reconnect attempt failed:', err);
+          this.scheduleReconnect();
+        });
       }
     }, 1000 + jitter);
   }

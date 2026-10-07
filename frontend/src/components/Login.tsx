@@ -6,6 +6,7 @@ import { LogoutUserReact, handleUserLogin } from '../utils/userActions';
 import LoggedOutView from './LoggedOutView';
 import Home from './Home';
 import { User, UserType } from '../types';
+import { isAdmin as accessIsAdmin } from '../utils/access';
 
 declare global {
     interface Window {
@@ -254,37 +255,9 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
         setTurnstileToken(null);
     };
 
-    // Shared by login and register: fetch roles for the new session and sign the user in
+    // Shared by login and register: store the person's record (with their access) and sign them in
     const completeSignIn = async (data: any) => {
-        const rolesResponse = await fetch(`${API_URL}/admin/user-roles`, {
-            headers: {
-                'Authorization': `Bearer ${data.sessionId}`,
-            },
-        });
-
-        if (!rolesResponse.ok) {
-            throw new Error('Failed to fetch user roles');
-        }
-
-        const rolesData = await rolesResponse.json();
-
-        // Construct user data with roles from the roles endpoint
-        const userData = {
-            id: data.id,
-            email: data.email,
-            name: data.name,
-            isAdmin: data.isAdmin || false,
-            approved: data.approved || false,
-            roles: rolesData.roles || [],
-            userType: data.isAdmin ? UserType.Admin : 
-                     rolesData.roles.includes('CouncilManager') ? UserType.CouncilManager :
-                     rolesData.roles.includes('CommsCadre') ? UserType.CommsCadre :
-                     rolesData.roles.includes('Lead') ? UserType.Lead :
-                     rolesData.roles.includes('Member') ? UserType.Member :
-                     UserType.Public
-        };
-
-        await handleUserLogin(userData, data.sessionId);
+        const userData = await handleUserLogin({ email: data.email, name: data.name, isAdmin: !!data.isAdmin }, data.sessionId);
         setUser(userData);
         setParentUser(userData);
 
@@ -689,7 +662,7 @@ const Login: React.FC<LoginProps> = ({ skipNavbar, setParentUser }) => {
                     <div style={{ marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                             <p>Logged in as: <strong>{user.name}</strong> ({user.email})</p>
-                            {user.isAdmin && <p><em>Administrator account</em></p>}
+                            {accessIsAdmin(user) && <p><em>Administrator account</em></p>}
                         </div>
                         <button 
                             onClick={handleLogout}

@@ -1,6 +1,5 @@
-import { useNavigate } from 'react-router-dom';
 import { API_URL } from '../config';
-import { User, UserType } from '../types';
+import { User } from '../types';
 
 // Event to notify login state changes
 export const USER_LOGIN_EVENT = 'user_login_change';
@@ -11,56 +10,37 @@ const dispatchLoginStateChange = (user: User | null) => {
     window.dispatchEvent(event);
 };
 
-// Function to handle user login
-export const handleUserLogin = async (userData: User, sessionId: string) => {
-    // First, set default permissions based on roles
-    const defaultPermissions = {
-        canEdit: userData.roles.includes('Admin') || userData.roles.includes('CouncilManager') || userData.roles.includes('CommsCadre'),
-        canApprove: userData.roles.includes('Admin') || userData.roles.includes('CouncilManager') || userData.roles.includes('CommsCadre'),
-        canCreateSuggestions: userData.roles.includes('Admin') || userData.roles.includes('CouncilManager') || userData.roles.includes('CommsCadre'),
-        canApproveSuggestions: userData.roles.includes('Admin') || userData.roles.includes('CouncilManager') || userData.roles.includes('CommsCadre'),
-        canReviewSuggestions: userData.roles.includes('Admin') || userData.roles.includes('CouncilManager') || userData.roles.includes('CommsCadre')
-    };
-    localStorage.setItem('userPermissions', JSON.stringify(defaultPermissions));
-
-    // Then fetch user roles from backend
+/**
+ * Sign in with a new session: store the person's record as the server has it (GET /auth/me,
+ * with their access: utils/access.ts) and the review permissions (GET /admin/user-roles).
+ * `fallback` is used only if /auth/me can't be read. Returns the stored user.
+ */
+export const handleUserLogin = async (fallback: Partial<User>, sessionId: string): Promise<User> => {
+    const headers = { Authorization: `Bearer ${sessionId}` };
+    let user = { ...fallback } as User;
     try {
-        const response = await fetch(`${API_URL}/admin/user-roles`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${sessionId}`,
-            },
-        });
-
-        if (response.ok) {
-                  const data = await response.json();
-            
-            // Update both roles and userType based on the roles
-            userData.roles = data.roles || [];
-            userData.userType = userData.isAdmin ? UserType.Admin : 
-                               data.roles.includes('CouncilManager') ? UserType.CouncilManager :
-                               data.roles.includes('CommsCadre') ? UserType.CommsCadre :
-                               data.roles.includes('Lead') ? UserType.Lead :
-                               data.roles.includes('Member') ? UserType.Member :
-                               UserType.Public;
-
-            // Update permissions based on roles
-            const updatedPermissions = {
-                canEdit: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-                canApprove: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-                canCreateSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-                canApproveSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre'),
-                canReviewSuggestions: data.roles.includes('Admin') || data.roles.includes('CouncilManager') || data.roles.includes('CommsCadre')
-            };
-            localStorage.setItem('userPermissions', JSON.stringify(updatedPermissions));
+        const me = await fetch(`${API_URL}/auth/me`, { headers });
+        if (me.ok) {
+            const data = await me.json();
+            if (data?.user) user = data.user as User;
         }
     } catch (error) {
-        console.error('Error fetching user roles:', error);
+        console.error('Error fetching the signed-in user:', error);
+    }
+    try {
+        const response = await fetch(`${API_URL}/admin/user-roles`, { headers });
+        if (response.ok) {
+            const data = await response.json();
+            if (data?.permissions) localStorage.setItem('userPermissions', JSON.stringify(data.permissions));
+        }
+    } catch (error) {
+        console.error('Error fetching user permissions:', error);
     }
 
-    localStorage.setItem('user', JSON.stringify(userData));
+    localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('sessionId', sessionId);
-    dispatchLoginStateChange(userData);
+    dispatchLoginStateChange(user);
+    return user;
 };
 
 export const LogoutUserReact = async (navigate?: (path: string) => void) => {

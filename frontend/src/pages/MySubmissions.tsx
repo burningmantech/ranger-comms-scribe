@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useContent } from '../contexts/ContentContext';
 import { ContentSubmission as ContentSubmissionComponent } from '../components/ContentSubmission';
 import { SubmissionHistory } from '../components/SubmissionHistory';
@@ -7,6 +7,7 @@ import { ContentSubmission } from '../types/content';
 import ReviewerDashboard from '../components/ReviewerDashboard';
 import SubmitterDashboard from '../components/SubmitterDashboard';
 import './MySubmissions.css';
+import { canSendAnnouncements, isReviewer as accessIsReviewer } from '../utils/access';
 
 export const MySubmissions: React.FC = () => {
   const navigate = useNavigate();
@@ -30,13 +31,17 @@ export const MySubmissions: React.FC = () => {
     return <div className="error-message">Please log in to view requests.</div>;
   }
 
-  const isReviewer = userPermissions?.canViewFilteredSubmissions ||
-    currentUser.roles?.some(r => ['CommsCadre', 'CouncilManager', 'Admin'].includes(r));
+  const isReviewer = userPermissions?.canViewFilteredSubmissions || accessIsReviewer(currentUser);
 
   return (
     <div className="content-management">
       <div className="content-header">
         <h1>Requests</h1>
+        {!selectedSubmission && canSendAnnouncements(currentUser) && (
+          <Link to="/requests/settings" className="btn btn-neutral" title="Mailing lists and request templates">
+            <i className="fas fa-cog" aria-hidden="true" /> Lists &amp; templates
+          </Link>
+        )}
         {selectedSubmission && (
           <button
             onClick={async () => { setSelectedSubmission(null); await refreshSubmissions(); }}

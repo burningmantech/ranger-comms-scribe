@@ -2,10 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { 
   getAllUsers, 
-  approveUser, 
-  makeAdmin, 
   isAdmin, 
-  changeUserType,
   createGroup,
   getAllGroups,
   getGroup,
@@ -17,35 +14,60 @@ import {
   updateUserName,
   getUser
 } from '../services/userService';
-import { 
-  getAllRoles,
-  getRole,
-  updateRole,
-  createRole,
-  deleteRole,
-  createGroupsForExistingRoles,
-  Role
-} from '../services/roleService';
 import { sendEmail } from '../utils/email';
-import { UserType, CouncilRole, CouncilMember } from '../types';
+import { User } from '../types';
 import { GetSession, Env } from '../utils/sessionManager';
 import { withAdminCheck } from '../authWrappers';
-import { getCouncilManagersForRole, addCouncilMember, removeCouncilMember } from '../services/councilManagerService';
+import { AccessChangeError, listPeople, personView, setAccess } from '../services/peopleService';
+import { accessView, publicUser, rolesResponse } from '../services/access';
 import { getObject, putObject, removeFromCache } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
-
-interface RequestWithParams extends Request {
-  params: {
-    roleName: string;
-  };
-}
+import { getDevUserForRequest } from '../utils/devUsers';
 
 export const router = AutoRouter({ base: '/api/admin' });
 
-// Get all users
+// Get all users (without password hashes), with their access
 router.get('/users', withAdminCheck, async (request: Request, env: Env) => {
   const users = await getAllUsers(env);
-  return json({ users });
+  return json({ users: users.map((u) => ({ ...publicUser(u), ...accessView(u, env) })) });
+});
+
+// People and their access (Admin → People)
+router.get('/people', withAdminCheck, async (_request: Request, env: Env) => {
+  const people = (await listPeople(env)).map((u) => personView(u, env))
+    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+  return json({ people });
+});
+
+// Change one person's access: { isAdmin?, commsCadre?, councilRole? (one role, or null) }
+router.put('/people/:id/access', withAdminCheck, async (request: Request, env: Env) => {
+  const { id } = (request as any).params;
+  const actor = (request as any).user as User;
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Send the access to change as JSON' }, { status: 400 });
+  }
+  if ('councilRoles' in body || 'approved' in body) {
+    // A person holds one council role (`councilRole`), and anyone signed in can submit requests
+    return json({ error: "Send councilRole (one role, or null); 'councilRoles' and 'approved' are no longer used" }, { status: 400 });
+  }
+  const patch: Record<string, unknown> = {};
+  for (const key of ['isAdmin', 'commsCadre'] as const) {
+    if (key in body) {
+      if (typeof body[key] !== 'boolean') return json({ error: `${key} must be true or false` }, { status: 400 });
+      patch[key] = body[key];
+    }
+  }
+  if ('councilRole' in body) patch.councilRole = body.councilRole;
+  try {
+    const updated = await setAccess(decodeURIComponent(id), patch, actor, env);
+    return json({ person: personView(updated, env) });
+  } catch (err) {
+    if (err instanceof AccessChangeError) return json({ error: err.message }, { status: err.status });
+    throw err;
+  }
 });
 
 // Update a user's name - Endpoint for frontend compatibility
@@ -70,62 +92,6 @@ router.post('/update-user-name', withAdminCheck, async (request: Request, env: E
     message: 'User name updated successfully', 
     user: updatedUser 
   });
-});
-
-// Approve a user
-router.post('/approve-user', withAdminCheck, async (request: Request, env: Env) => {
-  const body = await request.json() as { userId: string };
-  const { userId } = body;
-
-  if (!userId) {
-    return json({ error: 'User ID is required' }, { status: 400 });
-  }
-
-  const updatedUser = await approveUser(userId, env);
-  if (!updatedUser) {
-    return json({ error: 'User not found' }, { status: 404 });
-  }
-
-  return json({ message: 'User approved successfully', user: updatedUser });
-});
-
-// Make a user an admin
-router.post('/make-admin', withAdminCheck, async (request: Request, env: Env) => {
-  const body = await request.json() as { userId: string };
-  const { userId } = body;
-
-  if (!userId) {
-    return json({ error: 'User ID is required' }, { status: 400 });
-  }
-
-  const updatedUser = await makeAdmin(userId, env);
-  if (!updatedUser) {
-    return json({ error: 'User not found' }, { status: 404 });
-  }
-
-  return json({ message: 'User is now an admin', user: updatedUser });
-});
-
-// Change a user's type
-router.post('/change-user-type', withAdminCheck, async (request: Request, env: Env) => {
-  const body = await request.json() as { userId: string; userType: UserType };
-  const { userId, userType } = body;
-
-  if (!userId || !userType) {
-    return json({ error: 'User ID and user type are required' }, { status: 400 });
-  }
-
-  // Validate user type
-  if (!Object.values(UserType).includes(userType)) {
-    return json({ error: 'Invalid user type' }, { status: 400 });
-  }
-
-  const updatedUser = await changeUserType(userId, userType, env);
-  if (!updatedUser) {
-    return json({ error: 'User not found' }, { status: 404 });
-  }
-
-  return json({ message: `User type changed to ${userType}`, user: updatedUser });
 });
 
 // Create a new group
@@ -319,7 +285,7 @@ router.post('/groups/:groupId/send-email', withAdminCheck, async (request: Reque
 
 // Bulk create users
 router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: Env) => {
-  const body = await request.json() as { users: { name: string; email: string; approved: boolean }[] };
+  const body = await request.json() as { users: { name: string; email: string }[] };
   const { users } = body;
 
   if (!users || !Array.isArray(users) || users.length === 0) {
@@ -339,16 +305,11 @@ router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: 
   for (const userEntry of validUsers) {
     try {
       // Create the user
+      // Emails are stored lowercased (as sign-in finds them), so a pasted address can't make a duplicate
       const newUser = await getOrCreateUser({
-        name: userEntry.name,
-        email: userEntry.email
+        name: String(userEntry.name).trim(),
+        email: String(userEntry.email).trim().toLowerCase()
       }, env);
-
-      // Approve the user if requested
-      if (userEntry.approved && !newUser.approved) {
-        await approveUser(newUser.id, env);
-        newUser.approved = true;
-      }
 
       createdUsers.push(newUser);
     } catch (error) {
@@ -361,7 +322,7 @@ router.post('/bulk-create-users', withAdminCheck, async (request: Request, env: 
 
   return json({
     message: `Successfully created ${createdUsers.length} users`,
-    users: createdUsers,
+    users: createdUsers.map((u) => ({ ...publicUser(u), ...accessView(u, env) })),
     errors: errors.length > 0 ? errors : undefined
   });
 });
@@ -384,111 +345,10 @@ router.get('/check', async (request: Request, env: Env) => {
   return json({ isAdmin: isUserAdmin });
 });
 
-// Role management endpoints
-router.get('/roles', withAdminCheck, async (request: Request, env: Env) => {
-  try {
-    const roles = await getAllRoles(env);
-    return json({ roles });
-  } catch (error) {
-    return json({ error: 'Failed to fetch roles' }, { status: 500 });
-  }
-});
-
-router.get('/roles/:roleName', async (request: Request, env: Env) => {
-  try {
-    const roleName = (request as any).params.roleName;
-    console.log('🔍 Fetching role:', roleName);
-    
-    const role = getRole(roleName);
-    if (!role) {
-      console.log('❌ Role not found:', roleName);
-      return json({ error: 'Role not found' }, { status: 404 });
-    }
-    
-    console.log('✅ Role found:', role);
-    return json({ role });
-  } catch (error) {
-    console.error('❌ Error fetching role:', error);
-    return json({ error: 'Failed to fetch role' }, { status: 500 });
-  }
-});
-
-router.put('/roles/:roleName', withAdminCheck, async (request: RequestWithParams, env: Env) => {
-  const { roleName } = request.params;
-  const updatedRole = await request.json() as Role;
-  
-  if (updatedRole.name !== roleName) {
-    return json({ error: 'Role name mismatch' }, { status: 400 });
-  }
-
-  try {
-    const role = await updateRole(roleName, updatedRole, env);
-    return json({ role });
-  } catch (error) {
-    return json({ error: 'Failed to update role' }, { status: 500 });
-  }
-});
-
-router.post('/roles', withAdminCheck, async (request: Request, env: Env) => {
-  const newRole = await request.json() as Role;
-  
-  // Get the creator's ID from the session
-  const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
-  if (!sessionId) {
-    return json({ error: 'Session ID is required' }, { status: 400 });
-  }
-
-  const session = await GetSession(sessionId, env);
-  if (!session) {
-    return json({ error: 'Session not found or expired' }, { status: 403 });
-  }
-
-  try {
-    const role = await createRole(newRole, session.userId, env);
-    return json({ role });
-  } catch (error) {
-    return json({ error: 'Failed to create role' }, { status: 500 });
-  }
-});
-
-router.delete('/roles/:roleName', withAdminCheck, async (request: RequestWithParams, env: Env) => {
-  const { roleName } = request.params;
-  try {
-    await deleteRole(roleName, env);
-    return json({ message: 'Role deleted successfully' });
-  } catch (error) {
-    return json({ error: 'Failed to delete role' }, { status: 500 });
-  }
-});
-
-router.post('/roles/sync-groups', withAdminCheck, async (request: Request, env: Env) => {
-  // Get the creator's ID from the session
-  const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
-  if (!sessionId) {
-    return json({ error: 'Session ID is required' }, { status: 400 });
-  }
-
-  const session = await GetSession(sessionId, env);
-  if (!session) {
-    return json({ error: 'Session not found or expired' }, { status: 403 });
-  }
-
-  try {
-    const result = await createGroupsForExistingRoles(session.userId, env);
-    return json({
-      message: 'Groups synchronized with roles',
-      created: result.created,
-      existing: result.existing
-    });
-  } catch (error) {
-    return json({ error: 'Failed to sync groups with roles' }, { status: 500 });
-  }
-});
-
-// Add a new endpoint to get all roles for a user
+// The signed-in user's roles and review permissions (services/access.ts rolesResponse)
 router.get('/user-roles', async (request: Request, env: Env) => {
   if (env.DEV_BYPASS_AUTH === 'true') {
-    return json({ roles: ['Admin'], permissions: { canEdit: true, canApprove: true, canCreateSuggestions: true, canReviewTrackedChanges: true, canManageSubmissions: true } });
+    return json(rolesResponse(getDevUserForRequest(request), env));
   }
 
   const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
@@ -501,168 +361,12 @@ router.get('/user-roles', async (request: Request, env: Env) => {
     return json({ error: 'Session not found or expired' }, { status: 403 });
   }
 
-  try {
-    const user = await getUser(session.userId, env);
-    if (!user) {
-      return json({ error: 'User not found' }, { status: 404 });
-    }
-
-    console.log('🔍 User data:', user);
-
-    // Get all roles
-    const allRoles = await getAllRoles(env);
-    console.log('📋 All roles:', allRoles);
-    
-    // Get user's roles (including groups)
-    const userRoles = new Set<string>();
-    
-    // Add roles from user type
-    if (user.isAdmin) {
-      userRoles.add('Admin');
-    }
-    if (user.userType === UserType.CouncilManager) {
-      userRoles.add('CouncilManager');
-    }
-    if (user.userType === UserType.CommsCadre) {
-      userRoles.add('CommsCadre');
-    }
-
-    // Add roles from groups
-    if (user.groups) {
-      const groups = await getAllGroups(env);
-      for (const groupId of user.groups) {
-        const group = groups.find(g => g.id === groupId);
-        if (group && allRoles.some(role => role.name === group.name)) {
-          userRoles.add(group.name);
-        }
-      }
-    }
-
-    console.log('👤 User roles:', Array.from(userRoles));
-
-    // Get permissions from all roles
-    const permissions = allRoles
-      .filter(role => userRoles.has(role.name))
-      .reduce((acc, role) => {
-        console.log(`🔑 Processing role ${role.name} permissions:`, role.permissions);
-        return {
-          canEdit: acc.canEdit || role.permissions.canEdit,
-          canApprove: acc.canApprove || role.permissions.canApprove,
-          canCreateSuggestions: acc.canCreateSuggestions || role.permissions.canCreateSuggestions,
-          canApproveSuggestions: acc.canApproveSuggestions || role.permissions.canApproveSuggestions,
-          canReviewSuggestions: acc.canReviewSuggestions || role.permissions.canReviewSuggestions,
-          canViewFilteredSubmissions: acc.canViewFilteredSubmissions || role.permissions.canViewFilteredSubmissions
-        };
-      }, {
-        canEdit: false,
-        canApprove: false,
-        canCreateSuggestions: false,
-        canApproveSuggestions: false,
-        canReviewSuggestions: false,
-        canViewFilteredSubmissions: false
-      });
-
-    // If user has Admin, CouncilManager, or CommsCadre role, grant all permissions
-    if (userRoles.has('Admin') || userRoles.has('CouncilManager') || userRoles.has('CommsCadre')) {
-      permissions.canEdit = true;
-      permissions.canApprove = true;
-      permissions.canCreateSuggestions = true;
-      permissions.canApproveSuggestions = true;
-      permissions.canReviewSuggestions = true;
-      permissions.canViewFilteredSubmissions = true;
-    }
-
-    console.log('🔐 Final permissions:', permissions);
-
-    return json({ 
-      roles: Array.from(userRoles),
-      permissions
-    });
-  } catch (error) {
-    console.error('Error fetching user roles:', error);
-    return json({ error: 'Failed to fetch user roles' }, { status: 500 });
+  const user = await getUser(session.userId, env);
+  if (!user) {
+    return json({ error: 'User not found' }, { status: 404 });
   }
+  return json(rolesResponse(user, env));
 });
 
-// Get all council managers
-router.get('/council-managers', withAdminCheck, async (request: Request, env: Env) => {
-  try {
-    console.log('🔍 Fetching council managers...');
-    
-    // Get managers for each role
-    const commsManagers = await getCouncilManagersForRole(CouncilRole.CommunicationsManager, env);
-    const intakeManagers = await getCouncilManagersForRole(CouncilRole.IntakeManager, env);
-    const logisticsManagers = await getCouncilManagersForRole(CouncilRole.LogisticsManager, env);
-    const operationsManagers = await getCouncilManagersForRole(CouncilRole.OperationsManager, env);
-    const personnelManagers = await getCouncilManagersForRole(CouncilRole.PersonnelManager, env);
-    const departmentManagers = await getCouncilManagersForRole(CouncilRole.DepartmentManager, env);
-    const deputyManagers = await getCouncilManagersForRole(CouncilRole.DeputyDepartmentManager, env);
-
-    console.log('📊 Role breakdown:');
-    console.log('  CommunicationsManager:', commsManagers.length);
-    console.log('  IntakeManager:', intakeManagers.length);
-    console.log('  LogisticsManager:', logisticsManagers.length);
-    console.log('  OperationsManager:', operationsManagers.length);
-    console.log('  PersonnelManager:', personnelManagers.length);
-    console.log('  DepartmentManager:', departmentManagers.length);
-    console.log('  DeputyDepartmentManager:', deputyManagers.length);
-
-    // Combine all managers
-    const allManagers = [
-      ...commsManagers,
-      ...intakeManagers,
-      ...logisticsManagers,
-      ...operationsManagers,
-      ...personnelManagers,
-      ...departmentManagers,
-      ...deputyManagers
-    ];
-
-    console.log('🔍 Backend council managers response:', allManagers);
-    console.log('🔍 Backend council managers count:', allManagers.length);
-
-    return json(allManagers);
-  } catch (error) {
-    console.error('Error fetching council managers:', error);
-    return json({ error: 'Error fetching council managers' }, { status: 500 });
-  }
-});
-
-// Update council managers
-router.put('/council-managers', withAdminCheck, async (request: Request, env: Env) => {
-  try {
-    const body = await request.json() as { email: string; role: CouncilRole; action: 'add' | 'remove' };
-    const { email, role, action } = body;
-
-    console.log('🔄 Council manager update request:', { email, role, action });
-
-    if (!email || !role || !action) {
-      return json({ error: 'Email, role, and action are required' }, { status: 400 });
-    }
-
-    if (action === 'add') {
-      console.log('➕ Adding council member...');
-      const newMember = await addCouncilMember(email, role, env);
-      if (!newMember) {
-        console.log('❌ Failed to add council member');
-        return json({ error: 'Failed to add council member' }, { status: 500 });
-      }
-      console.log('✅ Council member added successfully');
-      return json({ message: 'Council member added successfully', member: newMember });
-    } else {
-      console.log('➖ Removing council member...');
-      const success = await removeCouncilMember(email, role, env);
-      if (!success) {
-        console.log('❌ Failed to remove council member');
-        return json({ error: 'Failed to remove council member' }, { status: 500 });
-      }
-      console.log('✅ Council member removed successfully');
-      return json({ message: 'Council member removed successfully' });
-    }
-  } catch (error) {
-    console.error('Error updating council manager:', error);
-    return json({ error: 'Failed to update council manager' }, { status: 500 });
-  }
-});
 
 

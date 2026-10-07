@@ -23,12 +23,60 @@ export interface TrackedChange {
   rejectedByName?: string;
   approvedAt?: string;
   rejectedAt?: string;
+  /**
+   * When an undo of this change's rejection put its text back in the document. Changes
+   * made between the rejection and the undo have snapshots without that text, so an
+   * accept doesn't store their snapshot as the document (isNewestActiveChange).
+   */
+  reappliedAt?: string;
   isIncremental?: boolean;
   previousVersionId?: string;
   completeProposedVersion?: string; // Store the complete proposed version for incremental changes
   richTextOldValue?: string; // Store the rich text content for the old value
   richTextNewValue?: string; // Store the rich text content for the new value
   regionMap?: RegionMap; // Maps the affected region in the document for cascade dependency tracking
+}
+
+/**
+ * Tracked-change fields that hold a request's form values (the review page's Subject,
+ * Audience, Reply-To and Signature rows), not the document. Resolving one never touches
+ * content / richTextContent; the approved value is the newest approved change's whole value
+ * (approvedFieldValue in services/announcementEmail.ts).
+ */
+export const FORM_FIELD_CHANGE_FIELDS: ReadonlySet<string> = new Set([
+  'title',
+  'audience',
+  'replyToAddress',
+  'signatureText',
+]);
+
+/**
+ * The current proposed value of a form field: the whole value of the newest change to it
+ * that isn't rejected (pending or approved), or null when there is none (the value as
+ * submitted stands). Once every change is resolved this is approvedFieldValue's answer.
+ */
+export function currentFormFieldValue(changes: TrackedChange[], field: string): string | null {
+  const wholeValue = (c: TrackedChange) =>
+    typeof c.completeProposedVersion === 'string' ? c.completeProposedVersion : c.newValue;
+  const active = changes
+    .filter(c => c.field === field && c.status !== 'rejected' && typeof wholeValue(c) === 'string')
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  return active.length > 0 ? wholeValue(active[0]) : null;
+}
+
+/**
+ * The cached proposed document, unless a change was made after it was written (an older
+ * server didn't invalidate it on create, or the write raced a create). Such a copy lacks
+ * that change's edit, so the caller recomputes from the changes instead.
+ */
+export function freshProposedVersions(saved: any, changes: TrackedChange[]): any | null {
+  if (!saved) return null;
+  const savedAt = saved.lastUpdatedAt ? new Date(saved.lastUpdatedAt).getTime() : NaN;
+  if (Number.isNaN(savedAt)) return saved; // undated: keep the old behaviour
+  // Form-field changes (Subject, Reply-To, ...) don't touch the document
+  const newerChange = changes.some(c =>
+    !FORM_FIELD_CHANGE_FIELDS.has(c.field) && new Date(c.timestamp).getTime() > savedAt);
+  return newerChange ? null : saved;
 }
 
 export interface ChangeComment {
@@ -39,51 +87,27 @@ export interface ChangeComment {
   authorId: string;
   authorName: string;
   createdAt: string;
+  /** Set by POST /content/submissions/:id/comments/:commentId/resolve */
+  resolved?: boolean;
+  resolvedBy?: string;
+  resolvedByName?: string;
+  resolvedAt?: string;
 }
 
 // Get all tracked changes for a submission
 export const getTrackedChanges = async (submissionId: string, env: Env): Promise<TrackedChange[]> => {
   try {
-    // Cache key for all tracked changes for this submission
-    const cacheKey = `tracked_changes:submission:${submissionId}`;
-    
-    // Try to get from cache first
-    let changes = await getObject<TrackedChange[]>(cacheKey, env);
-    
-    // If not in cache, fetch from R2
-    if (!changes) {
-      // List all objects with the tracked-changes/submission/ prefix
-      const objects = await listObjects(`tracked-changes/submission/${submissionId}/`, env);
-      
-      // Create a list of promises to get each change's content
-      const changePromises = objects.objects.map(async (object: { key: string }) => {
-        // Check cache for individual change
-        const changeCacheKey = `change:${object.key}`;
-        const cachedChange = await getObject<TrackedChange>(changeCacheKey, env);
-        
-        if (cachedChange) {
-          return cachedChange;
-        }
-        
-        // If not in cache, get from R2
-        const changeObject = await env.STORE.get(object.key);
-        if (!changeObject) return null;
-        
-        const change = await changeObject.json() as TrackedChange;
-        
-        // Cache individual change
-        await putObject(changeCacheKey, change, env, undefined, 3600); // Cache for 1 hour
-        
-        return change;
-      });
-      
-      // Wait for all promises to resolve and filter out null values
-      changes = (await Promise.all(changePromises)).filter((change: any): change is TrackedChange => change !== null);
-      
-      // Cache all changes for this submission
-      await putObject(cacheKey, changes, env, undefined, 300); // Cache for 5 minutes
-    }
-    
+    // Every change through the read-through cache (cacheService), which never caches a
+    // read that a concurrent write overtook. No derived copies: a `change:<key>` shadow or
+    // a cached array of all changes, rebuilt from reads that raced a status write, kept the
+    // old status (in the store, too) and hid the write: a Moved card's insertion stayed
+    // pending on the server after its reject (the deletion's PUT read it meanwhile).
+    // Legacy `change:` / `tracked_changes:submission:` objects in the store are ignored.
+    const objects = await listObjects(`tracked-changes/submission/${submissionId}/`, env);
+    const changes = (await Promise.all(
+      objects.objects.map((object: { key: string }) => getObject<TrackedChange>(object.key, env))
+    )).filter((change: TrackedChange | null): change is TrackedChange => change !== null);
+
     // Sort changes by timestamp (newest first)
     return changes.sort((a: TrackedChange, b: TrackedChange) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch (error) {
@@ -313,17 +337,17 @@ export const createTrackedChange = async (
       regionMap
     };
 
-    // Store the change in R2 and cache
+    // Store the change (putObject also updates the cache and the cached listing)
     const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
     await putObject(changeKey, newChange, env);
-    
-    // Also cache it individually
-    const cacheKey = `change:${changeKey}`;
-    await putObject(cacheKey, newChange, env, undefined, 3600); // Cache for 1 hour
-    
-    // Invalidate the submission's tracked changes cache
-    await deleteObject(`tracked_changes:submission:${submissionId}`, env);
-    
+
+    // The cached proposed document predates this change, so drop it and let the next
+    // read recompute it (a stale copy reseeds the editor without this edit). A form-field
+    // change (Subject, Reply-To, ...) doesn't change the document.
+    if (!FORM_FIELD_CHANGE_FIELDS.has(field)) {
+      await deleteObject(`proposed_versions/${submissionId}`, env);
+    }
+
     return newChange;
   } catch (error) {
     console.error('Error creating tracked change:', error);
@@ -366,15 +390,8 @@ export const updateChangeStatus = async (
       richTextNewValue: status === 'approved' ? change.richTextNewValue : change.richTextNewValue
     };
     
-    // Store the updated change in R2 and cache
+    // Store the updated change (putObject also updates the cache)
     await putObject(changeKey, updatedChange, env);
-    
-    // Also cache it individually
-    const cacheKey = `change:${changeKey}`;
-    await putObject(cacheKey, updatedChange, env, undefined, 3600); // Cache for 1 hour
-    
-    // Invalidate the submission's tracked changes cache
-    await deleteObject(`tracked_changes:submission:${change.submissionId}`, env);
 
     // Invalidate the cached proposed versions so they're recomputed on next fetch
     await deleteObject(`proposed_versions/${change.submissionId}`, env);
@@ -673,6 +690,33 @@ function extractPlainText(content: string): string {
   return content;
 }
 
+const timeOf = (iso?: string): number => (iso ? new Date(iso).getTime() : NaN);
+
+/**
+ * The change whose saved snapshot (completeProposedVersion / richTextNewValue, the whole
+ * document after the edit) is the current proposed document, or null when none is.
+ *
+ * That is the newest non-rejected change, pending or approved, provided it was made after
+ * every rejection in the field: its author's document already had those rejections
+ * reverted, and approvals don't change the text. A change made before a later rejection
+ * still holds the rejected text, so the caller has to replay the changes instead.
+ * `fieldChanges` must be sorted oldest first.
+ */
+export function getCurrentSnapshotChange(fieldChanges: TrackedChange[]): TrackedChange | null {
+  const active = fieldChanges.filter(c => c.status !== 'rejected');
+  const newest = active[active.length - 1];
+  if (!newest) return null;
+  const newestAt = timeOf(newest.timestamp);
+  const madeAfterEveryRejection = fieldChanges
+    .filter(c => c.status === 'rejected')
+    // No rejectedAt (older data): the rejection can't be dated, so don't trust the snapshot
+    .every(c => timeOf(c.rejectedAt) < newestAt);
+  return madeAfterEveryRejection ? newest : null;
+}
+
+const snapshotText = (change: TrackedChange): string =>
+  (change.isIncremental && change.completeProposedVersion) ? change.completeProposedVersion : change.newValue;
+
 // Get the complete proposed version for a field by applying all incremental changes
 export const getCompleteProposedVersion = async (
   submissionId: string,
@@ -695,17 +739,13 @@ export const getCompleteProposedVersion = async (
       return null;
     }
 
-    // Fast path: no rejections exist → the last pending change's cpv is correct
-    const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
-    if (!hasRejections) {
-      const latestChange = pendingChanges[pendingChanges.length - 1];
-      if (latestChange.isIncremental && latestChange.completeProposedVersion) {
-        return latestChange.completeProposedVersion;
-      }
-      return latestChange.newValue;
+    // Fast path: the newest change's snapshot already is the whole proposed document
+    const snapshot = getCurrentSnapshotChange(allFieldChanges);
+    if (snapshot) {
+      return snapshotText(snapshot);
     }
 
-    // Slow path: rejections exist → recompute by replaying only pending changes
+    // Slow path: a rejection came after the newest change → replay only pending changes
     const submission = await getObject(`content_submissions/${submissionId}`, env) as any;
     const originalContent = submission ? extractPlainText(submission.content || '') : '';
 
@@ -757,14 +797,12 @@ export const getCompleteRichTextProposedVersion = async (
       return null;
     }
 
-    // Fast path: no rejections → use last pending change's rich text directly
-    const hasRejections = allFieldChanges.some(c => c.status === 'rejected');
-    if (!hasRejections) {
-      const latestChange = pendingChanges[pendingChanges.length - 1];
-      if (latestChange.richTextNewValue) {
-        return latestChange.richTextNewValue;
-      }
-      return latestChange.newValue;
+    // Fast path: the newest change's snapshot is the whole proposed document. Without
+    // rich text (e.g. recovered orphaned transactions) return null, so the caller merges
+    // the plain text into the submission's Lexical structure.
+    const snapshot = getCurrentSnapshotChange(allFieldChanges);
+    if (snapshot) {
+      return snapshot.richTextNewValue || null;
     }
 
     // Slow path: compute correct plain text first
@@ -1024,7 +1062,9 @@ export const undoChange = async (
       return null;
     }
     
-    // Reset the change status to pending and clear approval/rejection info
+    // Reset the change status to pending and clear approval/rejection info. Undoing a
+    // rejection puts the change's text back (the editor re-applies it): snapshots of
+    // changes made while it was rejected lack it (see isNewestActiveChange).
     const updatedChange: TrackedChange = {
       ...targetChange,
       status: 'pending',
@@ -1033,19 +1073,12 @@ export const undoChange = async (
       rejectedBy: undefined,
       rejectedByName: undefined,
       approvedAt: undefined,
-      rejectedAt: undefined
+      rejectedAt: undefined,
+      ...(targetChange.status === 'rejected' ? { reappliedAt: new Date().toISOString() } : {}),
     };
     
-    // Save the updated change
+    // Save the updated change (putObject also updates the cache)
     await putObject(changeKey, updatedChange, env);
-    
-    // Clear cache for this change
-    const changeCacheKey = `change:${changeKey}`;
-    await deleteObject(changeCacheKey, env);
-    
-    // Clear cache for the submission's tracked changes
-    const submissionCacheKey = `tracked_changes:submission:${targetChange.submissionId}`;
-    await deleteObject(submissionCacheKey, env);
 
     // Invalidate the cached proposed versions so they're recomputed on next fetch
     await deleteObject(`proposed_versions/${targetChange.submissionId}`, env);
@@ -1079,13 +1112,8 @@ export const deleteChange = async (
     // Delete the change from R2 and cache
     await deleteObject(changeKey, env);
 
-    // Also remove the individual cache entry
-    const changeCacheKey = `change:${changeKey}`;
-    await deleteObject(changeCacheKey, env);
-
-    // Invalidate the submission's tracked changes cache
-    const submissionCacheKey = `tracked_changes:submission:${submissionId}`;
-    await deleteObject(submissionCacheKey, env);
+    // Also remove the legacy shadow copy, if one was stored
+    await deleteObject(`change:${changeKey}`, env);
 
     // Invalidate the cached proposed versions so they're recomputed on next fetch
     await deleteObject(`proposed_versions/${submissionId}`, env);
@@ -1247,16 +1275,12 @@ export const batchCreateTrackedChanges = async (
       const changeKey = `tracked-changes/submission/${submissionId}/${changeId}`;
       await putObject(changeKey, newChange, env);
 
-      // Cache individually
-      const cacheKey = `change:${changeKey}`;
-      await putObject(cacheKey, newChange, env, undefined, 3600);
-
       createdChanges.push(newChange);
       createdKeys.push(changeKey);
     }
 
-    // Invalidate the submission's tracked changes cache
-    await deleteObject(`tracked_changes:submission:${submissionId}`, env);
+    // Invalidate the cached proposed document
+    await deleteObject(`proposed_versions/${submissionId}`, env);
 
     return createdChanges;
   } catch (error) {

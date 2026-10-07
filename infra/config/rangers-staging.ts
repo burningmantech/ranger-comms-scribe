@@ -49,6 +49,8 @@ const config: ScribeConfig = {
     EMAIL_FROM: 'Comms Scribe <noreply@scrivenly.com>', // placeholder: confirm sender
     EMAIL_BCC: '', // must stay empty in Rangers environments
     ANNOUNCE_EMAIL_TO: '', // staging must not email the real list; set a test list if needed
+    NUDGE_EMAIL_OVERRIDE: 'noreply@scrivenly.com', // placeholder: staging must not email real teams; set a test address
+    COMMS_EMAIL_OVERRIDE: 'noreply@scrivenly.com', // placeholder: staging must not email real lists or approvers
     BOOTSTRAP_ADMIN_EMAILS: '', // placeholder: the first admin's email address
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
   },

@@ -104,15 +104,44 @@ describe('alex-dev (dev profile)', () => {
     );
   });
 
-  test('service runs one task on FARGATE_SPOT only, with a public IP, 0%/100% deployments', () => {
+  test('lets sent announcements be resent (ALLOW_ANNOUNCEMENT_RESEND=true)', () => {
+    const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'ALLOW_ANNOUNCEMENT_RESEND', Value: 'true' }]),
+    );
+  });
+
+  test('sends list emails and reminders only to Alex (COMMS_EMAIL_OVERRIDE)', () => {
+    const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'COMMS_EMAIL_OVERRIDE', Value: 'alexander.young@gmail.com' }]),
+    );
+  });
+
+  test('sends Comms Calendar nudges only to Alex (NUDGE_EMAIL_OVERRIDE)', () => {
+    const [taskDef] = Object.values(compute.findResources('AWS::ECS::TaskDefinition'));
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'NUDGE_EMAIL_OVERRIDE', Value: 'alexander.young@gmail.com' }]),
+    );
+  });
+
+  test('service runs one task on FARGATE_SPOT only, with a public IP, overlapping 100%/200% deployments', () => {
     compute.hasResourceProperties('AWS::ECS::Service', {
       DesiredCount: 1,
       CapacityProviderStrategy: [{ CapacityProvider: 'FARGATE_SPOT', Weight: 1 }],
-      DeploymentConfiguration: Match.objectLike({ MinimumHealthyPercent: 0, MaximumPercent: 100 }),
+      DeploymentConfiguration: Match.objectLike({ MinimumHealthyPercent: 100, MaximumPercent: 200 }),
       NetworkConfiguration: { AwsvpcConfiguration: Match.objectLike({ AssignPublicIp: 'ENABLED' }) },
     });
     persistent.hasResourceProperties('AWS::ECS::ClusterCapacityProviderAssociations', {
       CapacityProviders: Match.arrayWith(['FARGATE_SPOT']),
+    });
+  });
+
+  test('health checks every 5 s', () => {
+    compute.hasResourceProperties('AWS::ElasticLoadBalancingV2::TargetGroup', {
+      HealthCheckIntervalSeconds: 5,
+      HealthCheckTimeoutSeconds: 4,
+      HealthyThresholdCount: 2,
     });
   });
 
@@ -250,6 +279,19 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ Name: 'COLLAB_MODE' })]),
     );
+    // Announcements are sent once outside dev
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ Name: 'ALLOW_ANNOUNCEMENT_RESEND' })]),
+    );
+    // Nudges, list sends and reminders reach real people only in production
+    for (const name of ['NUDGE_EMAIL_OVERRIDE', 'COMMS_EMAIL_OVERRIDE']) {
+      const override = expect.arrayContaining([expect.objectContaining({ Name: name })]);
+      if (configName === 'rangers-production') {
+        expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(override);
+      } else {
+        expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(override);
+      }
+    }
   });
 
   test('forwards the viewer Host header and routes by host on the ALB', () => {

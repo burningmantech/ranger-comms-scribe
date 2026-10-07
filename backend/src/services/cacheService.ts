@@ -20,6 +20,38 @@ interface CacheEntry {
 
 const memoryCache = new Map<string, CacheEntry>();
 
+/**
+ * Store reads in flight, per cache key. A write or invalidation of the key while a read is
+ * in flight marks that read stale, and its result is then returned but not cached: it may
+ * hold the value from before the write (a slow S3 GET answered after a concurrent PUT), and
+ * caching it would hide the write until the entry expires.
+ */
+interface InflightRead { stale: boolean }
+const inflightReads = new Map<string, Set<InflightRead>>();
+
+const beginRead = (key: string): InflightRead => {
+    const read: InflightRead = { stale: false };
+    let reads = inflightReads.get(key);
+    if (!reads) {
+        reads = new Set();
+        inflightReads.set(key, reads);
+    }
+    reads.add(read);
+    return read;
+};
+
+const endRead = (key: string, read: InflightRead): void => {
+    const reads = inflightReads.get(key);
+    if (!reads) return;
+    reads.delete(read);
+    if (reads.size === 0) inflightReads.delete(key);
+};
+
+/** The key was written or invalidated: reads of it now in flight must not cache their result. */
+const markReadsStale = (key: string): void => {
+    inflightReads.get(key)?.forEach((read) => { read.stale = true; });
+};
+
 // Sweep expired entries every N writes so the map can't grow without bound.
 const SWEEP_EVERY_N_WRITES = 1000;
 let writesSinceSweep = 0;
@@ -41,6 +73,7 @@ const sweepExpired = (): void => {
  */
 export const clearMemoryCache = (): void => {
     memoryCache.clear();
+    inflightReads.forEach((reads) => reads.forEach((read) => { read.stale = true; }));
     writesSinceSweep = 0;
 };
 
@@ -142,6 +175,7 @@ export const setInCache = async (
  */
 export const removeFromCache = async (key: string, _env: Env): Promise<void> => {
     memoryCache.delete(key);
+    markReadsStale(key);
 };
 
 /**
@@ -154,6 +188,9 @@ export const invalidateCacheWithPrefix = async (prefix: string, _env: Env): Prom
         if (key.startsWith(prefix)) {
             memoryCache.delete(key);
         }
+    }
+    for (const key of Array.from(inflightReads.keys())) {
+        if (key.startsWith(prefix)) markReadsStale(key);
     }
 };
 
@@ -206,18 +243,26 @@ export const getObjectStrict = async <T>(key: string, env: Env, ttl: number = 36
     }
 
     // If not in cache, get it from the store (throws on store errors)
-    const object = await env.STORE.get(key);
-    if (!object) {
-        return null;
+    const read = beginRead(key);
+    try {
+        const object = await env.STORE.get(key);
+        if (!object) {
+            return null;
+        }
+
+        // Parse the JSON content (throws on corrupt content)
+        const content = await object.json<T>();
+
+        // Store in cache for future requests, unless the key was written meanwhile
+        // (this value may predate that write)
+        if (!read.stale) {
+            await setInCache(key, content, env, ttl);
+        }
+
+        return content;
+    } finally {
+        endRead(key, read);
     }
-
-    // Parse the JSON content (throws on corrupt content)
-    const content = await object.json<T>();
-
-    // Store in cache for future requests
-    await setInCache(key, content, env, ttl);
-
-    return content;
 };
 
 /**
@@ -269,7 +314,8 @@ export const putObject = async (
         // Store durably
         await env.STORE.put(key, stringValue, toPutOptions(options));
 
-        // Also store in cache
+        // Also store in cache (a read of the key in flight may hold the old value)
+        markReadsStale(key);
         await setInCache(key, value, env, ttl);
 
         // Invalidate any list caches that might contain this object
@@ -326,12 +372,20 @@ export const listObjects = async (prefix: string, env: Env, ttl: number = 300): 
         }
 
         // If not in cache, get from the store
-        const listing = await env.STORE.list(prefix);
+        const read = beginRead(cacheKey);
+        try {
+            const listing = await env.STORE.list(prefix);
 
-        // Store in cache for future requests with a shorter TTL
-        await setInCache(cacheKey, listing, env, ttl);
+            // Store in cache for future requests with a shorter TTL, unless an object under
+            // the prefix was written or deleted meanwhile (the listing may predate it)
+            if (!read.stale) {
+                await setInCache(cacheKey, listing, env, ttl);
+            }
 
-        return listing;
+            return listing;
+        } finally {
+            endRead(cacheKey, read);
+        }
     } catch (error) {
         console.error(`Error listing objects with prefix ${prefix}:`, error);
         throw error; // Rethrow to maintain the same error behavior as the store

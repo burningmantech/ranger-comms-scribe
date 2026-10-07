@@ -1,0 +1,1074 @@
+{
+ "root": {
+  "children": [
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": "Rangers — Ticketing Team",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": "The Clubhouse Ticketing is now open! You ",
+      "type": "text",
+      "version": 1
+     },
+     {
+      "detail": 0,
+      "format": 1,
+      "mode": "normal",
+      "style": "",
+      "text": "must",
+      "type": "text",
+      "version": 1
+     },
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": " claim in the Clubhouse all items (Staff Credentials, Special Price Tickets, Vehicle…",
+      "type": "text",
+      "version": 1
+     },
+     {
+      "detail": 0,
+      "format": 1,
+      "mode": "normal",
+      "style": "",
+      "text": "23:59 PT on Sunday, July 12th!!",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 1,
+      "mode": "normal",
+      "style": "",
+      "text": "Remember that accepting any of these things is contingent upon your agreement that you…",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "type": "linebreak",
+      "version": 1
+     },
+     {
+      "type": "linebreak",
+      "version": 1
+     }
+    ],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 1,
+      "mode": "normal",
+      "style": "",
+      "text": "Key Things to Know for 2026:",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 1,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "Only claim a Vehicle Pass (VP) if you know you will need one. These passes are a limited…",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 1
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "Rangers who claim a Staff Credential (SC) can claim a Gift Vehicle Pass.",
+            "type": "text",
+            "version": 1
+           }
+          ],
+          "direction": "ltr",
+          "format": "",
+          "indent": 1,
+          "type": "listitem",
+          "version": 1,
+          "value": 1
+         },
+         {
+          "children": [
+           {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "Rangers who claim a Special Price Ticket (SPT) through the Ranger Department can claim a…",
+            "type": "text",
+            "version": 1
+           },
+           {
+            "type": "linebreak",
+            "version": 1
+           },
+           {
+            "type": "linebreak",
+            "version": 1
+           }
+          ],
+          "direction": "ltr",
+          "format": "",
+          "indent": 1,
+          "type": "listitem",
+          "version": 1,
+          "value": 2
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "list",
+        "version": 1,
+        "listType": "bullet",
+        "start": 1,
+        "tag": "ul"
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 2
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "When you receive any requested SO SAPs (Significant Other Setup Access Passes, formerly…",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "detail": 0,
+        "format": 2,
+        "mode": "normal",
+        "style": "",
+        "text": "your",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": " name will be on the PDF. The names of your SOs are stored elsewhere in the ticketing…",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "children": [
+         {
+          "detail": 0,
+          "format": 8,
+          "mode": "normal",
+          "style": "",
+          "text": "SAP FAQs",
+          "type": "text",
+          "version": 1
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "link",
+        "version": 1,
+        "rel": null,
+        "target": null,
+        "title": null,
+        "url": "https://docs.google.com/document/d/1wuucvq017bQHP7-0uH2KlSWSaYW7CSvNN7siU11Ah7k/edit"
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": " for more detailed info.",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "type": "linebreak",
+        "version": 1
+       },
+       {
+        "type": "linebreak",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 2
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "If you want any of the goodies that you qualified for, you must request them by 23:59 PT…",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "type": "linebreak",
+        "version": 1
+       },
+       {
+        "type": "linebreak",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 3
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "If you need to receive your Special Price Ticket in the mail, you must pay for it by July…",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 4
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "The shipping fees for Standard USPS is $20, Priority USPS is $30, and Will Call is free.",
+            "type": "text",
+            "version": 1
+           }
+          ],
+          "direction": "ltr",
+          "format": "",
+          "indent": 1,
+          "type": "listitem",
+          "version": 1,
+          "value": 1
+         },
+         {
+          "children": [
+           {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "In past years, items have been mailed out later than is ideal, causing stress for Rangers…",
+            "type": "text",
+            "version": 1
+           }
+          ],
+          "direction": "ltr",
+          "format": "",
+          "indent": 1,
+          "type": "listitem",
+          "version": 1,
+          "value": 2
+         },
+         {
+          "children": [
+           {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "Only Staff Credentials (SC) are available for pick up prior to noon on Monday, August…",
+            "type": "text",
+            "version": 1
+           },
+           {
+            "type": "linebreak",
+            "version": 1
+           },
+           {
+            "type": "linebreak",
+            "version": 1
+           }
+          ],
+          "direction": "ltr",
+          "format": "",
+          "indent": 1,
+          "type": "listitem",
+          "version": 1,
+          "value": 3
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "list",
+        "version": 1,
+        "listType": "bullet",
+        "start": 1,
+        "tag": "ul"
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 5
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "If you claim a Special Price Ticket and a Special Price Vehicle Pass, ",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "detail": 0,
+        "format": 8,
+        "mode": "normal",
+        "style": "",
+        "text": "make sure you add both to your cart when completing the payment process",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": ".\\",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "changeId": "93daf92b-787a-40ff-a219-8cfc4d1cfe6a",
+        "deletedText": "\\",
+        "authorName": "Alex Young",
+        "authorColor": "#607d8b",
+        "isBlockLevel": false,
+        "authorId": "user-1",
+        "type": "deleted-text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 5
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "list",
+    "version": 1,
+    "listType": "bullet",
+    "start": 1,
+    "tag": "ul"
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 1,
+      "mode": "normal",
+      "style": "",
+      "text": "How to claim “Tickets & Stuff”:",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": "1. Log in to the Ranger Clubhouse at",
+      "type": "text",
+      "version": 1
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 8,
+        "mode": "normal",
+        "style": "",
+        "text": " https://ranger-clubhouse.burningman.org/",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "link",
+      "version": 1,
+      "rel": null,
+      "target": null,
+      "title": null,
+      "url": "http://rangeroffice.burningman.org/"
+     },
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": ".",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": "2. Choose “Tickets & Stuff” from the menu bar on the left side of the page OR go to the…",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "type": "linebreak",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "image",
+    "version": 1,
+    "src": "/api/gallery/1791242299248_pasted-image-1791242298889.png",
+    "altText": "",
+    "width": 513,
+    "height": 222,
+    "alignment": "none",
+    "fullSizeSrc": "/api/gallery/1791242299248_pasted-image-1791242298889.png",
+    "thumbnailSrc": "/api/gallery/1791242299248_pasted-image-1791242298889.png/thumbnail",
+    "mediumSrc": "/api/gallery/1791242299248_pasted-image-1791242298889.png/medium",
+    "imageId": "gallery/1791242299248_pasted-image-1791242298889.png",
+    "uploadedAt": "2026-10-05T23:18:19.647Z"
+   },
+   {
+    "children": [],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "image",
+    "version": 1,
+    "src": "/api/gallery/1791242299134_pasted-image-1791242298889.png",
+    "altText": "",
+    "width": 106,
+    "height": 244,
+    "alignment": "none",
+    "fullSizeSrc": "/api/gallery/1791242299134_pasted-image-1791242298889.png",
+    "thumbnailSrc": "/api/gallery/1791242299134_pasted-image-1791242298889.png/thumbnail",
+    "mediumSrc": "/api/gallery/1791242299134_pasted-image-1791242298889.png/medium",
+    "imageId": "gallery/1791242299134_pasted-image-1791242298889.png",
+    "uploadedAt": "2026-10-05T23:18:19.434Z"
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": "On your Tickets & Stuff page, you can:",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "Claim or bank your Staff Credential or Special Price Ticket, if you’ve qualified for one.",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 1
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "Claim a ",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "children": [
+         {
+          "detail": 0,
+          "format": 8,
+          "mode": "normal",
+          "style": "",
+          "text": "Setup Access Pass",
+          "type": "text",
+          "version": 1
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "link",
+        "version": 1,
+        "rel": null,
+        "target": null,
+        "title": null,
+        "url": "https://docs.google.com/document/d/1K7yetkjytOEX7BWsZAiQXXiW0AOQ4d4ST8nPBZqDDtY/edit"
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": " (if you have a Staff Credential, that is also your SAP).",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 2
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "Claim a ",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "children": [
+         {
+          "detail": 0,
+          "format": 8,
+          "mode": "normal",
+          "style": "",
+          "text": "Vehicle Pass",
+          "type": "text",
+          "version": 1
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "link",
+        "version": 1,
+        "rel": null,
+        "target": null,
+        "title": null,
+        "url": "https://docs.google.com/document/d/1jZ44GB_Zx6bC04NL1wpbRucBRKLTXZTzfR2VHxA_qn0/edit"
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": ", if available and if you need one.",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 3
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "Request up to three Setup Access Passes for significant others / critical campmates.",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 4
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "Choose the method of delivery for Special Price Tickets and Vehicle Passes. (Staff…",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 5
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "Choose the type of shipping, Standard USPS ($20) or Priority USPS ($30).",
+            "type": "text",
+            "version": 1
+           }
+          ],
+          "direction": "ltr",
+          "format": "",
+          "indent": 1,
+          "type": "listitem",
+          "version": 1,
+          "value": 1
+         },
+         {
+          "children": [
+           {
+            "detail": 0,
+            "format": 0,
+            "mode": "normal",
+            "style": "",
+            "text": "Reminder: Nothing can be shipped internationally. ",
+            "type": "text",
+            "version": 1
+           }
+          ],
+          "direction": "ltr",
+          "format": "",
+          "indent": 1,
+          "type": "listitem",
+          "version": 1,
+          "value": 2
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "list",
+        "version": 1,
+        "listType": "bullet",
+        "start": 1,
+        "tag": "ul"
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 6
+     },
+     {
+      "children": [
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "Claim or bank other provisions (",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "children": [
+         {
+          "detail": 0,
+          "format": 8,
+          "mode": "normal",
+          "style": "",
+          "text": "meals",
+          "type": "text",
+          "version": 1
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "link",
+        "version": 1,
+        "rel": null,
+        "target": null,
+        "title": null,
+        "url": "https://docs.google.com/document/d/1dQF3ggQIGMo8vorhHbwClQL1zny5yqb5fqT2wIGW_Ug/edit"
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": ", ",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "children": [
+         {
+          "detail": 0,
+          "format": 8,
+          "mode": "normal",
+          "style": "",
+          "text": "showers",
+          "type": "text",
+          "version": 1
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "link",
+        "version": 1,
+        "rel": null,
+        "target": null,
+        "title": null,
+        "url": "https://docs.google.com/document/u/0/d/1eidgYAxdmzR-MUp6hWHSXaagB32nctZOyRaYrozz4KY/edit"
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": ", ",
+        "type": "text",
+        "version": 1
+       },
+       {
+        "children": [
+         {
+          "detail": 0,
+          "format": 8,
+          "mode": "normal",
+          "style": "",
+          "text": "event radios",
+          "type": "text",
+          "version": 1
+         }
+        ],
+        "direction": "ltr",
+        "format": "",
+        "indent": 0,
+        "type": "link",
+        "version": 1,
+        "rel": null,
+        "target": null,
+        "title": null,
+        "url": "https://docs.google.com/document/d/1TPcAvfi_0fkPmwJFvtkoDls-xYCpJPOxFBDzut8nZAQ/edit"
+       },
+       {
+        "detail": 0,
+        "format": 0,
+        "mode": "normal",
+        "style": "",
+        "text": "), if you’ve qualified for any.",
+        "type": "text",
+        "version": 1
+       }
+      ],
+      "direction": "ltr",
+      "format": "",
+      "indent": 0,
+      "type": "listitem",
+      "version": 1,
+      "value": 6
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "list",
+    "version": 1,
+    "listType": "bullet",
+    "start": 1,
+    "tag": "ul"
+   },
+   {
+    "children": [],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "image",
+    "version": 1,
+    "src": "/api/gallery/1791242299143_pasted-image-1791242298890.png",
+    "altText": "",
+    "width": 528,
+    "height": 112,
+    "alignment": "none",
+    "fullSizeSrc": "/api/gallery/1791242299143_pasted-image-1791242298890.png",
+    "thumbnailSrc": "/api/gallery/1791242299143_pasted-image-1791242298890.png/thumbnail",
+    "mediumSrc": "/api/gallery/1791242299143_pasted-image-1791242298890.png/medium",
+    "imageId": "gallery/1791242299143_pasted-image-1791242298890.png",
+    "uploadedAt": "2026-10-05T23:18:19.517Z"
+   },
+   {
+    "children": [],
+    "direction": null,
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   },
+   {
+    "children": [
+     {
+      "detail": 0,
+      "format": 0,
+      "mode": "normal",
+      "style": "",
+      "text": "After the Clubhouse Ticketing window closes, you will receive confirmation emails of all…",
+      "type": "text",
+      "version": 1
+     }
+    ],
+    "direction": "ltr",
+    "format": "",
+    "indent": 0,
+    "type": "paragraph",
+    "version": 1,
+    "textFormat": 0,
+    "textStyle": ""
+   }
+  ],
+  "direction": "ltr",
+  "format": "",
+  "indent": 0,
+  "type": "root",
+  "version": 1,
+  "textFormat": 1
+ }
+}

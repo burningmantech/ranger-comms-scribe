@@ -25,11 +25,15 @@ function getStageIndex(status: SubmissionStatus): number {
 
 function getBlockingText(gates?: ApprovalGates): string | null {
   if (!gates) return null;
-  if (!gates.councilManager.met) return 'Waiting on Council Manager approval';
+  if (!gates.councilManager.met) {
+    return (gates.councilManager.approvers || []).length === 0
+      ? 'Waiting for the Comms Cadre to choose a council approver'
+      : 'Waiting on council approval';
+  }
   if (!gates.commsCadre.met) return 'Waiting on Comms Cadre approval';
   if (!gates.requiredApprovers.met) {
     const remaining = gates.requiredApprovers.total - gates.requiredApprovers.approved;
-    return `Waiting on ${remaining} required approver${remaining !== 1 ? 's' : ''}`;
+    return `Waiting on ${remaining} approver${remaining !== 1 ? 's' : ''}`;
   }
   if (!gates.trackedChanges.met) {
     return `${gates.trackedChanges.pending} tracked change${gates.trackedChanges.pending !== 1 ? 's' : ''} pending review`;
