@@ -23,6 +23,17 @@ import { accessView, publicUser, rolesResponse } from '../services/access';
 import { getObject, putObject, removeFromCache } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { getDevUserForRequest } from '../utils/devUsers';
+import {
+  FeedbackError,
+  deleteFeedback,
+  getFeedback,
+  getFeedbackScreenshot,
+  getFeedbackSettings,
+  listFeedback,
+  setFeedbackSettings,
+  setPersonFeedback,
+  updateFeedback,
+} from '../services/feedbackService';
 
 export const router = AutoRouter({ base: '/api/admin' });
 
@@ -68,6 +79,72 @@ router.put('/people/:id/access', withAdminCheck, async (request: Request, env: E
     if (err instanceof AccessChangeError) return json({ error: err.message }, { status: err.status });
     throw err;
   }
+});
+
+// One person's feedback tab: { enabled: true | false | null } (null follows the global switch)
+router.put('/people/:id/feedback', withAdminCheck, async (request: Request, env: Env) => {
+  const { id } = (request as any).params;
+  const body = await request.json().catch(() => null) as { enabled?: unknown } | null;
+  if (!body || !(body.enabled === true || body.enabled === false || body.enabled === null)) {
+    return json({ error: 'enabled must be true, false or null' }, { status: 400 });
+  }
+  try {
+    const updated = await setPersonFeedback(decodeURIComponent(id), body.enabled, env);
+    return json({ person: personView(updated, env) });
+  } catch (err) {
+    if (err instanceof FeedbackError) return json({ error: err.message }, { status: err.status });
+    throw err;
+  }
+});
+
+// Admin → Feedback: the global switch, and the feedback received (services/feedbackService.ts)
+router.get('/feedback/settings', withAdminCheck, async (_request: Request, env: Env) => {
+  return json({ settings: await getFeedbackSettings(env) });
+});
+
+router.put('/feedback/settings', withAdminCheck, async (request: Request, env: Env) => {
+  const body = await request.json().catch(() => null) as { enabled?: unknown } | null;
+  if (typeof body?.enabled !== 'boolean') return json({ error: 'enabled must be true or false' }, { status: 400 });
+  return json({ settings: await setFeedbackSettings(body.enabled, (request as any).user as User, env) });
+});
+
+router.get('/feedback', withAdminCheck, async (_request: Request, env: Env) => {
+  return json({ feedback: await listFeedback(env) });
+});
+
+const FEEDBACK_ID = /^[0-9a-f-]{36}$/;
+
+router.get('/feedback/:id', withAdminCheck, async (request: Request, env: Env) => {
+  const { id } = (request as any).params;
+  const report = FEEDBACK_ID.test(id) ? await getFeedback(id, env) : null;
+  return report ? json({ feedback: report }) : json({ error: 'Feedback not found' }, { status: 404 });
+});
+
+router.get('/feedback/:id/screenshot', withAdminCheck, async (request: Request, env: Env) => {
+  const { id } = (request as any).params;
+  const image = FEEDBACK_ID.test(id) ? await getFeedbackScreenshot(id, env) : null;
+  if (!image) return json({ error: 'No screenshot' }, { status: 404 });
+  return new Response(image, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } });
+});
+
+// Mark handled and keep notes: { handled?, notes? }
+router.put('/feedback/:id', withAdminCheck, async (request: Request, env: Env) => {
+  const { id } = (request as any).params;
+  if (!FEEDBACK_ID.test(id)) return json({ error: 'Feedback not found' }, { status: 404 });
+  try {
+    const report = await updateFeedback(id, await request.json().catch(() => ({})), (request as any).user as User, env);
+    return json({ feedback: report });
+  } catch (err) {
+    if (err instanceof FeedbackError) return json({ error: err.message }, { status: err.status });
+    throw err;
+  }
+});
+
+router.delete('/feedback/:id', withAdminCheck, async (request: Request, env: Env) => {
+  const { id } = (request as any).params;
+  if (!FEEDBACK_ID.test(id)) return json({ error: 'Feedback not found' }, { status: 404 });
+  await deleteFeedback(id, env);
+  return json({ success: true });
 });
 
 // Update a user's name - Endpoint for frontend compatibility

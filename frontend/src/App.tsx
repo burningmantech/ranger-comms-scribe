@@ -24,6 +24,7 @@ import { NewsletterArchive, PublicEdition, PublicDocument } from './pages/Public
 import { canSendAnnouncements, canUseNewsletter, isReviewer } from './utils/access';
 import { CommsCalendar } from './pages/CommsCalendar';
 import { RequestSettings } from './pages/RequestSettings';
+import { FeedbackCarrot } from './components/FeedbackCarrot';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -99,6 +100,8 @@ const App: React.FC = () => {
               </Routes>
             )}
           </div>
+          {/* The feedback tab on the right edge, for whoever an Admin turned it on for */}
+          <FeedbackCarrot signedInAs={user?.email || null} />
         </div>
       </Router>
     </ContentProvider>

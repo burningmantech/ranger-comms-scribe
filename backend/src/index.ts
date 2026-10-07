@@ -19,6 +19,7 @@ import { router as websocketRouter } from './handlers/websocket';
 import { router as newsletterRouter } from './handlers/newsletter';
 import { router as mailingListsRouter } from './handlers/mailingLists';
 import { router as publicNewsRouter } from './handlers/publicNews';
+import { router as feedbackRouter } from './handlers/feedback';
 import { AutoRouter, cors } from 'itty-router';
 import { GetSession, Env } from './utils/sessionManager';
 import { getUser, initializeFirstAdmin } from './services/userService';
@@ -174,6 +175,8 @@ router
     .all('/api/comms-calendar/*', commsCalendarRouter.fetch) // Handle all Comms Calendar routes
     .all('/api/annual-dates/*', withValidSession) // Annual dates (fixed or from Labor Day) that requests link to
     .all('/api/annual-dates/*', annualDatesRouter.fetch)
+    .all('/api/feedback/*', withValidSession) // The feedback tab (Admin → Feedback is under /api/admin)
+    .all('/api/feedback/*', feedbackRouter.fetch)
     .all('/api/ws/*', websocketRouter.fetch) // Room HTTP routes; WebSocket upgrades are handled in httpServer.ts
     .all('*', (request: Request) => {
         console.log('Unmatched request in main router:', request.url);

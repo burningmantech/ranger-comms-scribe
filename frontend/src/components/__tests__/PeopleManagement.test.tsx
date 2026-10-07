@@ -20,6 +20,12 @@ beforeEach(() => {
   localStorage.setItem('user', JSON.stringify({ email: 'boss@x.org', isAdmin: true }));
   fetchMock = jest.fn((url: string, init?: RequestInit) => {
     if (url.endsWith('/admin/people')) return json({ people: PEOPLE });
+    if (url.endsWith('/admin/feedback/settings')) return json({ settings: { enabled: false } });
+    const f = url.match(/\/admin\/people\/([^/]+)\/feedback$/);
+    if (f && init?.method === 'PUT') {
+      const person = PEOPLE.find((p) => p.id === decodeURIComponent(f[1]))!;
+      return json({ person: { ...person, feedbackEnabled: JSON.parse(String(init.body)).enabled } });
+    }
     const m = url.match(/\/admin\/people\/([^/]+)\/access$/);
     if (m && init?.method === 'PUT') {
       const person = PEOPLE.find((p) => p.id === decodeURIComponent(m[1]))!;
@@ -35,6 +41,25 @@ beforeEach(() => {
 const row = (email: string) => screen.getByTestId(`person-${email}`);
 
 describe('People', () => {
+  it('sets one person\'s feedback tab, or leaves it to the global switch', async () => {
+    render(<PeopleManagement />);
+    await screen.findByText('Help Desk');
+    const select = within(row('new@x.org')).getByLabelText('new@x.org feedback tab') as HTMLSelectElement;
+    expect(select.value).toBe('default');
+    await within(row('new@x.org')).findByRole('option', { name: 'Default (off)' });
+    fireEvent.change(select, { target: { value: 'on' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/\/admin\/people\/u3\/feedback$/),
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: true }) }),
+    ));
+    expect(select.value).toBe('on');
+    fireEvent.change(select, { target: { value: 'default' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+      expect.stringMatching(/\/feedback$/),
+      expect.objectContaining({ body: JSON.stringify({ enabled: null }) }),
+    ));
+  });
+
   it('lists people with their roles, and filters them', async () => {
     render(<PeopleManagement />);
     await screen.findByText('Help Desk');

@@ -3,6 +3,10 @@ import './components/styles/common.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { installDiagnostics } from './utils/diagnostics';
+
+// Collect network calls, errors and steps from the start, for the feedback tab (utils/diagnostics.ts)
+installDiagnostics();
 
 // DEV: Allow per-tab session override via ?devSession=xxx URL parameter.
 // This patches localStorage.getItem so each tab can use a different session

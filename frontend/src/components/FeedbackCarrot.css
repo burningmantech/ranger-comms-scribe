@@ -1,0 +1,196 @@
+/* The feedback tab on the right edge (FeedbackCarrot.tsx). Tokens from styles.css. */
+
+.feedback-carrot {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 10500; /* above the review page's panels and modals' backdrops */
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.feedback-carrot > * {
+  pointer-events: auto;
+}
+
+.feedback-tab {
+  width: 28px;
+  height: 56px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  background: var(--accent-teal);
+  color: var(--text-light);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast), width var(--transition-fast);
+}
+
+.feedback-tab:hover,
+.feedback-tab:focus-visible,
+.feedback-carrot.is-open .feedback-tab {
+  opacity: 1;
+  width: 32px;
+  background: var(--accent-teal-hover);
+}
+
+.feedback-tab:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
+.feedback-tab:disabled {
+  cursor: progress;
+}
+
+.feedback-panel {
+  width: min(340px, calc(100vw - 48px));
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #fff;
+  color: var(--text-dark);
+  border: 1px solid var(--border-color);
+  border-right: none;
+  border-radius: var(--radius-xl) 0 0 var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  animation: feedback-slide-in var(--transition-slow);
+}
+
+@keyframes feedback-slide-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feedback-panel { animation: none; }
+}
+
+.feedback-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--primary-light);
+}
+
+.feedback-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.feedback-close {
+  border: none;
+  background: none;
+  color: var(--text-medium);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.feedback-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.feedback-body label[for='feedback-message'] {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.feedback-body textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font: inherit;
+  resize: vertical;
+}
+
+.feedback-shot img {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+  object-position: left top;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--primary-light);
+}
+
+.feedback-shot img.excluded {
+  opacity: 0.3;
+}
+
+.feedback-shot-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+  font-size: 0.85rem;
+}
+
+.feedback-noshot {
+  font-size: 0.85rem;
+  color: var(--text-medium);
+}
+
+.feedback-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent-teal);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.feedback-included {
+  font-size: 0.85rem;
+  color: var(--text-medium);
+}
+
+.feedback-included summary {
+  cursor: pointer;
+  color: var(--accent-teal);
+}
+
+.feedback-included ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.feedback-counts {
+  margin: 6px 0 0;
+}
+
+.feedback-error {
+  color: var(--danger);
+  font-size: 0.9rem;
+}
+
+.feedback-send {
+  margin: 0;
+  width: 100%;
+  gap: 8px;
+}
+
+.feedback-sent {
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.feedback-sent i {
+  font-size: 2.2rem;
+  color: var(--accent-teal);
+}
+
+.feedback-sent p {
+  margin: 10px 0 12px;
+}
