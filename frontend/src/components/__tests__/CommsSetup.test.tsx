@@ -33,6 +33,15 @@ describe('approval reminders in the conditions popover', () => {
     expect(screen.getByRole('button', { name: /Remind Pat/ })).toBeDisabled();
   });
 
+  it("says when a reminder reached them in Scribe but the email couldn't be sent", async () => {
+    const onRemind = jest.fn(async (target: string) => [{ target, to: ['x'], by: 'me@x.org', byName: 'Me', at: new Date().toISOString(), emailFailed: true }]);
+    render(<ConditionsPopover gates={GATES} onRemind={onRemind} reminders={[]} />);
+    fireEvent.click(screen.getByRole('button', { name: /conditions met/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Remind Pat/ }));
+    expect(await screen.findByText(/Reminded in Scribe .* by Me; the email couldn't be sent/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('says why a reminder failed, and hides Remind without permission', async () => {
     const onRemind = jest.fn(async () => { throw new Error('Lee was reminded today; try again tomorrow'); });
     const { unmount } = render(<ConditionsPopover gates={GATES} onRemind={onRemind} />);

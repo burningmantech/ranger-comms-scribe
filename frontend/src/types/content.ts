@@ -8,6 +8,8 @@ export interface SubmissionReminder {
   by: string;
   byName: string;
   at: string;
+  /** The email couldn't be sent; they got the in-app notification only. */
+  emailFailed?: boolean;
 }
 
 export interface User {

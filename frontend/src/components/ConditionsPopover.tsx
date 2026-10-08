@@ -143,7 +143,12 @@ function reminderNote(reminders: SubmissionReminder[], target: string): { recent
   const at = new Date(last.at);
   const recent = Date.now() - at.getTime() < REMIND_AGAIN_MS;
   const when = at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  return { recent, text: `Reminded ${when} by ${last.byName}` };
+  return {
+    recent,
+    text: last.emailFailed
+      ? `Reminded in Scribe ${when} by ${last.byName}; the email couldn't be sent`
+      : `Reminded ${when} by ${last.byName}`,
+  };
 }
 
 const ConditionsPopover: React.FC<ConditionsPopoverProps> = ({ gates, pendingEdits, reminders: initialReminders, onRemind }) => {

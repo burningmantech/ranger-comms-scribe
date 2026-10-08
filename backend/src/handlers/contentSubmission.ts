@@ -1,6 +1,6 @@
 import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
-import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates, ApproverDetail } from '../types';
+import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates, ApproverDetail, SubmissionReminder } from '../types';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { broadcastToSubmissionRoom } from './websocket';
@@ -12,7 +12,7 @@ import { Access, accessOf, approverCounts, derivedRoles, derivedUserType, isAdmi
 import { accessByEmail, peopleByEmail, peopleWhere } from '../services/peopleService';
 import { listMailingLists, suggestedListIds } from '../services/mailingListService';
 import { getUser } from '../services/userService';
-import { askForApproval, becomesSubmitted, createdLive, notifyRequestSubmitted, notifySubmitter } from '../services/workflowNotifications';
+import { ApprovalEmailError, askForApproval, becomesSubmitted, createdLive, notifyRequestSubmitted, notifySubmitter } from '../services/workflowNotifications';
 import { audienceKeys, STANDALONE_EMAIL_AUDIENCES } from '../utils/audiences';
 import { InputError, cleanKeyDates, cleanNewsletterRequest, cleanWritingHelp } from '../utils/newsletterInput';
 import { getEdition } from '../services/newsletterService';
@@ -1239,17 +1239,31 @@ router.post('/submissions/:id/remind', withAuth, async (request: Request, env: a
     return json({ error: `${who} was reminded ${when}; try again tomorrow`, lastReminder: last }, { status: 429 });
   }
 
+  // The email can fail (SES down, a rejected address) while the in-app notifications still go out.
+  // Then the reminder counts (they were reminded, in Scribe) and the reply says the email failed.
+  // SES's own error text is logged here, never sent to the browser.
+  let to = recipients.map((r) => r.email);
+  let emailFailed = false;
   try {
-    await askForApproval(submission, recipients.map((r) => r.email), user, 'reminder', env);
-  } catch (e: any) {
-    return json({ error: e.message || 'Could not send the reminder' }, { status: 502 });
+    await askForApproval(submission, to, user, 'reminder', env);
+  } catch (e) {
+    console.error(`Could not email the reminder for ${id} (${key}):`, e);
+    const notified = e instanceof ApprovalEmailError ? e.notified : [];
+    if (notified.length === 0) {
+      return json({ error: "The reminder couldn't be sent. Try again later." }, { status: 502 });
+    }
+    to = to.filter((email) => notified.includes(normalizeEmail(email)));
+    emailFailed = true;
   }
 
-  const reminder = { target: key, to: recipients.map((r) => r.email), by: user.email, byName: user.name || user.email, at: new Date().toISOString() };
+  const reminder: SubmissionReminder = {
+    target: key, to, by: user.email, byName: user.name || user.email, at: new Date().toISOString(),
+    ...(emailFailed ? { emailFailed: true } : {}),
+  };
   const fresh = (await getObject<ContentSubmission>(`content_submissions/${id}`, env)) || submission;
   fresh.reminders = [...(fresh.reminders || []), reminder].slice(-50);
   await putObject(`content_submissions/${id}`, fresh, env);
-  return json({ reminder, reminders: fresh.reminders });
+  return json({ reminder, reminders: fresh.reminders, ...(emailFailed ? { emailFailed: true } : {}) });
 });
 
 // Track changes to a submission

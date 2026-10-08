@@ -1,7 +1,7 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
 import { clearMemoryCache, getObject, listObjects } from '../../src/services/cacheService';
-import { askForApproval, getAskLog, recordAsked } from '../../src/services/workflowNotifications';
+import { askForApproval, getAskLog, notifyRequestSubmitted, recordAsked } from '../../src/services/workflowNotifications';
 import { createInAppNotification } from '../../src/services/notificationService';
 import { updateUserNotificationSettings, wantsSubmitterUpdates, getUserNotificationSettings } from '../../src/services/userService';
 
@@ -119,10 +119,58 @@ describe('askForApproval', () => {
     });
   });
 
-  it('throws, and records nothing, when the email fails', async () => {
+  it('still notifies in the app and records who got it when the email fails, then throws', async () => {
     sendSpy.mockRejectedValueOnce(new Error('throttled'));
-    await expect(askForApproval(submission, ['sam@x.org'], actor, 'added', env)).rejects.toThrow(/throttled/);
-    expect(await getAskLog(env, 's1')).toEqual({});
+    await expect(askForApproval(submission, ['sam@x.org', 'nobody@x.org'], actor, 'added', env)).rejects.toThrow(/throttled/);
+
+    // Sam has an account, so the bell has the ask and the log records it
+    const listing = await listObjects('notifications/sam@x.org/', env);
+    expect(listing.objects).toHaveLength(1);
+    expect(await getObject<any>(listing.objects[0].key, env)).toMatchObject({ type: 'submission_waiting', submissionId: 's1' });
+    // nobody@x.org has no account: neither email nor bell reached them, so they weren't asked
+    expect((await listObjects('notifications/nobody@x.org/', env)).objects).toHaveLength(0);
+    expect(Object.keys(await getAskLog(env, 's1'))).toEqual(['sam@x.org']);
+  });
+
+  it('records everyone it emailed, with or without an account', async () => {
+    await askForApproval(submission, ['sam@x.org', 'nobody@x.org'], actor, 'added', env);
+    expect(Object.keys(await getAskLog(env, 's1')).sort()).toEqual(['nobody@x.org', 'sam@x.org']);
+  });
+});
+
+describe('notifyRequestSubmitted', () => {
+  beforeEach(async () => {
+    await putUser(user('kim@x.org'));
+    await putUser(user('cadre@x.org', { commsCadre: true }));
+  });
+
+  const bell = async (email: string) => {
+    const listing = await listObjects(`notifications/${email}/`, env);
+    return Promise.all(listing.objects.map((o: { key: string }) => getObject<any>(o.key, env)));
+  };
+
+  it('asks the listed approvers and tells the Comms Cadre in the app, and records the asks, when email fails', async () => {
+    sendSpy.mockRejectedValue(new Error('SES rejected the credentials'));
+    const live = { ...submission, id: 's2', requiredApprovers: ['pat@x.org', 'Kim@x.org'] };
+    await expect(notifyRequestSubmitted(live, { id: 'id-sam', email: 'sam@x.org', name: 'sam' }, env)).resolves.toBeUndefined();
+
+    // Both emails were tried (approvers, then the Comms Cadre) and both failed
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    for (const email of ['pat@x.org', 'kim@x.org']) {
+      expect(await bell(email)).toEqual([expect.objectContaining({ type: 'submission_waiting', submissionId: 's2' })]);
+    }
+    expect(await bell('cadre@x.org')).toEqual([expect.objectContaining({ type: 'request_submitted', submissionId: 's2' })]);
+    expect(await bell('sam@x.org')).toEqual([]);
+    expect(Object.keys(await getAskLog(env, 's2')).sort()).toEqual(['cadre@x.org', 'kim@x.org', 'pat@x.org']);
+  });
+
+  it('emails, notifies and records everyone when email works', async () => {
+    const live = { ...submission, id: 's3', requiredApprovers: ['pat@x.org'] };
+    await notifyRequestSubmitted(live, { id: 'id-sam', email: 'sam@x.org', name: 'sam' }, env);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(await bell('pat@x.org')).toHaveLength(1);
+    expect(await bell('cadre@x.org')).toHaveLength(1);
+    expect(Object.keys(await getAskLog(env, 's3')).sort()).toEqual(['cadre@x.org', 'pat@x.org']);
   });
 });
 

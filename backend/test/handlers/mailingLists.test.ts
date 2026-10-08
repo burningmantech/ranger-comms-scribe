@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { router as listsRouter } from '../../src/handlers/mailingLists';
 import { router as contentRouter } from '../../src/handlers/contentSubmission';
-import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
+import { clearMemoryCache, getObject, listObjects, putObject } from '../../src/services/cacheService';
 import { saveUser } from '../../src/services/userService';
 import { withDerivedAccess } from '../../src/services/access';
 import { CreateSession } from '../../src/utils/sessionManager';
@@ -176,6 +176,32 @@ describe('reminders', () => {
     expect((await call(contentRouter, 'POST', '/api/content/submissions/r1/remind', 'member', { target: 'council' })).status).toBe(200);
     await putObject('content_submissions/r2', submission('r2', { status: 'approved' }), env);
     expect((await call(contentRouter, 'POST', '/api/content/submissions/r2/remind', 'cadre', { target: 'council' })).status).toBe(409);
+  });
+
+  it('reminds in the app when the email fails, says so without the SES error, and counts it', async () => {
+    sendSpy.mockRejectedValue(new Error('UnrecognizedClientException: The security token included in the request is invalid.'));
+    let res = await call(contentRouter, 'POST', '/api/content/submissions/r1/remind', 'council', { target: 'approver@x.org' });
+    expect(res.status).toBe(200);
+    expect(res.body.emailFailed).toBe(true);
+    expect(res.body.reminder).toMatchObject({ target: 'approver@x.org', to: ['approver@x.org'], by: 'council@x.org', emailFailed: true });
+    expect(JSON.stringify(res.body)).not.toMatch(/UnrecognizedClientException|security token/);
+    const bell = await listObjects('notifications/approver@x.org/', env);
+    expect(bell.objects).toHaveLength(1);
+    expect(await getObject<any>(bell.objects[0].key, env)).toMatchObject({ type: 'submission_waiting', submissionId: 'r1' });
+    expect((await getObject<any>('content_submissions/r1', env)).reminders).toHaveLength(1);
+
+    // They were reminded (in Scribe), so the once-a-day limit applies
+    res = await call(contentRouter, 'POST', '/api/content/submissions/r1/remind', 'council', { target: 'approver@x.org' });
+    expect(res.status).toBe(429);
+  });
+
+  it("fails with a plain message, logging nothing as a reminder, when neither the email nor the bell reached anyone", async () => {
+    sendSpy.mockRejectedValue(new Error('UnrecognizedClientException: The security token included in the request is invalid.'));
+    await putObject('content_submissions/r4', submission('r4', { status: 'in_review', requiredApprovers: ['ghost@x.org'] }), env);
+    const res = await call(contentRouter, 'POST', '/api/content/submissions/r4/remind', 'cadre', { target: 'ghost@x.org' });
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("The reminder couldn't be sent. Try again later.");
+    expect((await getObject<any>('content_submissions/r4', env)).reminders).toBeUndefined();
   });
 
   it('goes only to COMMS_EMAIL_OVERRIDE on dev', async () => {

@@ -66,9 +66,24 @@ export async function recordAsked(env: Env, submissionId: string, emails: string
 }
 
 /**
+ * Thrown by `askForApproval` when the email couldn't be sent. The in-app notifications went out
+ * anyway: `notified` are the lowercased emails that got one (people without an account get none).
+ * The SES error is in `emailError` and the message; log it, never show it to the person.
+ */
+export class ApprovalEmailError extends Error {
+  constructor(readonly notified: string[], readonly emailError: unknown) {
+    super(`Could not email the approval request: ${emailError instanceof Error ? emailError.message : String(emailError)}`);
+    this.name = 'ApprovalEmailError';
+  }
+}
+
+/**
  * Ask people to approve a request: an email (through COMMS_EMAIL_OVERRIDE on dev and staging)
  * and an in-app notification each. `kind` 'added': they were just added as an approver;
- * 'reminder': someone reminded them; 'submitted': the request was just submitted. Records when they were asked. Throws if the email can't be sent.
+ * 'reminder': someone reminded them; 'submitted': the request was just submitted.
+ * The in-app notifications go out even when the email fails. Records when they were asked
+ * (everyone when the email went out, else those the in-app notification reached), then throws
+ * an `ApprovalEmailError` if the email couldn't be sent.
  */
 export async function askForApproval(
   submission: ContentSubmission,
@@ -93,14 +108,20 @@ export async function askForApproval(
     details: await requestDetails(submission, env).catch(() => []),
     action: { label: 'Open the request', url: requestLink(env, submission.id) },
   });
-  await sendWorkflowEmail(env, emails, subject, rendered);
-  await recordAsked(env, submission.id, emails);
-
+  let emailError: unknown = null;
   try {
-    for (const email of emails) {
+    await sendWorkflowEmail(env, emails, subject, rendered);
+  } catch (err) {
+    emailError = err ?? new Error('Email failed');
+  }
+
+  // The bell gets the ask whatever happened to the email
+  const notified: string[] = [];
+  for (const email of emails) {
+    try {
       const person = await getUser(email, env).catch(() => null);
       if (!person) continue;
-      await createInAppNotification({
+      const notification = await createInAppNotification({
         userId: person.email,
         type: 'submission_waiting',
         title: 'Your approval is needed',
@@ -109,10 +130,15 @@ export async function askForApproval(
         submissionTitle: submission.title,
         actorName: by,
       }, env);
+      if (notification) notified.push(normalizeEmail(email));
+    } catch (err) {
+      console.error(`Could not add the approval notification for ${email}:`, err);
     }
-  } catch (err) {
-    console.error('Could not add approval notifications:', err);
   }
+
+  // They were asked if either the email or the bell reached them (the digest waits from here)
+  await recordAsked(env, submission.id, emailError ? notified : emails);
+  if (emailError) throw new ApprovalEmailError(notified, emailError);
 }
 
 // =============================================================================
@@ -188,15 +214,16 @@ export async function notifyRequestSubmitted(submission: ContentSubmission, acto
       action: { label: 'Open the request', url: requestLink(env, submission.id) },
     });
     const emails = cadre.map((p) => normalizeEmail(p.email));
+    let emailed = false;
     try {
       await sendWorkflowEmail(env, emails, `New request: "${submission.title}"`, rendered);
-      // Only once they've been told: the reminder digest counts the wait from here
-      await recordAsked(env, submission.id, emails);
+      emailed = true;
     } catch (err) {
       console.error(`Could not email the Comms Cadre about ${submission.id}:`, err);
     }
+    const notified: string[] = [];
     for (const email of emails) {
-      await createInAppNotification({
+      const notification = await createInAppNotification({
         userId: email,
         type: 'request_submitted',
         title: 'New request',
@@ -205,7 +232,10 @@ export async function notifyRequestSubmitted(submission: ContentSubmission, acto
         submissionTitle: submission.title,
         actorName: by,
       }, env);
+      if (notification) notified.push(email);
     }
+    // Only once they've been told (by email, else in the app): the reminder digest counts the wait from here
+    await recordAsked(env, submission.id, emailed ? emails : notified);
   } catch (err) {
     console.error(`Could not tell people about the new request ${submission.id}:`, err);
   }

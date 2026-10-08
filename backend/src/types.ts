@@ -224,6 +224,8 @@ export interface SubmissionReminder {
   by: string;
   byName: string;
   at: string;
+  /** The email couldn't be sent; `to` got the in-app notification only. */
+  emailFailed?: boolean;
 }
 
 /** The feedback tab's global switch, at settings/feedback (Admin → Feedback). */
