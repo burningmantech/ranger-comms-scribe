@@ -19,7 +19,7 @@ import TrayPanel from '../components/newsletter/TrayPanel';
 import HtmlFrame from '../components/newsletter/HtmlFrame';
 import { isWebUrl } from '../components/newsletter/urls';
 import { STATUS_LABELS } from './NewsletterEditions';
-import { storedUser } from '../utils/newsletterAccess';
+import { canEditNewsletter, storedUser } from '../utils/newsletterAccess';
 import '../components/newsletter/newsletter.css';
 import './NewsletterEditor.css';
 
@@ -199,10 +199,13 @@ export const NewsletterEditor: React.FC = () => {
   const saving = useRef<Promise<void> | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopped = useRef(false); // a conflict stops autosave until it is resolved
+  // Only the Comms Cadre and Admins edit (the server says, once loaded); others see it read-only
+  const canEditRef = useRef(canEditNewsletter(user));
 
   /** Take the server's edition (after load or an action); `remount` refreshes the rich text editors. */
   const applyView = useCallback((next: EditionView, remount: boolean) => {
     setView(next);
+    if (typeof next.permissions.canEdit === 'boolean') canEditRef.current = next.permissions.canEdit;
     versionRef.current = next.edition.version;
     if (remount || !draftRef.current) {
       draftRef.current = next.edition;
@@ -275,7 +278,7 @@ export const NewsletterEditor: React.FC = () => {
   // Warn before leaving with unsaved edits
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (editSeq.current !== savedSeq.current) {
+      if (canEditRef.current && editSeq.current !== savedSeq.current) {
         e.preventDefault();
         e.returnValue = '';
       }
@@ -286,7 +289,7 @@ export const NewsletterEditor: React.FC = () => {
 
   const edit = useCallback((change: (d: NewsletterEdition) => NewsletterEdition) => {
     const current = draftRef.current;
-    if (!current) return;
+    if (!current || !canEditRef.current) return;
     const next = change(current);
     draftRef.current = next;
     setDraft(next);
@@ -359,6 +362,19 @@ export const NewsletterEditor: React.FC = () => {
     }
   };
 
+  /** Open a dialog fresh: no text, and no error from an earlier action. */
+  const openDialog = (kind: 'send' | 'changes' | 'override') => {
+    setDialogText('');
+    setActionMessage((m) => (m?.kind === 'error' ? null : m));
+    setDialog(kind);
+  };
+
+  /** Close the confirm dialog; an error it showed goes with it. */
+  const closeDialog = () => {
+    setDialog(null);
+    setActionMessage((m) => (m?.kind === 'error' ? null : m));
+  };
+
   const sectionIdsKey = useMemo(() => (draft ? draft.sections.map((s) => s.id).join(',') : ''), [draft]);
 
   if (loadError) {
@@ -373,7 +389,8 @@ export const NewsletterEditor: React.FC = () => {
 
   const { edition, permissions } = view;
   const sent = edition.status === 'sent';
-  const locked = sent;
+  const canEdit = permissions.canEdit ?? canEditNewsletter(user);
+  const locked = sent || !canEdit;
   const subjectLine = `${draft.subject.trim() ? `${draft.subject.trim()} - ` : ''}Ranger News #${draft.number}`;
   const myEmail = (user?.email || '').toLowerCase();
   const myDecision = edition.approvals
@@ -395,11 +412,11 @@ export const NewsletterEditor: React.FC = () => {
           <Link to="/newsletter/editions" className="nle-back">← Editions</Link>
           <h1>Ranger News #{draft.number}</h1>
           <span className={`nl-badge nl-badge-${edition.status}`}>{STATUS_LABELS[edition.status]}</span>
-          {!sent && <span className={`nle-save nle-save-${saveState}`} role="status">{saveLabel[saveState]}</span>}
+          {!sent && canEdit && <span className={`nle-save nle-save-${saveState}`} role="status">{saveLabel[saveState]}</span>}
         </div>
         <ApprovalSummary view={view} />
         <div className="nle-actions">
-          {edition.status === 'draft' && (
+          {edition.status === 'draft' && canEdit && (
             <button type="button" className="btn btn-neutral" disabled={!!busy} onClick={() => act('submit', () => newsletterService.submitForApproval(id), { ok: 'Approvers have been notified' })}>
               Ask for approval
             </button>
@@ -425,12 +442,12 @@ export const NewsletterEditor: React.FC = () => {
               >
                 {myDecision?.status === 'approved' ? 'Approved ✓' : 'Approve'}
               </button>
-              <button type="button" className="btn btn-neutral" disabled={!!busy} onClick={() => { setDialogText(''); setDialog('changes'); }}>
+              <button type="button" className="btn btn-neutral" disabled={!!busy} onClick={() => openDialog('changes')}>
                 Request changes
               </button>
               </>)}
               {permissions.canOverride && (
-                <button type="button" className="btn btn-neutral" disabled={!!busy} onClick={() => { setDialogText(''); setDialog('override'); }}>
+                <button type="button" className="btn btn-neutral" disabled={!!busy} onClick={() => openDialog('override')}>
                   Override
                 </button>
               )}
@@ -444,13 +461,13 @@ export const NewsletterEditor: React.FC = () => {
               {busy === 'test' ? 'Sending…' : 'Send test to me'}
             </button>
           )}
-          {edition.status === 'approved' && (
+          {edition.status === 'approved' && canEdit && (
             <button
               type="button"
               className="btn btn-primary nle-send"
               disabled={!!busy || !permissions.announceConfigured || saveState !== 'saved'}
               title={!permissions.announceConfigured ? 'Sending is not configured here (ANNOUNCE_EMAIL_TO)' : ''}
-              onClick={() => setDialog('send')}
+              onClick={() => openDialog('send')}
             >
               <i className="fas fa-paper-plane" aria-hidden="true" /> Send to Announce
             </button>
@@ -459,20 +476,25 @@ export const NewsletterEditor: React.FC = () => {
             <Link className="btn btn-neutral" to={`/newsletter/${edition.number}`}>View the public page</Link>
           )}
         </div>
-        {actionMessage && (
+        {actionMessage && !(dialog && actionMessage.kind === 'error') && (
           <div className={actionMessage.kind === 'error' ? 'field-error' : 'nle-ok'} role={actionMessage.kind === 'error' ? 'alert' : 'status'}>{actionMessage.text}</div>
+        )}
+        {!sent && !canEdit && (
+          <div className="nle-muted nle-readonly-note">
+            Only the Comms Cadre edit the newsletter{permissions.canApprove ? '; you can approve or request changes.' : '.'}
+          </div>
         )}
         {edition.status === 'approved' && (
           <div className="nle-muted">Approved as it is now. Any edit sends it back for approval.</div>
         )}
-        {edition.status === 'approved' && !permissions.announceConfigured && (
+        {edition.status === 'approved' && canEdit && !permissions.announceConfigured && (
           <div className="nle-muted">Sending is not configured in this environment.</div>
         )}
       </header>
 
       {conflict && (
         <div className="nle-conflict" role="alert">
-          <strong>Someone else saved this edition</strong> ({conflict.updatedBy}, version {conflict.version}) while you were editing. Your latest changes are not saved.
+          <strong>Someone else saved this edition</strong> ({conflict.updatedByName || conflict.updatedBy}, version {conflict.version}) while you were editing. Your latest changes are not saved.
           <div className="nle-conflict-actions">
             <button type="button" className="btn btn-sm btn-neutral" onClick={() => resolveConflict(false)}>Load their version (drop my changes)</button>
             <button type="button" className="btn btn-sm btn-primary" onClick={() => resolveConflict(true)}>Keep mine (replace theirs)</button>
@@ -535,7 +557,8 @@ export const NewsletterEditor: React.FC = () => {
           </section>
 
           <h2 className="nle-heading">Sections</h2>
-          {draft.sections.length === 0 && (
+          {draft.sections.length === 0 && locked && <p className="nle-muted">No sections yet.</p>}
+          {draft.sections.length === 0 && !locked && (
             <p className="nle-muted">No sections yet. Add approved requests from the <button type="button" className="nle-linkbtn" onClick={() => setSideTab('tray')}>tray</button>, or write your own.</p>
           )}
           {draft.sections.map((section, i) => (
@@ -598,7 +621,7 @@ export const NewsletterEditor: React.FC = () => {
         <aside className="nle-side">
           <div className="nle-tabs" role="tablist">
             <button type="button" role="tab" aria-selected={sideTab === 'preview'} className={sideTab === 'preview' ? 'active' : ''} onClick={() => setSideTab('preview')}>Preview</button>
-            {!sent && <button type="button" role="tab" aria-selected={sideTab === 'tray'} className={sideTab === 'tray' ? 'active' : ''} onClick={() => setSideTab('tray')}>Add from requests</button>}
+            {!locked && <button type="button" role="tab" aria-selected={sideTab === 'tray'} className={sideTab === 'tray' ? 'active' : ''} onClick={() => setSideTab('tray')}>Add from requests</button>}
             <button type="button" role="tab" aria-selected={sideTab === 'activity'} className={sideTab === 'activity' ? 'active' : ''} onClick={() => setSideTab('activity')}>
               Activity{edition.comments.length ? ` (${edition.comments.length})` : ''}
             </button>
@@ -622,7 +645,7 @@ export const NewsletterEditor: React.FC = () => {
                 {preview ? <HtmlFrame html={preview.html} title="Newsletter preview" className="nle-preview-frame" /> : !previewError && <p className="nle-muted">Loading the preview…</p>}
               </>
             )}
-            {sideTab === 'tray' && !sent && (
+            {sideTab === 'tray' && !locked && (
               <TrayPanel
                 disabled={!!busy}
                 refreshKey={sectionIdsKey}
@@ -641,7 +664,7 @@ export const NewsletterEditor: React.FC = () => {
       </div>
 
       {dialog && (
-        <div className="request-changes-overlay" onClick={() => setDialog(null)}>
+        <div className="request-changes-overlay" onClick={closeDialog}>
           <div className="request-changes-dialog" role="dialog" aria-modal="true" aria-labelledby="nle-dialog-title" onClick={(e) => e.stopPropagation()}>
             {dialog === 'send' && (
               <>
@@ -662,8 +685,11 @@ export const NewsletterEditor: React.FC = () => {
                 <textarea className="form-control" rows={3} value={dialogText} placeholder="Why? (recorded on the edition)" onChange={(e) => setDialogText(e.target.value)} aria-label="Reason for the override" />
               </>
             )}
+            {actionMessage?.kind === 'error' && (
+              <div className="field-error" role="alert">{actionMessage.text}</div>
+            )}
             <div className="request-changes-actions">
-              <button type="button" className="btn btn-neutral" onClick={() => setDialog(null)}>Cancel</button>
+              <button type="button" className="btn btn-neutral" onClick={closeDialog}>Cancel</button>
               <button
                 type="button"
                 className="btn btn-primary"

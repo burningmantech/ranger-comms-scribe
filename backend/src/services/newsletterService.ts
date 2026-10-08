@@ -110,6 +110,11 @@ export function archivePageUrl(env: Env): string | null {
 const editionKey = (id: string) => `${EDITION_PREFIX}${id}`;
 const submissionKey = (id: string) => `content_submissions/${id}`;
 const userKey = (user: User) => user.id || user.email;
+/** How a person is shown on an edition (who saved it last). */
+const displayName = (user: User) => user.name || user.email || user.id;
+
+/** What the sender sees when SES refuses an edition (the SES text is only logged). */
+export const SEND_FAILED_MESSAGE = "The email couldn't be sent, so nothing went out. Try again later.";
 
 /**
  * Edits to one edition are applied one at a time (each is a read, then a write, with awaits
@@ -248,6 +253,7 @@ export async function createEdition(
       createdBy: userKey(user),
       createdAt: now,
       updatedBy: userKey(user),
+      updatedByName: displayName(user),
       updatedAt: now,
     };
     await putObject(editionKey(edition.id), edition, env);
@@ -259,6 +265,7 @@ export async function createEdition(
 function touch(edition: NewsletterEdition, user: User): void {
   edition.version += 1;
   edition.updatedBy = userKey(user);
+  edition.updatedByName = displayName(user);
   edition.updatedAt = new Date().toISOString();
   if (edition.status === 'approved') {
     edition.status = 'in_review';
@@ -892,14 +899,25 @@ export async function sendTestEdition(id: string, user: User, env: Env): Promise
   const { sendEmail } = await import('../utils/email');
   const { embedGalleryImages } = await import('./announcementEmail');
   const embedded = await embedGalleryImages(email.html, env);
-  await sendEmail(user.email, `[TEST] ${email.subject}`, email.text, env, {
-    html: embedded.html,
-    text: email.text,
-    attachments: embedded.attachments,
-    ...(edition.replyTo && validReplyTo(edition.replyTo) ? { replyTo: validReplyTo(edition.replyTo)! } : {}),
-  });
+  try {
+    await sendEmail(user.email, `[TEST] ${email.subject}`, email.text, env, {
+      html: embedded.html,
+      text: email.text,
+      attachments: embedded.attachments,
+      ...(edition.replyTo && validReplyTo(edition.replyTo) ? { replyTo: validReplyTo(edition.replyTo)! } : {}),
+    });
+  } catch (err) {
+    console.error(`Newsletter #${edition.number}: the test email to ${user.email} failed:`, err);
+    throw new ServiceError(502, "The test email couldn't be sent. Try again later.");
+  }
   return { to: user.email };
 }
+
+/**
+ * Editions whose email went out from this process. Normally the stored edition says so; this
+ * stops a second send if recording it failed (the store was unreachable right after SES).
+ */
+const sentInProcess = new Map<string, string>();
 
 export async function sendEdition(id: string, user: User, env: Env): Promise<NewsletterEdition> {
   const toAddress = env.ANNOUNCE_EMAIL_TO;
@@ -907,7 +925,7 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
 
   return serialized(editionKey(id), async () => {
     const edition = await requireEdition(id, env);
-    if (edition.status === 'sent') throw new ServiceError(409, 'This edition has already been sent');
+    if (edition.status === 'sent' || sentInProcess.has(edition.id)) throw new ServiceError(409, 'This edition has already been sent');
     if (edition.status !== 'approved' || edition.approvedVersion !== edition.version) {
       throw new ServiceError(409, 'The edition must be approved (in its current version) before it is sent');
     }
@@ -924,43 +942,66 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
 
     const asOf = todayIso();
     const email = await renderEdition(edition, env, asOf);
-    const { sendEmail } = await import('../utils/email');
+    const { sendEmail, commsRecipients } = await import('../utils/email');
     const { embedGalleryImages } = await import('./announcementEmail');
     const embedded = await embedGalleryImages(email.html, env);
     const replyTo = edition.replyTo ? validReplyTo(edition.replyTo) : null;
-    await sendEmail(toAddress, email.subject, email.text, env, {
-      html: embedded.html,
-      text: email.text,
-      attachments: embedded.attachments,
-      ...(replyTo ? { replyTo } : {}),
-    });
+    // On dev and staging (COMMS_EMAIL_OVERRIDE) it goes to the override, as announcements do
+    const delivery = commsRecipients([toAddress], email.subject, env);
+    try {
+      await sendEmail(delivery.to, delivery.subject, email.text, env, {
+        html: embedded.html,
+        text: email.text,
+        attachments: embedded.attachments,
+        ...(replyTo ? { replyTo } : {}),
+      });
+    } catch (err) {
+      console.error(`Newsletter #${edition.number}: the email to Announce failed, nothing was sent:`, err);
+      throw new ServiceError(502, SEND_FAILED_MESSAGE);
+    }
 
+    // It has gone out. Record that first, so it can't be sent twice; nothing after this fails the send.
     const sentAt = new Date().toISOString();
-    const sent: SentEdition = { number: edition.number, editionId: edition.id, subject: email.subject, sentAt, html: email.html, text: email.text };
-    await putObject(`${SENT_PREFIX}${edition.number}`, sent, env);
-
+    sentInProcess.set(edition.id, sentAt);
     edition.status = 'sent';
     edition.sentAt = sentAt;
     edition.sentBy = userKey(user);
-    await putObject(editionKey(edition.id), edition, env);
+    try {
+      await putObject(editionKey(edition.id), edition, env);
+    } catch (err) {
+      console.error(`Newsletter #${edition.number} WAS SENT but could not be marked sent (edition ${edition.id}):`, err);
+      throw new ServiceError(500, "The newsletter went out, but Scribe couldn't record that. Don't send it again; tell an Admin.");
+    }
+
+    // The public web page of the edition
+    try {
+      const sent: SentEdition = { number: edition.number, editionId: edition.id, subject: email.subject, sentAt, html: email.html, text: email.text };
+      await putObject(`${SENT_PREFIX}${edition.number}`, sent, env);
+    } catch (err) {
+      console.error(`Newsletter #${edition.number}: sent, but its public page could not be saved:`, err);
+    }
 
     const newlySent: ContentSubmission[] = [];
     for (const section of edition.sections) {
       if (!section.sourceSubmissionId) continue;
-      const changes = await getTrackedChanges(section.sourceSubmissionId, env);
-      await updateSubmission(section.sourceSubmissionId, env, (submission) => {
-        submission.newsletterSentIn = edition.number;
-        submission.newsletterEditionId = edition.id;
-        // Done, unless it also goes out on its own (singular / allcom)
-        const keys = audienceKeys(submission, changes);
-        if (submission.status === 'approved' && !keys.some((k) => STANDALONE_EMAIL_AUDIENCES.has(k))) {
-          submission.status = 'sent';
-          submission.sentAt = sentAt;
-          submission.sentBy = userKey(user);
-          if (!newlySent.some((s) => s.id === submission.id)) newlySent.push(submission);
-        }
-        return true;
-      });
+      try {
+        const changes = await getTrackedChanges(section.sourceSubmissionId, env);
+        await updateSubmission(section.sourceSubmissionId, env, (submission) => {
+          submission.newsletterSentIn = edition.number;
+          submission.newsletterEditionId = edition.id;
+          // Done, unless it also goes out on its own (singular / allcom)
+          const keys = audienceKeys(submission, changes);
+          if (submission.status === 'approved' && !keys.some((k) => STANDALONE_EMAIL_AUDIENCES.has(k))) {
+            submission.status = 'sent';
+            submission.sentAt = sentAt;
+            submission.sentBy = userKey(user);
+            if (!newlySent.some((s) => s.id === submission.id)) newlySent.push(submission);
+          }
+          return true;
+        });
+      } catch (err) {
+        console.error(`Newsletter #${edition.number}: sent, but request ${section.sourceSubmissionId} could not be marked:`, err);
+      }
     }
 
     // Each request's item goes in the Comms Calendar. Never fails the send: it has gone out.
@@ -981,7 +1022,11 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
 
     // Tell each submitter whose request this edition finished (never fails the send)
     for (const submission of newlySent) {
-      await notifySubmitter(submission, 'sent', user, env, { edition: edition.number });
+      try {
+        await notifySubmitter(submission, 'sent', user, env, { edition: edition.number });
+      } catch (err) {
+        console.error(`Newsletter #${edition.number}: could not tell the submitter of ${submission.id}:`, err);
+      }
     }
     return edition;
   });

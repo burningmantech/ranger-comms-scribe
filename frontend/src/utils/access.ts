@@ -97,6 +97,15 @@ export function canUseNewsletter(user: PersonLike | null | undefined): boolean {
   return a.isAdmin || a.commsCadre || a.councilRole === 'CommunicationsManager';
 }
 
+/**
+ * Builds and sends newsletter editions: Comms Cadre or Admin (backend `canManageNewsletter`).
+ * The Communications Manager reviews, approves and overrides, but doesn't edit.
+ */
+export function canEditNewsletter(user: PersonLike | null | undefined): boolean {
+  const a = accessOf(user);
+  return a.isAdmin || a.commsCadre;
+}
+
 /** The signed-in user saved at sign-in (localStorage 'user'), or null. */
 export function storedUser<T extends PersonLike = PersonLike & { id?: string; email?: string; name?: string }>(): T | null {
   try {

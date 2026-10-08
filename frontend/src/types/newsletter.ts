@@ -111,6 +111,8 @@ export interface NewsletterEdition {
   createdBy: string;
   createdAt: string;
   updatedBy: string;
+  /** The name (else email) of who saved last; older editions have only updatedBy (a user id). */
+  updatedByName?: string;
   updatedAt: string;
   sentBy?: string;
   sentAt?: string;
@@ -150,6 +152,8 @@ export interface EditionView {
   /** Who can give the Communications Manager approval (Admin → Council). */
   commsManagers: Array<{ name: string; email: string }>;
   permissions: {
+    /** May change the edition (Comms Cadre or Admin); the server's answer. */
+    canEdit?: boolean;
     canApprove: boolean;
     /** The gates the signed-in user's approval counts for. */
     approvesAs: { commsCadre: boolean; commsManager: boolean };

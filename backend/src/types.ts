@@ -391,7 +391,9 @@ export interface NewsletterEdition {
   comments: ContentComment[];
   createdBy: string;
   createdAt: string;
+  /** Who saved last: user id (else email), and their name (else email) to show. Older editions have no name. */
   updatedBy: string;
+  updatedByName?: string;
   updatedAt: string;
   sentBy?: string;
   sentAt?: string;

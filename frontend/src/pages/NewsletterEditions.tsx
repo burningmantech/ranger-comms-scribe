@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { newsletterService } from '../services/newsletterService';
 import { EditionStatus, EditionSummary } from '../types/newsletter';
+import { canEditNewsletter, storedUser } from '../utils/newsletterAccess';
 import '../components/newsletter/newsletter.css';
 import './NewsletterEditor.css';
 
@@ -30,6 +31,8 @@ export const NewsletterEditions: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  // Only the Comms Cadre and Admins build editions; the Communications Manager reviews them
+  const canEdit = canEditNewsletter(storedUser());
 
   useEffect(() => {
     newsletterService.listEditions()
@@ -63,6 +66,7 @@ export const NewsletterEditions: React.FC = () => {
         <Link to="/newsletter" className="nle-link">Public archive <i className="fas fa-external-link-alt" aria-hidden="true" /></Link>
       </header>
 
+      {canEdit ? (
       <form className="nle-new" onSubmit={create}>
         <label htmlFor="nle-new-subject" className="nle-new-label">
           Start Ranger News #{nextNumber ?? '…'}
@@ -82,6 +86,9 @@ export const NewsletterEditions: React.FC = () => {
         </div>
         <div className="field-hint">You can change the subject later. Standing dates from the last edition's calendar carry over.</div>
       </form>
+      ) : (
+        <p className="nle-muted">The Comms Cadre build the editions. Open one to read it, approve it or request changes.</p>
+      )}
 
       {error && <div className="field-error" role="alert">{error}</div>}
       {!editions && !error && <p className="nle-muted">Loading…</p>}
@@ -113,7 +120,7 @@ export const NewsletterEditions: React.FC = () => {
           </section>
         );
       })}
-      {editions && editions.length === 0 && <p className="nle-muted">No editions yet. Start the first one above.</p>}
+      {editions && editions.length === 0 && <p className="nle-muted">No editions yet.{canEdit ? ' Start the first one above.' : ''}</p>}
     </div>
   );
 };

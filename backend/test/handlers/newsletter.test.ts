@@ -392,6 +392,122 @@ describe('newsletter editions', () => {
     expect(res.body.edition.comments.map((c: any) => c.content)).toEqual(['Changes requested: Fix the date']);
   });
 
+  /** An edition with the ticket and legacy sections, approved by the Comms Cadre and the Communications Manager. */
+  async function approvedEdition(): Promise<string> {
+    const id = (await nl(env, 'POST', '/editions', CADRE, { subject: 'Tickets' })).body.edition.id;
+    await nl(env, 'POST', `/editions/${id}/sections/from-submission`, CADRE, { submissionId: 'ticket' });
+    const res = await nl(env, 'POST', `/editions/${id}/sections/from-submission`, CADRE, { submissionId: 'legacy' });
+    const version = res.body.edition.version;
+    await nl(env, 'POST', `/editions/${id}/approve`, CADRE, { status: 'approved', version });
+    const approved = await nl(env, 'POST', `/editions/${id}/approve`, ADMIN, { status: 'approved', version });
+    expect(approved.body.edition.status).toBe('approved');
+    return id;
+  }
+
+  const announceSends = () => sendSpy.mock.calls
+    .map((c) => (c[0] as SendEmailCommand).input)
+    .filter((i) => i.Destination?.ToAddresses?.includes(ANNOUNCE_TO));
+
+  it('lets the Communications Manager review but not edit, and says so', async () => {
+    await saveUser(withDerivedAccess({
+      id: 'cm-only', email: 'cm@localhost', name: 'Casey Manager', verified: true, groups: [], roles: [], userType: 'Member',
+      isAdmin: false, commsCadre: false, councilRole: 'CommunicationsManager',
+    } as any) as any, env);
+    const MANAGER = await CreateSession('cm@localhost', { email: 'cm@localhost' }, env);
+    const id = (await nl(env, 'POST', '/editions', CADRE, { subject: 'S' })).body.edition.id;
+
+    const seen = await nl(env, 'GET', `/editions/${id}`, MANAGER);
+    expect(seen.status).toBe(200);
+    expect(seen.body.permissions.canEdit).toBe(false);
+    expect(seen.body.permissions.canApprove).toBe(true);
+    expect((await nl(env, 'GET', `/editions/${id}`, CADRE)).body.permissions.canEdit).toBe(true);
+    expect((await nl(env, 'GET', `/editions/${id}`, ADMIN)).body.permissions.canEdit).toBe(true);
+
+    const save = await nl(env, 'PUT', `/editions/${id}`, MANAGER, { version: 1, subject: 'Mine' });
+    expect(save.status).toBe(403);
+    expect(save.body.error).toBe('Only the Comms Cadre can work on the newsletter');
+    expect((await nl(env, 'POST', `/editions/${id}/approve`, MANAGER, { status: 'approved', version: 1 })).status).toBe(200);
+  });
+
+  it('records who saved last by name, for the conflict message', async () => {
+    const created = (await nl(env, 'POST', '/editions', ADMIN, { subject: 'S' })).body.edition;
+    expect(created.updatedByName).toBe('Dev Admin');
+    const saved = await nl(env, 'PUT', `/editions/${created.id}`, CADRE, { version: created.version, subject: 'Theirs' });
+    expect(saved.body.edition.updatedBy).toBe('dev-user2');
+    expect(saved.body.edition.updatedByName).toBe('Test Reviewer');
+    const stale = await nl(env, 'PUT', `/editions/${created.id}`, ADMIN, { version: created.version, subject: 'Mine' });
+    expect(stale.status).toBe(409);
+    expect(stale.body.edition.updatedByName).toBe('Test Reviewer');
+    // Adding from the tray is a save too
+    const added = await nl(env, 'POST', `/editions/${created.id}/sections/from-submission`, ADMIN, { submissionId: 'ticket' });
+    expect(added.body.edition.updatedByName).toBe('Dev Admin');
+  });
+
+  it('reports a failed send as a 502 without the SES text, and the edition can be sent again', async () => {
+    const id = await approvedEdition();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    sendSpy.mockImplementationOnce(async () => { throw new Error('MessageRejected: Email address is not verified. secret-arn'); });
+    const failed = await nl(env, 'POST', `/editions/${id}/send`, CADRE);
+    expect(failed.status).toBe(502);
+    expect(failed.body.error).toBe("The email couldn't be sent, so nothing went out. Try again later.");
+    expect(JSON.stringify(failed.body)).not.toMatch(/MessageRejected|secret-arn/);
+    expect((await getObject<any>(`newsletter_editions/${id}`, env)).status).toBe('approved');
+    expect(await getObject<any>('newsletter_sent/11', env)).toBeNull();
+    expect((await getObject<any>('content_submissions/legacy', env)).newsletterSentIn).toBeUndefined();
+
+    const retry = await nl(env, 'POST', `/editions/${id}/send`, CADRE);
+    expect(retry.status).toBe(200);
+    expect(retry.body.edition.status).toBe('sent');
+  });
+
+  it('reports a failed test send as a 502 without the SES text', async () => {
+    const id = (await nl(env, 'POST', '/editions', CADRE, { subject: 'S' })).body.edition.id;
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    sendSpy.mockImplementationOnce(async () => { throw new Error('Throttling: Maximum sending rate exceeded'); });
+    const failed = await nl(env, 'POST', `/editions/${id}/send-test`, CADRE);
+    expect(failed.status).toBe(502);
+    expect(failed.body.error).not.toMatch(/Throttling/);
+  });
+
+  it('marks the edition sent as soon as the email has gone, whatever fails afterwards', async () => {
+    const id = await approvedEdition();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const put = env.STORE.put.bind(env.STORE);
+    env.STORE.put = async (key: string, ...rest: any[]) => {
+      // Every write after the email has gone (Read more pages are published before it)
+      const afterEmail = announceSends().length > 0;
+      if (key.startsWith('newsletter_sent/') || (afterEmail && (key.startsWith('content_submissions/') || key.startsWith('comms_calendar/')))) {
+        throw new Error(`store down for ${key}`);
+      }
+      return put(key, ...rest);
+    };
+
+    const sent = await nl(env, 'POST', `/editions/${id}/send`, CADRE);
+    expect(sent.status).toBe(200);
+    expect(sent.body.edition.status).toBe('sent');
+    clearMemoryCache();
+    expect((await getObject<any>(`newsletter_editions/${id}`, env)).status).toBe('sent');
+
+    // Never twice
+    expect((await nl(env, 'POST', `/editions/${id}/send`, CADRE)).status).toBe(409);
+    expect(announceSends()).toHaveLength(1);
+  });
+
+  it('sends to COMMS_EMAIL_OVERRIDE on dev, naming Announce in the subject, as announcements do', async () => {
+    env.COMMS_EMAIL_OVERRIDE = 'override@example.org';
+    const id = await approvedEdition();
+    const res = await nl(env, 'POST', `/editions/${id}/send`, CADRE);
+    expect(res.status).toBe(200);
+    expect(announceSends()).toHaveLength(0);
+    const toOverride = sendSpy.mock.calls.map((c) => (c[0] as SendEmailCommand).input)
+      .filter((i) => i.Destination?.ToAddresses?.includes('override@example.org'));
+    const edition = toOverride.find((i) => /Ranger News #11/.test(i.Content?.Simple?.Subject?.Data || ''));
+    expect(edition?.Destination?.ToAddresses).toEqual(['override@example.org']);
+    expect(edition?.Content?.Simple?.Subject?.Data).toBe(`[for ${ANNOUNCE_TO}] Tickets - Ranger News #11`);
+    // The public page keeps the real subject
+    expect((await getObject<any>('newsletter_sent/11', env)).subject).toBe('Tickets - Ranger News #11');
+  });
+
   it('refuses to send without ANNOUNCE_EMAIL_TO', async () => {
     delete env.ANNOUNCE_EMAIL_TO;
     const id = (await nl(env, 'POST', '/editions', CADRE, { subject: 'S' })).body.edition.id;

@@ -112,6 +112,8 @@ async function editionView(current: NewsletterEdition, env: Env, user: User) {
     calendar: editorCalendar(edition),
     documents,
     permissions: {
+      /** Builds the edition (the PUT and section routes): Comms Cadre or Admin. */
+      canEdit: await canManageNewsletter(user, env),
       canApprove: userIsCadre || userIsManager,
       /** The gates this user's approval counts for. */
       approvesAs: { commsCadre: userIsCadre || membership.cadreEmails.has(email), commsManager: userIsManager },
