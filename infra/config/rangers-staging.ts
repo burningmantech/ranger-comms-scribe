@@ -53,6 +53,9 @@ const config: ScribeConfig = {
     COMMS_EMAIL_OVERRIDE: 'noreply@scrivenly.com', // placeholder: staging must not email real lists or approvers
     BOOTSTRAP_ADMIN_EMAILS: '', // placeholder: the first admin's email address
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
+    // Merged real-time editing (Yjs, PRD §14). Legacy whole-document sync loses one person's
+    // text when two people edit within a second; Yjs merges them.
+    COLLAB_MODE: 'yjs',
   },
 
   // Secrets Manager secret created by the stack; set its value after the first deploy.

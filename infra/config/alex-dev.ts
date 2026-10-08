@@ -61,7 +61,7 @@ const config: ScribeConfig = {
     ANNOUNCE_EMAIL_TO: process.env.SCRIBE_ALEX_DEV_ANNOUNCE_EMAIL_TO ?? 'alexander.young@gmail.com',
     BOOTSTRAP_ADMIN_EMAILS: process.env.SCRIBE_ALEX_DEV_BOOTSTRAP_ADMIN_EMAILS || 'alexander.young@gmail.com',
     GOOGLE_CLIENT_ID: '402914910938-47o6ff5rkig658lr4k51rmrmlbm4s4qg.apps.googleusercontent.com',
-    // Merged real-time editing (Yjs, PRD §14) is on in dev; the Rangers environments keep the default 'legacy'.
+    // Merged real-time editing (Yjs, PRD §14), as in the Rangers environments.
     COLLAB_MODE: 'yjs',
     // Sent announcements can be sent again, to test email rendering (they only go to Alex)
     ALLOW_ANNOUNCEMENT_RESEND: 'true',

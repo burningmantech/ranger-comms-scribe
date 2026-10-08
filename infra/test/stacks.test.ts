@@ -275,9 +275,9 @@ describe.each(['rangers-staging', 'rangers-production'])('%s (standard profile)'
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
       expect.arrayContaining([{ Name: 'EMAIL_BCC', Value: '' }]),
     );
-    // Collaboration mode stays at the backend default (legacy) until it's turned on deliberately.
-    expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ Name: 'COLLAB_MODE' })]),
+    // Merged real-time editing (Yjs) is on, as in dev
+    expect(taskDef.Properties.ContainerDefinitions[0].Environment).toEqual(
+      expect.arrayContaining([{ Name: 'COLLAB_MODE', Value: 'yjs' }]),
     );
     // Announcements are sent once outside dev
     expect(taskDef.Properties.ContainerDefinitions[0].Environment).not.toEqual(
