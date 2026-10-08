@@ -65,6 +65,23 @@ const toLocalIsoDate = (d: Date) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
+const getTomorrow = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const getOneWeekOut = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+/** Publish By dates from tomorrow to six days out are urgent. */
+const isDateInUrgentRange = (date: Date) => date >= getTomorrow() && date < getOneWeekOut();
+
 /** Loose check for an approver address (the dev users are user@localhost, so no TLD rule). */
 const looksLikeEmail = (v: string) => /^[^\s@]+@[^\s@]+$/.test(v);
 
@@ -119,6 +136,12 @@ export const CommsRequest: React.FC = () => {
   const annualDates = useAnnualDates();
   // Bumped when a draft is restored, so the blurb editor shows it
   const [blurbEditorKey, setBlurbEditorKey] = useState(0);
+  // Bumped after a submit: remounts the body editor (it reads its content only when it mounts),
+  // the key dates and the dates panel, so nothing of the last request stays on screen
+  const [resetKey, setResetKey] = useState(0);
+  // Whether "urgent" was ticked by the Publish By date (not by the person). Only then does
+  // moving the date out of the next week untick it. Saved with the draft.
+  const urgentAutoRef = useRef(false);
 
   const userJson = localStorage.getItem('user');
   const user = userJson ? JSON.parse(userJson) : null;
@@ -167,6 +190,7 @@ export const CommsRequest: React.FC = () => {
           ...watchedValues,
           editorContent,
           selectedTemplateId,
+          urgentAuto: urgentAutoRef.current,
           newsletterItem,
           helpWithBlurb,
           helpWithDocument,
@@ -201,6 +225,8 @@ export const CommsRequest: React.FC = () => {
             setKeyDates(value as KeyDate[]);
           } else if (key === 'dateLinks' && Array.isArray(value)) {
             setDateLinks(value as DateLink[]);
+          } else if (key === 'urgentAuto') {
+            // handled after the loop
           } else if (key === 'email') {
             // Always use current user's email, not stale draft value
             setValue('email', userEmail);
@@ -208,6 +234,12 @@ export const CommsRequest: React.FC = () => {
             setValue(key as keyof CommsRequestFormData, value as any);
           }
         });
+        // Drafts saved before urgentAuto existed: urgent with a date in the next week was the
+        // date's doing (the form ticks it for those dates).
+        urgentAutoRef.current = typeof draft.urgentAuto === 'boolean'
+          ? draft.urgentAuto && draft.urgentRequest === true
+          : draft.urgentRequest === true && typeof draft.publishBy === 'string'
+            && isDateInUrgentRange(new Date(draft.publishBy + 'T00:00:00'));
       }
     } catch { /* ignore parse errors */ }
   }, [setValue, copyFrom]);
@@ -256,25 +288,6 @@ export const CommsRequest: React.FC = () => {
     };
   }, [copyFrom, copyPublishBy, setValue]);
 
-  const getTomorrow = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  };
-
-  const getOneWeekOut = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 7);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  };
-
-  const isDateInUrgentRange = (date: Date) => {
-    const tomorrow = getTomorrow();
-    const oneWeek = getOneWeekOut();
-    return date >= tomorrow && date < oneWeek;
-  };
 
   const getPublishByDateClassName = (date: Date) => {
     if (isDateInUrgentRange(date)) {
@@ -285,14 +298,23 @@ export const CommsRequest: React.FC = () => {
 
   const publishByDate = publishByValue ? new Date(publishByValue + 'T00:00:00') : null;
 
-  // Auto-check urgent when selecting a date within the next week
+  // A date within the next week ticks urgent; moving it out again unticks it, unless the
+  // person ticked urgent themselves. Both values are read from the form, not this render: a
+  // draft restore sets them in the same commit.
   useEffect(() => {
-    if (!publishByValue) return;
-    const selected = new Date(publishByValue + 'T00:00:00');
-    if (isDateInUrgentRange(selected) && !urgentRequestValue) {
+    const publishBy = getValues('publishBy');
+    if (!publishBy) return;
+    const selected = new Date(publishBy + 'T00:00:00');
+    const urgent = getValues('urgentRequest');
+    if (isDateInUrgentRange(selected) && !urgent) {
+      urgentAutoRef.current = true;
       setValue('urgentRequest', true);
+    } else if (selected >= getOneWeekOut() && urgent && urgentAutoRef.current) {
+      // Later than the urgent week (a restored draft whose date has since passed stays urgent)
+      urgentAutoRef.current = false;
+      setValue('urgentRequest', false);
     }
-  }, [publishByValue]);
+  }, [publishByValue, getValues, setValue]);
 
   // When unchecking urgent, ensure date is at least a week out
   const handleUrgentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -304,6 +326,7 @@ export const CommsRequest: React.FC = () => {
         setValue('publishBy', getDefaultPublishBy());
       }
     }
+    urgentAutoRef.current = false;
     setValue('urgentRequest', isChecked);
   };
 
@@ -607,7 +630,11 @@ export const CommsRequest: React.FC = () => {
       localStorage.removeItem('commsRequestDraft');
       setShowSuccess(true);
       reset();
+      urgentAutoRef.current = false;
       setEditorContent('');
+      setCopiedBody(undefined);
+      setCopySource(null);
+      setResetKey((k) => k + 1);
       setApproverEmails(['']);
       setSkipApprovers(false);
       setSuggestions({});
@@ -711,6 +738,7 @@ export const CommsRequest: React.FC = () => {
             Include any text you'd like us to use, or paste content and links here.
           </div>
           <LexicalEditorComponent
+            key={`body-${resetKey}`}
             initialContent={editorContent}
             onChange={handleEditorChange}
             placeholder="Start typing or paste your content..."
@@ -882,6 +910,7 @@ export const CommsRequest: React.FC = () => {
         <div className="form-field">
           <label>Key dates</label>
           <KeyDatesEditor
+            key={`key-dates-${resetKey}`}
             value={keyDates}
             onChange={setKeyDates}
             hint="Deadlines and events your announcement mentions. They go in the newsletter's “Mark your calendar!” table."
@@ -892,6 +921,7 @@ export const CommsRequest: React.FC = () => {
         </div>
 
         <DatesPanel
+          key={`dates-${resetKey}`}
           sources={dateSources}
           links={dateLinks}
           onLinksChange={setDateLinks}

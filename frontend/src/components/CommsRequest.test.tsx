@@ -9,9 +9,44 @@ jest.mock('../contexts/ContentContext', () => ({
   useContent: () => ({ saveSubmission: mockSaveSubmission }),
 }));
 
+// Behaves like the real editor where it matters here: it reads `initialContent` only when it
+// mounts, applies a `content` prop when it changes, and reports edits (never its own loading)
+// through onChange as Lexical JSON. Typing into the textarea is an edit.
 jest.mock('./editor/LexicalEditor', () => {
-  return function MockLexicalEditor() {
-    return <div data-testid="lexical-editor" />;
+  const ReactLib = jest.requireActual('react');
+  const textOf = (json?: string) => {
+    if (!json) return '';
+    try {
+      const out: string[] = [];
+      const walk = (n: any) => {
+        if (typeof n?.text === 'string') out.push(n.text);
+        (n?.children || []).forEach(walk);
+      };
+      walk(JSON.parse(json).root);
+      return out.join('');
+    } catch {
+      return json;
+    }
+  };
+  const toJson = (text: string) => JSON.stringify({
+    root: { type: 'root', children: [{ type: 'paragraph', children: text ? [{ type: 'text', text }] : [] }] },
+  });
+  return function MockLexicalEditor({ initialContent, content, onChange, placeholder }: any) {
+    const [text, setText] = ReactLib.useState(() => textOf(initialContent));
+    ReactLib.useEffect(() => {
+      if (content !== undefined && content !== null) setText(textOf(content));
+    }, [content]);
+    return (
+      <textarea
+        data-testid="lexical-editor"
+        aria-label={placeholder}
+        value={text}
+        onChange={(e: any) => {
+          setText(e.target.value);
+          onChange?.(null, toJson(e.target.value));
+        }}
+      />
+    );
   };
 });
 
@@ -56,9 +91,9 @@ beforeEach(() => {
   }
 });
 
-function renderForm() {
+function renderForm(path = '/comms-request') {
   const utils = render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <CommsRequest />
     </MemoryRouter>
   );
@@ -296,5 +331,225 @@ describe('CommsRequest wizard', () => {
     expect(sent.newsletter).toBeUndefined();
     expect(sent.writingHelp).toBeUndefined();
     expect(sent.keyDates).toBeUndefined();
+  });
+});
+
+/** YYYY-MM-DD `days` from today, in local time (as the form computes it). */
+const ymdFromToday = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+const urgentBox = () => screen.getByLabelText('This is an urgent request') as HTMLInputElement;
+const publishByInput = () => screen.getByPlaceholderText('Select a date') as HTMLInputElement;
+const setPublishBy = (ymd: string) => fireEvent.change(publishByInput(), { target: { value: ymd } });
+const URGENT_HELP = /require less than a week's turnaround/;
+
+function seedDraft(extra: Record<string, unknown>) {
+  localStorage.setItem('commsRequestDraft', JSON.stringify({
+    suggestedSubjectLine: 'Subject',
+    description: 'Description',
+    signatureText: 'Thanks',
+    audience: ['allcom'],
+    owner: 'Test Member',
+    replyToAddress: 'replies@example.com',
+    ...extra,
+  }));
+}
+
+async function toStep2FromDraft(container: HTMLElement) {
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/council\/members$/), expect.anything()));
+  await waitFor(() => expect(field(container, 'suggestedSubjectLine').value).toBe('Subject'));
+  await clickNext(container, 2);
+}
+
+describe('CommsRequest urgent flag', () => {
+  it('a restored draft made urgent by its date stops being urgent when Publish By moves out of the week', async () => {
+    seedDraft({ publishBy: ymdFromToday(3), urgentRequest: true });
+    const { container } = renderForm();
+    await toStep2FromDraft(container);
+    expect(urgentBox().checked).toBe(true);
+    expect(screen.getByText('Urgent')).toBeInTheDocument();
+
+    setPublishBy(ymdFromToday(42));
+    await waitFor(() => expect(publishByInput().value).toBe(ymdFromToday(42)));
+    expect(urgentBox().checked).toBe(false);
+    expect(screen.queryByText(URGENT_HELP)).not.toBeInTheDocument();
+    expect(screen.queryByText('Urgent')).not.toBeInTheDocument();
+
+    await clickNext(container, 3);
+    await pickSuggestion(container, 'Pat', 'pat@example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Request' }));
+    await waitFor(() => expect(mockSaveSubmission).toHaveBeenCalledTimes(1));
+    const sent = mockSaveSubmission.mock.calls[0][0];
+    expect(sent.formFields.find((f: any) => f.id === 'urgentRequest').value).toBe('No');
+    expect(sent.formFields.find((f: any) => f.id === 'publishBy').value).toBe(ymdFromToday(42));
+  });
+
+  it('picking a date in the next week turns urgent on, and moving it out turns it off again', async () => {
+    const { container } = renderForm();
+    fillStep1(container);
+    await clickNext(container, 2);
+    expect(urgentBox().checked).toBe(false);
+    setPublishBy(ymdFromToday(3));
+    await waitFor(() => expect(urgentBox().checked).toBe(true));
+    expect(screen.getByText(URGENT_HELP)).toBeInTheDocument();
+    setPublishBy(ymdFromToday(30));
+    await waitFor(() => expect(urgentBox().checked).toBe(false));
+    expect(screen.queryByText(URGENT_HELP)).not.toBeInTheDocument();
+  });
+
+  it('urgent the person ticked themselves stays on whatever the date', async () => {
+    const { container } = renderForm();
+    fillStep1(container);
+    await clickNext(container, 2);
+    fireEvent.click(urgentBox());
+    expect(urgentBox().checked).toBe(true);
+    setPublishBy(ymdFromToday(3));
+    await waitFor(() => expect(publishByInput().value).toBe(ymdFromToday(3)));
+    setPublishBy(ymdFromToday(30));
+    await waitFor(() => expect(publishByInput().value).toBe(ymdFromToday(30)));
+    expect(urgentBox().checked).toBe(true);
+  });
+
+  it('a draft that saved urgent as the person\'s own choice keeps it when the date moves out', async () => {
+    seedDraft({ publishBy: ymdFromToday(3), urgentRequest: true, urgentAuto: false });
+    const { container } = renderForm();
+    await toStep2FromDraft(container);
+    expect(urgentBox().checked).toBe(true);
+    setPublishBy(ymdFromToday(42));
+    await waitFor(() => expect(publishByInput().value).toBe(ymdFromToday(42)));
+    expect(urgentBox().checked).toBe(true);
+  });
+
+  it('a restored draft whose urgent date has since passed stays urgent', async () => {
+    seedDraft({ publishBy: ymdFromToday(-1), urgentRequest: true, urgentAuto: true });
+    const { container } = renderForm();
+    await toStep2FromDraft(container);
+    await settle();
+    expect(urgentBox().checked).toBe(true);
+  });
+
+  it('the draft remembers that urgent came from the date, so after a reload moving the date out unticks it', async () => {
+    const first = renderForm();
+    fillStep1(first.container);
+    await clickNext(first.container, 2);
+    setPublishBy(ymdFromToday(3));
+    await waitFor(() => expect(urgentBox().checked).toBe(true));
+    const savedDraft = () => JSON.parse(localStorage.getItem('commsRequestDraft') || '{}');
+    await waitFor(() => expect(savedDraft()).toMatchObject({ urgentRequest: true, urgentAuto: true }), { timeout: 3000 });
+    first.unmount();
+
+    const { container } = renderForm();
+    await toStep2FromDraft(container);
+    expect(urgentBox().checked).toBe(true);
+    setPublishBy(ymdFromToday(30));
+    await waitFor(() => expect(urgentBox().checked).toBe(false));
+  });
+
+  it('unticking urgent while the date is in the next week moves the date out to a week', async () => {
+    const { container } = renderForm();
+    fillStep1(container);
+    await clickNext(container, 2);
+    setPublishBy(ymdFromToday(3));
+    await waitFor(() => expect(urgentBox().checked).toBe(true));
+    fireEvent.click(urgentBox());
+    await waitFor(() => expect(publishByInput().value).toBe(ymdFromToday(7)));
+    expect(urgentBox().checked).toBe(false);
+  });
+});
+
+describe('CommsRequest after a successful submit', () => {
+  const bodyEditor = () => screen.getByLabelText('Start typing or paste your content...') as HTMLTextAreaElement;
+  const blurbEditor = () => screen.getByLabelText(/^e\.g\. Everyone camping/) as HTMLTextAreaElement;
+
+  async function submitAt3(container: HTMLElement) {
+    await clickNext(container, 3);
+    await pickSuggestion(container, 'Pat', 'pat@example.com');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Request' }));
+    await waitFor(() => expect(screen.getByText('Request Submitted!')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(activeStep(container)).toBe(1));
+  }
+
+  it('clears the text editor, the blurb editor and the dates, and the next request sends no old text', async () => {
+    const { container } = renderForm();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/council\/members$/), expect.anything()));
+    fillStep1(container);
+    fireEvent.change(bodyEditor(), { target: { value: 'Hello Rangers! Training is on September 5, 2027.' } });
+    await clickNext(container, 2);
+    await waitFor(() => expect(screen.getByText('Dates in this request')).toBeInTheDocument());
+    fireEvent.click(audienceCard(container, 'Newsletter'));
+    // RichTextField takes the editor's first report as the loaded content, and only counts
+    // edits after a key press
+    fireEvent.keyDown(blurbEditor(), { key: 'O' });
+    fireEvent.change(blurbEditor(), { target: { value: 'O' } });
+    fireEvent.change(blurbEditor(), { target: { value: 'Old blurb' } });
+    fireEvent.change(field(container, 'owner'), { target: { value: 'Test Member' } });
+    fireEvent.change(field(container, 'replyToAddress'), { target: { value: 'replies@example.com' } });
+    await submitAt3(container);
+
+    const first = mockSaveSubmission.mock.calls[0][0];
+    expect(first.richTextContent).toContain('Hello Rangers!');
+    expect(first.newsletter.blurb).toContain('Old blurb');
+
+    // The form is empty again, the editors included
+    expect(field(container, 'suggestedSubjectLine').value).toBe('');
+    expect(bodyEditor().value).toBe('');
+
+    fillStep1(container);
+    await clickNext(container, 2);
+    expect(screen.queryByText('Dates in this request')).not.toBeInTheDocument();
+    fireEvent.click(audienceCard(container, 'Newsletter'));
+    expect(blurbEditor().value).toBe('');
+    fireEvent.click(audienceCard(container, 'Newsletter'));
+    fireEvent.click(audienceCard(container, 'Allcom'));
+    fireEvent.change(field(container, 'owner'), { target: { value: 'Test Member' } });
+    fireEvent.change(field(container, 'replyToAddress'), { target: { value: 'replies@example.com' } });
+    await submitAt3(container);
+
+    expect(mockSaveSubmission).toHaveBeenCalledTimes(2);
+    const second = mockSaveSubmission.mock.calls[1][0];
+    expect(second.richTextContent || '').not.toContain('Hello Rangers!');
+    expect(second.content || '').not.toContain('Hello Rangers!');
+  });
+
+  it('a request started from a past message does not bring that message back after it is sent', async () => {
+    const SOURCE = {
+      id: 'past-1',
+      title: 'Last year',
+      formFields: [],
+      richTextContent: JSON.stringify({ root: { type: 'root', children: [{ type: 'paragraph', children: [{ type: 'text', text: 'Copied body' }] }] } }),
+    };
+    fetchMock.mockImplementation((url: string) => {
+      if (url.endsWith('/user/approvers')) return jsonResponse({ users: APPROVERS });
+      if (url.endsWith('/council/members')) return jsonResponse(COUNCIL);
+      if (url.endsWith('/content/submissions/past-1')) return jsonResponse(SOURCE);
+      return jsonResponse({ error: 'forbidden' }, 403);
+    });
+    const { container } = renderForm('/comms-request?from=past-1&entry=entry-1');
+    await waitFor(() => expect(bodyEditor().value).toBe('Copied body'));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/council\/members$/), expect.anything()));
+    fillStep1(container);
+    await clickNext(container, 2);
+    fireEvent.click(audienceCard(container, 'Allcom'));
+    fireEvent.change(field(container, 'owner'), { target: { value: 'Test Member' } });
+    fireEvent.change(field(container, 'replyToAddress'), { target: { value: 'replies@example.com' } });
+    await submitAt3(container);
+    expect(mockSaveSubmission.mock.calls[0][0].copiedFrom).toBe('past-1');
+
+    expect(bodyEditor().value).toBe('');
+    fillStep1(container);
+    await clickNext(container, 2);
+    fireEvent.click(audienceCard(container, 'Allcom'));
+    fireEvent.change(field(container, 'owner'), { target: { value: 'Test Member' } });
+    fireEvent.change(field(container, 'replyToAddress'), { target: { value: 'replies@example.com' } });
+    await submitAt3(container);
+    const second = mockSaveSubmission.mock.calls[1][0];
+    expect(second.richTextContent || '').not.toContain('Copied body');
+    expect(second.copiedFrom).toBeUndefined();
+    expect(second.calendarEntryId).toBeUndefined();
   });
 });
