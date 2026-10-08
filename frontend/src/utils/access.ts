@@ -73,6 +73,20 @@ export function isReviewer(user: PersonLike | null | undefined): boolean {
   return a.isAdmin || a.commsCadre || a.council;
 }
 
+/**
+ * Can accept, reject (one, or all) and undo tracked changes on a request: a reviewer, or the
+ * person who submitted it. The backend's rule for PUT /tracked-changes/change/:id/status,
+ * /batch-status and the undo (handlers/trackedChanges.ts), which compares `submittedBy` with
+ * the user id only. Listed approvers who aren't reviewers comment and approve, but don't decide edits.
+ */
+export function canResolveTrackedChanges(
+  user: (PersonLike & { id?: string }) | null | undefined,
+  submission: { submittedBy?: string } | null | undefined,
+): boolean {
+  if (isReviewer(user)) return true;
+  return !!user?.id && !!submission?.submittedBy && user.id === submission.submittedBy;
+}
+
 /** The review permissions object (GET /admin/user-roles shape): all or nothing. */
 export function reviewerPermissions(reviewer: boolean) {
   return {

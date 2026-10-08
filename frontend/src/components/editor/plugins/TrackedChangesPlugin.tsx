@@ -1257,6 +1257,42 @@ export function reapplyRejectedChanges(
   return result;
 }
 
+/**
+ * The document's top-level blocks (serialized), with any pending update committed first: taken
+ * around an accept or reject so the change it made to the document can be undone if the server
+ * refuses it (revertResolve). Null without an editor.
+ */
+export function snapshotDocument(editor: LexicalEditor | null): any[] | null {
+  if (!editor) return null;
+  return editor.read(() => $getRoot().getChildren().map($exportNodeJSON));
+}
+
+/**
+ * Undo what an accept or reject did to the document, when the server refused it: the edit
+ * between the snapshots taken before and after the resolve is reverted in the live document
+ * with the reject's locator (so others' edits since are kept), deletion markers included (an
+ * accept's removed markers come back with their change id). One discrete update tagged like a
+ * resolve: in collaborative mode it reaches everyone through Yjs, and it is never a tracked edit.
+ * Nothing changes when it can't be located.
+ */
+export function revertResolve(
+  editor: LexicalEditor | null,
+  before: any[],
+  after: any[],
+  changeId: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (!editor) return { ok: false, reason: 'the editor is not ready' };
+  // Commit a pending update first (a remote Yjs sync, tagged 'collaboration'): batched with
+  // it, this update would never be written to the shared doc.
+  editor.read(() => undefined);
+  let result: { ok: true } | { ok: false; reason: string } = { ok: false, reason: 'the editor did not run the update' };
+  editor.update(() => {
+    const outcome = $rejectByContext({ root: { children: before } }, { root: { children: after } }, { markerChangeId: changeId });
+    result = outcome.ok ? { ok: true } : { ok: false, reason: outcome.reason };
+  }, { tag: 'tracked-changes-resolve', discrete: true });
+  return result;
+}
+
 /** Resolve through deletion markers, then the inserted-text and format heuristics. */
 function $resolveWithMarkers(detail: ResolveTrackedChangeDetail): void {
   const { action, deletedTexts, replacementPairs, insertedTexts, formatChanges, pendingAuthorIds } = detail;

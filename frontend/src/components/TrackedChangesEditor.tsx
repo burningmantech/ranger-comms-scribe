@@ -12,7 +12,7 @@ import { TransactionManager, Transaction } from '../services/transactionManager'
 import SaveIndicator from './SaveIndicator';
 import SaveStatus from './SaveStatus';
 import DocumentViewBar from './DocumentViewBar';
-import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail, getActiveTrackedChangesEditor, reapplyRejectedChanges, dryRunRejects } from './editor/plugins/TrackedChangesPlugin';
+import { addDecorationsForChange, removeDecorationsForChange, TrackedChange as PluginTrackedChange, ResolveTrackedChangeDetail, getActiveTrackedChangesEditor, reapplyRejectedChanges, dryRunRejects, snapshotDocument, revertResolve } from './editor/plugins/TrackedChangesPlugin';
 import ApprovalTracker from './ApprovalTracker';
 import { ReviewPanel, ReviewTab } from './review/ReviewPanel';
 import NewsletterReviewPanel from './newsletter/NewsletterReviewPanel';
@@ -36,7 +36,7 @@ import { applyChangeStatus, ChangeResolver, mergeLocalChanges, resolvedChangeIds
 import { remoteCommentFromMessage } from '../utils/remoteComments';
 import { REVIEW_STATE_MESSAGE_TYPES } from '../utils/reviewState';
 import { currentFormFieldValue } from '../utils/formFieldValue';
-import { canSendAnnouncements, councilRoleLabel, isAdmin, isCommsCadre, isReviewer } from '../utils/access';
+import { canResolveTrackedChanges, canSendAnnouncements, councilRoleLabel, isAdmin, isCommsCadre, isReviewer } from '../utils/access';
 import { LexicalEditor } from 'lexical';
 import DatesPanel, { DateSource } from './dates/DatesPanel';
 import DateBubbles from './dates/DateBubbles';
@@ -48,6 +48,19 @@ import { DateLink } from '../types/annualDates';
 import { todayIso } from './newsletter/dates';
 
 const webSocketManager = new WebSocketManager();
+
+/**
+ * The proposed version's document blocks (TrackedChangesPlugin's editor), or null. Never
+ * throws: a decision goes ahead without its rollback snapshot.
+ */
+function safeSnapshotDocument(): any[] | null {
+  try {
+    return snapshotDocument(getActiveTrackedChangesEditor()) ?? null;
+  } catch (e) {
+    console.warn('[RESOLVE] could not snapshot the document:', e);
+    return null;
+  }
+}
 
 const AUDIENCE_LABELS: Record<string, string> = {
   newsletter: 'Include in Ranger Newsletter (sent over Ranger Announce)',
@@ -1293,30 +1306,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     [allTrackedChanges],
   );
 
-  // Check if user can make editorial decisions
-  const canMakeEditorialDecisions = useCallback(() => {
-    // Check if user has admin, comms cadre, or council manager roles
-    const hasEditorialRole = isReviewer(currentUser);
-
-    // Check if user is the submitter
-    const isSubmitter = currentUser.id === submission.submittedBy ||
-      currentUser.email === submission.submittedBy;
-
-    // Check if user is a required approver
-    const isRequiredApprover = submission.requiredApprovers?.includes(currentUser.email) || false;
-
-    // Check if user is an assigned council manager
-    const isAssignedCouncilManager = submission.assignedCouncilManagers?.includes(currentUser.email) || false;
-
-    // Check if user has already approved this submission
-    const hasApproved = submission.approvals?.some(approval =>
-      approval.approverEmail === currentUser.email || approval.approverId === currentUser.email
-    ) || false;
-
-    const canMake = hasEditorialRole || isSubmitter || isRequiredApprover || isAssignedCouncilManager || hasApproved;
-
-    return canMake;
-  }, [currentUser, submission.submittedBy, submission.requiredApprovers, submission.assignedCouncilManagers, submission.approvals]);
+  // Can accept, reject and undo tracked changes: exactly who the backend lets change a
+  // change's status (a reviewer, or the submitter by user id). Listed approvers, assigned
+  // council managers and people who approved the request are not, unless they are reviewers.
+  const canMakeEditorialDecisions = useCallback(
+    () => canResolveTrackedChanges(currentUser, { submittedBy: submission.submittedBy }),
+    [currentUser, submission.submittedBy],
+  );
 
   // Get current content (proposed version or original)
   const currentContent = useMemo(() => {
@@ -1419,11 +1415,23 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, [editedProposedContent, submission, onSave, currentUser.id, currentUser.email, isCollab]);
 
   // PUT one change's status to the backend. Resolves to the response body (null when it
-  // has none), or undefined when the request failed (already reported to the user).
-  const putChangeStatus = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string): Promise<any | undefined> => {
+  // has none), or undefined when the request failed (reported to the user, unless `quiet`:
+  // a batch reports its failures once).
+  const putChangeStatus = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string, quiet = false): Promise<any | undefined> => {
+    const label = status === 'approved' ? 'accept' : 'reject';
+    const fail = (message: string) => {
+      if (!quiet) {
+        showErrorToast(message);
+        onRefreshNeeded?.();
+      }
+      return undefined;
+    };
     try {
       const sessionId = localStorage.getItem('sessionId');
-      if (!sessionId) return undefined;
+      if (!sessionId) {
+        console.error(`Failed to ${status} change ${changeId}: no session`);
+        return fail(`Failed to ${label} change: you're signed out. Sign in again and retry.`);
+      }
       const body: Record<string, string> = { status, submissionId: submission.id };
       // Include the reverted editor content so the backend uses it instead of
       // recomputing rich text (which loses format reverts).
@@ -1438,31 +1446,45 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');
         console.error(`Failed to ${status} change ${changeId}: ${response.status} ${errorText}`);
-        const label = status === 'approved' ? 'accept' : 'reject';
-        showErrorToast(`Failed to ${label} change (${response.status}): ${errorText || 'Unknown error'}`);
-        onRefreshNeeded?.();
-        return undefined;
+        return fail(`Failed to ${label} change (${response.status}): ${errorText || 'Unknown error'}`);
       }
       // An older server or an empty body gives null (no cascade ids)
       return await response.json().catch(() => null);
     } catch (error) {
       console.error(`Background sync failed for change ${changeId}:`, error);
-      showErrorToast(`Failed to save change status: network error`);
-      onRefreshNeeded?.();
-      return undefined;
+      return fail(`Failed to save change status: network error`);
     }
   }, [onRefreshNeeded, submission.id, showErrorToast]);
 
   // Set below (with the sidebar state): records changes the server cascade-rejected.
   const onCascadeRejectedRef = useRef<(changeId: string, cascadeIds: string[]) => void>(() => {});
 
-  // Background sync: fire-and-forget PUT to backend
-  const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string) => {
+  // A decision made here, until its save settles: the document's blocks just before and
+  // just after its resolve (collaborative mode, where the resolve reached everyone through
+  // Yjs), to undo it if the server refuses it. `seq` orders the rollbacks (newest first).
+  const decisionRecordsRef = useRef(new Map<string, { before: any[] | null; after: any[] | null; seq: number }>());
+  const decisionSeqRef = useRef(0);
+  // Set below (with the sidebar state): rolls back decisions the server didn't save.
+  const rollbackDecisionsRef = useRef<(ids: string[]) => void>(() => {});
+  // Accept all / Reject all in progress: its changes, and those whose own PUT failed (the
+  // batch PUT decides whether they are rolled back).
+  const batchDecisionIdsRef = useRef<Set<string> | null>(null);
+  const batchFailedIdsRef = useRef(new Set<string>());
+
+  // Background sync: PUT the decision to the backend. On failure (any non-2xx, or a network
+  // error) the decision is rolled back here: pending again, its document change undone.
+  const syncChangeStatusToBackend = useCallback(async (changeId: string, status: 'approved' | 'rejected', revertedRichText?: string): Promise<'ok' | 'failed' | 'skipped'> => {
     // Skip individual backend syncs during batch operations — the batch
     // handler will make a single API call with all changes.
-    if (batchSyncInProgressRef.current) return;
-    const result = await putChangeStatus(changeId, status, revertedRichText);
-    if (result === undefined) return;
+    if (batchSyncInProgressRef.current) return 'skipped';
+    const inBatch = batchDecisionIdsRef.current?.has(changeId) ?? false;
+    const result = await putChangeStatus(changeId, status, revertedRichText, inBatch);
+    if (result === undefined) {
+      if (inBatch) batchFailedIdsRef.current.add(changeId);
+      else rollbackDecisionsRef.current([changeId]);
+      return 'failed';
+    }
+    decisionRecordsRef.current.delete(changeId);
 
     // A reject can cascade to dependent changes on the server; the response lists them.
     let cascadeRejectedIds = status === 'rejected'
@@ -1508,6 +1530,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (client?.sendChangeStatusUpdate) {
       client.sendChangeStatusUpdate(changeId, status, cascadeRejectedIds);
     }
+    return 'ok';
   }, [putChangeStatus, isCollab, currentUser.email, currentUser.id, currentUser.name]);
 
   // Collaborative mode: the change whose reject by context just failed. Rejecting that same
@@ -1526,6 +1549,25 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // partner's restored text is not taken for this change's, so an insertion whose text is
   // already gone rejects as a no-op instead of removing the deletion's restored copy).
   const movePartnerDocsRef = useRef<(changeId: string) => { before: string; after: string } | undefined>(() => undefined);
+
+  // Legacy mode: send the whole document to the other users (they replace theirs with it).
+  const broadcastLegacyContent = useCallback((state: string) => {
+    const client = webSocketClientRef.current;
+    if (!client) return;
+    try {
+      client.send({
+        type: 'content_updated',
+        data: {
+          field: 'proposedVersions.richTextContent',
+          newValue: extractTextFromLexical(state),
+          lexicalContent: state,
+          isAutoSave: true,
+        }
+      });
+    } catch (e) {
+      console.error('Failed to broadcast post-resolution content:', e);
+    }
+  }, []);
 
   // Handle change decision (approve/reject) — fully local, no network on hot path.
   // Returns false when a collaborative reject couldn't revert the document (the change
@@ -1555,6 +1597,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         }
       }
     }
+
+    // Collaborative mode: the document as it is before the resolve, so the resolve can be
+    // undone if the server refuses the decision (rollbackDecisions).
+    const docBefore = isCollab ? safeSnapshotDocument() : null;
 
     // 1. Suppress TransactionManager for all editor changes caused by the
     //    resolve (restore text, remove decorations, applyDecorations re-run).
@@ -1601,6 +1647,14 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // 3. Remove CSS highlight decorations for additions
     removeDecorationsForChange(changeId);
 
+    // 3b. Remember the decision until its save settles (with the document right after the
+    //     resolve, in collaborative mode), so a failed save can roll it back.
+    decisionRecordsRef.current.set(changeId, {
+      before: docBefore,
+      after: docBefore ? safeSnapshotDocument() : null,
+      seq: ++decisionSeqRef.current,
+    });
+
     // 4. Optimistic sidebar update (no network call)
     if (decision === 'approve') {
       onApprove(changeId);
@@ -1631,25 +1685,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       const currentState = editedProposedContentRef.current;
       console.log(`[RESOLVE] setTimeout(500ms): currentState valid=${!!(currentState && isLexicalJson(currentState))}, pendingResolves=${pendingResolveCountRef.current}, first 200 chars:`, currentState?.substring(0, 200));
 
-      // Broadcast the post-resolution editor state to other users (legacy only: in
-      // collaborative mode the resolve already reached everyone through Yjs).
+      // Collaborative mode: the resolve already reached everyone through Yjs.
       if (isCollab && currentState && isLexicalJson(currentState)) {
         setLastSavedProposedContent(currentState);
-      } else if (currentState && isLexicalJson(currentState) && webSocketClientRef.current) {
-        try {
-          setLastSavedProposedContent(currentState);
-          webSocketClientRef.current.send({
-            type: 'content_updated',
-            data: {
-              field: 'proposedVersions.richTextContent',
-              newValue: extractTextFromLexical(currentState),
-              lexicalContent: currentState,
-              isAutoSave: true,
-            }
-          });
-        } catch (e) {
-          console.error('Failed to broadcast post-resolution content:', e);
-        }
       }
 
       // Sync change status to backend, passing the reverted content so the
@@ -1658,8 +1696,15 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       // fetchSubmission(), which will get the correct reverted content.
       // Await the sync so isResolvingChangeRef stays true until the backend
       // has stored the reverted content — prevents a refresh from fetching
-      // stale (pre-revert) data.
-      await syncChangeStatusToBackend(changeId, decision === 'approve' ? 'approved' : 'rejected', currentState);
+      // stale (pre-revert) data. A failed save rolls the decision back.
+      const outcome = await syncChangeStatusToBackend(changeId, decision === 'approve' ? 'approved' : 'rejected', currentState);
+
+      // Legacy mode: then other users get the post-resolution editor state, once the server
+      // has the decision (a refused one is never shown to them).
+      if (!isCollab && outcome !== 'failed' && currentState && isLexicalJson(currentState)) {
+        setLastSavedProposedContent(currentState);
+        broadcastLegacyContent(currentState);
+      }
 
       // Only unblock incoming WebSocket content updates when ALL pending
       // resolve timeouts have completed. In a batch, the first timeout
@@ -1671,7 +1716,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
     }, 500);
     return true;
-  }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText, isCollab, currentUser.id, currentUser.email, showErrorToast]);
+  }, [onApprove, onReject, syncChangeStatusToBackend, trackedChanges, getDisplayableText, isCollab, currentUser.id, currentUser.email, showErrorToast, broadcastLegacyContent]);
 
   // Changes the server rejected along with one the reviewer rejected (cascadeRejectedIds):
   // revert them in the shared document too, newest first. Returns true when the document
@@ -1725,6 +1770,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     const sessionId = localStorage.getItem('sessionId');
     const doc = editedProposedContentRef.current;
     const hasDoc = !!doc && isLexicalJson(doc);
+    // Only the ones the server set back to pending are shown pending (and announced); the
+    // others stay rejected, as the server has them.
+    const restored: string[] = [];
     for (const id of ids) {
       try {
         const response = await fetch(`${API_URL}/tracked-changes/${id}/undo`, {
@@ -1732,16 +1780,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionId}` },
           body: JSON.stringify({ submissionId: submission.id, ...(hasDoc ? { proposedVersionsRichText: doc } : {}) }),
         });
-        if (!response.ok) console.error(`Could not set ${id} back to pending: ${response.status}`);
+        if (response.ok) restored.push(id);
+        else console.error(`Could not set ${id} back to pending: ${response.status}`);
       } catch (err) {
         console.error(`Could not set ${id} back to pending:`, err);
       }
     }
-    recordStatus(ids, 'pending');
+    if (restored.length < ids.length) {
+      showErrorToast(`Couldn't set ${ids.length - restored.length} change(s) back to pending: they are rejected, but their text is still in the document. Reload to check.`);
+    }
+    if (restored.length === 0) return;
+    recordStatus(restored, 'pending');
     const client = webSocketClientRef.current;
     if (client?.send) {
       try {
-        client.send({ type: 'change_status_updated', data: { changeId: ids[0], status: 'pending', undoneIds: ids } });
+        client.send({ type: 'change_status_updated', data: { changeId: restored[0], status: 'pending', undoneIds: restored } });
       } catch (e) {
         console.error('Failed to broadcast the pending status:', e);
       }
@@ -1762,6 +1815,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       // Only the changes that were actually resolved go to the server: a collaborative
       // reject that couldn't revert the document returns false and stays pending.
       const resolvedIds = changeIds.filter(id => handleChangeDecision(id, decision) !== false);
+      // Their own PUTs (below) report failures to the batch instead of rolling back
+      batchDecisionIdsRef.current = new Set(resolvedIds);
+      batchFailedIdsRef.current = new Set();
       onResolved?.(resolvedIds);
       // NOTE: cleared before the per-change 500 ms timers fire, so each of them still
       // runs syncChangeStatusToBackend: an individual PUT with the rich text at that
@@ -1789,19 +1845,38 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       // Single batch API call for backend persistence, with the editor state after all
       // the reverts (read now, after the per-change timers, not before the decisions).
       const sessionId = localStorage.getItem('sessionId');
+      let batchSaved = false;
+      const revertedRichText = editedProposedContentRef.current;
       if (sessionId && resolvedIds.length > 0) {
         const body: Record<string, unknown> = { changeIds: resolvedIds, status, submissionId: submission.id };
-        const revertedRichText = editedProposedContentRef.current;
         if (revertedRichText && isLexicalJson(revertedRichText)) body.revertedRichText = revertedRichText;
-        const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
-          body: JSON.stringify(body)
-        });
-        if (!response.ok) {
-          console.error('Batch status update failed:', response.statusText);
+        try {
+          const response = await fetch(`${API_URL}/tracked-changes/batch-status`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionId}` },
+            body: JSON.stringify(body)
+          });
+          batchSaved = response.ok;
+          if (!response.ok) {
+            console.error(`Batch status update failed: ${response.status} ${await response.text().catch(() => '')}`);
+          }
+        } catch (err) {
+          console.error('Batch status update failed:', err);
         }
       }
+      // A change is saved when its own PUT or the batch PUT was. One that neither saved is
+      // rolled back (pending again, its document change undone), with one message.
+      const failed = resolvedIds.filter(id => batchFailedIdsRef.current.has(id));
+      if (!batchSaved && failed.length > 0) {
+        rollbackDecisionsRef.current(failed);
+        showErrorToast(`Couldn't save: ${failed.length === 1 ? '1 change is' : `${failed.length} changes are`} pending again. Reload if this keeps happening.`);
+        onRefreshNeeded?.();
+      } else if (failed.length > 0 && !isCollab && revertedRichText && isLexicalJson(revertedRichText)) {
+        // Legacy mode: their own broadcasts were skipped; the batch saved them
+        setLastSavedProposedContent(revertedRichText);
+        broadcastLegacyContent(revertedRichText);
+      }
+      resolvedIds.forEach(id => decisionRecordsRef.current.delete(id));
     } catch (err) {
       console.error('Batch action failed:', err);
       batchSyncInProgressRef.current = false;
@@ -1810,9 +1885,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       // (including after the backend has stored the reverted content).
       pendingResolveCountRef.current = 0;
       isResolvingChangeRef.current = false;
+      batchDecisionIdsRef.current = null;
+      batchFailedIdsRef.current = new Set();
       setBatchActionLoading(false);
     }
-  }, [handleChangeDecision, submission.id]);
+  }, [handleChangeDecision, submission.id, showErrorToast, onRefreshNeeded, isCollab, broadcastLegacyContent]);
 
   // Handle suggestion submission
   const handleSuggestionSubmit = useCallback(() => {
@@ -2164,12 +2241,68 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   }, []);
 
   /**
+   * Roll back decisions made here that the server didn't save (refused, or never reached):
+   * the cards are back in Open (pending again, over the optimistic status), their Undo toast
+   * is gone, and in collaborative mode what each resolve did to the shared document is
+   * undone, newest first, through Yjs (revertResolve: located by context, so edits made
+   * since are kept), leaving every client with the document the server still has. Legacy
+   * mode never sent the resolved document to anyone before the save; the refetch the
+   * failure asks for (onRefreshNeeded) reloads it.
+   */
+  rollbackDecisionsRef.current = (ids: string[]) => {
+    if (ids.length === 0) return;
+    const records = ids
+      .map(id => ({ id, record: decisionRecordsRef.current.get(id) }))
+      .sort((x, y) => (y.record?.seq ?? 0) - (x.record?.seq ?? 0));
+    ids.forEach(id => decisionRecordsRef.current.delete(id));
+
+    recordStatus(ids, 'pending');
+    setLocalRemovedChangeIds(prev => {
+      if (!ids.some(id => prev.has(id))) return prev;
+      const next = new Set(prev);
+      ids.forEach(id => next.delete(id));
+      return next;
+    });
+    setUndoToast(prev => (prev && prev.ids.some(id => ids.includes(id)) ? null : prev));
+
+    if (!isCollab) return;
+    const toRevert = records.filter(({ record }) =>
+      !!record?.before && !!record.after && JSON.stringify(record.before) !== JSON.stringify(record.after));
+    if (toRevert.length === 0) return;
+    // Like a resolve: settle the user's own edit in progress first, and keep the revert out
+    // of change tracking.
+    if (transactionManager.getActiveTransaction() && lastLocalJsonRef.current) {
+      transactionManager.settleTransaction(lastLocalJsonRef.current);
+      hasActiveTransactionRef.current = false;
+    }
+    transactionManager.pauseForChangeResolution();
+    isResolvingChangeRef.current = true;
+    const editor = getActiveTrackedChangesEditor();
+    const notReverted: string[] = [];
+    for (const { id, record } of toRevert) {
+      const result = revertResolve(editor, record!.before!, record!.after!, id);
+      if (!result.ok) {
+        console.warn(`[RESOLVE] rollback of ${id} couldn't restore the document: ${result.reason}`);
+        notReverted.push(id);
+      }
+    }
+    setTimeout(() => {
+      transactionManager.resumeAfterChangeResolution();
+      if (pendingResolveCountRef.current <= 0 && !batchSyncInProgressRef.current) isResolvingChangeRef.current = false;
+    }, 500);
+    if (notReverted.length > 0) {
+      showErrorToast("The decision wasn't saved, and the document couldn't be put back automatically (its text was edited since). The change is pending again; check its text, or reload.");
+    }
+  };
+
+  /**
    * Accept or reject a card. A move is two changes: they go through handleChangeDecision
    * one at a time, the deletion first, then the insertion (the order validated for a
    * reject: it restores the exact original). If the deletion can't be reverted, the
    * insertion is left alone, so the moved text is never lost.
    */
   const decideCard = useCallback((card: ChangeCard<TrackedChange>, decision: 'approve' | 'reject') => {
+    if (!canMakeEditorialDecisions()) return;
     // Collaborative mode: a move is rejected all or nothing. If either half can't be
     // reverted (its text was edited since), nothing is decided: rejecting only the
     // deletion would put the text back while the pasted copy stays.
@@ -2189,10 +2322,11 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     if (decided.length === 0) return;
     recordStatus(decided, decision === 'approve' ? 'approved' : 'rejected', selfResolver);
     showUndoToast(decided, decision, 1);
-  }, [handleChangeDecision, recordStatus, selfResolver, showUndoToast, isCollab, showErrorToast]);
+  }, [handleChangeDecision, recordStatus, selfResolver, showUndoToast, isCollab, showErrorToast, canMakeEditorialDecisions]);
 
   /** Accept all / Reject all, through the batch path, in document order (moves deletion first). */
   const handleBulkDecision = useCallback((status: 'approved' | 'rejected') => {
+    if (!canMakeEditorialDecisions()) return;
     // Collaborative mode, Reject all: a move is rejected all or nothing (as with its card),
     // so a move that can't be reverted as a whole is left out.
     const editor = isCollab && status === 'rejected' ? getActiveTrackedChangesEditor() : null;
@@ -2212,7 +2346,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       recordStatus(resolved, status, selfResolver);
       showUndoToast(resolved, status === 'approved' ? 'approve' : 'reject', resolved.length);
     });
-  }, [handleBatchAction, recordStatus, selfResolver, showUndoToast, isCollab]);
+  }, [handleBatchAction, recordStatus, selfResolver, showUndoToast, isCollab, canMakeEditorialDecisions]);
 
   /**
    * Undo accepts or rejects (with the changes the server cascade-rejected with them).
@@ -2231,6 +2365,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
    * status 'pending').
    */
   const undoDecision = useCallback(async (ids: string[]): Promise<boolean> => {
+    if (!canMakeEditorialDecisions()) return false;
     let busyIds = [...ids];
     setUndoBusyIds(prev => new Set([...Array.from(prev), ...busyIds]));
     const finish = () => setUndoBusyIds(prev => {
@@ -2268,6 +2403,20 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       return false;
     }
 
+    // What to put back if the server refuses the undo: each change's decision (and the
+    // changes cascade-rejected with it), and in collaborative mode the document around the
+    // re-apply of the rejects.
+    const previous = changes.map(c => ({
+      id: c.id,
+      status: c.status as 'approved' | 'rejected',
+      resolver: c.status === 'approved'
+        ? { id: c.approvedBy || '', name: c.approvedByName }
+        : { id: c.rejectedBy || '', name: c.rejectedByName },
+      cascade: cascadeByChangeRef.current.get(c.id),
+    }));
+    let docBeforeReapply: any[] | null = null;
+    let docAfterReapply: any[] | null = null;
+
     let documentChanged = false;
     if (rejected.length > 0) {
       // Like a decision: settle the user's own edit in progress first, and keep the
@@ -2278,6 +2427,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
       transactionManager.pauseForChangeResolution();
       isResolvingChangeRef.current = true;
+      if (isCollab) docBeforeReapply = safeSnapshotDocument();
       const ordered = [...rejected].sort((x, y) => new Date(x.timestamp).getTime() - new Date(y.timestamp).getTime());
       const result = reapplyRejectedChanges(
         getActiveTrackedChangesEditor(),
@@ -2295,6 +2445,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
         return false;
       }
       documentChanged = true;
+      if (docBeforeReapply) docAfterReapply = safeSnapshotDocument();
     }
 
     // Optimistic: pending again here, before the server answers.
@@ -2319,23 +2470,9 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
       const doc = editedProposedContentRef.current;
       const hasDoc = !!doc && isLexicalJson(doc);
-      if (hasDoc) setLastSavedProposedContent(doc);
-      // Legacy mode: other users get the document as a whole (collaborative mode synced it
-      // through Yjs already).
-      const client = webSocketClientRef.current;
-      if (!isCollab && documentChanged && hasDoc && client) {
-        try {
-          client.send({
-            type: 'content_updated',
-            data: { field: 'proposedVersions.richTextContent', newValue: extractTextFromLexical(doc), lexicalContent: doc, isAutoSave: true },
-          });
-        } catch (e) {
-          console.error('Failed to broadcast content after undo:', e);
-        }
-      }
 
       const sessionId = localStorage.getItem('sessionId');
-      let failed = 0;
+      const failedIds: string[] = [];
       for (const id of undoIds) {
         try {
           const response = await fetch(`${API_URL}/tracked-changes/${id}/undo`, {
@@ -2344,27 +2481,60 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             body: JSON.stringify({ submissionId: submission.id, ...(hasDoc ? { proposedVersionsRichText: doc } : {}) }),
           });
           if (!response.ok) {
-            failed++;
+            failedIds.push(id);
             console.error(`Undo failed for ${id}: ${response.status} ${await response.text().catch(() => '')}`);
           }
         } catch (err) {
-          failed++;
+          failedIds.push(id);
           console.error(`Undo failed for ${id}:`, err);
         }
       }
-      if (failed > 0) {
-        showErrorToast(`Couldn't save the undo on the server (${failed} of ${undoIds.length}). Reload to see the current state.`);
+      const undoneIds = undoIds.filter(id => !failedIds.includes(id));
+
+      if (failedIds.length > 0) {
+        // The server kept these decisions: show them decided again.
+        for (const p of previous) {
+          if (!failedIds.includes(p.id)) continue;
+          recordStatus([p.id], p.status, p.resolver);
+          if (p.cascade) cascadeByChangeRef.current.set(p.id, p.cascade);
+        }
+        // Collaborative mode: the re-applied rejects go back out of the shared document,
+        // when the server undid none of them (a partial re-apply can't be taken apart).
+        let documentRestored = !documentChanged || !isCollab;
+        const failedRejects = rejected.filter(c => failedIds.includes(c.id));
+        if (isCollab && documentChanged) {
+          if (failedRejects.length === 0) {
+            documentRestored = true;
+          } else if (failedRejects.length === rejected.length && docBeforeReapply && docAfterReapply) {
+            transactionManager.pauseForChangeResolution();
+            const result = revertResolve(getActiveTrackedChangesEditor(), docBeforeReapply, docAfterReapply, failedRejects[0].id);
+            documentRestored = result.ok;
+            if (!result.ok) console.warn(`[UNDO] couldn't take the re-apply back out: ${result.reason}`);
+            await sleep(500);
+            transactionManager.resumeAfterChangeResolution();
+          }
+        }
+        showErrorToast(documentRestored
+          ? `Couldn't save the undo on the server (${failedIds.length} of ${undoIds.length}); the decision stands.`
+          : `Couldn't save the undo on the server (${failedIds.length} of ${undoIds.length}). Reload to see the current state.`);
         onRefreshNeeded?.();
       }
 
-      if (client?.send) {
-        try {
-          client.send({ type: 'change_status_updated', data: { changeId: undoIds[0], status: 'pending', undoneIds: undoIds } });
-        } catch (e) {
-          console.error('Failed to broadcast undo:', e);
+      const client = webSocketClientRef.current;
+      if (undoneIds.length > 0) {
+        if (hasDoc) setLastSavedProposedContent(doc);
+        // Legacy mode: other users get the document as a whole, once the server has the undo
+        // (collaborative mode synced it through Yjs already).
+        if (!isCollab && documentChanged && hasDoc && failedIds.length === 0) broadcastLegacyContent(doc);
+        if (client?.send) {
+          try {
+            client.send({ type: 'change_status_updated', data: { changeId: undoneIds[0], status: 'pending', undoneIds } });
+          } catch (e) {
+            console.error('Failed to broadcast undo:', e);
+          }
         }
       }
-      return failed === 0;
+      return failedIds.length === 0;
     } finally {
       pendingResolveCountRef.current--;
       if (pendingResolveCountRef.current <= 0) {
@@ -2373,7 +2543,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       }
       finish();
     }
-  }, [isCollab, transactionManager, submission.id, onRefreshNeeded, recordStatus, showErrorToast]);
+  }, [isCollab, transactionManager, submission.id, onRefreshNeeded, recordStatus, showErrorToast, canMakeEditorialDecisions, broadcastLegacyContent]);
 
   const handleToastUndo = useCallback(() => {
     const toast = undoToast;
