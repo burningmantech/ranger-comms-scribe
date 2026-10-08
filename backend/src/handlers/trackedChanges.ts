@@ -18,6 +18,7 @@ import {
   freshProposedVersions,
   FORM_FIELD_CHANGE_FIELDS,
   currentFormFieldValue,
+  compareChangeOrder,
   TrackedChange,
   ChangeComment
 } from '../services/trackedChangesService';
@@ -136,7 +137,7 @@ async function recomputeContentAfterResolution(
   const allChanges = await getTrackedChanges(submissionId, env);
   const fieldChanges = allChanges
     .filter((c: any) => c.field === field)
-    .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    .sort(compareChangeOrder);
 
   if (fieldChanges.length === 0) {
     return { content: originalData.content, richText: originalData.richTextContent };
@@ -263,7 +264,7 @@ function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]
     c.id !== change.id &&
     c.field === change.field &&
     c.status !== 'rejected' &&
-    (new Date(c.timestamp).getTime() > at || (!!c.reappliedAt && new Date(c.reappliedAt).getTime() > at))
+    (compareChangeOrder(c, change) > 0 || (!!c.reappliedAt && new Date(c.reappliedAt).getTime() > at))
   );
 }
 
@@ -695,7 +696,7 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
             if (!hasRejections && status === 'approved') {
               const justApproved = allChanges
                 .filter((c: any) => changeIds.includes(c.id) && c.status === 'approved' && c.field === field)
-                .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+                .sort((a: any, b: any) => compareChangeOrder(b, a));
               const latestApproved = justApproved[0];
               // Only when it's the newest change: an older snapshot lacks newer edits
               if (latestApproved?.richTextNewValue && isNewestActiveChange(latestApproved, allChanges)) {

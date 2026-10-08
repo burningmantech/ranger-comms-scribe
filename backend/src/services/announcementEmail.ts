@@ -1,7 +1,7 @@
 import { ContentSubmission } from '../types';
 import { Env } from '../utils/sessionManager';
 import { getObject } from './cacheService';
-import { getTrackedChanges, freshProposedVersions, TrackedChange } from './trackedChangesService';
+import { getTrackedChanges, freshProposedVersions, compareChangeOrder, TrackedChange } from './trackedChangesService';
 import { renderContentForEmail, parseLexical, escapeHtml, EMAIL_FONT_FAMILY } from '../utils/lexicalEmail';
 import type { EmailAttachment } from '../utils/email';
 
@@ -46,7 +46,7 @@ export function approvedFieldValue(changes: TrackedChange[], field: string, fall
     typeof c.completeProposedVersion === 'string' ? c.completeProposedVersion : c.newValue;
   const approved = changes
     .filter((c) => c.field === field && c.status === 'approved' && typeof wholeValue(c) === 'string')
-    .sort((a, b) => (time(b.timestamp) - time(a.timestamp)) || (time(b.approvedAt) - time(a.approvedAt)));
+    .sort((a, b) => compareChangeOrder(b, a) || (time(b.approvedAt) - time(a.approvedAt)));
   return approved.length > 0 ? wholeValue(approved[0]) : fallback;
 }
 

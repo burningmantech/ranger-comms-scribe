@@ -16,6 +16,12 @@ export interface TrackedChange {
   changedBy: string;
   changedByName: string;
   timestamp: string;
+  /**
+   * Creation order in this process (nextChangeSeq), set when the change is created (a
+   * batch's changes in array order). Breaks ties between changes made in the same
+   * millisecond (compareChangeOrder). Records saved before it have none and count as 0.
+   */
+  seq?: number;
   status: 'pending' | 'approved' | 'rejected';
   approvedBy?: string;
   approvedByName?: string;
@@ -36,6 +42,30 @@ export interface TrackedChange {
   richTextNewValue?: string; // Store the rich text content for the new value
   regionMap?: RegionMap; // Maps the affected region in the document for cascade dependency tracking
 }
+
+let lastChangeSeq = 0;
+
+/** The next creation sequence number (TrackedChange.seq); strictly increasing in this process. */
+function nextChangeSeq(): number {
+  lastChangeSeq += 1;
+  return lastChangeSeq;
+}
+
+/**
+ * Creation order of two tracked changes, oldest first: by `timestamp`, and for changes made
+ * in the same millisecond by `seq` (the one created later is newer). Never by the store's
+ * listing order, which follows the random ids. Returns 0 for a full tie (older records
+ * without `seq`), so callers can add their own keys. Sort newest first with
+ * `(a, b) => compareChangeOrder(b, a)`.
+ */
+export function compareChangeOrder(
+  a: Pick<TrackedChange, 'timestamp' | 'seq'>,
+  b: Pick<TrackedChange, 'timestamp' | 'seq'>,
+): number {
+  return (new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) || ((a.seq ?? 0) - (b.seq ?? 0));
+}
+
+const newestFirst = (a: TrackedChange, b: TrackedChange): number => compareChangeOrder(b, a);
 
 /**
  * Tracked-change fields that hold a request's form values (the review page's Subject,
@@ -60,7 +90,7 @@ export function currentFormFieldValue(changes: TrackedChange[], field: string): 
     typeof c.completeProposedVersion === 'string' ? c.completeProposedVersion : c.newValue;
   const active = changes
     .filter(c => c.field === field && c.status !== 'rejected' && typeof wholeValue(c) === 'string')
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    .sort(newestFirst);
   return active.length > 0 ? wholeValue(active[0]) : null;
 }
 
@@ -108,8 +138,10 @@ export const getTrackedChanges = async (submissionId: string, env: Env): Promise
       objects.objects.map((object: { key: string }) => getObject<TrackedChange>(object.key, env))
     )).filter((change: TrackedChange | null): change is TrackedChange => change !== null);
 
-    // Sort changes by timestamp (newest first)
-    return changes.sort((a: TrackedChange, b: TrackedChange) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    // Newest first (creation order); a full tie (older records) by id, so the order never
+    // depends on the listing
+    return changes.sort((a: TrackedChange, b: TrackedChange) =>
+      newestFirst(a, b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   } catch (error) {
     console.error('Error fetching tracked changes:', error);
     return [];
@@ -237,7 +269,7 @@ export const getLatestProposedVersion = async (
     // Get the most recent pending or approved change for this field
     const fieldChanges = changes
       .filter(change => change.field === field && change.status !== 'rejected')
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      .sort(newestFirst);
     
     if (fieldChanges.length === 0) {
       return null;
@@ -283,6 +315,7 @@ export const createTrackedChange = async (
   try {
     const changeId = uuidv4();
     const timestamp = new Date().toISOString();
+    const seq = nextChangeSeq();
     
     // Get the latest proposed version to calculate incremental changes
     const latestProposedVersion = await getLatestProposedVersion(submissionId, field, env);
@@ -303,7 +336,7 @@ export const createTrackedChange = async (
       const changes = await getTrackedChanges(submissionId, env);
       const previousChange = changes
         .filter(change => change.field === field && change.status !== 'rejected')
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+        .sort(newestFirst)[0];
       
       if (previousChange) {
         previousVersionId = previousChange.id;
@@ -328,6 +361,7 @@ export const createTrackedChange = async (
       changedBy,
       changedByName,
       timestamp,
+      seq,
       status: 'pending',
       isIncremental,
       previousVersionId,
@@ -647,10 +681,10 @@ function getPredecessorCpv(
   allFieldChanges: TrackedChange[],
   originalContent: string
 ): string {
-  // Find the change immediately preceding this one (by timestamp)
+  // Find the change immediately preceding this one (creation order)
   const predecessors = allFieldChanges
-    .filter(c => new Date(c.timestamp).getTime() < new Date(change.timestamp).getTime())
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    .filter(c => c.id !== change.id && compareChangeOrder(c, change) < 0)
+    .sort(newestFirst);
 
   if (predecessors.length > 0) {
     const pred = predecessors[0];
@@ -729,7 +763,7 @@ export const getCompleteProposedVersion = async (
     // All changes for this field, sorted chronologically
     const allFieldChanges = changes
       .filter(change => change.field === field)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort(compareChangeOrder);
 
     // Only replay pending changes. Approved changes are already folded into
     // submission.content by the accept handler, so replaying them would
@@ -789,7 +823,7 @@ export const getCompleteRichTextProposedVersion = async (
 
     const allFieldChanges = changes
       .filter(change => change.field === field)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort(compareChangeOrder);
 
     // Only consider pending changes — approved changes are already in submission.content
     const pendingChanges = allFieldChanges.filter(c => c.status === 'pending');
@@ -881,8 +915,8 @@ export const getChangeHistory = async (
         changes = changes.filter(change => change.changedBy === userId);
       }
       
-      // Sort by timestamp (newest first)
-      changes = changes.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      // Newest first
+      changes = changes.sort(newestFirst);
       
       // Limit to 100 results
       changes = changes.slice(0, 100);
@@ -1180,9 +1214,9 @@ export const getCascadeDependencies = async (
         c.id !== changeId &&
         c.field === targetChange.field &&
         (c.status === 'pending' || c.status === 'approved') &&
-        new Date(c.timestamp).getTime() > new Date(targetChange.timestamp).getTime()
+        compareChangeOrder(c, targetChange) > 0
       )
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort(compareChangeOrder);
 
     const dependentIds: string[] = [];
 
@@ -1256,6 +1290,7 @@ export const batchCreateTrackedChanges = async (
     for (const changeData of changesData) {
       const changeId = uuidv4();
       const timestamp = changeData.timestamp || new Date().toISOString();
+      const seq = nextChangeSeq();
 
       const newChange: TrackedChange = {
         id: changeId,
@@ -1266,6 +1301,7 @@ export const batchCreateTrackedChanges = async (
         changedBy: changeData.changedBy,
         changedByName: changeData.changedByName,
         timestamp,
+        seq,
         status: 'pending',
         richTextOldValue: changeData.richTextOldValue,
         richTextNewValue: changeData.richTextNewValue,
