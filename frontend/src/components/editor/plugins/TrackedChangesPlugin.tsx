@@ -18,7 +18,7 @@ import { $createHeadingNode, HeadingNode } from '@lexical/rich-text';
 import { diffCharsOptimized } from '../../../utils/diffAlgorithm';
 import { DeletedTextNode, $createDeletedTextNode, $isDeletedTextNode } from '../nodes/DeletedTextNode';
 import { extractTextFromLexical, isLexicalJson } from '../../../utils/lexicalUtils';
-import { $exportNodeJSON, $reapplyByContext, $rejectByContext, applyBlockReplacements, ChangeDocs, planRejectRestore } from '../collab/rejectRestore';
+import { $exportNodeJSON, $reapplyByContext, $rejectByContext, applyBlockReplacements, ChangeDocs, locateChangeText, planRejectRestore } from '../collab/rejectRestore';
 import { getUserColorIndex, getUserColor, getChangeColorIndex, getChangeColor } from '../../../utils/userColors';
 
 /** The change id of a deletion marker whose transaction hasn't been saved yet. */
@@ -242,6 +242,11 @@ export function addDecorationsForChange(
   // into the registry and the editor. We delegate to the internal logic.
   if (!editor) return;
   applyDecorationsForSingleChange(editor, change);
+}
+
+/** The addition highlight ranges of a change (offsets in the editor's plain text), for tests and tools. */
+export function getHighlightCharRanges(changeId: string): Array<{ start: number; end: number }> {
+  return (highlightRegistry.get(changeId)?.charRanges || []).map((r) => ({ start: r.start, end: r.end }));
 }
 
 /**
@@ -747,6 +752,27 @@ export default function TrackedChangesPlugin({
                   }
                 }
               }
+            }
+          }
+
+          // Step 3-collab: in collaborative mode an insertion's highlight is located by
+          // context (the reject's locator, on the change's whole document before and after),
+          // which finds it wherever the document has moved on since: matching the change's
+          // text with the text before it failed once another change near it was rejected or
+          // undone. When the locator finds the change, its ranges replace the text match's;
+          // otherwise the text match stands. Deletions keep their markers either way.
+          if (isCollab) {
+            let live: any[] | null = null;
+            for (const change of changesToProcess) {
+              if (!change.richTextOldValue || !change.richTextNewValue) continue;
+              if (!live) live = root.getChildren().map($exportNodeJSON);
+              const ranges = locateChangeText(change.richTextOldValue, change.richTextNewValue, live);
+              if (!ranges) continue;
+              const colorIndex = getChangeColorIndex(change.changedBy || '', currentUserId);
+              for (let i = newAdditionRanges.length - 1; i >= 0; i--) {
+                if (newAdditionRanges[i].changeId === change.id) newAdditionRanges.splice(i, 1);
+              }
+              for (const r of ranges) newAdditionRanges.push({ start: r.start, end: r.end, changeId: change.id, colorIndex });
             }
           }
 

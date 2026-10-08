@@ -75,7 +75,7 @@ export async function recomputeApprovalStatus(submission: ContentSubmission, env
  *
  * Re-reads the submission (the caller may just have written it) and writes it only when
  * the status changes. Always tells the room, with the approval gates: `status_changed` when
- * the status changed, else `approval_state`. `onlyDemote` skips the promotion check (a newly
+ * the status changed, else `approval_state` (with `requiredApprovers` after an approvers change). `onlyDemote` skips the promotion check (a newly
  * created change can only make a change pending). `approversChanged` (the approvers list was
  * edited) also demotes an `approved` request whose gates are no longer met, e.g. a new council
  * approver who hasn't approved yet; an override approval still holds.
@@ -127,6 +127,9 @@ export async function syncSubmissionStatus(
       data: {
         status: submission.status,
         ...(changed ? { previousStatus: before, title: submission.title, reason: options.approversChanged ? 'approvers_changed' : 'tracked_changes' } : {}),
+        // The approvers list as saved, after it was changed: other open review pages show it
+        // (only then: another operation's read may predate a concurrent change of the list)
+        ...(options.approversChanged ? { requiredApprovers: submission.requiredApprovers || [] } : {}),
         approvalGates: await computeApprovalGates(submission, env),
       },
     }, env);

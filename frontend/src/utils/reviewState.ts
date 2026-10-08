@@ -6,7 +6,9 @@
  * The server tells the room after every tracked-change operation (`status_changed` when the
  * status changed, else `approval_state`, both with `approvalGates`), after an approval
  * (`approval_added` with `submissionStatus` and `approvalGates`) and after a comment thread
- * is resolved or reopened (`comment_resolved`).
+ * is resolved or reopened (`comment_resolved`). After the approvers list is changed
+ * (PUT /submissions/:id/approvers) its `status_changed` / `approval_state` also carries
+ * `requiredApprovers`, the list as saved.
  */
 import type { ApprovalGates, Comment, ContentSubmission, SubmissionStatus } from '../types/content';
 
@@ -75,11 +77,16 @@ export function applyReviewStateMessage(submission: ContentSubmission, message: 
   else return submission;
   const gates = isGates(data.approvalGates) ? data.approvalGates : undefined;
   const statusChanges = isStatus(status) && status !== submission.status;
-  if (!statusChanges && !gates) return submission;
+  const approvers: string[] | undefined = message?.type !== 'approval_added' && Array.isArray(data.requiredApprovers) &&
+    data.requiredApprovers.every((e: unknown) => typeof e === 'string') ? data.requiredApprovers : undefined;
+  const current = submission.requiredApprovers || [];
+  const approversChange = !!approvers && (approvers.length !== current.length || approvers.some((e, i) => e !== current[i]));
+  if (!statusChanges && !gates && !approversChange) return submission;
   return {
     ...submission,
     ...(statusChanges ? { status: status as SubmissionStatus } : {}),
     ...(gates ? { approvalGates: gates } : {}),
+    ...(approversChange ? { requiredApprovers: approvers } : {}),
   };
 }
 

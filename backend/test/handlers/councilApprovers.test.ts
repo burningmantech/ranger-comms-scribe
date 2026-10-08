@@ -100,6 +100,15 @@ describe('changing approvers', () => {
     expect((broadcastToSubmissionRoom as jest.Mock).mock.calls.some(([, m]) => m.type === 'approval_state')).toBe(true);
   });
 
+  it("tells the room the new approvers list, so other open review pages show it (F14)", async () => {
+    (broadcastToSubmissionRoom as jest.Mock).mockClear();
+    expect((await setApprovers('cadre', ['council@x.org', 'Ops@x.org'])).status).toBe(200);
+    const messages = (broadcastToSubmissionRoom as jest.Mock).mock.calls.filter(([id]) => id === 's1').map(([, m]) => m);
+    const state = messages.find((m) => m.type === 'approval_state' || m.type === 'status_changed');
+    expect(state.data.requiredApprovers).toEqual(['council@x.org', 'ops@x.org']);
+    expect(state.data.approvalGates.councilManager.approvers.map((a: any) => a.email)).toEqual(['council@x.org', 'ops@x.org']);
+  });
+
   it('lets Council and Admins change approvers too, but not the submitter or an approver', async () => {
     expect((await setApprovers('council', ['council@x.org'])).status).toBe(200);
     expect((await setApprovers('admin', ['council@x.org', 'ops@x.org'])).status).toBe(200);

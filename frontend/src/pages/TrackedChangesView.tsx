@@ -14,6 +14,7 @@ import { mergeComment } from '../utils/remoteComments';
 import { applyCommentResolution, applyReviewStateMessage, needsReviewStateRefresh } from '../utils/reviewState';
 import type { WebSocketMessage } from '../services/websocketService';
 import { isReviewer } from '../utils/access';
+import { createLatestRequestGate } from '../utils/latestRequest';
 
 /** A stored submission comment in the frontend's shape (resolve fields included). */
 export function toFrontendComment(raw: any): Comment {
@@ -46,6 +47,7 @@ export const TrackedChangesView: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userPermissions, deleteSubmission, sendAnnouncementEmail } = useContent();
   const [submission, setSubmission] = useState<ContentSubmission | null>(null);
+  const fetchGateRef = useRef(createLatestRequestGate());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Real-time editing mode from GET /api/config (fetched in parallel with the submission).
@@ -62,6 +64,9 @@ export const TrackedChangesView: React.FC = () => {
   }, []);
 
   const fetchSubmission = async () => {
+    // Refetches overlap (several room messages in a row): apply only the newest one's
+    // answer, so an older response landing last can't drop a change the newer one listed.
+    const isCurrent = fetchGateRef.current.start();
     if (!submissionId) {
       setError('No submission ID provided');
       setLoading(false);
@@ -96,6 +101,7 @@ export const TrackedChangesView: React.FC = () => {
 
       const data = await submissionResponse.json();
       const trackedChanges = trackedChangesResponse.ok ? await trackedChangesResponse.json() : [];
+      if (!isCurrent()) return;
 
       console.log('[TrackedChangesView] fetchSubmission:', {
         trackedChangesResponseOk: trackedChangesResponse.ok,
@@ -235,6 +241,7 @@ export const TrackedChangesView: React.FC = () => {
       setSubmission(transformedSubmission);
     } catch (err) {
       console.error('Error fetching submission:', err);
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : 'Failed to fetch submission');
     } finally {
       setLoading(false);

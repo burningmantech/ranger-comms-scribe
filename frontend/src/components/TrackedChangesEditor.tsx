@@ -351,6 +351,12 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Track optimistically added changes (from handleSaved) so they appear in sidebar
   // immediately without a full fetchSubmission() round-trip that would trigger applyDecorations cascade
   const [localAddedChanges, setLocalAddedChanges] = useState<Change[]>([]);
+  const localRemovedChangeIdsRef = useRef(localRemovedChangeIds);
+  localRemovedChangeIdsRef.current = localRemovedChangeIds;
+  const localAddedChangesRef = useRef(localAddedChanges);
+  localAddedChangesRef.current = localAddedChanges;
+  const submissionChangesRef = useRef(submission.changes);
+  submissionChangesRef.current = submission.changes;
 
   // Synchronized scrolling refs and state
   const originalDiffTextRef = useRef<HTMLDivElement>(null);
@@ -436,6 +442,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // re-initialize the editor with server content that lacks the local keystrokes, so
   // it waits until the local edit has been saved (see flushPendingRemoteRefresh).
   const pendingRemoteRefreshRef = useRef(false);
+  // Orders refetch requests and this user's saves (F13): a refetch asked for before a
+  // save may answer without the saved change; the local copy is kept until one asked for
+  // after the save answers. refreshSeqRef: the sequence number of the latest request;
+  // localSavedSeqRef: each locally saved change's.
+  const orderSeqRef = useRef(0);
+  const refreshSeqRef = useRef(0);
+  const localSavedSeqRef = useRef(new Map<string, number>());
   const refreshWithRemoteGuardRef = useRef<() => void>(() => {});
 
   // Collaborative mode state.
@@ -660,6 +673,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     // frozen.
     if (isCollab) {
       if (onRefreshNeeded) {
+        refreshSeqRef.current = ++orderSeqRef.current;
         onRefreshNeeded();
       }
       return;
@@ -672,6 +686,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
     isApplyingRealTimeUpdateRef.current = true;
     isRemoteRefreshInFlightRef.current = true;
     if (onRefreshNeeded) {
+      refreshSeqRef.current = ++orderSeqRef.current;
       onRefreshNeeded();
     }
     // 5s ceiling covers: network RTT + React re-render + editor re-init +
@@ -829,6 +844,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
             ? tx.afterSnapshot.lexicalState
             : JSON.stringify(tx.afterSnapshot.lexicalState),
         };
+        localSavedSeqRef.current.set(optimisticChange.id, ++orderSeqRef.current);
         setLocalAddedChanges(prev => [...prev, optimisticChange]);
       }
     };
@@ -1080,9 +1096,21 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
 
   // Initialize edited proposed content when component mounts or submission changes
   useEffect(() => {
-    // Clear optimistic local state when submission changes arrive from the server
+    // Clear optimistic local state when submission changes arrive from the server, except
+    // this user's changes saved after the latest refetch was asked for that the server
+    // doesn't list yet (that refetch may have read before the save landed): they stay
+    // until a refetch asked for after the save answers (one is asked for now). One the
+    // server lists is the server's from now on.
+    const removedHere = localRemovedChangeIdsRef.current;
     setLocalRemovedChangeIds(new Set());
-    setLocalAddedChanges([]);
+    const serverIds = new Set((submissionChangesRef.current || []).map(c => c.id));
+    const unconfirmed = localAddedChangesRef.current.filter(c => !serverIds.has(c.id) && !removedHere.has(c.id) &&
+      (localSavedSeqRef.current.get(c.id) ?? 0) > refreshSeqRef.current);
+    localSavedSeqRef.current.forEach((_, id) => {
+      if (!unconfirmed.some(c => c.id === id)) localSavedSeqRef.current.delete(id);
+    });
+    setLocalAddedChanges(unconfirmed);
+    if (unconfirmed.length > 0) scheduleStatusRefresh();
 
     // Collaborative mode: once the editor has reported the shared document, it alone
     // defines editedProposedContent. A refetch (other users' saves, reconnects) only
@@ -1137,7 +1165,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
       hasInitializedContentRef.current = true;
       isRefreshingContentRef.current = false;
     }, 100);
-  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent]);
+  }, [submission.proposedVersions?.richTextContent, submission.proposedVersions?.content, submission.richTextContent, submission.content, getRichTextContent, scheduleStatusRefresh]);
 
   // Synchronized scrolling handlers
   const handleOriginalScroll = useCallback(() => {

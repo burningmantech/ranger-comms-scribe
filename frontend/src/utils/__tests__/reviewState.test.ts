@@ -53,6 +53,20 @@ describe('applyReviewStateMessage', () => {
     expect(after.approvalGates).toBe(before.approvalGates);
   });
 
+  it('approval_state after an approvers change: the new approvers list too (F14)', () => {
+    const before = submission({ requiredApprovers: [] });
+    const after = applyReviewStateMessage(before, { type: 'approval_state', data: { status: 'in_review', approvalGates: gates(false), requiredApprovers: ['ira@x.org'] } });
+    expect(after.requiredApprovers).toEqual(['ira@x.org']);
+    // status_changed too; the same list again changes nothing
+    const changed = applyReviewStateMessage(before, { type: 'status_changed', data: { status: 'in_review', requiredApprovers: ['ira@x.org'] } });
+    expect(changed.requiredApprovers).toEqual(['ira@x.org']);
+    const same = submission({ requiredApprovers: ['ira@x.org'], approvalGates: gates(false) });
+    expect(applyReviewStateMessage(same, { type: 'approval_state', data: { status: 'in_review', requiredApprovers: ['ira@x.org'] } })).toBe(same);
+    // Anything else (a message without the list, or a malformed one) leaves it alone
+    expect(applyReviewStateMessage(same, { type: 'approval_state', data: { status: 'in_review', approvalGates: gates(false) } }).requiredApprovers).toEqual(['ira@x.org']);
+    expect(applyReviewStateMessage(same, { type: 'approval_state', data: { status: 'in_review', requiredApprovers: 'ira@x.org' } })).toBe(same);
+  });
+
   it('returns the same submission when nothing changes or the message is unrelated', () => {
     const before = submission();
     expect(applyReviewStateMessage(before, { type: 'approval_state', data: { status: 'in_review' } })).toBe(before);

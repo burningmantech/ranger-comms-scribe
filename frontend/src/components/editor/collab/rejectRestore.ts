@@ -463,11 +463,15 @@ export interface PlanOptions {
   movePartner?: { before: Json; after: Json };
 }
 
-/** A live range [ls, le) a hunk maps to; `restored`: removed text someone has put back. */
+/**
+ * A live range [ls, le) a hunk maps to; `restored`: removed text someone has put back;
+ * `reverted`: added text already reverted (the range holds the old text).
+ */
 interface Span {
   ls: number;
   le: number;
   restored?: boolean;
+  reverted?: boolean;
 }
 
 /** Where each hunk of a change maps in the live document (unit indexes), plus the edits. */
@@ -578,7 +582,7 @@ function mapPatch(O: DocUnits, N: DocUnits, L: DocUnits, options: PlanOptions = 
           const movedTo = liveInserts.find((x) => x.b1 - x.b0 >= added.length / 2 && x.b1 - x.b0 <= added.length * 2 &&
             similarity(lIds.slice(x.b0, x.b1), added) >= MIN_CONTENT_SIMILARITY);
           if (movedTo) return { ok: false, reason: 'the changed text has been moved since' };
-          spans.push({ ls: laEnd, le: raStart });
+          spans.push({ ls: laEnd, le: raStart, reverted: true });
           continue;
         }
         return { ok: false, reason: 'the changed text has been edited or removed since' };
@@ -790,6 +794,61 @@ export function locateChange(before: Json, after: Json, liveBlocks: Json[]): Cha
   if (collapsed) return { order: ls, start, end: start, collapsed };
   const endBlock = blockOf(le - 1);
   return { order: ls, start, end: { block: endBlock, offset: Math.max(0, le - inlineStart(endBlock)) }, collapsed };
+}
+
+/** Text length of a node as the decorations count it: its text nodes, deletion markers left out. */
+function plainTextLength(node: Json): number {
+  if (!node || typeof node !== 'object' || node.type === 'deleted-text') return 0;
+  let length = typeof node.text === 'string' ? node.text.length : 0;
+  if (Array.isArray(node.children)) for (const child of node.children) length += plainTextLength(child);
+  return length;
+}
+
+function unitTextLength(u: Unit): number {
+  if (u.kind === 'char') return u.ch!.length;
+  if (u.kind === 'block') return 0;
+  return plainTextLength(u.node); // a leaf (a tab is text) or an opaque block (all its text)
+}
+
+/**
+ * The text a change put into the live document (what it inserted, or replaced text with),
+ * located with the same locator as a reject, so it is found wherever the document has
+ * moved on since: other changes made, rejected or undone around it. Ranges are offsets in
+ * the live document's plain text: the text of its text nodes, top-level block after block,
+ * deletion markers left out (TrackedChangesPlugin's "clean text"). Empty for a pure
+ * deletion; null when the change can't be located (or has no rich text), or is inside a
+ * list, table or code token (one unit here, so not located to the character).
+ */
+export function locateChangeText(before: Json, after: Json, liveBlocks: Json[]): Array<{ start: number; end: number }> | null {
+  const oldBlocks = blocksOf(before);
+  const newBlocks = blocksOf(after);
+  if (!oldBlocks || !newBlocks || !Array.isArray(liveBlocks)) return null;
+  const interner = new Interner();
+  const O = toUnits(oldBlocks, interner);
+  const N = toUnits(newBlocks, interner);
+  const L = toUnits(liveBlocks, interner);
+  const mapping = mapPatch(O, N, L);
+  if (!mapping.ok) return null;
+  const offsets: number[] = new Array(L.units.length + 1);
+  let pos = 0;
+  for (let i = 0; i < L.units.length; i++) {
+    offsets[i] = pos;
+    pos += unitTextLength(L.units[i]);
+  }
+  offsets[L.units.length] = pos;
+  const spans = mapping.spans.filter((s) => !s.restored && !s.reverted && s.le > s.ls);
+  // A span over an opaque block (a list, a table) or a multi-character leaf (a code token)
+  // would cover all of its text, not just what the change added: not located at the
+  // character level.
+  for (const s of spans) {
+    for (let i = s.ls; i < s.le; i++) {
+      const u = L.units[i];
+      if (u.kind === 'opaque' || (u.kind === 'leaf' && unitTextLength(u) > 1)) return null;
+    }
+  }
+  return spans
+    .map((s) => ({ start: offsets[s.ls], end: offsets[s.le] }))
+    .filter((r) => r.end > r.start);
 }
 
 // ---------------------------------------------------------------------------
