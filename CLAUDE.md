@@ -106,8 +106,15 @@ Access is one model, stored on each person's record (`user/<email>`); see
    `migrations/people-access-v1`) moved access from the old type, roles, council lists and Comms Cadre list
 
 4. **Authentication Flow**:
-   - Google OAuth handled in `backend/src/handlers/auth.ts`
-   - Sessions stored in the object store (`session/<id>`)
+   - Google OAuth and email/password handled in `backend/src/handlers/auth.ts`. Emails are stored lowercased (lookups
+     try the exact key, then lowercased). Password reset verifies the account and ends all its sessions; there is no
+     set-password. Verification and reset emails: at most 3 per address per hour
+   - Sessions stored in the object store (`session/<id>`), each with an index entry `session-index/<email>/<id>`
+     so `DeleteSessionsForUser` lists one prefix (`migrations/sessionIndex.ts` indexed the older ones). Ending
+     sessions closes their open room sockets (`onSessionsEnded` → `closeSessionSockets` in `handlers/websocket.ts`)
+   - **Verified addresses:** an unverified password account can be registered by anyone for an address that hasn't
+     signed up, so email-matched rights need `verified`: being a listed approver (`isListedApprover` in
+     `services/access.ts`) and the email-keyed notification inbox
    - Session ID passed via `Authorization: Bearer <token>` header
    - Auth wrappers in `backend/src/authWrappers.ts` provide middleware (`withAuth`, `withAdminCheck`)
    - **First admin**: users whose email is in `BOOTSTRAP_ADMIN_EMAILS` become verified Admins on
@@ -140,7 +147,13 @@ Content submissions go through a multi-stage approval process:
    - **Other approvers**: everyone else on the list must approve (met when there are none)
    - **Comms Cadre**: any Comms Cadre approval (a listed council member who is also Comms Cadre meets both)
    - **Edits resolved**: no pending tracked change
-   - Status transitions: `submitted`/`in_review` → `approved` → `sent`
+   - Status transitions: `submitted`/`in_review` → `approved` → `sent`. A body never sets approval: POST creates
+     `draft`/`submitted`/`in_review` (approvers checked, at most 50); PUT moves draft → review, or approved → sent
+     for the Comms Cadre and Admins (`allowedPutStatus`), and keeps the server's fields (`PUT_IGNORED_FIELDS`: id,
+     submittedBy, approval and sending state). Once approved, only reviewers change the message by PUT
+   - **Sent is final:** a sent request's message doesn't change (it is what went out, and its public page). Every
+     tracked-change write and the proposed document answer 409, PUT ignores the message fields, its Yjs room takes
+     no edits (`setYjsRoomReadOnly` on send), and the review page is read-only with "start a new request from it"
    - **Status follows the tracked changes** (`syncSubmissionStatus()` in `contentSubmission.ts`, called last
      by every tracked-change handler: create, batch create, accept/reject incl. cascade, batch status, undo,
      delete). The submission becomes `approved` once all gates are met, including when the last pending change
@@ -168,7 +181,8 @@ Content submissions go through a multi-stage approval process:
    - Comment threads can be resolved and reopened (`POST /content/submissions/:id/comments/:commentId/resolve`
      with `{resolved}`; any user who can view the submission; stores `resolvedBy`/`resolvedByName`/`resolvedAt`,
      broadcasts `comment_resolved`). The review sidebar moves resolved threads to History, with Reopen
-   - `PUT /content/submissions/:id` ignores `comments` and `approvals` (their own endpoints own them)
+   - `PUT /content/submissions/:id` ignores `comments` and `approvals` (their own endpoints own them). Posting a
+     comment, reading tracked changes and the timeline need `canViewSubmission`; writing changes `canEditSubmission`
 
 ### Newsletter ("Black Rock Ranger News")
 
@@ -196,7 +210,11 @@ WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST AP
    - A plain relay: stamps the sender identity (`userId` = email, `userName`, `userEmail`) and a per-room `seq`
      on every relayed message; answers ping/heartbeat itself; sends a server `ping` every 30 s
    - Room keys are `submission:<id>` and `document:<id>`
-   - REST handlers call `broadcastToSubmissionRoom()` / `broadcastToDocumentRoom()` directly
+   - REST handlers call `broadcastToSubmissionRoom()` / `broadcastToDocumentRoom()` directly. Workflow and presence
+     types (`status_changed`, `approval_*`, `comment_*`, `room_state`, `user_*`, `connected`, `error`) come only from
+     the server: a client sending one is ignored (`SERVER_ONLY_TYPES`)
+   - Access is checked again after it changes: `recheckRoomAccess()` (approvers PUT, People access PUT) closes the
+     sockets (JSON and Yjs) of anyone no longer allowed in (4403); ended sessions close theirs (4401)
    - All state is in memory, so the service runs as a single task
 
 2. **Yjs collaboration rooms** (`backend/src/realtime/yjsRooms.ts`, contracts §9):
@@ -323,12 +341,14 @@ changes, blog posts, pages, media) is JSON or binary objects in the object store
 ## Media Handling
 
 Media files (`backend/src/services/mediaService.ts`):
-- Uploaded to the object store (`gallery/`, `gallery/thumbnails/`, `gallery/medium/`)
+- Uploaded to the object store (`gallery/`, `gallery/thumbnails/`, `gallery/medium/`). Only PNG, JPEG, GIF, WebP and
+  AVIF, detected from the bytes (`utils/imageSniff.ts`), which also set the stored type and extension: the gallery is
+  served from the site's origin, so an SVG or HTML file there could run script. Served with `nosniff` and a sandbox
+  CSP. The gallery listing (`GET /api/gallery/`) is Admins only
 - URLs are stored relative to the site origin (`/api/gallery/<file>`); in local dev `frontend/src/setupProxy.js`
   forwards them from the CRA dev server to the backend
 - Automatic image resizing (thumbnail, medium, full)
-- Supports images, videos, documents
-- Access control via `isPublic` flag and `groupId`
+- `isPublic` and `groupId` only hide files from the listing: anyone with a URL can load a file (emails link them)
 
 ## Comms Calendar
 
