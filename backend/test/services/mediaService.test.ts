@@ -58,6 +58,7 @@ describe('Media Service', () => {
   const MAGIC: Record<string, number[]> = {
     'image/jpeg': [0xff, 0xd8, 0xff, 0xe0],
     'image/png': [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    'image/avif': [0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66], // ....ftypavif
     'image/svg+xml': Array.from(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')),
   };
   const bytesOf = (type: string, size: number): ArrayBuffer => {
@@ -276,6 +277,22 @@ describe('Media Service', () => {
       expect(result.success).toBe(true);
       expect(result.mediaItem).toMatchObject({ fileName: '1609459200000_photo.png', fileType: 'image/png' });
       expect(env.STORE.put).toHaveBeenCalledWith('gallery/1609459200000_photo.png', expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'image/png' }));
+    });
+
+    it('takes an AVIF (the image import asks for it first), with PNG versions', async () => {
+      jest.spyOn(Date, 'now').mockImplementation(() => 1609459200000);
+      const avif = createMockFile('photo.avif', 'image/avif', 100);
+      const png = createMockFile('thumbnail_photo.avif', 'image/avif', 100, bytesOf('image/png', 100));
+      const result = await uploadMedia(avif, png, 'user1', env, true, undefined, undefined, png);
+      expect(result.success).toBe(true);
+      expect(result.mediaItem).toMatchObject({ fileName: '1609459200000_photo.avif', fileType: 'image/avif' });
+    });
+
+    it('refuses a form field that is not a file', async () => {
+      const jpeg = createMockFile('ok.jpg', 'image/jpeg', 100);
+      expect(await uploadMedia('text' as any, jpeg, 'user1', env)).toMatchObject({ success: false, invalid: true });
+      expect(await uploadMedia(jpeg, jpeg, 'user1', env, true, undefined, undefined, 'text' as any)).toMatchObject({ success: false, invalid: true });
+      expect(env.STORE.put).not.toHaveBeenCalled();
     });
 
     it('should support private media files with group access', async () => {

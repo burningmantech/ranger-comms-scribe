@@ -95,6 +95,13 @@ async function flagAdmins(env: Env): Promise<User[]> {
   return (await listPeople(env)).filter((u) => accessOf(u).isAdmin);
 }
 
+/** Taking Admin from this person (the access PUT) or deleting them (Admin → People) would leave no Admin. */
+export async function isLastAdmin(user: User, env: Env): Promise<boolean> {
+  if (!accessOf(user).isAdmin) return false;
+  const others = (await flagAdmins(env)).filter((u) => normalizeEmail(u.email) !== normalizeEmail(user.email));
+  return others.length === 0;
+}
+
 /**
  * Change a person's access (People page). Refuses to remove the last Admin, so the admin pages
  * can't be locked; an Admin can't take Admin away from themselves.
@@ -121,8 +128,7 @@ export async function setAccess(targetId: string, patch: AccessPatch, actor: Use
     if (normalizeEmail(actor.email) === normalizeEmail(user.email)) {
       throw new AccessChangeError(409, "You can't remove your own Admin. Ask another Admin.");
     }
-    const others = (await flagAdmins(env)).filter((u) => normalizeEmail(u.email) !== normalizeEmail(user.email));
-    if (others.length === 0) throw new AccessChangeError(409, "This is the only Admin; make someone else an Admin first.");
+    if (await isLastAdmin(user, env)) throw new AccessChangeError(409, "This is the only Admin; make someone else an Admin first.");
   }
   const updated = withDerivedAccess(user, next) as User;
   await saveUser(updated, env);

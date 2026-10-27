@@ -9,8 +9,6 @@ import { buildAnnouncementEmail, embedGalleryImages } from '../services/announce
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
 import { Access, accessOf, approverCounts, canEditSubmission, canViewSubmission, derivedRoles, derivedUserType, isAdmin, isCommsCadre, isCommsManager, isListedApprover, isReviewer, normalizeEmail } from '../services/access';
-
-export { canViewSubmission } from '../services/access';
 import { accessByEmail, peopleByEmail, peopleWhere } from '../services/peopleService';
 import { listMailingLists, suggestedListIds } from '../services/mailingListService';
 import { getUser } from '../services/userService';
@@ -283,7 +281,9 @@ function allowedPutStatus(user: User, from: ContentSubmission['status'], to: unk
   return from;
 }
 
-/** Check a submitted approvers list (the same rules as PUT /submissions/:id/approvers). */
+const looksLikeEmail = (value: string) => /^[^\s@<>,;]+@[^\s@<>,;]+$/.test(value);
+
+/** Check an approvers list (POST /submissions and PUT /submissions/:id/approvers). */
 function cleanApproverList(value: unknown): string[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value) || value.some((e) => typeof e !== 'string')) {
@@ -384,14 +384,7 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   const allSubmissions = (await Promise.all(submissionPromises)).filter((sub): sub is ContentSubmission => sub !== null);
   
   // Reviewers see everything; others their own, and the ones they approve
-  let submissions;
-  if (isReviewer(user)) {
-    submissions = allSubmissions;
-  } else {
-    submissions = allSubmissions.filter((sub: ContentSubmission) => canViewSubmission(user, sub));
-  }
-
-  return json(submissions);
+  return json(allSubmissions.filter((sub: ContentSubmission) => canViewSubmission(user, sub)));
 });
 
 // Get submissions needing the current user's action
@@ -563,9 +556,9 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
   updatedSubmission.status = allowedPutStatus(user, submission.status, updates?.status, env);
   if (updatedSubmission.status === 'sent' && submission.status !== 'sent') {
     // Marked sent by hand (Comms Cadre, Admins): when it went out, if they say, else now
-    const saidSentAt = typeof updates?.sentAt === 'string' && !Number.isNaN(Date.parse(updates.sentAt)) ? updates.sentAt : undefined;
+    const saidSentAt = typeof updates?.sentAt === 'string' ? new Date(updates.sentAt) : null;
     updatedSubmission.sentBy = user.email;
-    updatedSubmission.sentAt = saidSentAt || new Date().toISOString();
+    updatedSubmission.sentAt = saidSentAt && !Number.isNaN(saidSentAt.getTime()) ? saidSentAt.toISOString() : new Date().toISOString();
   }
   // Leaving draft tells the people who act on the request, once (the field is the server's)
   const tellPeople = !submission.submittedNotifiedAt && becomesSubmitted(submission.status, updatedSubmission.status);
@@ -885,6 +878,10 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
   if (!submission) {
     return json({ error: 'Submission not found' }, { status: 404 });
   }
+  // A sent request is done (back to approved, send-email would send it again)
+  if (submission.status === 'sent') {
+    return json({ error: 'This request has been sent' }, { status: 409 });
+  }
 
   const statusBefore = submission.status;
   submission.status = 'approved';
@@ -905,7 +902,7 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
     data: { status: submission.status, title: submission.title }
   }, env);
 
-  if (statusBefore !== 'approved' && statusBefore !== 'sent') await notifySubmitter(submission, 'approved', user, env);
+  if (statusBefore !== 'approved') await notifySubmitter(submission, 'approved', user, env);
 
   return json(submission);
 });
@@ -1194,8 +1191,6 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
   }
 });
 
-const looksLikeEmail = (value: string) => /^[^\s@<>,;]+@[^\s@<>,;]+$/.test(value);
-
 // Change a request's approvers (the review page). Admins, the Comms Cadre and Council: the Cadre
 // picks or swaps the council approver(s), e.g. when the submitter didn't know who should approve.
 // People added are asked by email and in the app; the status is checked again (an approved
@@ -1210,10 +1205,13 @@ router.put('/submissions/:id/approvers', withAuth, async (request: Request, env:
   if (!Array.isArray(body.approvers) || body.approvers.some((e) => typeof e !== 'string')) {
     return json({ error: 'Send approvers: a list of email addresses' }, { status: 400 });
   }
-  const approvers = Array.from(new Set(body.approvers.map((e: string) => normalizeEmail(e)).filter(Boolean)));
-  const bad = approvers.find((e) => !looksLikeEmail(e));
-  if (bad) return json({ error: `"${bad}" is not an email address` }, { status: 400 });
-  if (approvers.length > 50) return json({ error: 'At most 50 approvers' }, { status: 400 });
+  let approvers: string[];
+  try {
+    approvers = cleanApproverList(body.approvers);
+  } catch (err) {
+    if (err instanceof InputError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
 
   const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
   if (!submission) return json({ error: 'Submission not found' }, { status: 404 });

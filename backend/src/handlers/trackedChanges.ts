@@ -1,5 +1,5 @@
 import { canEditSubmission, canViewSubmission, isReviewer } from '../services/access';
-import { CustomRequest } from '../types';
+import { ContentSubmission, CustomRequest } from '../types';
 import { randomUUID as uuidv4 } from 'node:crypto';
 import { AutoRouter } from 'itty-router';
 import {
@@ -274,8 +274,8 @@ function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]
  */
 async function submissionFor(
   request: CustomRequest, submissionId: string, mode: 'view' | 'edit', env: any
-): Promise<{ submission: import('../types').ContentSubmission } | { response: Response }> {
-  const submission = await getObject<import('../types').ContentSubmission>(`content_submissions/${submissionId}`, env);
+): Promise<{ submission: ContentSubmission } | { response: Response }> {
+  const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
   if (!submission) return { response: new Response('Submission not found', { status: 404 }) };
   const user = request.user as any;
   const allowed = mode === 'view' ? canViewSubmission(user, submission) : canEditSubmission(user, submission);
@@ -298,8 +298,8 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
     // Get all changes for the submission
     const changes = await getTrackedChanges(submissionId, env);
 
-    // Get the original submission (for richTextContent)
-    const submission = await getObject(`content_submissions/${submissionId}`, env) as import('../types').ContentSubmission | null;
+    // The original submission (for richTextContent), loaded by the access check
+    const submission: ContentSubmission | null = access.submission;
 
     // Get comments for each change
     const changesWithComments = await Promise.all(
@@ -398,13 +398,11 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
     const originalKey = `original_content/${submissionId}`;
     const existingOriginal = await getObject<any>(originalKey, env);
     if (!existingOriginal) {
-      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
-      if (submission) {
-        await putObject(originalKey, {
-          content: submission.content || '',
-          richTextContent: submission.richTextContent || '',
-        }, env);
-      }
+      const { submission } = access;
+      await putObject(originalKey, {
+        content: submission.content || '',
+        richTextContent: submission.richTextContent || '',
+      }, env);
     }
 
     // Create the tracked change
@@ -770,6 +768,9 @@ export async function addChangeCommentHandler(request: CustomRequest, env: any):
     if (!change) {
       return new Response('Change not found', { status: 404 });
     }
+    // Who may see the request may comment on its changes (as on the request itself)
+    const access = await submissionFor(request, change.submissionId, 'view', env);
+    if ('response' in access) return access.response;
 
     // Create the comment
     const newComment = await addChangeComment(

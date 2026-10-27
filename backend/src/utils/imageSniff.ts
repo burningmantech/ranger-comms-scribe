@@ -16,5 +16,10 @@ export function sniffImage(bytes: Uint8Array): SniffedImage | null {
   if (startsWith(bytes, [0x52, 0x49, 0x46, 0x46]) && startsWith(bytes, [0x57, 0x45, 0x42, 0x50], 8)) {
     return { contentType: 'image/webp', ext: 'webp' }; // RIFF....WEBP
   }
+  // ....ftypavif / ....ftypavis (AVIF still or sequence; the image import asks servers for AVIF first)
+  if (startsWith(bytes, [0x66, 0x74, 0x79, 0x70], 4) &&
+      (startsWith(bytes, [0x61, 0x76, 0x69, 0x66], 8) || startsWith(bytes, [0x61, 0x76, 0x69, 0x73], 8))) {
+    return { contentType: 'image/avif', ext: 'avif' };
+  }
   return null;
 }

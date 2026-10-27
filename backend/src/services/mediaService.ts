@@ -286,7 +286,9 @@ export const uploadMedia = async (
     try {
         // Only raster images, checked by their bytes; the stored type and the file's
         // extension come from what was detected (utils/imageSniff.ts)
-        if (!mediaFile || !thumbnailFile) {
+        // Form fields can be plain strings (formData.get): only files count
+        const isFile = (value: unknown): value is File => typeof (value as File)?.arrayBuffer === 'function';
+        if (!isFile(mediaFile) || !isFile(thumbnailFile) || (mediumFile && !isFile(mediumFile))) {
             return { success: false, invalid: true, message: 'An image and its thumbnail are required' };
         }
         const mediaBuffer = await mediaFile.arrayBuffer();
@@ -296,7 +298,7 @@ export const uploadMedia = async (
         const thumbnailType = sniffImage(new Uint8Array(thumbnailBuffer));
         const mediumType = mediumBuffer ? sniffImage(new Uint8Array(mediumBuffer)) : null;
         if (!mediaType || !thumbnailType || (mediumBuffer && !mediumType)) {
-            return { success: false, invalid: true, message: 'Only PNG, JPEG, GIF and WebP images can be uploaded' };
+            return { success: false, invalid: true, message: 'Only PNG, JPEG, GIF, WebP and AVIF images can be uploaded' };
         }
 
         // Generate a unique ID for the file

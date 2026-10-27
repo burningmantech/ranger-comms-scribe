@@ -28,8 +28,10 @@ export const router = AutoRouter({ base: '/api/page' });
 router.get('/', async (request: ExtendedRequest, env: Env) => {
   try {
     console.log('GET /page called');
-    const userId = request.user;
-    const pages = await getPages(env, userId);
+    // Non-public pages are for Admins, as on the single-page routes below (request.user is the
+    // whole User from withOptionalSession, which getPages would take as "signed in")
+    const user = request.user as any;
+    const pages = await getPages(env, isAdmin(user, env) ? user.id : undefined);
     return json(pages);
   } catch (error) {
     console.error('Error fetching pages:', error);

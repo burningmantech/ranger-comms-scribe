@@ -575,23 +575,6 @@ export async function wantsSubmitterUpdates(env: Env, userIdOrEmail: string): Pr
   return (await getUserNotificationSettings(userIdOrEmail, env)).submitterUpdates;
 }
 
-// Add or update user password
-export async function setUserPassword(userId: string, password: string, env: Env): Promise<boolean> {
-  try {
-    const user = await getUser(userId, env);
-    if (!user) return false;
-    
-    // Hash the password
-    user.passwordHash = await hashPassword(password);
-    await saveUser(user, env);
-
-    return true;
-  } catch (error) {
-    console.error(`Error setting password for user ${userId}:`, error);
-    return false;
-  }
-}
-
 // Authenticate user with email and password
 export async function authenticateUser(email: string, password: string, env: Env): Promise<User | null> {
   try {
@@ -613,6 +596,8 @@ export async function authenticateUser(email: string, password: string, env: Env
  * After /auth/verify-email. For a bootstrap admin address the existing sessions and password
  * (possibly someone else's, see promoteAfterEmailVerification) go before the record says
  * verified: a verified bootstrap address is Admin, and those sessions resolve to this record.
+ * The password goes first, so no new session can be made with it while the old ones are
+ * deleted (DeleteSessionsForUser only sees the sessions that exist when it starts).
  */
 export async function markUserAsVerified(userId: string, env: Env): Promise<User | null> {
   const user = await getUser(userId, env);
@@ -620,9 +605,10 @@ export async function markUserAsVerified(userId: string, env: Env): Promise<User
 
   let verifiedUser: User = { ...user, verified: true };
   if (user.verified !== true && isBootstrapAdminEmail(user.email, env) && !accessOf(user).isAdmin) {
+    const { passwordHash: _unproven, ...rest } = user;
+    await saveUser(rest, env);
     await DeleteSessionsForUser(user.email, env);
-    const { passwordHash: _unproven, ...rest } = verifiedUser;
-    verifiedUser = rest;
+    verifiedUser = { ...rest, verified: true };
   }
   await saveUser(verifiedUser, env);
 
@@ -632,13 +618,17 @@ export async function markUserAsVerified(userId: string, env: Env): Promise<User
 /**
  * Password reset. The emailed link proves the mailbox and whoever holds it chose this password,
  * so the account is verified. Every existing session ends: they may be a thief's, or belong to
- * whoever registered the address before its owner.
+ * whoever registered the address before its owner. The new password is saved first, so the old
+ * one can't make a session while they are deleted (DeleteSessionsForUser only sees the sessions
+ * that exist when it starts), and the record says verified only once they are gone.
  */
 export async function resetUserPassword(userId: string, password: string, env: Env): Promise<User | null> {
   const user = await getUser(userId, env);
   if (!user) return null;
+  const rehashed: User = { ...user, passwordHash: await hashPassword(password) };
+  await saveUser(rehashed, env);
   await DeleteSessionsForUser(user.email, env);
-  const updated: User = { ...user, passwordHash: await hashPassword(password), verified: true };
+  const updated: User = { ...rehashed, verified: true };
   await saveUser(updated, env);
   return applyBootstrapAdmin(updated, env);
 }

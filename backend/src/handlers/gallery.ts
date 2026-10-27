@@ -227,6 +227,7 @@ const IMAGE_CONTENT_TYPES: Record<string, string> = {
     png: 'image/png',
     gif: 'image/gif',
     webp: 'image/webp',
+    avif: 'image/avif',
 };
 
 const VARIANT_PREFIXES = {

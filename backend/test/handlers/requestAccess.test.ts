@@ -7,6 +7,7 @@ jest.mock('../../src/handlers/websocket', () => ({
 import { router as contentRouter } from '../../src/handlers/contentSubmission';
 import { router as notificationsRouter } from '../../src/handlers/notifications';
 import { updateProposedVersionsHandler, getTrackedChangesHandler, createTrackedChangeHandler } from '../../src/handlers/trackedChanges';
+import { router as pageRouter } from '../../src/handlers/page';
 import { getTimelineHandler } from '../../src/handlers/timeline';
 import { clearMemoryCache, getObject, putObject } from '../../src/services/cacheService';
 import { getUser, saveUser } from '../../src/services/userService';
@@ -142,8 +143,8 @@ describe('PUT /submissions/:id', () => {
     await putObject('content_submissions/s1', request('s1', { status: 'approved' }), env);
     await call('PUT', '/submissions/s1', 'member', { title: 'Something else', content: 'Changed' });
     expect(await stored()).toMatchObject({ title: 'Request s1', content: 'Hello Rangers', status: 'approved' });
-    await call('PUT', '/submissions/s1', 'cadre', { status: 'sent' });
-    expect(await stored()).toMatchObject({ status: 'sent', sentBy: 'cadre@x.org' });
+    await call('PUT', '/submissions/s1', 'cadre', { status: 'sent', sentAt: '2026-10-03' });
+    expect(await stored()).toMatchObject({ status: 'sent', sentBy: 'cadre@x.org', sentAt: '2026-10-03T00:00:00.000Z' });
   });
 });
 
@@ -168,6 +169,30 @@ describe('POST /submissions/:id/approve', () => {
     await saveUser({ ...(await asUser('approver')), verified: false } as any, env);
     expect((await call('POST', '/submissions/s1/approve', 'approver', { status: 'approved' })).status).toBe(403);
     expect((await call('GET', '/submissions/s1', 'approver')).status).toBe(403);
+  });
+});
+
+describe('override-approve', () => {
+  it('leaves a sent request alone', async () => {
+    await person('admin', 'admin@x.org', { isAdmin: true });
+    await putObject('content_submissions/s1', request('s1', { status: 'sent' }), env);
+    expect((await call('POST', '/submissions/s1/override-approve', 'admin', { confirm: true, reason: 'again' })).status).toBe(409);
+    expect((await stored()).status).toBe('sent');
+  });
+});
+
+describe('the page list', () => {
+  it('shows non-public pages only to Admins', async () => {
+    await person('admin', 'admin@x.org', { isAdmin: true });
+    await putObject('page/p1', { id: 'p1', title: 'Public', slug: 'public', content: '', published: true, isPublic: true, order: 1 }, env);
+    await putObject('page/p2', { id: 'p2', title: 'Private', slug: 'private', content: '', published: true, isPublic: false, order: 2 }, env);
+    const list = async (who: string) => {
+      const request = new Request('http://localhost/api/page/');
+      (request as any).user = await getUser(`${who}@x.org`, env); // as withOptionalSession sets it
+      return ((await (await pageRouter.fetch(request, env)).json()) as any[]).map((p) => p.id);
+    };
+    expect(await list('member')).toEqual(['p1']);
+    expect(await list('admin')).toEqual(['p1', 'p2']);
   });
 });
 
