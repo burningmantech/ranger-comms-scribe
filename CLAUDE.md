@@ -207,7 +207,7 @@ WebSocket rooms (JSON relay and Yjs) run in the same Node process as the REST AP
 1. **Rooms** (`backend/src/realtime/rooms.ts`, replaces the old Durable Object):
    - Upgrades on `/api/ws/submissions/:id` and `/api/ws/documents/:id` (`?sessionId=`) are handled in
      `src/httpServer.ts`; `authorizeRoomConnection()` in `handlers/websocket.ts` checks the session and access
-   - A plain relay: stamps the sender identity (`userId` = email, `userName`, `userEmail`) and a per-room `seq`
+   - A plain relay: stamps the sender identity (`userId` = email, `userName`, `userEmail`) and a per-connection `seq`
      on every relayed message; answers ping/heartbeat itself; sends a server `ping` every 30 s
    - Room keys are `submission:<id>` and `document:<id>`
    - REST handlers call `broadcastToSubmissionRoom()` / `broadcastToDocumentRoom()` directly. Workflow and presence
