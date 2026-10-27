@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Comms Scribe is a collaborative content management platform hosted at scrivenly.com. It enables Ranger teams to submit content and helps the Comms Cadre and other reviewers process submissions through an advanced workflow system with real-time collaboration features.
+Comms Scribe is a collaborative content management platform (production: scrivenly.com, offline until the AWS cutover; see Deployment). It enables Ranger teams to submit content and helps the Comms Cadre and other reviewers process submissions through an advanced workflow system with real-time collaboration features.
 
 ## Architecture
 
@@ -21,8 +21,9 @@ This is a monorepo with two main components:
 - **Container**: `backend/Dockerfile` (node:24-alpine), runs `node dist/server.js`
 - **Location**: `backend/` directory
 
-The service is being moved from Cloudflare to AWS (ECS Fargate behind CloudFront and an ALB).
-See `docs/plans/2026-10-04-aws-migration-prd.md` and `docs/plans/2026-10-04-aws-migration-contracts.md`.
+The service runs on AWS (ECS Fargate behind CloudFront and an ALB); the Cloudflare deployment was deleted on
+2026-10-05. See `docs/plans/2026-10-04-aws-migration-prd.md`, `docs/plans/2026-10-04-aws-migration-contracts.md`
+and `infra/README.md`.
 
 ### Frontend (React SPA)
 - **Framework**: React 18 with TypeScript
@@ -57,7 +58,7 @@ STORE_DRIVER=memory DEV_BYPASS_AUTH=true PUBLIC_URL=http://localhost:8080/api \
 ```bash
 cd frontend
 npm install                    # Install dependencies
-npm run start                  # Start dev server (uses production API)
+npm run start                  # Dev server against https://scrivenly.com/api (offline now: use the next one)
 npm run start:local-backend    # Start dev server against http://localhost:8080/api
 npm run build                  # Build for production
 npm test                       # Run tests
@@ -67,7 +68,8 @@ npm test                       # Run tests
 ### Running Full Stack Locally
 ```bash
 # Terminal 1 - MinIO + backend in Docker (API on http://localhost:8080/api)
-docker compose up -d --build          # add DEV_BYPASS_AUTH=true for fake dev users
+docker compose up -d --build          # add DEV_BYPASS_AUTH=true for fake dev users (COLLAB_MODE is legacy here;
+                                      #   dev/staging/production use yjs: run from source with COLLAB_MODE=yjs)
 # or: run MinIO from compose and the backend with `npm run dev` (S3_ENDPOINT=http://localhost:9000,
 #     DATA_BUCKET=scribe-local, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY=minioadmin)
 
@@ -296,7 +298,8 @@ Read once at boot by `backend/src/config/env.ts` (full list in the contracts doc
 AWS credentials come from the default credential chain (task role on ECS; a profile or the MinIO keys locally).
 
 ### Frontend Configuration
-- `REACT_APP_API_URL`: Backend API URL (default: production, override for local dev)
+- `REACT_APP_API_URL`: Backend API URL (`src/config.ts`: else `https://scrivenly.com/api` on localhost, else the
+  page's origin + `/api`)
 
 ## Data Storage
 
@@ -446,8 +449,11 @@ Email via AWS SES v2 (`EMAIL_FROM`, `EMAIL_BCC`, `SES_REGION`); every workflow e
 ## Deployment
 
 - **Backend**: container image from `backend/Dockerfile`, run on ECS Fargate behind CloudFront and an ALB
-  (infrastructure and CI are added in Phase 3 of the migration)
+  (AWS CDK app in `infra/`)
 - **Health check**: `GET /healthz` returns `{"ok":true}`
 - **Frontend**: static build, served from the same origin as the API
-- **Production URL**: https://scrivenly.com
-- **API URL**: https://scrivenly.com/api
+- **Environments** (`infra/config/`):
+  - dev, `alex-dev`: https://app.scrivenly.com, Alex's account, deployed with `bin/dev-deploy`; live
+  - Rangers staging, `rangers-staging`: `staging.scrivenly.com` (placeholder), GitHub Actions `cicd.yml`; not deployed yet
+  - Rangers production, `rangers-production`: `scrivenly.com` (placeholder), GitHub Actions `deploy.yml`; not deployed
+    yet. scrivenly.com is offline (Cloudflare 522) until it points at CloudFront

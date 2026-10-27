@@ -1,116 +1,93 @@
 # Comms Scribe - Frontend
 
-Welcome to the Comms Scribe frontend! This project is built with TypeScript and React, providing a collaborative content management platform for the Comms Scribe application.
+The Comms Scribe single-page app: React 18 and TypeScript, built with Create React App. It talks to the backend at
+`<origin>/api` (REST) and `<origin>/api/ws/*` (WebSockets). See the top-level `README.md` for what the app does.
 
-## Project Structure
+## Running it
 
-- **src/**: Contains the source code for the frontend application.
-  - **components/**: Contains React components for the application.
-    - **Admin.tsx**: Comprehensive administrative interface with user management, group management, bulk user operations, role assignments, and email functionality
-    - **CollaborativeEditor.tsx**: Advanced real-time collaborative rich text editor with cursor tracking, operational transforms, and WebSocket integration
-    - **CommsRequest.tsx**: Communication request form with rich text editing, approver selection, and council manager integration
-    - **ContentSubmission.tsx**: Content submission and review system with collaborative editing capabilities
-    - **Login.tsx**: User authentication with Google OAuth integration and session management
-    - **Navbar.tsx**: Navigation component with role-based menu items
-    - **RoleManagement.tsx**: User role and permission management interface
-    - **TrackedChangesEditor.tsx**: Advanced editor for reviewing, accepting, and rejecting tracked changes with diff visualization
-    - **UserPresence.tsx**: Real-time user presence indicators with cursor tracking and activity status
-    - **UserSettings.tsx**: User profile and settings management with password reset functionality
-    - **ApprovalReminders.tsx**: System for sending approval reminders to users
-    - **CouncilManagerManagement.tsx**: Interface for managing council manager roles and permissions
-    - **CommsCadreManagement.tsx**: Interface for managing communications cadre members
-    - **editor/**: Lexical-based rich text editor components and plugins
-      - **LexicalEditor.tsx**: Core Lexical editor component
-      - **plugins/**: Rich text editing plugins (tables, images, formatting, etc.)
-      - **nodes/**: Custom Lexical nodes (images, checkboxes, suggestions)
-      - **utils/**: Editor utility functions
-    - **styles/**: Component-specific CSS files
-  - **pages/**: Page-level components
-    - **ContentManagement.tsx**: Content management interface for administrators
-    - **MySubmissions.tsx**: User's content submissions view with status tracking
-    - **TrackedChangesView.tsx**: Comprehensive tracked changes review interface with diff visualization
-  - **services/**: API and service layer
-    - **trackedChangesService.ts**: Tracked changes API integration with diff algorithms
-    - **websocketService.ts**: Real-time WebSocket communication for collaborative editing and presence
-  - **types/**: TypeScript type definitions
-    - **content.ts**: Content-related type definitions including submissions, forms, and user roles
-    - **index.ts**: Core application types for users, sessions, and authentication
-  - **utils/**: Utility functions and helpers
-    - **diffAlgorithm.ts**: Text diffing algorithms for change tracking
-    - **googleAuth.ts**: Google authentication utilities and OAuth integration
-    - **lexicalUtils.ts**: Lexical editor utilities for content manipulation
-    - **operationalTransforms.ts**: Operational transformation functions for conflict resolution
-    - **userActions.ts**: User action utilities and session management
-    - **logger.ts**: Logging utilities for debugging
-  - **contexts/**: React context providers
-    - **ContentContext.tsx**: Global content state management for submissions and user data
-  - **examples/**: Example and test components
-    - **SuggestedEditsExample.tsx**: Example implementation of suggested edits
-  - **App.tsx**: Main application component with routing and authentication guards
-  - **index.tsx**: Entry point of the application
+```bash
+npm install
+npm run start:local-backend   # dev server on http://localhost:3000, API at http://localhost:8080/api
+npm test                      # Jest + React Testing Library (add --watchman=false if watchman complains)
+npm run build                 # production build in build/
+```
 
-- **public/**: Contains static files for the frontend application.
-  - **index.html**: Main HTML file where the React app is mounted
-  - **test-login.html**: Login testing page
-  - **websocket-test.html**: WebSocket testing page
+- **Start the backend first:** `docker compose up -d --build` from the repository root (see the top-level README).
+- **API address:** `src/config.ts` resolves it in this order:
+  1. `REACT_APP_API_URL`, which `start:local-backend` sets;
+  2. on localhost without it, `https://scrivenly.com/api`, which is offline until the production cutover, so plain
+     `npm start` doesn't work right now;
+  3. otherwise the page's own origin plus `/api`, the deployed setup where the SPA and API share an origin.
+- **Gallery images:** `src/setupProxy.js` forwards `/api/gallery/*` from the dev server to the backend, so relative
+  image URLs load locally.
+- **Builds:** CRA fails a build with `CI=true` on any lint warning, so the CI and deploy scripts build with `CI=false`.
 
-## Getting Started
+## Pages
 
-To get started with the frontend development, follow these steps:
+| Route | Page | Who |
+|---|---|---|
+| `/requests` | Requests list (`pages/MySubmissions.tsx`) | anyone signed in |
+| `/comms-request` | The request form (`components/CommsRequest.tsx`) | anyone signed in |
+| `/tracked-changes/:submissionId` | Review page (`pages/TrackedChangesView.tsx`) | the request's submitter, approvers and reviewers |
+| `/requests/settings` | Mailing lists and request templates (`pages/RequestSettings.tsx`) | Comms Cadre, Admins |
+| `/comms-calendar` | Comms Calendar and Annual dates (`pages/CommsCalendar.tsx`) | Comms Cadre, Council, Admins |
+| `/newsletter/editions`, `/newsletter/editions/:id` | Newsletter editions and editor | Comms Cadre, Communications Manager, Admins |
+| `/admin` | People and Feedback (`components/Admin.tsx`) | Admins |
+| `/newsletter`, `/newsletter/:number`, `/news/:slug` | Public newsletter archive and pages (`pages/PublicNewsletter.tsx`) | anyone |
+| `/login`, `/verify-email`, `/reset-password` | Sign-in (Google or email and password) | anyone |
 
-1. **Clone the repository**:
-   ```
-   git clone https://github.com/your-repo/comms-scribe-website.git
-   cd comms-scribe-website/frontend
-   ```
+`ProtectedRoute` in `App.tsx` guards pages with an `allow={...}` predicate from `utils/access.ts`, the mirror of the
+backend's `services/access.ts`. Check access through those predicates, never by comparing `userType` or `roles`. The
+backend authorizes every request regardless.
 
-2. **Install dependencies**:
-   ```
-   npm install
-   ```
+## Layout
 
-3. **Run the development server**:
-   ```
-   npm start
-   ```
+```
+src/
+├── App.tsx, index.tsx       # Routes; index.tsx installs diagnostics before rendering
+├── config.ts                # API URL, Google client ID
+├── pages/                   # One file per route (table above)
+├── components/
+│   ├── CommsRequest.tsx     # Request form
+│   ├── TrackedChangesEditor.tsx, CollaborativeEditor.tsx
+│   │                        # Review editor: tracked changes over a collaborative Lexical editor
+│   ├── review/              # Review page panels: cards, comment threads, history, send preview
+│   ├── editor/              # Lexical editor, nodes and plugins
+│   │   └── collab/          # Yjs integration (YjsCollaboration.tsx, caret preservation, provenance, ...)
+│   ├── newsletter/          # Newsletter item and edition editing (RichTextField.tsx binds Lexical to a form value)
+│   ├── commsCalendar/       # Comms Calendar modals, including the Google Docs import
+│   ├── dates/               # Date detection panel, date bubbles, Track all
+│   ├── PeopleManagement.tsx, FeedbackAdmin.tsx, MailingListsManager.tsx, TemplateManagement.tsx
+│   └── FeedbackCarrot.tsx, NotificationBell.tsx, Navbar.tsx, ...
+├── services/                # websocketService (JSON rooms), yjsProvider and collabConfig (Yjs), newsletterService,
+│                            # commsCalendarService, annualDatesService, trackedChangesService, userDirectory
+├── contexts/ContentContext.tsx  # Submissions state and API calls
+├── utils/                   # access.ts, reviewState.ts (live status/gates), dateDetection.ts, annualDates.ts,
+│                            # diagnostics.ts and screenshot.ts (feedback), commsCalendarImport.ts, ...
+└── types/
+```
 
-4. **For local backend development**:
-   ```
-   npm run start:local-backend
-   ```
+## Real-time editing
 
-5. **Open your browser** and navigate to `http://localhost:3000` to see the application in action.
+The review page edits the request together with everyone else on it. The mode comes from the backend's
+`GET /api/config` (`COLLAB_MODE`, read by `services/collabConfig.ts`):
 
-## Features
+- **`yjs`**: merged editing through Lexical's `CollaborationPlugin` and the Yjs socket `/api/ws/yjs/submissions/:id`.
+  Dev, staging and production use this mode.
+- **`legacy`**: whole-document sync over the JSON room. This is the backend's default, so local Docker runs it.
+  To test Yjs locally, run the backend from source with `COLLAB_MODE=yjs`.
 
-- **Collaborative Editing**: Real-time collaborative rich text editing with Lexical, featuring cursor tracking, operational transforms, and conflict resolution
-- **Content Management**: Comprehensive content submission, review, and approval system with role-based workflows
-- **Tracked Changes**: Advanced change tracking and review capabilities with diff visualization and acceptance/rejection workflows
-- **User Management**: Role-based access control with admin interface for user management, group management, and bulk operations
-- **Real-time Communication**: WebSocket-based real-time updates, user presence indicators, and live collaboration features
-- **Authentication**: Google OAuth integration for secure user login with session management
-- **Responsive Design**: Modern, responsive UI built with React Bootstrap and custom CSS
-- **Rich Text Editor**: Feature-rich Lexical editor with tables, images, formatting, checkboxes, and custom plugins
-- **Council Management**: Specialized interfaces for managing council managers and communications cadre members
-- **Approval Workflows**: Automated approval processes with reminder systems and status tracking
-- **Form Validation**: Comprehensive form validation using Zod schemas and React Hook Form
-- **Email Integration**: Built-in email functionality for notifications and group communications
+Workflow updates (status, approval gates, comments, approvers) arrive over the JSON room
+(`/api/ws/submissions/:id`, `services/websocketService.ts`) in either mode, and `utils/reviewState.ts` applies them.
 
-## Technology Stack
+Tests for the editor:
 
-- **React 18** with TypeScript for type-safe development
-- **Lexical** rich text editor framework with custom plugins and nodes
-- **React Router** for client-side navigation and route protection
-- **React Bootstrap** for responsive UI components and styling
-- **WebSocket** for real-time communication and collaborative editing
-- **Google OAuth** for secure authentication and user management
-- **Operational Transforms** for conflict resolution in collaborative editing
-- **Zod** for schema validation and type safety
-- **React Hook Form** for form management and validation
-- **Draft.js** for content import/export capabilities
-- **Yjs** for operational transformation algorithms
+- **Yjs integration test:** `src/__integration__/yjsCollab.integration.test.ts` runs against a running backend and is
+  skipped unless `YJS_E2E_API_URL` is set; its header has the commands.
+- **Two-browser regression scripts:** `tools/collab-e2e/` at the repository root. Run them after editor changes.
 
-## Contributing
+## Technology
 
-Contributions are welcome! Please feel free to submit a pull request or open an issue for any enhancements or bug fixes.
-
+React 18, React Router v6, React Bootstrap, Lexical with `@lexical/yjs`, Yjs with `y-websocket`, React Hook Form
+with Zod, and chrono-node for date detection. html2canvas-pro takes the feedback screenshot. Draft.js is only used to
+import old Draft.js content.
