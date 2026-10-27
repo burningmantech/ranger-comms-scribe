@@ -21,7 +21,7 @@ import {
   setInCache, 
   removeFromCache 
 } from './cacheService';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'node:crypto';
 
 // Cache TTL for documents (1 hour)
 const DOCUMENT_CACHE_TTL = 3600;

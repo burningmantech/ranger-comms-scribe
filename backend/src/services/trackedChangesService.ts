@@ -1,6 +1,6 @@
 import { Env } from '../utils/sessionManager';
 import { getObject, putObject, deleteObject, listObjects } from './cacheService';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'node:crypto';
 
 export interface RegionMap {
   field: string;

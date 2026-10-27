@@ -1,6 +1,6 @@
 import { isReviewer } from '../services/access';
 import { CustomRequest } from '../types';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'node:crypto';
 import { AutoRouter } from 'itty-router';
 import {
   getTrackedChanges,

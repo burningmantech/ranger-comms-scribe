@@ -25,9 +25,9 @@ import { createMockObjectStore } from '../helpers/mockObjectStore';
 
 let mockIdCounter = 0;
 let mockIdsDescending = false;
-jest.mock('uuid', () => ({
-  ...jest.requireActual('uuid'),
-  v4: () => {
+jest.mock('node:crypto', () => ({
+  ...jest.requireActual('node:crypto'),
+  randomUUID: () => {
     mockIdCounter += 1;
     const n = mockIdsDescending ? 999999 - mockIdCounter : mockIdCounter;
     return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
