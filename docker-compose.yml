@@ -4,8 +4,9 @@
 #   cd frontend && npm run start:local-backend
 #
 # Set DEV_BYPASS_AUTH=true (e.g. `DEV_BYPASS_AUTH=true docker compose up -d`) to
-# use fake dev users instead of real sign-in. MinIO console: http://localhost:9001
-# (minioadmin / minioadmin).
+# use fake dev users instead of real sign-in, and COLLAB_MODE=yjs for the Yjs
+# editing that dev, staging and production use (the default here is legacy).
+# MinIO console: http://localhost:9001 (minioadmin / minioadmin).
 #
 # The official minio/minio and minio/mc images are no longer published on Docker
 # Hub, so this uses pgsty/minio, a maintained community build of the same MinIO
@@ -61,6 +62,7 @@ services:
       TURNSTILESECRET: ${TURNSTILESECRET:-local-dev-placeholder}
       BOOTSTRAP_ADMIN_EMAILS: ${BOOTSTRAP_ADMIN_EMAILS:-}
       DEV_BYPASS_AUTH: ${DEV_BYPASS_AUTH:-false}
+      COLLAB_MODE: ${COLLAB_MODE:-legacy}
 
 volumes:
   minio-data:

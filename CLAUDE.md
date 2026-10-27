@@ -68,8 +68,8 @@ npm test                       # Run tests
 ### Running Full Stack Locally
 ```bash
 # Terminal 1 - MinIO + backend in Docker (API on http://localhost:8080/api)
-docker compose up -d --build          # add DEV_BYPASS_AUTH=true for fake dev users (COLLAB_MODE is legacy here;
-                                      #   dev/staging/production use yjs: run from source with COLLAB_MODE=yjs)
+docker compose up -d --build          # add DEV_BYPASS_AUTH=true for fake dev users, COLLAB_MODE=yjs for Yjs editing
+                                      #   (default legacy; dev/staging/production use yjs)
 # or: run MinIO from compose and the backend with `npm run dev` (S3_ENDPOINT=http://localhost:9000,
 #     DATA_BUCKET=scribe-local, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY=minioadmin)
 

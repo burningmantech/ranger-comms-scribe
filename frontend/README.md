@@ -74,8 +74,8 @@ The review page edits the request together with everyone else on it. The mode co
 
 - **`yjs`**: merged editing through Lexical's `CollaborationPlugin` and the Yjs socket `/api/ws/yjs/submissions/:id`.
   Dev, staging and production use this mode.
-- **`legacy`**: whole-document sync over the JSON room. This is the backend's default, so local Docker runs it.
-  To test Yjs locally, run the backend from source with `COLLAB_MODE=yjs`.
+- **`legacy`**: whole-document sync over the JSON room. This is the backend's default, locally too.
+  To test Yjs locally, start the backend with `COLLAB_MODE=yjs docker compose up -d --build`.
 
 Workflow updates (status, approval gates, comments, approvers) arrive over the JSON room
 (`/api/ws/submissions/:id`, `services/websocketService.ts`) in either mode, and `utils/reviewState.ts` applies them.

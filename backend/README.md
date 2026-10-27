@@ -87,7 +87,8 @@ npm run dev
 
 From the repository root, `docker compose up -d --build` starts MinIO, creates the `scribe-local`
 bucket and runs the backend container on port 8080. `DEV_BYPASS_AUTH=true docker compose up -d`
-enables the fake dev users; `BOOTSTRAP_ADMIN_EMAILS=you@example.com docker compose up -d` makes your
+enables the fake dev users; `COLLAB_MODE=yjs docker compose up -d` switches on Yjs editing (the default is
+`legacy`); `BOOTSTRAP_ADMIN_EMAILS=you@example.com docker compose up -d` makes your
 account an admin when you sign in with Google (or after verifying your email). `docker compose down -v` removes everything, including the data.
 
 To run the backend from source against the compose MinIO instead:

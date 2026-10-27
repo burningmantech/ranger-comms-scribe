@@ -126,8 +126,8 @@ cd frontend && npm run start:local-backend
   The Admin pages don't accept these dev sessions.
 - **A real account:** start the backend with `BOOTSTRAP_ADMIN_EMAILS=you@example.com`. That address becomes an Admin
   once it is proven, by Google sign-in or email verification.
-- **Editing mode:** Docker runs the backend's default `legacy` editing mode. Dev, staging and production use Yjs; to
-  match them, run the backend from source with `COLLAB_MODE=yjs` (see `backend/README.md`).
+- **Editing mode:** the backend defaults to the `legacy` editing mode. Dev, staging and production use Yjs; to match
+  them, start it with `COLLAB_MODE=yjs docker compose up -d --build`.
 - **`docker compose down`** stops everything; `down -v` also deletes the local MinIO data.
 - **Without Docker:** `STORE_DRIVER=memory` runs the backend from source with an in-memory store. See
   `backend/README.md` for that and for running against the compose MinIO.
