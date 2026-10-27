@@ -287,6 +287,11 @@ When working with the editor:
 - Custom nodes extend base Lexical nodes
 - Plugins handle specific features
 - See `CollaborativeEditor.tsx` and `TrackedChangesEditor.tsx`
+- Edits are grouped into transactions (`services/transactionManager.ts`): active while typing, settled after a
+  2.5 s pause, then autosaved as one tracked change. `SaveStatus` also saves when the page is hidden, unloads or
+  the editor unmounts, and asks before leaving with an edit unsaved. Undo: in `legacy` mode
+  `TransactionHistoryPlugin` undoes whole settled transactions; in `yjs` mode a Yjs UndoManager undoes only your own
+  edits (PRD §14.5)
 
 ## Environment & Configuration
 

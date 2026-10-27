@@ -1,7 +1,7 @@
 # Ranger newsletter ("Black Rock Ranger News")
 
 **Date:** 2026-10-06
-**Status:** Built on `feat/newsletter` (from `feat/review-ui`)
+**Status:** Built (on `feat/newsletter`, now in `master`)
 
 ## Why
 
@@ -33,7 +33,8 @@ edition is approved, sent to Announce, and published on the web.
    An Admin or the Communications Manager can override with a reason. **Any edit after approval needs approving
    again**: every save bumps `version`, and approvals count only for the version they were given on.
 6. **Sending.** *Send test to me* sends to the signed-in user (subject prefixed `[TEST]`). *Send to Announce* needs
-   the current version approved, sends to `ANNOUNCE_EMAIL_TO` as `"<subject> - Ranger News #N"`, with gallery
+   the current version approved, sends to `ANNOUNCE_EMAIL_TO` (through `commsRecipients()`, so `COMMS_EMAIL_OVERRIDE`
+   redirects it on dev and staging) as `"<subject> - Ranger News #N"`, with gallery
    photos attached inline (as announcements are), then freezes the edition, publishes its web page and the Read more
    pages it links to, and marks the requests: `newsletterSentIn`, and `status: 'sent'` when the request has no
    singular/allcom audience still to send.
@@ -68,7 +69,9 @@ nothing keeps the version (and the approval).
 
 ## API
 
-`/api/newsletter` (Comms Cadre by user type, role or the active list; Admins):
+`/api/newsletter`, checked with `services/access.ts`: building and sending (create, PUT, DELETE, tray, sections,
+submit, send) is for the Comms Cadre and Admins; reading, preview, comments, approve, override and send-test also
+allow the Communications Manager (override: Admins and the Communications Manager).
 `GET/POST /editions`, `GET/PUT/DELETE /editions/:id`, `GET /tray`,
 `POST /editions/:id/sections/from-submission`, `POST /editions/:id/sections/:sectionId/refresh`,
 `GET /editions/:id/preview`, `POST /editions/:id/{submit,approve,override-approve,comments,send-test,send}`.

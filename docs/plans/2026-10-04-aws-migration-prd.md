@@ -1,6 +1,14 @@
 # PRD: Moving Comms Scribe to AWS
 
-**Status:** Phases 0–5 implemented and deployed to Alex's account (app.scrivenly.com, `COLLAB_MODE=yjs`) · **Date:** 2026-10-04 · **Owner:** Alex Young · **Branch:** `feature/aws-migration`
+**Status:** Phases 0–5 done; the Rangers setup (§9) is left · **Date:** 2026-10-04 · **Owner:** Alex Young · **Merged:** `feature/aws-migration` into `master` (PR #4, 2026-10-05)
+
+> **Status (2026-10-27).** The plan below has been carried out, except §9:
+> - **Done:** Phases 0–5. Dev runs at https://app.scrivenly.com in Alex's account (`alex-dev`, `COLLAB_MODE=yjs`), deployed with `bin/dev-deploy`. Phase 4's password-reset email check was left manual (§1a).
+> - **Cloudflare is gone.** The Workers, R2 and D1 deployment was deleted on 2026-10-05 (§9's last step), so `scrivenly.com` is offline until production points at CloudFront. Sections describing Cloudflare (§2.1, §2.2) are the starting point, not the current system.
+> - **Left:** §9, the fresh setup in the Ranger tech team's account. `rangers-staging` and `rangers-production` are configured in `infra/config/` (with placeholders, §11) but not deployed. CI's deploy steps stay skipped (tests and the Docker build only) until the tech team configures the `rangers` GitHub Environment (§7.3). Then the cutover: point `scrivenly.com` at production.
+> - **Open:** the §11 questions and the unfixed items in §12.
+>
+> The current system is described in `CLAUDE.md`, `infra/README.md` and the contracts doc; this file keeps the reasoning and the record of what was built and tested.
 
 ## 1. Summary
 
@@ -35,7 +43,7 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
   - **Passed, two-user collaboration** (two Chrome profiles: Alex as Admin, HelpDesk as Comms Cadre): each user's presence avatar and labelled remote cursor appear in the other window, and typing from either side shows up live as that user's tracked change.
   - **Fixed along the way:** a fresh login showed "Please log in to view requests" until a page reload, because `ContentContext` ignored `USER_LOGIN_EVENT` (pre-existing; also on the live site).
   - **Still manual:** forgot-password, which needs a human to pass Turnstile and also proves SES from the task role. |
-| 5: Real-time merging with Yjs (§14) | Server and editor implemented behind `COLLAB_MODE=yjs` (on in `alex-dev` only); see §14.5. Not yet deployed or tested on the dev site. |
+| 5: Real-time merging with Yjs (§14) | Done: server and editor behind `COLLAB_MODE=yjs` (§14.5), deployed to the dev site and tested there with two browsers on 2026-10-05 (§14.6). All three infra configs set `COLLAB_MODE=yjs`; the backend's default is still `legacy`. |
 
 **Changes made during implementation, beyond the requirements above:**
 - `POST /auth/register` returns 409 for any existing email. Registering the email of a Google-only or admin-created user used to return a session for that account, which was an account takeover.
@@ -50,7 +58,7 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
 
 ## 2. Background
 
-### 2.1 Current architecture (Cloudflare)
+### 2.1 Architecture before the move (Cloudflare, deleted 2026-10-05)
 
 | Concern | Today | Notes |
 |---|---|---|
@@ -64,7 +72,7 @@ Estimated effort for one developer: **about 2½–4 weeks** of focused work to r
 | Bot protection | Cloudflare Turnstile | `frontend/src/components/Login.tsx`, `backend/src/utils/turnstile.ts`. It's a plain HTTPS API and works from anywhere. |
 | CI/CD | None; developers run `wrangler deploy` by hand | |
 
-### 2.2 How real-time editing works today
+### 2.2 How real-time editing worked before the move
 
 - A browser on `/tracked-changes/:submissionId` opens a WebSocket to `/api/ws/submissions/<id>?sessionId=…`. Everyone on the same submission shares one Durable Object, called the room.
 - The Durable Object is a **plain relay**. It adds the sender's identity and a per-room `seq` number, forwards the message to everyone else, and answers ping/heartbeat itself. All state is in memory; it never uses `ctx.storage`.
@@ -192,15 +200,15 @@ ECR repo for the image · CloudWatch Logs
 
 **One frontend build works in every environment.** `frontend/src/config.ts` derives the API base from `window.location.origin + '/api'`. `REACT_APP_API_URL` stays as an override for local development.
 
-**Backend environment variables** (task definition):
+**Backend environment variables** (task definition). The full, current list is contracts §3:
 
 | Variable | Purpose |
 |---|---|
 | `PUBLIC_URL`, `FRONTEND_URL` | Base URLs |
-| `CORS_ORIGINS` | Currently hardcoded in `backend/src/index.ts:44-72` |
+| `CORS_ORIGINS` | Was hardcoded in `backend/src/index.ts`; now this variable |
 | `DATA_BUCKET` | S3 data bucket |
 | `S3_ENDPOINT` | Optional. Points at MinIO for local development |
-| `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` | From and BCC are currently hardcoded. `EMAIL_BCC` must be empty in Rangers environments |
+| `SES_REGION`, `EMAIL_FROM`, `EMAIL_BCC` | From and BCC were hardcoded. `EMAIL_BCC` must be empty in Rangers environments |
 | `BOOTSTRAP_ADMIN_EMAILS` | First-admin bootstrap (§8, Phase 2) |
 | `TURNSTILESECRET` | Through the task definition's `secrets` field. Standard: Secrets Manager. Dev: SSM Parameter Store SecureString, which is free |
 
@@ -283,7 +291,7 @@ These are estimates from us-east-1 list prices, not a quote. Check them in the A
 ### Phase 1: Storage layer on S3 (≈3–4 days)
 
 **Requirements**
-- R1.1: Add `backend/src/services/objectStore.ts`, an `ObjectStore` interface with `get`, `getJson`, `put` (content type and metadata), `head`, `delete`, and `list` with full pagination. Implement it on `@aws-sdk/client-s3`, with a configurable endpoint for MinIO.
+- R1.1: Add `backend/src/services/objectStore.ts`, an `ObjectStore` interface with `get`, `getJson`, `put` (content type and metadata), `head`, `delete`, and `list` with full pagination. Implement it on `@aws-sdk/client-s3`, with a configurable endpoint for MinIO. (Built as `backend/src/storage/`, where `get` returns an object with `json()`; see contracts §1.)
 - R1.2: The adapter maps S3's lowercased user-metadata keys back to the camelCase keys the code expects: `isPublic`, `groupId`, `userId`, `createdAt`, `takenBy`, `memberId`, `updatedAt` (see `mediaService.ts:6-30`).
 - R1.3: Convert `cacheService.ts` and all 53 direct `env.R2.*` call sites to `ObjectStore`. The main files are:
   - `mediaService.ts`, `blogService.ts`, `handlers/auth.ts`, `utils/sessionManager.ts`
@@ -397,7 +405,7 @@ This uses the **standard** profile: the tech team's regular production setup, wi
   - promotion is the manual `deploy.yml` workflow (`bin/deploy production`).
 - Request SES production access in their account, and set `EMAIL_BCC` to empty.
 - Point the final hostname, for example `scrivenly.com`, at the production CloudFront distribution.
-- Retire the Cloudflare deployment whenever Alex chooses. Its content isn't migrated.
+- ~~Retire the Cloudflare deployment whenever Alex chooses.~~ Done: deleted 2026-10-05, ahead of this step. Its content wasn't migrated.
 
 **Acceptance criteria**, in addition to Phase 4's app checks on the staging hostname:
 - A push to `master` deploys to staging through GitHub Actions.
@@ -431,7 +439,7 @@ This uses the **standard** profile: the tech team's regular production setup, wi
 
 These are outside the migration's scope except where a phase is noted.
 
-- **Reminders never run.** `scheduled()` is a named export rather than on the default export, there's no cron trigger, and `handlers/reminders.ts` uses the unbound `env.DB` and `env.EMAIL`. Either rebuild later as an in-container scheduler (the Clubhouse pattern) or EventBridge Scheduler, or delete it.
+- ~~**Reminders never run.**~~ Fixed: the dead feature was deleted (§1a). Reminders are now the Remind buttons on a request and the daily digest, run by an in-process timer (`services/reminderDigest.ts`, the Clubhouse pattern).
 - **Document-room broadcasts are no-ops** because of the room-key mismatch. Fixed in Phase 2 (R2.2).
 - **Google `aud` not checked.** Fixed in Phase 0 (R0.2).
 - **Listings silently stop at 1,000 keys.** None of the roughly 30 `list()` calls paginate. Fixed in Phase 1 (R1.1).
@@ -441,7 +449,7 @@ These are outside the migration's scope except where a phase is noted.
   - Options: short-lived signed URLs (CloudFront or S3 presigned) for non-public media, or a signed query token checked by the route.
   - Not in migration scope. CloudFront caching doesn't widen the exposure, because private responses would also need `private`/`no-store` once fixed.
 
-Found in the AWS migration review and not fixed yet:
+Found in the AWS migration review (struck through when fixed):
 
 - ~~**Collaborator identity mismatch.**~~ Fixed 2026-10-05: sockets now use `user.id || user.email`, matching REST broadcasts and the frontend.
 - ~~**`seq` gap for the sender.**~~ Fixed 2026-10-05: `seq` is counted per connection. This was the main cause of a lone typist losing keystrokes (see §14).
@@ -449,8 +457,8 @@ Found in the AWS migration review and not fixed yet:
 - **Long API calls time out at CloudFront.** The API origin's `readTimeout` is 60 s (`infra/lib/shared.ts`), so `/api` requests that run longer return 504. 60 s is CloudFront's default maximum (more needs a quota increase, up to 180 s), so prefer making slow endpoints asynchronous.
 - **Standard stacks each create their own network.** Without `useExisting`, staging and production each create a VPC, cluster and ALB (§7.7's ~$55–60/month case). Share them by creating them once (a small shared stack, or one stack importing the other's), or use the tech team's existing ones.
 - **Account pre-hijack by registration.** Anyone can register a victim's (non-bootstrap) email with their own password, and keeps that password once the victim clicks the verification link. On `/auth/verify-email`, clear the password of an account that was created by email registration and has never logged in, or require the password to be set from the emailed link.
-- **Unpinned MinIO image.** The local `docker-compose.yml` uses the community image `pgsty/minio` because the official images couldn't be pulled. Pin it by digest (`pgsty/minio@sha256:…`).
-- **Production deployer allow-list.** The "Check user" step in `.github/workflows/deploy.yml` allows `alexyoung`, but the maintainer's GitHub login is `alexanderyoung`. Left for the maintainer to change.
+- **Unpinned MinIO image.** Partly fixed: the local `docker-compose.yml` uses the community image `pgsty/minio` (the official images couldn't be pulled), now pinned to the release tag `RELEASE.2026-08-04T00-00-00Z`. A digest (`pgsty/minio@sha256:…`) would also guard against a re-pushed tag.
+- ~~**Production deployer allow-list.**~~ Fixed: the "Check user" step in `.github/workflows/deploy.yml` now allows `alexanderyoung`, the maintainer's GitHub login.
 
 ## 14. Real-time editing: findings and Phase 5 (Yjs)
 
@@ -476,7 +484,7 @@ The editor syncs by sending the whole document, and the last write wins. When tw
 
 ### 14.3 Phase 5 design
 
-- **Client:** `@lexical/react` `CollaborationPlugin` with `@lexical/yjs` (0.30.0, already installed), using a small custom provider.
+- **Client:** `@lexical/react` `CollaborationPlugin` with `@lexical/yjs` (0.30.0, already installed), using a small custom provider. (Built with the stock `y-websocket` provider instead; see §14.5.)
 - **Transport:** a dedicated socket `/api/ws/yjs/submissions/:id`, authorized by the existing `authorizeRoomConnection`, separate from `rooms.ts`. The existing relay keeps handling presence, cursors and workflow events.
 - **Server:**
   - one in-memory `Y.Doc` per submission (single task, as already constrained);

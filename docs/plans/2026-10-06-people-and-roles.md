@@ -1,7 +1,7 @@
 # People and roles: one model
 
 **Date:** 2026-10-06
-**Status:** Built on `feat/roles` (from `feat/review-ui`)
+**Status:** Built (on `feat/roles`, now in `master`). The later sections (Comms setup, One council role, Who approves a request) changed parts of the first ones; where they differ, the later section is what the code does.
 
 ## Problem
 
@@ -44,8 +44,9 @@ can do is fixed in code and described on the People page. The boot-time org char
 Council). Every handler uses it. The frontend mirror is `frontend/src/utils/access.ts`, reading the same fields from
 the signed-in user (`/auth/me`).
 
-Approval gates count an approver for a gate if they held the role when approving (the snapshot on the approval) or hold
-it now (their record). As before, one person who holds both roles approves both gates.
+The Comms Cadre gate counts an approver if they held the role when approving (the snapshot on the approval) or hold
+it now (their record). As before, one person who holds both roles approves both gates. The Council gate is decided
+differently now: see "Who approves a request" below (the listed council members, by their record, else the snapshot).
 
 Lists ("who is the Communications Manager", approver suggestions, newsletter notifications) are read from the people
 records (`listPeople`), not from separate lists.
@@ -54,8 +55,9 @@ records (`listPeople`), not from separate lists.
 
 **People** (replaces Users, Council, Comms Cadre and Roles): one row per person with Comms Cadre, Council role (one
 menu) and Admin, a search box and filters (admins, Comms Cadre, Council). Changes save at once through
-`PUT /api/admin/people/:id/access`. The last Admin can't remove their own Admin. Groups, Bulk add, Reminders and
-Templates stay.
+`PUT /api/admin/people/:id/access`, which refuses removing your own Admin or the last Admin. Groups, Bulk add,
+Reminders and Templates stayed at first; they have since moved or gone (see "Comms setup" below), so Admin is People and
+Feedback.
 
 ## Migration
 
@@ -65,8 +67,8 @@ At startup, once (`migrations/people-access-v1`), every person gets the new fiel
 - `commsCadre`: `userType === 'CommsCadre'`, a `CommsCadre` role, or active on `comms_cadre:active`
 - `councilRoles`: every role list (`council_members:role:*`) and active legacy record (`council_member/*`) naming them;
   plus their per-person records (`council_members:<id>:<role>`) if they are still a council manager by type or role
-  (the org chart wrote only those)
-- `approved`: unchanged (Leads and Members stay approved)
+  (the org chart wrote only those). Now a single `councilRole`: see "One council role, no approval step"
+- `approved`: unchanged (Leads and Members stay approved). Since dropped: see the same section
 
 The old keys are left in place (unused) so a rollback still finds them.
 
@@ -87,7 +89,7 @@ The rest of the old Admin tabs moved to where the work happens:
   notifications for blog posts, pages and gallery media, but no screen sets a `groupId`, so nothing reaches them
 - **Templates** moved to the same page and are editable by the Comms Cadre as well as Admins
 - **Reminders** are Remind buttons in a request's approval conditions popover (one per unmet gate or waiting
-  approver), limited to once a day per target and logged on the request
+  approver), limited to once per target per 20 hours and logged on the request
 - **Bulk add** is Add people on the People screen, with an optional role
 - On dev and staging `COMMS_EMAIL_OVERRIDE` sends list emails and reminders to one address, so the real lists are
   never mailed from there

@@ -1,6 +1,6 @@
 # AWS migration: implementation contracts
 
-Companion to `2026-10-04-aws-migration-prd.md`. These are the interfaces that the Phase 1, 2 and 3 work share. Change them only on purpose, and update this file when you do.
+Companion to `2026-10-04-aws-migration-prd.md`. These are the interfaces that the Phase 1, 2 and 3 work shared, and that the code still follows (the migration is done; see the PRD's status). Change them only on purpose, and update this file when you do.
 
 ## 1. Storage: `ObjectStore`
 
@@ -10,6 +10,7 @@ R2 is replaced by an injected object store. **Code never imports a concrete stor
 - **Implementations** (all in `backend/src/storage/`):
   - `s3ObjectStore.ts` (`@aws-sdk/client-s3`, endpoint configurable for MinIO)
   - `memoryObjectStore.ts` (in-process, for tests and quick local runs)
+  - `latencyObjectStore.ts` (wraps the memory store with random S3-like delays, `STORE_LATENCY_MS`)
 
 ```ts
 export interface ObjectInfo {
@@ -53,16 +54,18 @@ export interface ObjectStore {
   - `httpMetadata.contentType` → `contentType`
   - `customMetadata` → `metadata`
   - R2 `list({prefix}).objects[].key` → `list(prefix).objects[].key`
-- **`env.STORE: ObjectStore`** replaces `env.R2` in the `Env` interface, which stays in `backend/src/utils/sessionManager.ts` for now.
+- **`env.STORE: ObjectStore`** replaces `env.R2` in the `Env` interface, which is in `backend/src/utils/sessionManager.ts`.
 
 ## 2. Cache
 
 `backend/src/services/cacheService.ts` keeps its exported function names and signatures (`getObject`, `putObject`, `deleteObject`, `listObjects`, `removeFromCache`, and the rest) so its roughly 200 call sites don't change.
 
 - Internally it uses `env.STORE` and an **in-memory TTL map** (module-level `Map`) instead of D1.
-- `initCache` and `cleanupExpiredCache` become trivial.
+- `initCache` and `cleanupExpiredCache` are trivial.
 - The `__list__:<prefix>` cache entries remain in memory only.
-- Keys such as `__meta__:`, `__exists__:`, `change:`, `change_comments:` and `tracked_changes:` are **durable data**. `putObject` must keep writing them to the store, as it does today.
+- Everything written with `putObject` is **durable data** and goes to the store, including keys such as `__meta__:`, `__exists__:` and `change_comments:`.
+- A store read that a write or invalidation of the same key overtakes is returned but not cached.
+- Never `putObject` a copy derived from reads. Tracked changes are read straight from their own keys (`tracked-changes/submission/<id>/...`); the old `change:` shadows and `tracked_changes:submission:` arrays are no longer written, and any left in the store are ignored.
 
 ## 3. Runtime configuration (environment variables)
 
@@ -72,13 +75,15 @@ export interface ObjectStore {
 | `PUBLIC_URL` | yes | e.g. `https://app.scrivenly.com/api` |
 | `FRONTEND_URL` | yes | e.g. `https://app.scrivenly.com` |
 | `CORS_ORIGINS` | no | comma-separated origins; default: `FRONTEND_URL` plus `http://localhost:3000` |
-| `DATA_BUCKET` | yes | S3 bucket name |
+| `DATA_BUCKET` | yes, unless `STORE_DRIVER=memory` | S3 bucket name |
 | `S3_ENDPOINT` | no | e.g. `http://localhost:9000` for MinIO (forces path-style) |
 | `AWS_REGION` | no | default `us-east-1` (S3 client) |
 | `SES_REGION` | no | default `us-east-1` |
 | `EMAIL_FROM` | no | default `Comms Scribe <alex@scrivenly.com>` |
 | `EMAIL_BCC` | no | comma-separated; default empty (no BCC) |
-| `ANNOUNCE_EMAIL_TO` | no | announcement list for approved submissions; unset disables sending (production: `rangers-announce@burningman.org`) |
+| `ANNOUNCE_EMAIL_TO` | no | Ranger Announce, the built-in mailing list for approved requests and newsletter editions; unset disables sending to it (production: `rangers-announce@burningman.org`) |
+| `ALLOW_ANNOUNCEMENT_RESEND` | no | `"true"` lets a sent announcement be sent again (dev only) |
+| `COMMS_EMAIL_OVERRIDE` | no | mailing-list sends, newsletter editions and workflow emails (`sendWorkflowEmail`: approval requests, reminders, digests, submitter updates) go only to this address, with `[for <real recipients>] ` before the subject (`commsRecipients()` in `utils/email.ts`; set in dev and staging, never in production). Sign-in emails are unaffected |
 | `NUDGE_EMAIL_OVERRIDE` | no | Comms Calendar nudges go only to this address instead of the team contacts (set in dev and staging, never in production) |
 | `REMINDER_DIGEST` | no | `off` stops the daily reminder digest (8am Pacific); on when unset |
 | `BOOTSTRAP_ADMIN_EMAILS` | no | comma-separated, case-insensitive |
@@ -89,6 +94,7 @@ export interface ObjectStore {
 | `WS_MAX_PAYLOAD_BYTES` | no | largest WebSocket message in bytes; default `16777216` (16 MiB; whole-document `realtime_content_update` messages carry full Lexical JSON, images go by URL). A larger message closes the socket with code `1009` |
 | `COLLAB_MODE` | no | `yjs` or `legacy` (default). Served to the frontend by the unauthenticated `GET /api/config` as `{"collabMode": ...}`. `yjs` turns on merged editing over the Yjs socket (§9); `legacy` keeps whole-document sync. Any other value is a startup error |
 | `STORE_DRIVER` | no | local/test only: `s3` (default) or `memory` (in-process store, data lost on restart; `DATA_BUCKET` not required). Never set it in AWS. |
+| `STORE_LATENCY_MS` | no | local/test only: with `STORE_DRIVER=memory`, delays every store call by a random 0..N ms, like S3 round trips. Default `0` |
 
 The loader is `backend/src/config/env.ts`. It fails at startup, listing every missing required variable.
 
@@ -101,17 +107,17 @@ AWS credentials come from the default credential chain: the task role on ECS, an
 - **Health:** `GET /healthz` returns `200 {"ok":true}` (outside `/api`, used by the ALB target group).
 - **Image name:** ECR repository `comms-scribe`. The dev tag is `:dev`; the standard profile uses commit-ID tags (from `ranger-deploy`).
 
-## 5. WebSocket protocol (unchanged)
+## 5. WebSocket protocol (JSON rooms)
 
-The frontend client (`frontend/src/services/websocketService.ts`) must work **without changes**:
+The migration kept the old Durable Object's protocol, so the frontend client (`frontend/src/services/websocketService.ts`) worked unchanged. The server side is `backend/src/realtime/rooms.ts`:
 
 - **Paths:** `/api/ws/submissions/:submissionId?sessionId=<id>` and `/api/ws/documents/:documentId?sessionId=<id>`.
-- **Message types and shapes:** identical to today's Durable Object (`backend/src/services/websocketService.ts`):
-  - server stamps the sender's identity (`userId`, `userName`, `userEmail`) and a per-room `seq` number on relayed messages;
-  - `connected`, `room_state`, `user_joined` and `user_left` work as now;
-  - ping→pong and heartbeat→heartbeat_response replies work as now.
-- **Server-side broadcasts:** `broadcastToSubmissionRoom(...)` and `broadcastToDocumentRoom(...)` keep their signatures, so the 13 call sites in `contentSubmission.ts` and `document.ts` don't change.
-- **Room keys:** one scheme for both connecting and broadcasting, `submission:<id>` and `document:<id>`. This fixes the old `document-` prefix mismatch.
+- **Message types and shapes:** as the Durable Object had them:
+  - the server stamps the sender's identity (`userId`, `userName`, `userEmail`) and a `seq` number on relayed messages. `seq` is counted per connection (each socket sees 1, 2, 3, ...), so a sender sees no gap for its own messages (PRD §12);
+  - `connected`, `room_state`, `user_joined` and `user_left` work as before;
+  - ping→pong and heartbeat→heartbeat_response replies work as before, and the server sends its own `ping` every 30 s.
+- **Server-side broadcasts:** REST handlers call `broadcastToSubmissionRoom(...)` and `broadcastToDocumentRoom(...)` directly; their signatures didn't change.
+- **Room keys:** one scheme for both connecting and broadcasting, `submission:<id>` and `document:<id>`. This fixed the old `document-` prefix mismatch.
 
 ## 6. Infrastructure naming
 
@@ -126,16 +132,16 @@ The frontend client (`frontend/src/services/websocketService.ts`) must work **wi
 
 `frontend/src/config.ts` chooses `API_URL` in this order:
 1. `REACT_APP_API_URL` if set;
-2. on `localhost` without it, `https://scrivenly.com/api` (keeps today's `npm start` behavior);
+2. on `localhost` without it, `https://scrivenly.com/api` (the old `npm start` behavior; that API is offline until production moves to AWS, so use `npm run start:local-backend`);
 3. otherwise `window.location.origin + '/api'`.
 
-## 8. Guardrails for all implementers
+## 8. Guardrails for the migration's implementers (historical)
 
-- **No deploys or pushes:** no `cdk deploy` or `cdk bootstrap`, no `wrangler deploy`, no AWS commands that change anything, no pushes.
-- **Commit** on your own branch in your worktree, and report the branch name and tip SHA.
-- **Baseline:** `backend` `npx jest` had 2 failing `pageService` tests ("should handle R2 errors gracefully") before this work. Report them as existing rather than chasing them, or fix them if the mock rewrite makes that natural.
+These rules applied to the agents that built Phases 1–3 in separate worktrees: no deploys or pushes, commit on your own branch and report its tip. They no longer apply. The 2 `pageService` tests that failed on the baseline were fixed during the migration (PRD §1a).
 
 ## 9. Yjs collaboration socket (Phase 5)
+
+Server: `backend/src/realtime/yjsRooms.ts`. Client: `frontend/src/services/yjsProvider.ts` and `frontend/src/components/editor/collab/YjsCollaboration.tsx`. `COLLAB_MODE=yjs` is set in all three infra configs.
 
 - **Endpoint:** `GET /api/ws/yjs/submissions/:submissionId?sessionId=<id>`, upgraded to a WebSocket.
   - Authorization is identical to the room sockets (`authorizeRoomConnection({ kind: 'submission', id })`).
@@ -152,8 +158,8 @@ The frontend client (`frontend/src/services/websocketService.ts`) must work **wi
   - Every other client's step-1 reply is held until the doc becomes non-empty (the seed update arrives). Held clients then get step 2 with the full state.
   - If the seeder disconnects before seeding, the next waiting client becomes the seeder and gets its reply.
   - A held client therefore never sees an empty synced doc. Lexical's `CollaborationPlugin` only bootstraps (applies `initialEditorState`) when the synced doc is empty, so it can't duplicate content.
-- **Relay:** each update from a client is applied to the server doc and broadcast to the other clients in the room. Awareness is relayed, and cleaned up when a client disconnects.
-- **Limits:** the existing `WS_MAX_PAYLOAD_BYTES` applies, along with the same keepalive and dead-connection handling as the rooms.
+- **Relay:** each update from a client is applied to the server doc and broadcast to the other clients in the room. Awareness is relayed to every client, the sender included (the y-websocket client closes a socket that hears nothing for 30 s, and its own awareness renewal coming back keeps a lone client open), and cleaned up when a client disconnects.
+- **Limits:** the existing `WS_MAX_PAYLOAD_BYTES` applies, and the same dead-connection rule as the rooms. The keepalive is a WebSocket protocol ping frame, never a JSON `ping` (the client decodes every message as binary).
 - **Feature flag:** the frontend uses this socket only when `GET /api/config` returns `{"collabMode": "yjs"}` (`COLLAB_MODE=yjs`, §3). It fetches the flag once before showing the editor and falls back to `legacy` if the request fails.
   - In `yjs` mode the editor mounts Lexical's `CollaborationPlugin` with a fresh `Y.Doc` per mount, and the JSON room (§5) carries only presence and workflow events (`transaction_settled`, `change_status_updated`, ...). The editor never sends `realtime_content_update`, `content_updated`, typing or cursor messages, and never replaces the whole document after the initial load.
   - In `legacy` mode nothing changes.
