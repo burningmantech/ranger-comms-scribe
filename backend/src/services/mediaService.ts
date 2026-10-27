@@ -4,6 +4,7 @@ import { MediaItem, UserType, User } from '../types';
 import { getUser, canAccessGroup } from '../services/userService';
 import { getObject, putObject, deleteObject, listObjects, removeFromCache } from './cacheService';
 import { ObjectInfo } from '../storage/objectStore';
+import { sniffImage } from '../utils/imageSniff';
 
 // Media URLs are stored and returned relative to the site origin
 // (/api/gallery/<file>[/thumbnail|/medium]) so saved content survives hostname
@@ -281,11 +282,27 @@ export const uploadMedia = async (
     groupId?: string,
     takenBy?: string,
     mediumFile?: File
-): Promise<{ success: boolean; message: string; mediaItem?: MediaItem }> => {
+): Promise<{ success: boolean; message: string; mediaItem?: MediaItem; invalid?: boolean }> => {
     try {
+        // Only raster images, checked by their bytes; the stored type and the file's
+        // extension come from what was detected (utils/imageSniff.ts)
+        if (!mediaFile || !thumbnailFile) {
+            return { success: false, invalid: true, message: 'An image and its thumbnail are required' };
+        }
+        const mediaBuffer = await mediaFile.arrayBuffer();
+        const thumbnailBuffer = await thumbnailFile.arrayBuffer();
+        const mediumBuffer = mediumFile ? await mediumFile.arrayBuffer() : undefined;
+        const mediaType = sniffImage(new Uint8Array(mediaBuffer));
+        const thumbnailType = sniffImage(new Uint8Array(thumbnailBuffer));
+        const mediumType = mediumBuffer ? sniffImage(new Uint8Array(mediumBuffer)) : null;
+        if (!mediaType || !thumbnailType || (mediumBuffer && !mediumType)) {
+            return { success: false, invalid: true, message: 'Only PNG, JPEG, GIF and WebP images can be uploaded' };
+        }
+
         // Generate a unique ID for the file
         const timestamp = Date.now();
-        const fileName = `${timestamp}_${mediaFile.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+        const baseName = (mediaFile.name || 'image').replace(/\.[^.]*$/, '').replace(/[^a-zA-Z0-9-]/g, '_').slice(0, 100) || 'image';
+        const fileName = `${timestamp}_${baseName}.${mediaType.ext}`;
         
         // Define object keys
         const mediaKey = `gallery/${fileName}`;
@@ -314,10 +331,8 @@ export const uploadMedia = async (
             ...(groupId ? { groupId } : {})
         };
         
-        // Get the file data as ArrayBuffer
-        const mediaBuffer = await mediaFile.arrayBuffer();
         const mediaOptions = {
-            contentType: mediaFile.type,
+            contentType: mediaType.contentType,
             metadata: mediaMetadata
         };
         
@@ -327,8 +342,6 @@ export const uploadMedia = async (
         // Cache the metadata for future use
         await putObject(`__meta__:${mediaKey}`, { customMetadata: mediaMetadata }, env);
         
-        // Get the thumbnail data as ArrayBuffer
-        const thumbnailBuffer = await thumbnailFile.arrayBuffer();
         const thumbnailMetadata = { 
             userId: userId, 
             createdAt: new Date().toISOString(),
@@ -336,7 +349,7 @@ export const uploadMedia = async (
             originalMediaKey: mediaKey,
         };
         const thumbnailOptions = {
-            contentType: thumbnailFile.type,
+            contentType: thumbnailType.contentType,
             metadata: thumbnailMetadata
         };
         
@@ -348,10 +361,9 @@ export const uploadMedia = async (
         // Upload medium version if provided by the frontend
         let mediumUrl = '';
         
-        if (mediumFile) {
+        if (mediumFile && mediumBuffer && mediumType) {
             console.log(`Using client-provided medium file: ${mediumFile.name}`);
             // Upload the provided medium file
-            const mediumBuffer = await mediumFile.arrayBuffer();
             const mediumMetadata = { 
                 userId: userId, 
                 createdAt: new Date().toISOString(),
@@ -360,7 +372,7 @@ export const uploadMedia = async (
                 isResized: 'true' // Mark that this is a properly resized medium image
             };
             const mediumOptions = {
-                contentType: mediumFile.type,
+                contentType: mediumType.contentType,
                 metadata: mediumMetadata
             };
             
@@ -379,7 +391,7 @@ export const uploadMedia = async (
                 isResized: 'false' // Mark that this is not a resized medium image
             };
             const mediumOptions = {
-                contentType: mediaFile.type,
+                contentType: mediaType.contentType,
                 metadata: mediumMetadata
             };
             
@@ -397,7 +409,7 @@ export const uploadMedia = async (
         const mediaItem: MediaItem = {
             id: mediaKey,
             fileName: fileName,
-            fileType: mediaFile.type,
+            fileType: mediaType.contentType,
             url: `${GALLERY_URL_PREFIX}/${fileName}`,
             thumbnailUrl: `${GALLERY_URL_PREFIX}/${fileName}/thumbnail`,
             mediumUrl: mediumUrl,

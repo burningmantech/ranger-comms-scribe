@@ -3,7 +3,8 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { zxcvbn } from '@zxcvbn-ts/core';
 import { CreateSession, DeleteSession, GetSession, Env } from '../utils/sessionManager';
-import { getUser, getUserStrict, getOrCreateUser, authenticateUser, setUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
+import { getUser, getUserStrict, getOrCreateUser, authenticateUser, resetUserPassword, markUserAsVerified, applyBootstrapAdmin, markVerifiedByGoogle, promoteAfterEmailVerification } from '../services/userService';
+import { escapeHtml } from '../utils/lexicalEmail';
 import { User } from '../types';
 import { sendEmail } from '../utils/email';
 import { verifyTurnstileToken } from '../utils/turnstile';
@@ -87,6 +88,34 @@ function debugToken(token: string, env: Env): { debug?: string } {
   return env.DEV_BYPASS_AUTH === 'true' ? { debug: 'Email not sent - token: ' + token } : {};
 }
 
+/** An email address from a request body: a string that looks like one, trimmed (else null). */
+function cleanEmail(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const email = value.trim();
+    return email.length <= 254 && /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/.test(email) ? email : null;
+}
+
+// Emails these endpoints send to one address: at most EMAIL_LIMIT an hour (in memory, one task)
+const EMAIL_LIMIT = 3;
+const EMAIL_WINDOW_MS = 60 * 60 * 1000;
+const recentEmails = new Map<string, number[]>();
+function underEmailLimit(kind: string, address: string, env: Env): boolean {
+    if (env.DEV_BYPASS_AUTH === 'true') return true; // local only (the e2e seed resends each run)
+    const key = `${kind}:${address.toLowerCase()}`;
+    const now = Date.now();
+    const recent = (recentEmails.get(key) || []).filter((t) => now - t < EMAIL_WINDOW_MS);
+    if (recent.length >= EMAIL_LIMIT) {
+        recentEmails.set(key, recent);
+        return false;
+    }
+    recent.push(now);
+    recentEmails.set(key, recent);
+    if (recentEmails.size > 10000) {
+        for (const [k, times] of recentEmails) if (!times.some((t) => now - t < EMAIL_WINDOW_MS)) recentEmails.delete(k);
+    }
+    return true;
+}
+
 // Helper function to validate password strength
 const validatePassword = (password: string): { valid: boolean; message: string } => {
     const result = zxcvbn(password);
@@ -126,11 +155,17 @@ const validatePassword = (password: string): { valid: boolean; message: string }
 // Register a new user with email and password
 router.post('/register', async (request: Request, env) => {
     console.log('POST /auth/register called');
-    const body = await request.json() as { name: string; email: string; password: string; turnstileToken: string };
-    const { name, email, password, turnstileToken } = body;
+    const body = await request.json() as { name: unknown; email: unknown; password: unknown; turnstileToken: string };
+    const { turnstileToken } = body;
+    const email = cleanEmail(body.email);
+    const name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
+    const password = typeof body.password === 'string' ? body.password : '';
 
-    if (!name || !email || !password) {
+    if (!name || !body.email || !password) {
         return json({ error: 'Name, email and password are required' }, { status: 400 });
+    }
+    if (!email) {
+        return json({ error: 'That is not an email address' }, { status: 400 });
     }
 
     if (!turnstileToken) {
@@ -165,7 +200,7 @@ router.post('/register', async (request: Request, env) => {
         // address is unproven until /verify-email (see applyBootstrapAdmin).
         const user = await getOrCreateUser({ name, email, password }, env);
 
-        if (!user.verified) {
+        if (!user.verified && underEmailLimit('verify', user.email, env)) {
             // Generate and store verification token
             const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
             const verificationUrl = buildTokenUrl(verificationToken, 'verify-email', env);
@@ -173,7 +208,7 @@ router.post('/register', async (request: Request, env) => {
             // Send verification email
             await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Welcome to our platform!</h1>
-            <p>Hello ${user.name},</p>
+            <p>Hello ${escapeHtml(user.name)},</p>
             <p>Thank you for registering. Please click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
@@ -184,8 +219,8 @@ router.post('/register', async (request: Request, env) => {
 
         return json({
             message: 'User registered successfully. Please check your email to verify your account.',
-            email,
-            name,
+            email: user.email,
+            name: user.name,
             userId: user.email,
             isAdmin: accessOf(user, env).isAdmin,
             verified: !!user.verified,
@@ -257,6 +292,9 @@ router.post('/resend-verification', async (request: Request, env) => {
         if (user.verified) {
             return json({ error: 'Email is already verified' }, { status: 400 });
         }
+        if (!underEmailLimit('verify', user.email, env)) {
+            return json({ error: 'A verification email was sent recently. Please check your inbox, or try again in an hour.' }, { status: 429 });
+        }
 
         // Generate new verification token
         const verificationToken = await createAndStoreToken(user.id, 'verification-token', 86400000, env);
@@ -265,7 +303,7 @@ router.post('/resend-verification', async (request: Request, env) => {
         // Send verification email
         const sent = await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Email Verification</h1>
-            <p>Hello ${user.name},</p>
+            <p>Hello ${escapeHtml(user.name)},</p>
             <p>Please click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
@@ -288,11 +326,16 @@ router.post('/resend-verification', async (request: Request, env) => {
 // Login with email and password
 router.post('/login', async (request: Request, env) => {
     console.log('POST /auth/login called');
-    const body = await request.json() as { email: string; password: string; turnstileToken: string };
-    const { email, password, turnstileToken } = body;
+    const body = await request.json() as { email: unknown; password: unknown; turnstileToken: string };
+    const { turnstileToken } = body;
+    const email = cleanEmail(body.email);
+    const password = typeof body.password === 'string' ? body.password : '';
 
-    if (!email || !password) {
+    if (!body.email || !password) {
         return json({ error: 'Email and password are required' }, { status: 400 });
+    }
+    if (!email) {
+        return json({ error: 'Invalid email or password' }, { status: 401 });
     }
 
     if (!turnstileToken) {
@@ -330,52 +373,21 @@ router.post('/login', async (request: Request, env) => {
     }
 });
 
-// Set or update password for current user
-router.post('/set-password', async (request: Request, env) => {
-    console.log('POST /auth/set-password called');
-    
-    // Verify session
-    const sessionId = request.headers.get('Authorization')?.replace('Bearer ', '');
-    if (!sessionId) {
-        return json({ error: 'Session ID is required' }, { status: 400 });
-    }
-
-    const session = await GetSession(sessionId, env);
-    if (!session) {
-        return json({ error: 'Session not found or expired' }, { status: 403 });
-    }
-
-    // Get password from request
-    const body = await request.json() as { password: string };
-    const { password } = body;
-
-    // Validate password strength
-    const passwordValidation = validatePassword(password);
-    if (!passwordValidation.valid) {
-        return json({ error: passwordValidation.message }, { status: 400 });
-    }
-
-    try {
-        const success = await setUserPassword(session.userId, password, env);
-        if (!success) {
-            return json({ error: 'Failed to set password' }, { status: 500 });
-        }
-
-        return json({ message: 'Password set successfully' });
-    } catch (error) {
-        console.error('Error setting password:', error);
-        return json({ error: 'Failed to set password' }, { status: 500 });
-    }
-});
+// (POST /set-password is gone: nothing called it, and it let any session set a password without
+// the current one, turning a stolen session into a lasting login. Passwords change by reset.)
 
 // Request password reset - sends reset email
 router.post('/forgot-password', async (request: Request, env) => {
     console.log('POST /auth/forgot-password called');
-    const body = await request.json() as { email: string; turnstileToken: string };
-    const { email, turnstileToken } = body;
+    const body = await request.json() as { email: unknown; turnstileToken: string };
+    const { turnstileToken } = body;
+    const email = cleanEmail(body.email);
 
-    if (!email) {
+    if (!body.email) {
         return json({ error: 'Email is required' }, { status: 400 });
+    }
+    if (!email) {
+        return json({ error: 'That is not an email address' }, { status: 400 });
     }
     
     if (!turnstileToken) {
@@ -392,8 +404,8 @@ router.post('/forgot-password', async (request: Request, env) => {
     try {
         // Check if user exists
         const user = await getUser(email, env);
-        if (!user) {
-            // Don't reveal whether a user exists or not for security reasons
+        // Don't reveal whether a user exists (or was just sent a link) for security reasons
+        if (!user || !underEmailLimit('reset', user.email, env)) {
             return json({ message: 'If an account with that email exists, a password reset link has been sent.' });
         }
 
@@ -404,7 +416,7 @@ router.post('/forgot-password', async (request: Request, env) => {
         // Send reset email
         const sent = await sendEmailIfConfigured(user.email, 'Password Reset Request', `
             <h1>Password Reset Request</h1>
-            <p>Hello ${user.name},</p>
+            <p>Hello ${escapeHtml(user.name)},</p>
             <p>You've requested to reset your password. Click the link below to create a new password:</p>
             <p><a href="${resetUrl}">Reset Password</a></p>
             <p>This link will expire in 1 hour.</p>
@@ -431,7 +443,7 @@ router.post('/reset-password', async (request: Request, env) => {
     const body = await request.json() as { token: string; password: string; turnstileToken: string };
     const { token, password, turnstileToken } = body;
 
-    if (!token || !password) {
+    if (!token || !password || typeof token !== 'string' || typeof password !== 'string') {
         return json({ error: 'Token and password are required' }, { status: 400 });
     }
 
@@ -458,9 +470,9 @@ router.post('/reset-password', async (request: Request, env) => {
             return json({ error: 'Invalid or expired token' }, { status: 400 });
         }
 
-        // Set new password
-        const success = await setUserPassword(tokenData.userId, password, env);
-        if (!success) {
+        // Set the new password: verifies the account and ends every session (resetUserPassword)
+        const updated = await resetUserPassword(tokenData.userId, password, env);
+        if (!updated) {
             return json({ error: 'Failed to update password' }, { status: 500 });
         }
 

@@ -2,6 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { withAdminCheck, withAuth } from '../authWrappers';
+import { isAdmin } from '../services/access';
 import {
   getPages,
   getAllPages,
@@ -59,12 +60,8 @@ router.get('/id/:id', async (request: ExtendedRequest, env: Env) => {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     
-    // Check if user has access to this page
-    if (!page.published && !request.user) {
-      return json({ error: 'Page not found' }, { status: 404 });
-    }
-    
-    if (!page.isPublic && !request.user) {
+    // Unpublished and non-public pages are for Admins (signing in isn't enough: anyone can)
+    if ((!page.published || !page.isPublic) && !isAdmin(request.user as any, env)) {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     
@@ -86,12 +83,8 @@ router.get('/:slug', async (request: ExtendedRequest, env: Env) => {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     
-    // Check if user has access to this page
-    if (!page.published && !request.user) {
-      return json({ error: 'Page not found' }, { status: 404 });
-    }
-    
-    if (!page.isPublic && !request.user) {
+    // Unpublished and non-public pages are for Admins (signing in isn't enough: anyone can)
+    if ((!page.published || !page.isPublic) && !isAdmin(request.user as any, env)) {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     

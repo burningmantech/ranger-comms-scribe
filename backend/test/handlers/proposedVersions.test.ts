@@ -40,7 +40,7 @@ async function setup(original = 'Hello world') {
   const env: any = { STORE: createMockObjectStore() };
   const submissionId = `pv-sub-${++counter}`;
   await putObject(`content_submissions/${submissionId}`, {
-    id: submissionId, submittedBy: 'author', content: original, richTextContent: lexical(original),
+    id: submissionId, submittedBy: 'member-user-id', content: original, richTextContent: lexical(original),
   }, env);
   return { env, submissionId };
 }

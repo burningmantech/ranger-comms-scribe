@@ -238,12 +238,15 @@ export default function CollaborativeCursorPlugin({
     
     const color = getColorForUser(cursor.userId);
     
-    cursorElement.innerHTML = `
-      <div class="cursor-line" style="background-color: ${color}"></div>
-      <div class="cursor-label" style="background-color: ${color}">
-        ${cursor.userName}
-      </div>
-    `;
+    // Built with textContent: the name is whatever the person typed at sign-up
+    const line = document.createElement('div');
+    line.className = 'cursor-line';
+    line.style.backgroundColor = color;
+    const label = document.createElement('div');
+    label.className = 'cursor-label';
+    label.style.backgroundColor = color;
+    label.textContent = cursor.userName;
+    cursorElement.append(line, label);
 
     return cursorElement;
   };

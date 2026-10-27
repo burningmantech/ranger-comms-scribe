@@ -1,4 +1,4 @@
-import { isReviewer } from '../services/access';
+import { canEditSubmission, canViewSubmission, isReviewer } from '../services/access';
 import { CustomRequest } from '../types';
 import { randomUUID as uuidv4 } from 'node:crypto';
 import { AutoRouter } from 'itty-router';
@@ -268,6 +268,21 @@ function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]
   );
 }
 
+/**
+ * The submission, when the signed-in person may see it ('view') or edit it ('edit', the same
+ * rule as PUT /content/submissions/:id); otherwise the error response to send.
+ */
+async function submissionFor(
+  request: CustomRequest, submissionId: string, mode: 'view' | 'edit', env: any
+): Promise<{ submission: import('../types').ContentSubmission } | { response: Response }> {
+  const submission = await getObject<import('../types').ContentSubmission>(`content_submissions/${submissionId}`, env);
+  if (!submission) return { response: new Response('Submission not found', { status: 404 }) };
+  const user = request.user as any;
+  const allowed = mode === 'view' ? canViewSubmission(user, submission) : canEditSubmission(user, submission);
+  if (!allowed) return { response: new Response('Forbidden', { status: 403 }) };
+  return { submission };
+}
+
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
@@ -277,16 +292,8 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
   }
 
   try {
-    // Get submission to check permissions (you'll need to implement this based on your content submission service)
-    // For now, we'll assume the user has access if they're authenticated
-
-    // Check if user has access
-    const hasAccess = isReviewer(request.user) ||
-      true; // TODO: Check if user is the submitter
-
-    if (!hasAccess) {
-      return new Response('Forbidden', { status: 403 });
-    }
+    const access = await submissionFor(request, submissionId, 'view', env);
+    if ('response' in access) return access.response;
 
     // Get all changes for the submission
     const changes = await getTrackedChanges(submissionId, env);
@@ -377,6 +384,9 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
   }
 
   try {
+    const access = await submissionFor(request, submissionId, 'edit', env);
+    if ('response' in access) return access.response;
+
     const { field, oldValue, newValue, richTextOldValue, richTextNewValue, regionMap, diffAgainstOldValue } = await request.json();
 
     if (!field || oldValue === undefined || oldValue === null || newValue === undefined || newValue === null) {
@@ -915,11 +925,12 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
       proposedVersionsRichTextPreview: proposedVersionsRichText?.substring(0, 100)
     });
 
-    // Check permissions
-    const hasPermission = isReviewer(request.user) ||
-      true; // TODO: Check if user is the submitter
-
-    if (!hasPermission) {
+    // The editors of the request. The approved document is built from these, so once it's
+    // approved only reviewers change them, and once sent nobody does.
+    const access = await submissionFor(request, submissionId, 'edit', env);
+    if ('response' in access) return access.response;
+    const { status } = access.submission;
+    if (status === 'sent' || (status === 'approved' && !isReviewer(request.user))) {
       return new Response('Forbidden', { status: 403 });
     }
 
@@ -1046,6 +1057,9 @@ export async function getCascadeHandler(request: CustomRequest, env: any): Promi
   }
 
   try {
+    const access = await submissionFor(request, submissionId, 'view', env);
+    if ('response' in access) return access.response;
+
     const dependentIds = await getCascadeDependencies(submissionId, changeId, env);
 
     return new Response(JSON.stringify({ changeId, dependentIds }), {
@@ -1066,6 +1080,9 @@ export async function batchCreateHandler(request: CustomRequest, env: any): Prom
   }
 
   try {
+    const access = await submissionFor(request, submissionId, 'edit', env);
+    if ('response' in access) return access.response;
+
     const { changes } = await request.json();
 
     if (!Array.isArray(changes) || changes.length === 0) {

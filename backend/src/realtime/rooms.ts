@@ -201,6 +201,12 @@ function removeConnection(ws: WebSocket, announce: boolean): void {
   }
 }
 
+
+/** Message types only the server sends; dropped when a client sends them. */
+const SERVER_ONLY_TYPES = new Set([
+  'connected', 'room_state', 'user_joined', 'user_left', 'error', 'heartbeat_response',
+  'status_changed', 'approval_state', 'approval_added', 'comment_added', 'comment_resolved',
+]);
 function handleMessage(ws: WebSocket, raw: string): void {
   const meta = connections.get(ws);
   if (!meta) {
@@ -254,6 +260,12 @@ function handleMessage(ws: WebSocket, raw: string): void {
   }
 
   if (message.type === 'pong') {
+    return;
+  }
+
+  // Workflow and presence messages come only from the server (REST handlers, join/leave):
+  // review pages apply them (status, approval gates, comments), so a client can't relay them.
+  if (typeof message.type !== 'string' || SERVER_ONLY_TYPES.has(message.type)) {
     return;
   }
 

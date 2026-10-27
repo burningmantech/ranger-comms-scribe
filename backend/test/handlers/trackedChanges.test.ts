@@ -167,6 +167,23 @@ describe('trackedChanges handlers', () => {
   });
 
   describe('batchCreateHandler', () => {
+    // user-1 wrote the request (only its editors create tracked changes)
+    beforeEach(async () => {
+      await putObject('content_submissions/sub-1', { id: 'sub-1', submittedBy: 'user-1', status: 'in_review' }, mockEnv);
+    });
+
+    it('refuses someone who may not edit the request', async () => {
+      const request = createMockRequest({
+        params: { submissionId: 'sub-1' },
+        user: { id: 'outsider', name: 'Outsider', email: 'outsider@example.org', userType: 'Member' },
+        body: { changes: [{ field: 'content', oldValue: 'a', newValue: 'b' }] },
+      });
+
+      const response = await batchCreateHandler(request, mockEnv);
+
+      expect(response.status).toBe(403);
+    });
+
     it('should reject batch with more than 50 changes', async () => {
       const changes = Array.from({ length: 51 }, (_, i) => ({
         field: 'content',

@@ -189,6 +189,8 @@ export function createDistribution(scope: Construct, props: DistributionProps): 
         override: true,
       },
       contentTypeOptions: { override: true },
+      // No framing by other sites (clickjacking); the site's own previews still frame it
+      frameOptions: { frameOption: cloudfront.HeadersFrameOption.SAMEORIGIN, override: true },
       referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: false },
     },
   });

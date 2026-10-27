@@ -1,4 +1,4 @@
-import { isReviewer } from '../services/access';
+import { canEditSubmission, isReviewer } from '../services/access';
 import { AutoRouter, json } from 'itty-router';
 import { Env, GetSession } from '../utils/sessionManager';
 import { getUser } from '../services/userService';
@@ -76,9 +76,8 @@ export async function authorizeRoomConnection(
       return { ok: false, status: 404, body: { error: 'Submission not found' } };
     }
 
-    const hasAccess = isReviewer(user, env) ||
-      submission.submittedBy === user.id ||
-      (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+    // Same rule as PUT /content/submissions/:id
+    const hasAccess = isReviewer(user, env) || canEditSubmission(user, submission);
 
     if (!hasAccess) {
       return { ok: false, status: 403, body: { error: 'Access denied' } };

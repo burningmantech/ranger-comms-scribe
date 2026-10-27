@@ -197,8 +197,9 @@ router.delete('/:mediaId/comments/:commentId', withAdminCheck, async (request: R
     }
 });
 
-// Get all media items (must be last before image serving)
-router.get('/', withAuth, async (request: Request, env: Env) => {
+// Get all media items (must be last before image serving). Admins only: every pasted editor
+// image is uploaded as public, so for anyone signed in this listed everyone's draft images.
+router.get('/', withAdminCheck, async (request: Request, env: Env) => {
     console.log('🖼️ Gallery list route hit');
     try {
         const user = (request as any).user as User;
@@ -226,7 +227,6 @@ const IMAGE_CONTENT_TYPES: Record<string, string> = {
     png: 'image/png',
     gif: 'image/gif',
     webp: 'image/webp',
-    svg: 'image/svg+xml',
 };
 
 const VARIANT_PREFIXES = {
@@ -268,6 +268,10 @@ export async function serveGalleryImage(
         return new Response(arrayBuffer, {
             headers: {
                 'Content-Type': IMAGE_CONTENT_TYPES[fileExt],
+                // Served from the site's origin: never sniffed into something that runs, and
+                // no script even if a file isn't the image its name says
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
                 'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
                 'Access-Control-Allow-Origin': '*'
             }

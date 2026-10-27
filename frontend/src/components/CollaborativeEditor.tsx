@@ -2937,9 +2937,9 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           const root = $getRoot();
           root.clear();
 
-          // Create a temporary element to parse the HTML
-          const tempDiv = document.createElement('div');
-          tempDiv.innerHTML = initialContent;
+          // Parse the HTML in an inert document (innerHTML on an element of this page would load
+          // images and run their onerror handlers from the stored content)
+          const tempDiv = new DOMParser().parseFromString(initialContent, 'text/html').body;
 
           // Convert HTML structure to Lexical nodes
           const processHtmlNode = (htmlNode: Node, currentParagraph?: any): any => {

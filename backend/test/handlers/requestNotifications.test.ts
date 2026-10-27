@@ -265,7 +265,7 @@ describe('updates for the submitter', () => {
 
     const pendingChange = async () => {
       const res = await createTrackedChangeHandler(
-        req(await asUser('lead'), { submissionId: 's1' }, { field: 'content', oldValue: 'Hello world.', newValue: 'Hello there world.' }), env);
+        req(await asUser('cadre'), { submissionId: 's1' }, { field: 'content', oldValue: 'Hello world.', newValue: 'Hello there world.' }), env);
       return (await res.json()).id as string;
     };
 

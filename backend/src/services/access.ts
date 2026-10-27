@@ -1,3 +1,4 @@
+import type { ContentApproval, ContentSubmission, User } from '../types';
 import { CouncilRole, UserType } from '../types';
 
 /**
@@ -172,4 +173,31 @@ export function rolesResponse(user: Person, env?: AccessEnv): { roles: string[];
       canViewFilteredSubmissions: reviewer,
     },
   };
+}
+
+// Per-request checks (the handlers, the WebSocket rooms)
+
+/**
+ * The person is on the request's approvers list. The list holds email addresses, so only an
+ * address the person has proven counts: anyone can register a password account for an address
+ * that hasn't signed up yet, and it stays unverified until its owner clicks the emailed link
+ * (or signs in with Google, or resets the password).
+ */
+export function isListedApprover(user: User, submission: ContentSubmission): boolean {
+  if (user.verified !== true) return false;
+  const me = normalizeEmail(user.email);
+  return !!me && (submission.requiredApprovers || []).some((e) => normalizeEmail(e) === me);
+}
+
+/** Who may see a submission (GET /submissions/:id); also who may resolve its comments. */
+export function canViewSubmission(user: User, submission: ContentSubmission): boolean {
+  return isReviewer(user) ||
+    submission.submittedBy === user.id ||
+    !!(submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
+    isListedApprover(user, submission);
+}
+
+/** Who may edit a submission (PUT /submissions/:id, its tracked changes and proposed versions). */
+export function canEditSubmission(user: User, submission: ContentSubmission): boolean {
+  return isReviewer(user) || submission.submittedBy === user.id || isListedApprover(user, submission);
 }

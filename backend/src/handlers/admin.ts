@@ -19,7 +19,7 @@ import { User } from '../types';
 import { GetSession, Env } from '../utils/sessionManager';
 import { withAdminCheck } from '../authWrappers';
 import { AccessChangeError, listPeople, personView, setAccess } from '../services/peopleService';
-import { accessView, publicUser, rolesResponse } from '../services/access';
+import { accessOf, accessView, normalizeEmail, publicUser, rolesResponse } from '../services/access';
 import { getObject, putObject, removeFromCache } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
 import { getDevUserForRequest } from '../utils/devUsers';
@@ -182,7 +182,7 @@ router.post('/update-user-name', withAdminCheck, async (request: Request, env: E
 
   return json({ 
     message: 'User name updated successfully', 
-    user: updatedUser 
+    user: publicUser(updatedUser)
   });
 });
 
@@ -295,6 +295,18 @@ router.delete('/users/:id', withAdminCheck, async (request: Request, env: Env) =
     return json({ error: 'User ID is required' }, { status: 400 });
   }
 
+  // The same guards as the access PUT: not yourself, and never the last Admin
+  const actor = (request as any).user as User;
+  const target = await getUser(id, env);
+  if (!target) return json({ error: 'User not found' }, { status: 404 });
+  if (normalizeEmail(target.email) === normalizeEmail(actor.email)) {
+    return json({ error: "You can't delete yourself. Ask another Admin." }, { status: 409 });
+  }
+  if (accessOf(target, env).isAdmin) {
+    const others = (await listPeople(env)).filter((u) => accessOf(u, env).isAdmin && normalizeEmail(u.email) !== normalizeEmail(target.email));
+    if (others.length === 0) return json({ error: 'This is the only Admin; make someone else an Admin first.' }, { status: 409 });
+  }
+
   const success = await deleteUser(id, env);
   if (!success) {
     return json({ error: 'Failed to delete user' }, { status: 500 });
@@ -324,7 +336,7 @@ router.put('/users/:id/update-name', withAdminCheck, async (request: Request, en
 
   return json({ 
     message: 'User name updated successfully', 
-    user: updatedUser 
+    user: publicUser(updatedUser)
   });
 });
 
