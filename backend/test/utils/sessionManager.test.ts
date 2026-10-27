@@ -1,4 +1,5 @@
-import { CreateSession, GetSession, DeleteSession, DeleteSessionsForUser } from '../../src/utils/sessionManager';
+import { CreateSession, GetSession, DeleteSession, DeleteSessionsForUser, onSessionsEnded } from '../../src/utils/sessionManager';
+import { migrateSessionIndex } from '../../src/migrations/sessionIndex';
 import { MemoryObjectStore } from '../../src/storage/memoryObjectStore';
 import { mockEnv, setupMockStorage } from '../utils/test-helpers';
 
@@ -160,6 +161,69 @@ describe('Session Manager', () => {
       expect(await GetSession('s1', storeEnv)).toBeNull();
       expect(await GetSession('s2', storeEnv)).toBeNull();
       expect(await GetSession('s3', storeEnv)).not.toBeNull();
+    });
+
+    it('finds them through the session index, without reading every session', async () => {
+      (global.crypto.randomUUID as jest.Mock).mockReturnValueOnce('mine').mockReturnValueOnce('theirs');
+      const store = new MemoryObjectStore();
+      const storeEnv: any = { STORE: store };
+      await CreateSession('me@example.com', {}, storeEnv);
+      await CreateSession('them@example.com', {}, storeEnv);
+      const list = jest.spyOn(store, 'list');
+      const get = jest.spyOn(store, 'get');
+
+      expect(await DeleteSessionsForUser('me@example.com', storeEnv)).toBe(1);
+
+      expect(list.mock.calls.map(([prefix]) => prefix)).toEqual(['session-index/me@example.com/']);
+      expect(get).not.toHaveBeenCalled();
+      expect(await store.list('session-index/me@example.com/')).toMatchObject({ objects: [] });
+      expect(await GetSession('theirs', storeEnv)).not.toBeNull();
+    });
+
+    it('tells the listeners which sessions ended (so their sockets close)', async () => {
+      (global.crypto.randomUUID as jest.Mock).mockReturnValueOnce('a').mockReturnValueOnce('b');
+      const storeEnv: any = { STORE: new MemoryObjectStore() };
+      const ended: string[][] = [];
+      onSessionsEnded((ids) => ended.push(ids));
+      await CreateSession('me@example.com', {}, storeEnv);
+      await CreateSession('me@example.com', {}, storeEnv);
+
+      await DeleteSession('a', storeEnv);
+      await DeleteSessionsForUser('me@example.com', storeEnv);
+
+      expect(ended).toEqual([['a'], ['b']]);
+    });
+  });
+
+  describe('signing out', () => {
+    it('removes the session and its index entry', async () => {
+      const store = new MemoryObjectStore();
+      const storeEnv: any = { STORE: store };
+      const id = await CreateSession('me@example.com', {}, storeEnv);
+      expect((await store.list('session-index/me@example.com/')).objects).toHaveLength(1);
+
+      await DeleteSession(id, storeEnv);
+
+      expect(await GetSession(id, storeEnv)).toBeNull();
+      expect((await store.list('session-index/')).objects).toHaveLength(0);
+    });
+  });
+
+  describe('migrateSessionIndex', () => {
+    it('indexes sessions made before the index once, and deletes expired ones', async () => {
+      const store = new MemoryObjectStore();
+      const storeEnv: any = { STORE: store };
+      const put = (id: string, userId: string, expiresAt: number) =>
+        store.put(`session/${id}`, JSON.stringify({ userId, data: {}, expiresAt }), { contentType: 'application/json' });
+      await put('old-live', 'Me@Example.com', Date.now() + 1000);
+      await put('old-expired', 'me@example.com', Date.now() - 1000);
+
+      expect(await migrateSessionIndex(storeEnv)).toEqual({ indexed: 1, expired: 1 });
+      expect(await migrateSessionIndex(storeEnv)).toBeNull();
+
+      expect(await store.get('session/old-expired')).toBeNull();
+      expect(await DeleteSessionsForUser('me@example.com', storeEnv)).toBe(1);
+      expect(await store.get('session/old-live')).toBeNull();
     });
   });
 });

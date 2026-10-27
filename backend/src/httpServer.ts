@@ -209,8 +209,10 @@ export function createAppServer(env: Env, options: AppServerOptions = {}): AppSe
         ? { kind: 'submission', id }
         : { kind: match![1] === 'submissions' ? 'submission' : 'document', id };
       const join = yjsMatch
-        ? (ws: WebSocket, identity: RoomIdentity) => joinYjsRoom(ws, id, identity)
-        : (ws: WebSocket, identity: RoomIdentity) => joinRoom(ws, target, identity);
+        ? (ws: WebSocket, auth: { identity: RoomIdentity; sessionId?: string; readOnly?: boolean }) =>
+            joinYjsRoom(ws, id, auth.identity, { sessionId: auth.sessionId, readOnly: auth.readOnly })
+        : (ws: WebSocket, auth: { identity: RoomIdentity; sessionId?: string }) =>
+            joinRoom(ws, target, auth.identity, auth.sessionId);
 
       try {
         const result = await authorizeRoomConnection(
@@ -223,7 +225,7 @@ export function createAppServer(env: Env, options: AppServerOptions = {}): AppSe
           return;
         }
         if (socket.destroyed) return;
-        wss.handleUpgrade(req, socket, head, (ws) => join(ws, result.identity));
+        wss.handleUpgrade(req, socket, head, (ws) => join(ws, result));
       } catch (error) {
         console.error('Error handling WebSocket upgrade:', error);
         rejectUpgrade(socket, 500, { error: 'Failed to connect to WebSocket service' });

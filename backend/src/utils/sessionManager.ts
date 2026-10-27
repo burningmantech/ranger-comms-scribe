@@ -41,6 +41,36 @@ export interface Env {
 
 export type CollabMode = 'yjs' | 'legacy';
 
+/**
+ * Sessions live at `session/<id>`. Each also has an empty marker at
+ * `session-index/<lowercased userId>/<id>`, so a person's sessions are found by listing their
+ * own prefix (DeleteSessionsForUser) instead of reading every session. The startup migration
+ * `migrations/sessionIndex.ts` indexed the sessions made before the index existed.
+ */
+export const SESSION_INDEX_PREFIX = 'session-index/';
+export const sessionIndexKey = (userId: string, sessionId: string): string =>
+    `${SESSION_INDEX_PREFIX}${userId.trim().toLowerCase()}/${sessionId}`;
+
+/**
+ * Told the IDs of sessions that just ended (sign-out, expiry, a password reset, a deleted
+ * account), so open WebSockets made with them can be closed (handlers/websocket.ts).
+ */
+type SessionsEndedListener = (sessionIds: string[]) => void;
+const sessionsEndedListeners: SessionsEndedListener[] = [];
+export function onSessionsEnded(listener: SessionsEndedListener): void {
+    sessionsEndedListeners.push(listener);
+}
+function notifySessionsEnded(sessionIds: string[]): void {
+    if (sessionIds.length === 0) return;
+    for (const listener of sessionsEndedListeners) {
+        try {
+            listener(sessionIds);
+        } catch (error) {
+            console.error('Error closing connections for ended sessions:', error);
+        }
+    }
+}
+
 export async function CreateSession(
         userId: string, 
         data: Record<string, any>, 
@@ -58,6 +88,7 @@ export async function CreateSession(
         contentType: 'application/json',
         metadata: { userId },
     });
+    await env.STORE.put(sessionIndexKey(userId, sessionId), '{}', { contentType: 'application/json' });
 
 return sessionId;
 }
@@ -69,39 +100,43 @@ export async function GetSession(
 
     const sessionData = await object.json() as { userId: string; data: Record<string, any>; expiresAt: number };
     if (sessionData.expiresAt < Date.now()) {
-        await DeleteSession(sessionId, env); // Delete expired session
+        await DeleteSession(sessionId, env, sessionData.userId); // Delete expired session
         return null;
     }
 
     return sessionData;
 }
 
-export async function DeleteSession(sessionId: string, env: Env): Promise<void> {
+/** End one session (sign-out, expiry). `userId` saves reading the session for its index entry. */
+export async function DeleteSession(sessionId: string, env: Env, userId?: string): Promise<void> {
+    let owner = userId;
+    if (!owner) {
+        try {
+            const object = await env.STORE.get(`session/${sessionId}`);
+            owner = object ? ((await object.json()) as { userId?: string }).userId : undefined;
+        } catch {
+            owner = undefined; // unreadable: the index entry (if any) is left behind, harmlessly
+        }
+    }
     await env.STORE.delete(`session/${sessionId}`);
+    if (owner) await env.STORE.delete(sessionIndexKey(owner, sessionId));
+    notifySessionsEnded([sessionId]);
 }
 
 /**
- * Delete every session belonging to `userId` (the email sessions are created with).
- * Used when an account changes hands in effect: e.g. a bootstrap admin is promoted
- * on an account someone else may have registered first, whose sessions resolve to
- * the (now promoted) user record. Rare, so a full scan of session/ is acceptable.
+ * Delete every session belonging to `userId` (the email sessions are created with), found
+ * through the session index. Used when an account changes hands in effect (a password reset,
+ * a bootstrap admin's promotion, a Google sign-in over an unproven password) or is deleted.
+ * Returns how many were deleted.
  */
 export async function DeleteSessionsForUser(userId: string, env: Env): Promise<number> {
-    const target = userId.trim().toLowerCase();
-    const { objects } = await env.STORE.list('session/');
-    let deleted = 0;
-    for (const { key } of objects) {
-        const object = await env.STORE.get(key);
-        if (!object) continue;
-        try {
-            const session = await object.json() as { userId?: string };
-            if (session.userId && session.userId.trim().toLowerCase() === target) {
-                await env.STORE.delete(key);
-                deleted += 1;
-            }
-        } catch {
-            // Unreadable session object; leave it to expire.
-        }
-    }
-    return deleted;
+    const prefix = `${SESSION_INDEX_PREFIX}${userId.trim().toLowerCase()}/`;
+    const { objects } = await env.STORE.list(prefix);
+    const sessionIds = objects.map(({ key }) => key.slice(prefix.length)).filter(Boolean);
+    await Promise.all(sessionIds.map(async (sessionId) => {
+        await env.STORE.delete(`session/${sessionId}`);
+        await env.STORE.delete(`${prefix}${sessionId}`);
+    }));
+    notifySessionsEnded(sessionIds);
+    return sessionIds.length;
 }

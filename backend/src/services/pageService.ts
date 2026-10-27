@@ -1,6 +1,6 @@
 import { Page } from '../types';
 import { Env } from '../utils/sessionManager';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'node:crypto';
 import { 
   getObject, 
   putObject, 

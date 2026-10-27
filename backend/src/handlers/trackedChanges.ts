@@ -1,6 +1,6 @@
-import { isReviewer } from '../services/access';
-import { CustomRequest } from '../types';
-import { v4 as uuidv4 } from 'uuid';
+import { canEditSubmission, canViewSubmission, isReviewer } from '../services/access';
+import { ContentSubmission, CustomRequest } from '../types';
+import { randomUUID as uuidv4 } from 'node:crypto';
 import { AutoRouter } from 'itty-router';
 import {
   getTrackedChanges,
@@ -268,6 +268,31 @@ function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]
   );
 }
 
+/**
+ * A sent request doesn't change: what went out (and its public page) stays as sent, and a new
+ * version starts from "New request from this". Every tracked-change write refuses it.
+ */
+const SENT_MESSAGE = 'This request has been sent, so it can no longer be edited. Start a new request from it instead.';
+async function refuseIfSent(submissionId: string, env: any): Promise<Response | null> {
+  const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
+  return submission?.status === 'sent' ? new Response(SENT_MESSAGE, { status: 409 }) : null;
+}
+
+/**
+ * The submission, when the signed-in person may see it ('view') or edit it ('edit', the same
+ * rule as PUT /content/submissions/:id); otherwise the error response to send.
+ */
+async function submissionFor(
+  request: CustomRequest, submissionId: string, mode: 'view' | 'edit', env: any
+): Promise<{ submission: ContentSubmission } | { response: Response }> {
+  const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
+  if (!submission) return { response: new Response('Submission not found', { status: 404 }) };
+  const user = request.user as any;
+  const allowed = mode === 'view' ? canViewSubmission(user, submission) : canEditSubmission(user, submission);
+  if (!allowed) return { response: new Response('Forbidden', { status: 403 }) };
+  return { submission };
+}
+
 // Get all tracked changes for a submission
 export async function getTrackedChangesHandler(request: CustomRequest, env: any): Promise<Response> {
   const { submissionId } = request.params!;
@@ -277,22 +302,14 @@ export async function getTrackedChangesHandler(request: CustomRequest, env: any)
   }
 
   try {
-    // Get submission to check permissions (you'll need to implement this based on your content submission service)
-    // For now, we'll assume the user has access if they're authenticated
-
-    // Check if user has access
-    const hasAccess = isReviewer(request.user) ||
-      true; // TODO: Check if user is the submitter
-
-    if (!hasAccess) {
-      return new Response('Forbidden', { status: 403 });
-    }
+    const access = await submissionFor(request, submissionId, 'view', env);
+    if ('response' in access) return access.response;
 
     // Get all changes for the submission
     const changes = await getTrackedChanges(submissionId, env);
 
-    // Get the original submission (for richTextContent)
-    const submission = await getObject(`content_submissions/${submissionId}`, env) as import('../types').ContentSubmission | null;
+    // The original submission (for richTextContent), loaded by the access check
+    const submission: ContentSubmission | null = access.submission;
 
     // Get comments for each change
     const changesWithComments = await Promise.all(
@@ -377,6 +394,10 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
   }
 
   try {
+    const access = await submissionFor(request, submissionId, 'edit', env);
+    if ('response' in access) return access.response;
+    if (access.submission.status === 'sent') return new Response(SENT_MESSAGE, { status: 409 });
+
     const { field, oldValue, newValue, richTextOldValue, richTextNewValue, regionMap, diffAgainstOldValue } = await request.json();
 
     if (!field || oldValue === undefined || oldValue === null || newValue === undefined || newValue === null) {
@@ -388,13 +409,11 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
     const originalKey = `original_content/${submissionId}`;
     const existingOriginal = await getObject<any>(originalKey, env);
     if (!existingOriginal) {
-      const submission = await getObject<any>(`content_submissions/${submissionId}`, env);
-      if (submission) {
-        await putObject(originalKey, {
-          content: submission.content || '',
-          richTextContent: submission.richTextContent || '',
-        }, env);
-      }
+      const { submission } = access;
+      await putObject(originalKey, {
+        content: submission.content || '',
+        richTextContent: submission.richTextContent || '',
+      }, env);
     }
 
     // Create the tracked change
@@ -472,6 +491,8 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
     if (!submissionId) {
       return new Response('submissionId is required', { status: 400 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     // Update the change status
     const updatedChange = await updateChangeStatus(
@@ -642,6 +663,8 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
         status: 400, headers: { 'Content-Type': 'application/json' }
       });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     const results = [];
     for (const changeId of changeIds) {
@@ -760,6 +783,9 @@ export async function addChangeCommentHandler(request: CustomRequest, env: any):
     if (!change) {
       return new Response('Change not found', { status: 404 });
     }
+    // Who may see the request may comment on its changes (as on the request itself)
+    const access = await submissionFor(request, change.submissionId, 'view', env);
+    if ('response' in access) return access.response;
 
     // Create the comment
     const newComment = await addChangeComment(
@@ -842,6 +868,8 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
     if (!submissionId) {
       return new Response('submissionId is required', { status: 400 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     // Undo the change
     const updatedChange = await undoChange(submissionId, changeId, env);
@@ -915,11 +943,12 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
       proposedVersionsRichTextPreview: proposedVersionsRichText?.substring(0, 100)
     });
 
-    // Check permissions
-    const hasPermission = isReviewer(request.user) ||
-      true; // TODO: Check if user is the submitter
-
-    if (!hasPermission) {
+    // The editors of the request. The approved document is built from these, so once it's
+    // approved only reviewers change them, and once sent nobody does.
+    const access = await submissionFor(request, submissionId, 'edit', env);
+    if ('response' in access) return access.response;
+    if (access.submission.status === 'sent') return new Response(SENT_MESSAGE, { status: 409 });
+    if (access.submission.status === 'approved' && !isReviewer(request.user)) {
       return new Response('Forbidden', { status: 403 });
     }
 
@@ -979,6 +1008,8 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
     if (!isAuthor && !hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     const result = await deleteChange(submissionId, changeId, env);
 
@@ -1012,6 +1043,8 @@ export async function deleteAllChangesHandler(request: CustomRequest, env: any):
     if (!hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     const { listObjects, deleteObject } = await import('../services/cacheService');
     const objects = await listObjects(`tracked-changes/submission/${submissionId}/`, env);
@@ -1046,6 +1079,9 @@ export async function getCascadeHandler(request: CustomRequest, env: any): Promi
   }
 
   try {
+    const access = await submissionFor(request, submissionId, 'view', env);
+    if ('response' in access) return access.response;
+
     const dependentIds = await getCascadeDependencies(submissionId, changeId, env);
 
     return new Response(JSON.stringify({ changeId, dependentIds }), {
@@ -1066,6 +1102,10 @@ export async function batchCreateHandler(request: CustomRequest, env: any): Prom
   }
 
   try {
+    const access = await submissionFor(request, submissionId, 'edit', env);
+    if ('response' in access) return access.response;
+    if (access.submission.status === 'sent') return new Response(SENT_MESSAGE, { status: 409 });
+
     const { changes } = await request.json();
 
     if (!Array.isArray(changes) || changes.length === 0) {

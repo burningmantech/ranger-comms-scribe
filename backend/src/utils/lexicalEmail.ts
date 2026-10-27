@@ -541,7 +541,7 @@ function decodeEntities(text: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_m, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#(\d+);/g, (m, code) => (Number(code) <= 0x10ffff ? String.fromCodePoint(Number(code)) : m))
     .replace(/&amp;/g, '&');
 }
 

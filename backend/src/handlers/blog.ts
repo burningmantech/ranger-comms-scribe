@@ -16,6 +16,7 @@ import {
     getBlockedUsers
 } from '../services/blogService';
 import { notifyAboutReply } from '../services/notificationService';
+import { BlogPost } from '../types';
 
 const { preflight } = cors();
 
@@ -28,15 +29,32 @@ interface ExtendedRequest extends Request {
 
 export const router = AutoRouter({ base: '/api/blog' });
 
+// The auth wrappers put the whole User record on request.user (not an id string)
+const userIdOf = (request: ExtendedRequest): string | undefined => (request.user as any)?.id;
+const userNameOf = (request: ExtendedRequest, fallback: string): string => (request.user as any)?.name || fallback;
+
+/**
+ * A post or comment as these public routes return it. Older records stored the author's whole
+ * user record (password hash included) as authorId: only its id goes out.
+ */
+function withAuthorId<T extends { authorId?: any; replies?: any[] }>(item: T): T {
+    const out: any = { ...item };
+    if (out.authorId && typeof out.authorId === 'object') out.authorId = out.authorId.id;
+    if (Array.isArray(out.replies)) out.replies = out.replies.map(withAuthorId);
+    return out;
+}
+
+/** These routes don't read a session, so only published public posts are shown. */
+const isVisible = (post: BlogPost | null): post is BlogPost => !!post && post.published === true && post.isPublic === true;
+
 router.options('*', preflight);
 
 // Get all blog posts
 router.get('/', async (request: ExtendedRequest, env: Env) => {
     try {
         console.log('GET /blog called');
-        const userId = request.user;
-        const posts = await getBlogPosts(env, userId);
-        return json(posts);
+        const posts = await getBlogPosts(env, userIdOf(request));
+        return json(posts.filter(isVisible).map(withAuthorId));
     } catch (error) {
         console.error('Error fetching blog posts:', error);
         return json({ error: 'Error fetching blog posts' }, { status: 500 });
@@ -50,11 +68,11 @@ router.get('/:id', async (request: ExtendedRequest, env: Env) => {
         console.log(`GET /blog/${id} called`);
         
         const post = await getBlogPost(id, env);
-        if (!post) {
+        if (!isVisible(post)) {
             return json({ error: 'Blog post not found' }, { status: 404 });
         }
         
-        return json(post);
+        return json(withAuthorId(post));
     } catch (error) {
         console.error('Error fetching blog post:', error);
         return json({ error: 'Error fetching blog post' }, { status: 500 });
@@ -84,17 +102,7 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
             return json({ error: 'Title and content are required' }, { status: 400 });
         }
         
-        // Get user name from session
-        const userKey = `user/${request.user}`;
-        const userObject = await env.STORE.get(userKey);
-        let userName = 'Admin';
-        
-        if (userObject) {
-            const userData = await userObject.json() as { name?: string };
-            if (userData.name) {
-                userName = userData.name;
-            }
-        }
+        const userName = userNameOf(request, 'Admin');
         
         const result = await createBlogPost(
             { 
@@ -106,7 +114,7 @@ router.post('/', withAdminCheck, async (request: ExtendedRequest, env: Env) => {
                 isPublic: isPublic ?? true, // Default to public
                 groupId
             },
-            request.user,
+            userIdOf(request)!,
             userName,
             env
         );
@@ -176,8 +184,11 @@ router.get('/:id/comments', async (request: ExtendedRequest, env: Env) => {
         const { id } = request.params;
         console.log(`GET /blog/${id}/comments called`);
         
+        if (!isVisible(await getBlogPost(id, env))) {
+            return json({ error: 'Blog post not found' }, { status: 404 });
+        }
         const comments = await getComments(id, env);
-        return json(comments);
+        return json(comments.map(withAuthorId));
     } catch (error) {
         console.error('Error fetching comments:', error);
         return json({ error: 'Error fetching comments' }, { status: 500 });
@@ -200,19 +211,9 @@ router.post('/:id/comments', withAuth, async (request: ExtendedRequest, env: Env
             return json({ error: 'Comment content is required' }, { status: 400 });
         }
         
-        // Get user name from session
-        const userKey = `user/${request.user}`;
-        const userObject = await env.STORE.get(userKey);
-        let userName = 'User';
+        const userName = userNameOf(request, 'User');
         
-        if (userObject) {
-            const userData = await userObject.json() as { name?: string };
-            if (userData.name) {
-                userName = userData.name;
-            }
-        }
-        
-        const result = await addComment(id, content, request.user, userName, env, parentId);
+        const result = await addComment(id, content, userIdOf(request)!, userName, env, parentId);
         
         if (result.success) {
             // If this is a reply to a comment, send a notification to the parent comment author
@@ -221,7 +222,7 @@ router.post('/:id/comments', withAuth, async (request: ExtendedRequest, env: Env
                     // Get the parent comment author to send notification
                     const parentAuthorId = result.parentAuthorId;
                     
-                    if (parentAuthorId && parentAuthorId !== request.user) {
+                    if (parentAuthorId && parentAuthorId !== userIdOf(request)) {
                         // Don't notify if user is replying to their own comment
                         await notifyAboutReply(
                             parentAuthorId, 
@@ -239,7 +240,7 @@ router.post('/:id/comments', withAuth, async (request: ExtendedRequest, env: Env
                 }
             } else if (result.comment && result.postAuthorId) {
                 // This is a top-level comment, notify the post author
-                if (result.postAuthorId !== request.user) {
+                if (result.postAuthorId !== userIdOf(request)) {
                     // Don't notify if user is commenting on their own post
                     try {
                         await notifyAboutReply(
@@ -299,7 +300,7 @@ router.post('/block-user/:userId', withAdminCheck, async (request: ExtendedReque
         
         const { reason } = await request.json() as { reason: string };
         
-        const result = await blockUser(userId, request.user, reason || 'No reason provided', env);
+        const result = await blockUser(userId, userIdOf(request)!, reason || 'No reason provided', env);
         
         if (result.success) {
             return json(result);

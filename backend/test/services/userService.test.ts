@@ -18,8 +18,9 @@ import {
   deleteUser,
   canAccessGroup,
   authenticateUser,
-  setUserPassword
+  resetUserPassword
 } from '../../src/services/userService';
+import { CreateSession, GetSession } from '../../src/utils/sessionManager';
 import { mockEnv } from './test-helpers';
 import { UserType } from '../../src/types';
 import { hashPassword } from '../../src/utils/password';
@@ -264,30 +265,41 @@ describe('User Service', () => {
     });
   });
 
-  describe('setUserPassword', () => {
-    it('should set a password for an existing user', async () => {
-      // Create a user first
-      const userData = {
-        name: 'Password User',
-        email: 'password@example.com'
-      };
-      
-      await getOrCreateUser(userData, env);
-      
-      // Set password for the user
-      const success = await setUserPassword('password@example.com', 'newSecurePassword123', env);
-      
-      expect(success).toBe(true);
-      
-      // Verify user has password hash
-      const user = await getUser('password@example.com', env);
-      expect(user?.passwordHash).toBeDefined();
+  describe('resetUserPassword', () => {
+    it('sets the password, verifies the account and ends its sessions', async () => {
+      await getOrCreateUser({ name: 'Reset User', email: 'reset@example.com', password: 'Old-pass-1!' }, env);
+      const sessionId = await CreateSession('reset@example.com', { email: 'reset@example.com' }, env);
+
+      const updated = await resetUserPassword('reset@example.com', 'New-pass-2!', env);
+
+      expect(updated?.verified).toBe(true);
+      expect(await authenticateUser('reset@example.com', 'Old-pass-1!', env)).toBeNull();
+      expect(await authenticateUser('reset@example.com', 'New-pass-2!', env)).not.toBeNull();
+      expect(await GetSession(sessionId, env)).toBeNull();
     });
-    
-    it('should return false for non-existent users', async () => {
-      const success = await setUserPassword('nonexistent@example.com', 'password123', env);
-      
-      expect(success).toBe(false);
+
+    it('stops the old password before the sessions are deleted (a sign-in meanwhile would survive)', async () => {
+      await getOrCreateUser({ name: 'Reset User', email: 'reset2@example.com', password: 'Old-pass-1!' }, env);
+      const store = env.STORE as any;
+      const list = store.list.getMockImplementation();
+      let oldPasswordWorkedDuringScan: boolean | undefined;
+      let verifiedDuringScan: boolean | undefined;
+      store.list.mockImplementation(async (prefix: string) => {
+        if (prefix.startsWith('session-index/')) {
+          oldPasswordWorkedDuringScan = !!(await authenticateUser('reset2@example.com', 'Old-pass-1!', env));
+          verifiedDuringScan = (await getUser('reset2@example.com', env))?.verified === true;
+        }
+        return list(prefix);
+      });
+
+      await resetUserPassword('reset2@example.com', 'New-pass-2!', env);
+
+      expect(oldPasswordWorkedDuringScan).toBe(false);
+      expect(verifiedDuringScan).toBe(false);
+    });
+
+    it('returns null for non-existent users', async () => {
+      expect(await resetUserPassword('nonexistent@example.com', 'New-pass-2!', env)).toBeNull();
     });
   });
   

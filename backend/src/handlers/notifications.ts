@@ -6,7 +6,12 @@ import { withAuth } from '../authWrappers';
 
 // Notifications are stored under the person's lowercased email (see createInAppNotification)
 const NOTIFICATIONS_PREFIX = 'notifications/';
-const emailOf = (request: Request): string => String(((request as any).user?.email) || '').toLowerCase();
+// The inbox is keyed by email, so only a proven address opens it: an unverified password account
+// may have been registered by someone else for an address that already has notifications.
+const emailOf = (request: Request): string => {
+  const user = (request as any).user;
+  return user?.verified === true ? String(user.email || '').toLowerCase() : '';
+};
 
 export const router = AutoRouter({ base: '/api/notifications' });
 
@@ -60,7 +65,7 @@ router.put('/:id/read', withAuth, async (request: Request, env: Env) => {
   const email = emailOf(request);
   const { id } = (request as any).params;
 
-  const notif = await getObject<AppNotification>(`${NOTIFICATIONS_PREFIX}${email}/${id}`, env);
+  const notif = !email ? null : await getObject<AppNotification>(`${NOTIFICATIONS_PREFIX}${email}/${id}`, env);
   if (!notif) {
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,
@@ -77,6 +82,7 @@ router.put('/:id/read', withAuth, async (request: Request, env: Env) => {
 });
 
 async function getUserNotifications(userId: string, env: Env): Promise<AppNotification[]> {
+  if (!userId) return [];
   const listing = await listObjects(`${NOTIFICATIONS_PREFIX}${userId}/`, env);
   if (!listing?.objects) return [];
 

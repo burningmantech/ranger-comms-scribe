@@ -39,6 +39,8 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({
   );
   const [links, setLinks] = useState<DateLink[]>(fromDocument ? entry.dateLinks || [] : []);
   const [error, setError] = useState<string | null>(null);
+  // A sent request doesn't change: its out-of-date dates are updated in a new request from it
+  const [sent, setSent] = useState(false);
   const annualDates = useAnnualDates();
 
   useEffect(() => {
@@ -54,6 +56,7 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({
           ...(blurb ? [{ field: 'blurb' as const, label: 'the blurb', text: blockTextFromLexical(blurb) }] : []),
         ]);
         setLinks(loaded.dateLinks || []);
+        setSent(loaded.status === 'sent');
       })
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : String(err)));
     return () => {
@@ -109,7 +112,10 @@ export const RequestDatesModal: React.FC<RequestDatesModalProps> = ({
           referenceYmd={referenceYmd}
           annualDates={annualDates.entries}
           onAnnualDateAdded={annualDates.added}
-          updateHref={submissionId ? `/tracked-changes/${encodeURIComponent(submissionId)}` : undefined}
+          updateHref={!submissionId ? undefined : sent
+            ? `/comms-request?from=${encodeURIComponent(submissionId)}`
+            : `/tracked-changes/${encodeURIComponent(submissionId)}`}
+          updateLabel={sent ? 'Update in a new request' : undefined}
           submissionId={submissionId}
           disabled={!canEdit}
           title={submissionId ? 'Dates in this request' : 'Dates in this message'}

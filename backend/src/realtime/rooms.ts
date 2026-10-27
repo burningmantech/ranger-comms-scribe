@@ -62,6 +62,8 @@ export interface RoomIdentity {
 
 interface ConnectionMetadata extends RoomIdentity {
   roomKey: string;
+  /** The session the socket was opened with (none for dev-bypass users); never sent to clients. */
+  sessionId?: string;
   submissionId?: string;
   documentId?: string;
   connectedAt: string;
@@ -201,6 +203,12 @@ function removeConnection(ws: WebSocket, announce: boolean): void {
   }
 }
 
+
+/** Message types only the server sends; dropped when a client sends them. */
+const SERVER_ONLY_TYPES = new Set([
+  'connected', 'room_state', 'user_joined', 'user_left', 'error', 'heartbeat_response',
+  'status_changed', 'approval_state', 'approval_added', 'comment_added', 'comment_resolved',
+]);
 function handleMessage(ws: WebSocket, raw: string): void {
   const meta = connections.get(ws);
   if (!meta) {
@@ -257,6 +265,12 @@ function handleMessage(ws: WebSocket, raw: string): void {
     return;
   }
 
+  // Workflow and presence messages come only from the server (REST handlers, join/leave):
+  // review pages apply them (status, approval gates, comments), so a client can't relay them.
+  if (typeof message.type !== 'string' || SERVER_ONLY_TYPES.has(message.type)) {
+    return;
+  }
+
   broadcastToRoom(meta.roomKey, message, ws);
 }
 
@@ -289,12 +303,15 @@ function startServerPing(ws: WebSocket): void {
 }
 
 /** Register an accepted socket in a room and run the join protocol. */
-export function joinRoom(ws: WebSocket, target: RoomTarget, identity: RoomIdentity): void {
+export function joinRoom(ws: WebSocket, target: RoomTarget, identity: RoomIdentity, sessionId?: string): void {
   const roomKey = roomKeyFor(target);
   const ids = target.kind === 'submission' ? { submissionId: target.id } : { documentId: target.id };
 
   connections.set(ws, {
-    ...identity,
+    userId: identity.userId,
+    userName: identity.userName,
+    userEmail: identity.userEmail,
+    sessionId,
     ...ids,
     roomKey,
     connectedAt: now(),
@@ -348,6 +365,36 @@ export function closeAllRooms(code = 1001, reason = 'Server shutting down'): voi
   for (const timer of pingTimers.values()) clearInterval(timer);
   pingTimers.clear();
   rooms.clear();
+}
+
+/** An open room socket, for access checks after it joined (handlers/websocket.ts). */
+export interface RoomConnectionInfo {
+  ws: WebSocket;
+  target: RoomTarget;
+  userEmail: string;
+  sessionId?: string;
+}
+
+export function roomConnections(): RoomConnectionInfo[] {
+  return Array.from(connections.entries()).map(([ws, meta]) => ({
+    ws,
+    target: meta.submissionId !== undefined
+      ? { kind: 'submission' as const, id: meta.submissionId }
+      : { kind: 'document' as const, id: meta.documentId || '' },
+    userEmail: meta.userEmail,
+    sessionId: meta.sessionId,
+  }));
+}
+
+/** Close one socket (its session ended or it lost access); the room is told it left. */
+export function closeRoomConnection(ws: WebSocket, code: number, reason: string): void {
+  if (!connections.has(ws)) return;
+  removeConnection(ws, true);
+  try {
+    ws.close(code, reason);
+  } catch {
+    ws.terminate();
+  }
 }
 
 /** Number of open connections across all rooms (diagnostics). */

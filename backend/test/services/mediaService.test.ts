@@ -54,7 +54,20 @@ describe('Media Service', () => {
   });
 
   // Create a more complete mock File object with proper TypeScript types
-  const createMockFile = (name: string, type: string, size: number): File => {
+  // The first bytes of each type (uploadMedia checks them, not the declared type)
+  const MAGIC: Record<string, number[]> = {
+    'image/jpeg': [0xff, 0xd8, 0xff, 0xe0],
+    'image/png': [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    'image/avif': [0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66], // ....ftypavif
+    'image/svg+xml': Array.from(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')),
+  };
+  const bytesOf = (type: string, size: number): ArrayBuffer => {
+    const bytes = new Uint8Array(Math.max(size, 16));
+    bytes.set((MAGIC[type] || []).slice(0, bytes.length));
+    return bytes.buffer;
+  };
+
+  const createMockFile = (name: string, type: string, size: number, content: ArrayBuffer = bytesOf(type, size)): File => {
     // Create mock data
     const data = new Uint8Array([1, 2, 3, 4, 5]);
     
@@ -69,7 +82,7 @@ describe('Media Service', () => {
       size,
       lastModified: Date.now(),
       webkitRelativePath: '',
-      arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(size)),
+      arrayBuffer: jest.fn().mockResolvedValue(content),
       slice: jest.fn().mockReturnValue(blob),
       text: jest.fn().mockResolvedValue('mock file content'),
       stream: jest.fn().mockReturnValue(blob)
@@ -241,6 +254,47 @@ describe('Media Service', () => {
       expect(stored.contentType).toBe('image/jpeg');
     });
     
+    it('refuses an SVG (it would run script on the site origin)', async () => {
+      const svg = createMockFile('x.svg', 'image/svg+xml', 80);
+      const result = await uploadMedia(svg, svg, 'user1', env, true);
+      expect(result).toMatchObject({ success: false, invalid: true });
+      expect(env.STORE.put).not.toHaveBeenCalled();
+    });
+
+    it('refuses an SVG sent as a JPEG, and an SVG thumbnail', async () => {
+      const disguised = createMockFile('x.jpg', 'image/jpeg', 80, bytesOf('image/svg+xml', 80));
+      const jpeg = createMockFile('ok.jpg', 'image/jpeg', 100);
+      expect((await uploadMedia(disguised, jpeg, 'user1', env)).success).toBe(false);
+      expect((await uploadMedia(jpeg, disguised, 'user1', env)).success).toBe(false);
+      expect((await uploadMedia(jpeg, jpeg, 'user1', env, true, undefined, undefined, disguised)).success).toBe(false);
+      expect(env.STORE.put).not.toHaveBeenCalled();
+    });
+
+    it('names and types the file by its bytes, not by what the upload says', async () => {
+      jest.spyOn(Date, 'now').mockImplementation(() => 1609459200000);
+      const png = createMockFile('photo.svg', 'image/svg+xml', 100, bytesOf('image/png', 100));
+      const result = await uploadMedia(png, png, 'user1', env);
+      expect(result.success).toBe(true);
+      expect(result.mediaItem).toMatchObject({ fileName: '1609459200000_photo.png', fileType: 'image/png' });
+      expect(env.STORE.put).toHaveBeenCalledWith('gallery/1609459200000_photo.png', expect.any(ArrayBuffer), expect.objectContaining({ contentType: 'image/png' }));
+    });
+
+    it('takes an AVIF (the image import asks for it first), with PNG versions', async () => {
+      jest.spyOn(Date, 'now').mockImplementation(() => 1609459200000);
+      const avif = createMockFile('photo.avif', 'image/avif', 100);
+      const png = createMockFile('thumbnail_photo.avif', 'image/avif', 100, bytesOf('image/png', 100));
+      const result = await uploadMedia(avif, png, 'user1', env, true, undefined, undefined, png);
+      expect(result.success).toBe(true);
+      expect(result.mediaItem).toMatchObject({ fileName: '1609459200000_photo.avif', fileType: 'image/avif' });
+    });
+
+    it('refuses a form field that is not a file', async () => {
+      const jpeg = createMockFile('ok.jpg', 'image/jpeg', 100);
+      expect(await uploadMedia('text' as any, jpeg, 'user1', env)).toMatchObject({ success: false, invalid: true });
+      expect(await uploadMedia(jpeg, jpeg, 'user1', env, true, undefined, undefined, 'text' as any)).toMatchObject({ success: false, invalid: true });
+      expect(env.STORE.put).not.toHaveBeenCalled();
+    });
+
     it('should support private media files with group access', async () => {
       const mediaFile = createMockFile('private.jpg', 'image/jpeg', 12345);
       const thumbnailFile = createMockFile('thumbnail.jpg', 'image/jpeg', 5000);

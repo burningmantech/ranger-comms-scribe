@@ -72,11 +72,13 @@ At startup, once (`migrations/people-access-v1`), every person gets the new fiel
 
 The old keys are left in place (unused) so a rollback still finds them.
 
-## Follow-ups (not changed here)
+## Follow-ups (since fixed)
 
-Permission gaps the review found, left as they were so this change only moves checks onto the new model:
-`getTrackedChangesHandler` and `updateProposedVersionsHandler` allow any signed-in user (`|| true`); creating
-tracked changes, change comments, batch create, the timeline and submission comments check only for a session.
+The review found permission gaps, left as they were here so this change only moved checks onto the new model:
+`getTrackedChangesHandler` and `updateProposedVersionsHandler` allowed any signed-in user (`|| true`); creating
+tracked changes, change comments, batch create, the timeline and submission comments checked only for a session.
+The security fixes (2026-10-27) closed them: reads need `canViewSubmission`, writes `canEditSubmission`
+(`services/access.ts`), and a listed approver counts only with a verified address.
 
 ## Comms setup (follow-on cleanup)
 

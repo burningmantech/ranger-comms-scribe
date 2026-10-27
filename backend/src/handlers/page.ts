@@ -2,6 +2,7 @@ import { AutoRouter } from 'itty-router';
 import { json } from 'itty-router-extras';
 import { Env } from '../utils/sessionManager';
 import { withAdminCheck, withAuth } from '../authWrappers';
+import { isAdmin } from '../services/access';
 import {
   getPages,
   getAllPages,
@@ -27,8 +28,10 @@ export const router = AutoRouter({ base: '/api/page' });
 router.get('/', async (request: ExtendedRequest, env: Env) => {
   try {
     console.log('GET /page called');
-    const userId = request.user;
-    const pages = await getPages(env, userId);
+    // Non-public pages are for Admins, as on the single-page routes below (request.user is the
+    // whole User from withOptionalSession, which getPages would take as "signed in")
+    const user = request.user as any;
+    const pages = await getPages(env, isAdmin(user, env) ? user.id : undefined);
     return json(pages);
   } catch (error) {
     console.error('Error fetching pages:', error);
@@ -59,12 +62,8 @@ router.get('/id/:id', async (request: ExtendedRequest, env: Env) => {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     
-    // Check if user has access to this page
-    if (!page.published && !request.user) {
-      return json({ error: 'Page not found' }, { status: 404 });
-    }
-    
-    if (!page.isPublic && !request.user) {
+    // Unpublished and non-public pages are for Admins (signing in isn't enough: anyone can)
+    if ((!page.published || !page.isPublic) && !isAdmin(request.user as any, env)) {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     
@@ -86,12 +85,8 @@ router.get('/:slug', async (request: ExtendedRequest, env: Env) => {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     
-    // Check if user has access to this page
-    if (!page.published && !request.user) {
-      return json({ error: 'Page not found' }, { status: 404 });
-    }
-    
-    if (!page.isPublic && !request.user) {
+    // Unpublished and non-public pages are for Admins (signing in isn't enough: anyone can)
+    if ((!page.published || !page.isPublic) && !isAdmin(request.user as any, env)) {
       return json({ error: 'Page not found' }, { status: 404 });
     }
     

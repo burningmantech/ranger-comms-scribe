@@ -1,6 +1,7 @@
 import { AutoRouter } from 'itty-router';
 import { CustomRequest, ContentSubmission, TimelineEvent } from '../types';
 import { getObject } from '../services/cacheService';
+import { canViewSubmission } from '../services/access';
 import { getTrackedChanges, TrackedChange } from '../services/trackedChangesService';
 
 // GET /submission/:submissionId — returns merged, chronologically sorted timeline events
@@ -17,6 +18,9 @@ export async function getTimelineHandler(request: CustomRequest, env: any): Prom
 
     if (!submission) {
       return new Response('Submission not found', { status: 404 });
+    }
+    if (!canViewSubmission(request.user as any, submission)) {
+      return new Response('Forbidden', { status: 403 });
     }
 
     const events: TimelineEvent[] = [];

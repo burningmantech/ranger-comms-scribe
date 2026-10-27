@@ -27,6 +27,7 @@ import { initCache } from './services/cacheService';
 import { cachePageSlugs } from './services/pageService';
 import { migratePeopleAccess } from './migrations/peopleAccess';
 import { migrateNotificationsByEmail } from './migrations/notificationsByEmail';
+import { migrateSessionIndex } from './migrations/sessionIndex';
 
 declare global {
     interface Request {
@@ -133,6 +134,9 @@ export const initializeApp = async (env: Env): Promise<void> => {
 
     // Once: in-app notifications stored under a user id move to the person's email
     await migrateNotificationsByEmail(env);
+
+    // Once: index the sessions made before the per-person session index (utils/sessionManager.ts)
+    await migrateSessionIndex(env);
 
     // Promote any BOOTSTRAP_ADMIN_EMAILS users that already exist
     await initializeFirstAdmin(env);

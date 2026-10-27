@@ -3,12 +3,13 @@ import { json } from 'itty-router-extras';
 import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates, ApproverDetail, SubmissionReminder } from '../types';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
-import { broadcastToSubmissionRoom } from './websocket';
+import { broadcastToSubmissionRoom, recheckRoomAccess } from './websocket';
+import { setYjsRoomReadOnly } from '../realtime/yjsRooms';
 import { uploadMedia } from '../services/mediaService';
 import { buildAnnouncementEmail, embedGalleryImages } from '../services/announcementEmail';
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
 import { Env } from '../utils/sessionManager';
-import { Access, accessOf, approverCounts, derivedRoles, derivedUserType, isAdmin, isCommsCadre, isCommsManager, isReviewer, normalizeEmail } from '../services/access';
+import { Access, accessOf, approverCounts, canEditSubmission, canViewSubmission, derivedRoles, derivedUserType, isAdmin, isCommsCadre, isCommsManager, isListedApprover, isReviewer, normalizeEmail } from '../services/access';
 import { accessByEmail, peopleByEmail, peopleWhere } from '../services/peopleService';
 import { listMailingLists, suggestedListIds } from '../services/mailingListService';
 import { getUser } from '../services/userService';
@@ -141,14 +142,6 @@ export async function syncSubmissionStatus(
   }
 }
 
-/** Who may see a submission (GET /submissions/:id); also who may resolve its comments. */
-export function canViewSubmission(user: User, submission: ContentSubmission): boolean {
-  return isReviewer(user) ||
-    submission.submittedBy === user.id ||
-    !!(submission.approvals && submission.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
-    !!(submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
-}
-
 /** The latest decision of each approver (by email, else id). */
 function latestDecisions(submission: ContentSubmission): ContentApproval[] {
   const byApprover = new Map<string, ContentApproval>();
@@ -262,7 +255,47 @@ const PUT_IGNORED_FIELDS = [
   'newsletter', 'keyDates', 'writingHelp', 'dateLinks',
   'newsletterEditionId', 'newsletterSentIn', 'publicSlug', 'publicPublishedAt',
   'sentTo', 'reminders', 'requiredApprovers', 'submittedNotifiedAt',
+  // Who made it and where it came from
+  'id', 'submittedBy', 'submittedAt', 'copiedFrom', 'importedFrom',
+  // Approval and sending state: set by approve, override, syncSubmissionStatus and send-email
+  'approvalOverride', 'approvalOverrideBy', 'approvalOverrideReason', 'approvalOverrideAt',
+  'finalApprovalDate', 'commsCadreApprovals', 'councilManagerApprovals', 'changes',
+  'announcementSent', 'sentBy', 'sentAt',
 ] as const;
+
+/** The fields that are the message itself: what the approvers approved. */
+const CONTENT_FIELDS = ['title', 'content', 'richTextContent', 'formFields'] as const;
+
+/** Statuses a request may be created in (the request form creates it in review). */
+const CREATE_STATUSES: ContentSubmission['status'][] = ['draft', 'submitted', 'in_review'];
+
+/**
+ * The status a PUT may set. Approval is the server's (approve, override, tracked changes), so a
+ * body can only send a draft for review, or (Comms Cadre and Admins) mark an approved request
+ * sent. Anything else keeps the stored status.
+ */
+function allowedPutStatus(user: User, from: ContentSubmission['status'], to: unknown, env: any): ContentSubmission['status'] {
+  if (typeof to !== 'string' || to === from) return from;
+  const waiting = ['submitted', 'in_review'];
+  if ((from === 'draft' || waiting.includes(from)) && waiting.includes(to)) return to as ContentSubmission['status'];
+  if (from === 'approved' && to === 'sent' && (isCommsCadre(user) || isAdmin(user, env))) return 'sent';
+  return from;
+}
+
+const looksLikeEmail = (value: string) => /^[^\s@<>,;]+@[^\s@<>,;]+$/.test(value);
+
+/** Check an approvers list (POST /submissions and PUT /submissions/:id/approvers). */
+function cleanApproverList(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((e) => typeof e !== 'string')) {
+    throw new InputError('requiredApprovers must be a list of email addresses');
+  }
+  const approvers = Array.from(new Set(value.map((e: string) => normalizeEmail(e)).filter(Boolean)));
+  const bad = approvers.find((e) => !looksLikeEmail(e));
+  if (bad) throw new InputError(`"${bad}" is not an email address`);
+  if (approvers.length > 50) throw new InputError('At most 50 approvers');
+  return approvers;
+}
 
 // Create a new content submission
 router.post('/submissions', withAuth, async (request: Request, env: any) => {
@@ -271,9 +304,11 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
 
   let newsletterFields: Pick<ContentSubmission, 'audiences' | 'writingHelp' | 'newsletter' | 'keyDates'>;
   let dateLinks: ContentSubmission['dateLinks'];
+  let requiredApprovers: string[];
   try {
     newsletterFields = cleanNewsletterFields(submission);
     dateLinks = cleanDateLinks(submission.dateLinks);
+    requiredApprovers = cleanApproverList(submission.requiredApprovers);
   } catch (err) {
     if (err instanceof InputError || err instanceof DateLinkError) return json({ error: err.message }, { status: 400 });
     throw err;
@@ -285,7 +320,7 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     content: submission.content!,
     submittedBy: user.id,
     submittedAt: new Date().toISOString(),
-    status: submission.status || 'draft',
+    status: CREATE_STATUSES.includes(submission.status as any) ? submission.status! : 'draft',
     formFields: submission.formFields || [],
     comments: [],
     approvals: [],
@@ -294,7 +329,7 @@ router.post('/submissions', withAuth, async (request: Request, env: any) => {
     councilManagerApprovals: [],
     announcementSent: false,
     assignedCouncilManagers: submission.assignedCouncilManagers || [],
-    requiredApprovers: submission.requiredApprovers || [],
+    requiredApprovers,
     ...newsletterFields,
     ...(dateLinks.length ? { dateLinks } : {}),
     ...(typeof (submission as any).copiedFrom === 'string' && (submission as any).copiedFrom
@@ -350,18 +385,7 @@ router.get('/submissions', withAuth, async (request: Request, env: any) => {
   const allSubmissions = (await Promise.all(submissionPromises)).filter((sub): sub is ContentSubmission => sub !== null);
   
   // Reviewers see everything; others their own, and the ones they approve
-  let submissions;
-  if (isReviewer(user)) {
-    submissions = allSubmissions;
-  } else {
-    submissions = allSubmissions.filter((sub: ContentSubmission) => 
-      sub.submittedBy === user.id || 
-      (sub.approvals && sub.approvals.some((a: ContentApproval) => a.approverId === user.id)) ||
-      (sub.requiredApprovers && sub.requiredApprovers.includes(user.email))
-    );
-  }
-
-  return json(submissions);
+  return json(allSubmissions.filter((sub: ContentSubmission) => canViewSubmission(user, sub)));
 });
 
 // Get submissions needing the current user's action
@@ -382,8 +406,10 @@ router.get('/submissions/my-actions', withAuth, async (request: Request, env: an
 
   for (const submission of allSubmissions) {
     if (['sent', 'rejected', 'draft'].includes(submission.status)) continue;
+    // Only the requests this person may see (everyone else's would otherwise land in inProgress)
+    if (!canViewSubmission(user, submission)) continue;
 
-    const isRequiredApprover = (submission.requiredApprovers || []).some((e) => normalizeEmail(e) === normalizeEmail(user.email));
+    const isRequiredApprover = isListedApprover(user, submission);
     const hasActed = (submission.approvals || []).some(
       (a: ContentApproval) =>
         a.approverEmail === user.email || a.approverId === user.id
@@ -489,11 +515,7 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
 
   // Check if user has permission to edit this submission (the approvers have their own
   // endpoint: PUT /submissions/:id/approvers)
-  const canEdit = isReviewer(user) ||
-                 submission.submittedBy === user.id ||
-                 (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
-
-  if (!canEdit) {
+  if (!canEditSubmission(user, submission)) {
     return json({ error: 'Access denied' }, { status: 403 });
   }
 
@@ -524,6 +546,21 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     if (submission[key] === undefined) delete (updatedSubmission as any)[key];
     else (updatedSubmission as any)[key] = submission[key];
   }
+  // Once approved, the message is what was approved: only reviewers change it here (edits
+  // otherwise go through tracked changes, which send it back to review). Once sent, nobody does.
+  if (submission.status === 'sent' || (submission.status === 'approved' && !isReviewer(user))) {
+    for (const key of CONTENT_FIELDS) {
+      if (submission[key] === undefined) delete (updatedSubmission as any)[key];
+      else (updatedSubmission as any)[key] = submission[key];
+    }
+  }
+  updatedSubmission.status = allowedPutStatus(user, submission.status, updates?.status, env);
+  if (updatedSubmission.status === 'sent' && submission.status !== 'sent') {
+    // Marked sent by hand (Comms Cadre, Admins): when it went out, if they say, else now
+    const saidSentAt = typeof updates?.sentAt === 'string' ? new Date(updates.sentAt) : null;
+    updatedSubmission.sentBy = user.email;
+    updatedSubmission.sentAt = saidSentAt && !Number.isNaN(saidSentAt.getTime()) ? saidSentAt.toISOString() : new Date().toISOString();
+  }
   // Leaving draft tells the people who act on the request, once (the field is the server's)
   const tellPeople = !submission.submittedNotifiedAt && becomesSubmitted(submission.status, updatedSubmission.status);
   if (tellPeople) updatedSubmission.submittedNotifiedAt = new Date().toISOString();
@@ -531,6 +568,7 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);
   if (updatedSubmission.status === 'sent' && submission.status !== 'sent') {
+    setYjsRoomReadOnly(id);
     await recordInCommsCalendar(updatedSubmission, env, { by: user.email });
     await notifySubmitter(updatedSubmission, 'sent', user, env);
   }
@@ -579,6 +617,9 @@ router.post('/submissions/:id/comments', withAuth, async (request: Request, env:
   const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
   if (!submission) {
     return json({ error: 'Submission not found' }, { status: 404 });
+  }
+  if (!canViewSubmission(user, submission)) {
+    return json({ error: 'Access denied' }, { status: 403 });
   }
 
   // Add the comment
@@ -702,6 +743,9 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
   const { id } = (request as any).params;
   const { status, comment } = await request.json();
   const user = (request as any).user as User;
+  if (status !== 'approved' && status !== 'rejected') {
+    return json({ error: 'status must be approved or rejected' }, { status: 400 });
+  }
 
   const approval: ContentApproval = {
     id: crypto.randomUUID(),
@@ -726,8 +770,7 @@ router.post('/submissions/:id/approve', withAuth, async (request: Request, env: 
 
   // Check if user has permission to approve this submission
   // Any required reviewer, Comms Cadre, or Council Manager can approve
-  const canApprove = isReviewer(user) ||
-                    (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+  const canApprove = isReviewer(user) || isListedApprover(user, submission);
 
   if (!canApprove) {
     return json({ error: 'Access denied' }, { status: 403 });
@@ -837,6 +880,10 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
   if (!submission) {
     return json({ error: 'Submission not found' }, { status: 404 });
   }
+  // A sent request is done (back to approved, send-email would send it again)
+  if (submission.status === 'sent') {
+    return json({ error: 'This request has been sent' }, { status: 409 });
+  }
 
   const statusBefore = submission.status;
   submission.status = 'approved';
@@ -857,7 +904,7 @@ router.post('/submissions/:id/override-approve', withAuth, async (request: Reque
     data: { status: submission.status, title: submission.title }
   }, env);
 
-  if (statusBefore !== 'approved' && statusBefore !== 'sent') await notifySubmitter(submission, 'approved', user, env);
+  if (statusBefore !== 'approved') await notifySubmitter(submission, 'approved', user, env);
 
   return json(submission);
 });
@@ -878,11 +925,14 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
   }
 
   // Only reviewers can request changes
-  const canRequest = isReviewer(user) ||
-    (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+  const canRequest = isReviewer(user) || isListedApprover(user, submission);
 
   if (!canRequest) {
     return json({ error: 'Access denied' }, { status: 403 });
+  }
+  // A sent request is done (back in review, its old approvals would approve it again for a resend)
+  if (submission.status === 'sent') {
+    return json({ error: 'This request has been sent' }, { status: 409 });
   }
 
   // Keep status as in_review
@@ -924,7 +974,7 @@ router.post('/submissions/:id/request-changes', withAuth, async (request: Reques
 function canEditDirectFields(user: User, submission: ContentSubmission, env: any): boolean {
   return isAdmin(user, env) ||
     submission.submittedBy === user.id ||
-    (submission.requiredApprovers || []).some((e) => (e || '').toLowerCase() === (user.email || '').toLowerCase()) ||
+    isListedApprover(user, submission) ||
     isCommsCadre(user);
 }
 
@@ -1117,6 +1167,7 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
 
     submission.sentTo = chosen.map((l) => ({ id: l.id, name: l.name, address: l.address }));
     submission.status = 'sent';
+    setYjsRoomReadOnly(id);
     submission.sentBy = user.id || user.email;
     submission.sentAt = new Date().toISOString();
     submission.announcementSent = true;
@@ -1143,8 +1194,6 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
   }
 });
 
-const looksLikeEmail = (value: string) => /^[^\s@<>,;]+@[^\s@<>,;]+$/.test(value);
-
 // Change a request's approvers (the review page). Admins, the Comms Cadre and Council: the Cadre
 // picks or swaps the council approver(s), e.g. when the submitter didn't know who should approve.
 // People added are asked by email and in the app; the status is checked again (an approved
@@ -1159,10 +1208,13 @@ router.put('/submissions/:id/approvers', withAuth, async (request: Request, env:
   if (!Array.isArray(body.approvers) || body.approvers.some((e) => typeof e !== 'string')) {
     return json({ error: 'Send approvers: a list of email addresses' }, { status: 400 });
   }
-  const approvers = Array.from(new Set(body.approvers.map((e: string) => normalizeEmail(e)).filter(Boolean)));
-  const bad = approvers.find((e) => !looksLikeEmail(e));
-  if (bad) return json({ error: `"${bad}" is not an email address` }, { status: 400 });
-  if (approvers.length > 50) return json({ error: 'At most 50 approvers' }, { status: 400 });
+  let approvers: string[];
+  try {
+    approvers = cleanApproverList(body.approvers);
+  } catch (err) {
+    if (err instanceof InputError) return json({ error: err.message }, { status: 400 });
+    throw err;
+  }
 
   const submission = await getObject<ContentSubmission>(`content_submissions/${id}`, env);
   if (!submission) return json({ error: 'Submission not found' }, { status: 404 });
@@ -1186,6 +1238,8 @@ router.put('/submissions/:id/approvers', withAuth, async (request: Request, env:
   }
 
   const synced = await syncSubmissionStatus(id, env, user, { approversChanged: true });
+  // Anyone taken off the list leaves the request's rooms (never fails the change)
+  await recheckRoomAccess(env, { submissionId: id }).catch((err) => console.error('Could not check the rooms again:', err));
   const fresh = synced || submission;
   return json({ submission: { ...fresh, approvalGates: await computeApprovalGates(fresh, env) } });
 });
@@ -1293,12 +1347,13 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
   }
 
   // Check if user has permission to track changes on this submission
-  const canTrackChanges = isReviewer(user) ||
-                         submission.submittedBy === user.id ||
-                         (submission.requiredApprovers && submission.requiredApprovers.includes(user.email));
+  const canTrackChanges = canEditSubmission(user, submission);
 
   if (!canTrackChanges) {
     return json({ error: 'Access denied' }, { status: 403 });
+  }
+  if (submission.status === 'sent') {
+    return json({ error: 'This request has been sent' }, { status: 409 });
   }
 
   // Add the change
@@ -1371,7 +1426,7 @@ router.post('/editor-images/upload', withAuth, async (request: Request, env: any
     if (result.success && result.mediaItem) {
       return json(result.mediaItem);
     } else {
-      return json({ error: result.message }, { status: 500 });
+      return json({ error: result.message }, { status: result.invalid ? 400 : 500 });
     }
   } catch (error) {
     console.error('Error uploading editor image:', error);

@@ -204,6 +204,14 @@ describe('who sees Accept and Reject (the backend rule: reviewer, or the submitt
     expect(screen.getByText('Accept all')).toBeInTheDocument();
     expect(screen.getByText('Reject all')).toBeInTheDocument();
   });
+  it('hides them from everyone once the request is sent, and says to start a new request', () => {
+    render(<TrackedChangesEditor {...props(casey, { ...baseSubmission, status: 'sent' })} />);
+    expect(screen.queryByTitle('Accept')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Reject')).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent("This request has been sent, so it can't be edited");
+    expect(screen.getByRole('link', { name: 'start a new request from it' }))
+      .toHaveAttribute('href', `/comms-request?from=${baseSubmission.id}`);
+  });
 });
 
 describe('a decision the server refuses is rolled back', () => {

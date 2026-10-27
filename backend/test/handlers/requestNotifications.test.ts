@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 jest.mock('../../src/handlers/websocket', () => ({
+  recheckRoomAccess: jest.fn().mockResolvedValue(0),
   broadcastToSubmissionRoom: jest.fn().mockResolvedValue(undefined),
   broadcastToDocumentRoom: jest.fn().mockResolvedValue(undefined),
 }));
@@ -265,7 +266,7 @@ describe('updates for the submitter', () => {
 
     const pendingChange = async () => {
       const res = await createTrackedChangeHandler(
-        req(await asUser('lead'), { submissionId: 's1' }, { field: 'content', oldValue: 'Hello world.', newValue: 'Hello there world.' }), env);
+        req(await asUser('cadre'), { submissionId: 's1' }, { field: 'content', oldValue: 'Hello world.', newValue: 'Hello there world.' }), env);
       return (await res.json()).id as string;
     };
 

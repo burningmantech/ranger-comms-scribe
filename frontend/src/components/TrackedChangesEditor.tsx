@@ -1337,9 +1337,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
   // Can accept, reject and undo tracked changes: exactly who the backend lets change a
   // change's status (a reviewer, or the submitter by user id). Listed approvers, assigned
   // council managers and people who approved the request are not, unless they are reviewers.
+  // A sent request is what went out: nobody edits it or decides its changes (the server refuses
+  // too). A new version starts from "New request from this".
+  const isSent = submission.status === 'sent';
+  const newRequestFromThisHref = `/comms-request?from=${encodeURIComponent(submission.id)}`;
   const canMakeEditorialDecisions = useCallback(
-    () => canResolveTrackedChanges(currentUser, { submittedBy: submission.submittedBy }),
-    [currentUser, submission.submittedBy],
+    () => !isSent && canResolveTrackedChanges(currentUser, { submittedBy: submission.submittedBy }),
+    [currentUser, submission.submittedBy, isSent],
   );
 
   // Get current content (proposed version or original)
@@ -3881,7 +3885,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                 <span className="separator">•</span>
                 <a
                   className="document-meta-action"
-                  href={`/comms-request?from=${encodeURIComponent(submission.id)}`}
+                  href={newRequestFromThisHref}
                   title="Start a new request from this message (for next time)"
                 >
                   <i className="fas fa-copy" aria-hidden="true" /> New request from this
@@ -3906,6 +3910,13 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
               submissionStatus={submission.status}
               transactionManager={reviewMode ? transactionManager : undefined}
             />
+
+            {isSent && (
+              <div className="sent-readonly-notice" role="note">
+                <i className="fas fa-lock" aria-hidden="true" /> This request has been sent, so it can't be edited: this
+                is what went out. To change it, <a href={newRequestFromThisHref}>start a new request from it</a>.
+              </div>
+            )}
 
             {/* Proposed Version */}
             {activeTab === 'proposed' && <div className="proposed-version-section">
@@ -3990,8 +4001,8 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                       remoteUpdateFunctionRef.current = updateFn;
                     }}
                     placeholder="Edit the proposed version..."
-                    readOnly={false}
-                    showToolbar={true}
+                    readOnly={isSent}
+                    showToolbar={!isSent}
                     className="proposed-collaborative-editor"
                     useSubmissionWebSocket={true}
                     trackedChanges={pendingContentChanges.length > 0 ? pendingContentChanges : undefined}
@@ -4068,7 +4079,10 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                   referenceYmd={datesReferenceYmd}
                   annualDates={annualDates.entries}
                   onAnnualDateAdded={annualDates.added}
-                  onReplaceText={async (field, search, replacement, occurrence) => {
+                  // Sent: the text doesn't change here; out-of-date dates link to a new request
+                  updateHref={isSent ? newRequestFromThisHref : undefined}
+                  updateLabel={isSent ? 'Update in a new request' : undefined}
+                  onReplaceText={isSent ? undefined : async (field, search, replacement, occurrence) => {
                     if (field === 'blurb') {
                       return blurbReplacerRef.current ? blurbReplacerRef.current(search, replacement, occurrence) : false;
                     }

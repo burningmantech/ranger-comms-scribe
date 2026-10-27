@@ -116,7 +116,8 @@ The migration kept the old Durable Object's protocol, so the frontend client (`f
   - the server stamps the sender's identity (`userId`, `userName`, `userEmail`) and a `seq` number on relayed messages. `seq` is counted per connection (each socket sees 1, 2, 3, ...), so a sender sees no gap for its own messages (PRD §12);
   - `connected`, `room_state`, `user_joined` and `user_left` work as before;
   - ping→pong and heartbeat→heartbeat_response replies work as before, and the server sends its own `ping` every 30 s.
-- **Server-side broadcasts:** REST handlers call `broadcastToSubmissionRoom(...)` and `broadcastToDocumentRoom(...)` directly; their signatures didn't change.
+- **Server-side broadcasts:** REST handlers call `broadcastToSubmissionRoom(...)` and `broadcastToDocumentRoom(...)` directly; their signatures didn't change. Workflow and presence types (`status_changed`, `approval_state`, `approval_added`, `comment_added`, `comment_resolved`, `room_state`, `user_joined`, `user_left`, `connected`, `error`, `heartbeat_response`) come only from the server: a client sending one is ignored (`SERVER_ONLY_TYPES`).
+- **Closed by the server:** sockets (JSON and Yjs) remember their session. Ending a session (sign-out, expiry, password reset, deleted account) closes its sockets with 4401; `recheckRoomAccess()` (after a request's approvers or a person's access change) closes those no longer allowed in with 4403. A sent request's Yjs room takes no edits after its seed.
 - **Room keys:** one scheme for both connecting and broadcasting, `submission:<id>` and `document:<id>`. This fixed the old `document-` prefix mismatch.
 
 ## 6. Infrastructure naming
