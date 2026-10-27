@@ -391,9 +391,18 @@ These are choices made where the PRD is silent:
 
 ## Known gaps and follow-ups
 
-- **CI is red until Phases 1 and 2 merge.** `backend/Dockerfile` doesn't exist yet (Phase 2), so the Docker job fails. The
-  backend's 2 `pageService` tests ("should handle R2 errors gracefully") already fail on the baseline.
-- **Pre-existing, Phase 2 scope:** `GET /api/gallery/:filename` serves any gallery object with no access check and
-  `Cache-Control: public, max-age=31536000`. CloudFront caching doesn't widen that exposure, because the URL is already
-  unauthenticated, but private media is reachable by anyone who knows its file name.
-- **`CLAUDE.md` and the READMEs** still describe Cloudflare deploys. PRD R2.9 assigns that update to Phase 2.
+- **The Rangers environments aren't deployed.** `rangers-staging` and `rangers-production` synth, but their hostnames
+  and certificates are placeholders, and CI skips the deploy until the `rangers` GitHub Environment is configured
+  (PRD §9). `scrivenly.com` is offline until production points at CloudFront.
+- **Gallery files are public by URL.** `GET /api/gallery/:filename` serves any gallery object without a session, cached
+  for a year, because announcement emails link pasted images there. `isPublic` only hides a file from listings. File
+  names are `<upload time in ms>_<name>`, so they're hard but not impossible to guess.
+- **The ALB trusts any CloudFront distribution.** Its security group admits CloudFront's origin-facing prefix list,
+  which every AWS customer's distribution uses, so someone could reach the ALB through their own distribution and set
+  `CloudFront-Viewer-Address` / `X-Forwarded-For`. Impact is low (the client IP is only a Turnstile hint and stored on
+  feedback). Fix: a secret origin header that an ALB listener rule requires.
+- **CI uses static AWS keys** (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets in `cicd.yml` and `deploy.yml`).
+  GitHub OIDC with a deploy role would remove the long-lived keys.
+- **No Content-Security-Policy.** The response-headers policy sets HSTS, `nosniff` and a referrer policy only.
+- **The WebSocket session ID is in the URL** (`?sessionId=`), so it reaches ALB and CloudFront access logs if those are
+  turned on. A short-lived connection ticket would keep it out.
