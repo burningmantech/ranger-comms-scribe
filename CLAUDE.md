@@ -150,11 +150,19 @@ Content submissions go through a multi-stage approval process:
      operation the room gets `status_changed` (status changed) or `approval_state`, both with `approvalGates`;
      `approval_added` carries them too. The review page applies these live (`frontend/src/utils/reviewState.ts`)
 
-3. **Change Tracking** (`backend/src/handlers/trackedChanges.ts`):
-   - All content changes are tracked as revisions
-   - Stored in the object store for versioning
-   - Changes can be accepted/rejected
-   - Tracked changes service in `backend/src/services/trackedChangesService.ts`
+3. **Change Tracking** (`backend/src/handlers/trackedChanges.ts`, `services/trackedChangesService.ts`, under
+   `/api/tracked-changes`):
+   - Every edit is a tracked change at `tracked-changes/submission/<submissionId>/<changeId>`, `pending` until
+     accepted (`approved`) or `rejected`; undo puts it back to `pending`. Change comments are at
+     `change_comments:change:<changeId>`
+   - The proposed document (the edits applied) is `proposed_versions/<submissionId>`; its one client writer is
+     `PUT /tracked-changes/submission/:id`
+   - Routes: `GET`/`POST /submission/:id`, `POST /submission/:id/batch`, `PUT /change/:changeId/status`,
+     `PUT /batch-status`, `POST /:changeId/undo`, `POST /change/:changeId/comment`,
+     `GET /submission/:id/cascade/:changeId`, `DELETE /submission/:id/change/:changeId` and `/submission/:id/all`,
+     `GET /history`
+   - Rejecting a change also rejects the later changes to the same field built on its text (`getCascadeDependencies`;
+     the chain stops at an accepted change). Accept, reject and undo are for reviewers and the submitter
 
 4. **Comments**:
    - Comment threads can be resolved and reopened (`POST /content/submissions/:id/comments/:commentId/resolve`
