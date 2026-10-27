@@ -35,6 +35,7 @@ import {
   updateFeedback,
 } from '../services/feedbackService';
 import { runReminderDigest } from '../services/reminderDigest';
+import { recheckRoomAccess } from './websocket';
 
 export const router = AutoRouter({ base: '/api/admin' });
 
@@ -75,6 +76,8 @@ router.put('/people/:id/access', withAdminCheck, async (request: Request, env: E
   if ('councilRole' in body) patch.councilRole = body.councilRole;
   try {
     const updated = await setAccess(decodeURIComponent(id), patch, actor, env);
+    // Rooms they may no longer be in (e.g. a reviewer's Comms Cadre access was removed) close
+    await recheckRoomAccess(env, { email: updated.email }).catch((err) => console.error('Could not check the rooms again:', err));
     return json({ person: personView(updated, env) });
   } catch (err) {
     if (err instanceof AccessChangeError) return json({ error: err.message }, { status: err.status });

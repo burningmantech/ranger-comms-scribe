@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 
 jest.mock('../../src/handlers/websocket', () => ({
+  recheckRoomAccess: jest.fn().mockResolvedValue(0),
   broadcastToSubmissionRoom: jest.fn().mockResolvedValue(undefined),
   broadcastToDocumentRoom: jest.fn().mockResolvedValue(undefined),
 }));

@@ -637,6 +637,19 @@
   text-decoration: underline;
 }
 
+.sent-readonly-notice {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f1f3f4;
+  color: #3c4043;
+  font-size: 14px;
+}
+
+.sent-readonly-notice a {
+  color: var(--accent-teal);
+}
+
 .document-meta .separator {
   margin: 0 8px;
 }

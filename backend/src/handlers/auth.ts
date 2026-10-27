@@ -209,9 +209,11 @@ router.post('/register', async (request: Request, env) => {
             await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Welcome to our platform!</h1>
             <p>Hello ${escapeHtml(user.name)},</p>
-            <p>Thank you for registering. Please click the link below to verify your email address:</p>
+            <p>Thank you for registering. If you created this account, click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
+            <p><strong>Didn't sign up?</strong> Don't click the link. Someone entered your email address on Comms Scribe;
+            clicking it would confirm their account as yours. Just delete this email.</p>
         `, env);
         }
 
@@ -304,9 +306,11 @@ router.post('/resend-verification', async (request: Request, env) => {
         const sent = await sendEmailIfConfigured(user.email, 'Verify Your Email', `
             <h1>Email Verification</h1>
             <p>Hello ${escapeHtml(user.name)},</p>
-            <p>Please click the link below to verify your email address:</p>
+            <p>If you created this account, click the link below to verify your email address:</p>
             <p><a href="${verificationUrl}">Verify Email</a></p>
             <p>This link will expire in 24 hours.</p>
+            <p><strong>Didn't sign up?</strong> Don't click the link. Someone entered your email address on Comms Scribe;
+            clicking it would confirm their account as yours. Just delete this email.</p>
         `, env);
 
         if (!sent) {

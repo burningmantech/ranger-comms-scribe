@@ -3,7 +3,8 @@ import { json } from 'itty-router-extras';
 import { ContentSubmission, ContentComment, ContentApproval, ContentChange, User, ApprovalGates, ApproverDetail, SubmissionReminder } from '../types';
 import { getObject, putObject, deleteObject, listObjects } from '../services/cacheService';
 import { withAuth } from '../authWrappers';
-import { broadcastToSubmissionRoom } from './websocket';
+import { broadcastToSubmissionRoom, recheckRoomAccess } from './websocket';
+import { setYjsRoomReadOnly } from '../realtime/yjsRooms';
 import { uploadMedia } from '../services/mediaService';
 import { buildAnnouncementEmail, embedGalleryImages } from '../services/announcementEmail';
 import { fetchPublicImage, FetchPublicImageOptions, ImageImportError } from '../utils/imageImport';
@@ -546,8 +547,8 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
     else (updatedSubmission as any)[key] = submission[key];
   }
   // Once approved, the message is what was approved: only reviewers change it here (edits
-  // otherwise go through tracked changes, which send it back to review)
-  if ((submission.status === 'approved' || submission.status === 'sent') && !isReviewer(user)) {
+  // otherwise go through tracked changes, which send it back to review). Once sent, nobody does.
+  if (submission.status === 'sent' || (submission.status === 'approved' && !isReviewer(user))) {
     for (const key of CONTENT_FIELDS) {
       if (submission[key] === undefined) delete (updatedSubmission as any)[key];
       else (updatedSubmission as any)[key] = submission[key];
@@ -567,6 +568,7 @@ router.put('/submissions/:id', withAuth, async (request: Request, env: any) => {
   // Store the updated submission
   await putObject(`content_submissions/${id}`, updatedSubmission, env);
   if (updatedSubmission.status === 'sent' && submission.status !== 'sent') {
+    setYjsRoomReadOnly(id);
     await recordInCommsCalendar(updatedSubmission, env, { by: user.email });
     await notifySubmitter(updatedSubmission, 'sent', user, env);
   }
@@ -1165,6 +1167,7 @@ router.post('/submissions/:id/send-email', withAuth, async (request: Request, en
 
     submission.sentTo = chosen.map((l) => ({ id: l.id, name: l.name, address: l.address }));
     submission.status = 'sent';
+    setYjsRoomReadOnly(id);
     submission.sentBy = user.id || user.email;
     submission.sentAt = new Date().toISOString();
     submission.announcementSent = true;
@@ -1235,6 +1238,8 @@ router.put('/submissions/:id/approvers', withAuth, async (request: Request, env:
   }
 
   const synced = await syncSubmissionStatus(id, env, user, { approversChanged: true });
+  // Anyone taken off the list leaves the request's rooms (never fails the change)
+  await recheckRoomAccess(env, { submissionId: id }).catch((err) => console.error('Could not check the rooms again:', err));
   const fresh = synced || submission;
   return json({ submission: { ...fresh, approvalGates: await computeApprovalGates(fresh, env) } });
 });
@@ -1346,6 +1351,9 @@ router.post('/submissions/:id/changes', withAuth, async (request: Request, env: 
 
   if (!canTrackChanges) {
     return json({ error: 'Access denied' }, { status: 403 });
+  }
+  if (submission.status === 'sent') {
+    return json({ error: 'This request has been sent' }, { status: 409 });
   }
 
   // Add the change

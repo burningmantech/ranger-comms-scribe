@@ -83,6 +83,8 @@ type ConnectionState = 'seeder' | 'held' | 'synced';
 interface YjsConnection {
   ws: WebSocket;
   identity: RoomIdentity;
+  /** The session the socket was opened with (none for dev-bypass users). */
+  sessionId?: string;
   state: ConnectionState;
   /** State vector from the latest step 1 not yet answered (held, or a seeder before its step 1 is answered). */
   pendingStateVector: Uint8Array | null;
@@ -101,6 +103,8 @@ interface YjsRoom {
   /** Insertion order is join order (used to pick the next seeder). */
   conns: Map<WebSocket, YjsConnection>;
   seeded: boolean;
+  /** The request has been sent: once seeded, document updates from clients are ignored. */
+  readOnly: boolean;
   destroyTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -184,7 +188,7 @@ function createRoom(submissionId: string): YjsRoom {
   const doc = new Y.Doc();
   const awareness = new awarenessProtocol.Awareness(doc);
   awareness.setLocalState(null);
-  const room: YjsRoom = { submissionId, doc, awareness, conns: new Map(), seeded: false, destroyTimer: null };
+  const room: YjsRoom = { submissionId, doc, awareness, conns: new Map(), seeded: false, readOnly: false, destroyTimer: null };
 
   // Relay doc updates to every connection that may see doc state, except the sender.
   doc.on('update', (update: Uint8Array, origin: unknown) => {
@@ -276,6 +280,9 @@ function handleSyncMessage(room: YjsRoom, conn: YjsConnection, decoder: decoding
       // A held client must not seed. Its state is collected after release through the
       // server's step 1, so nothing is lost by ignoring it here.
       if (conn.state === 'held') return;
+      // A sent request doesn't change. The seed (the saved text) still has to land, or every
+      // client would be held forever.
+      if (room.readOnly && room.seeded) return;
       Y.applyUpdate(room.doc, update, conn);
       if (!room.seeded && !isEmpty(room.doc)) releaseHeld(room);
       return;
@@ -335,8 +342,11 @@ function startPing(room: YjsRoom, conn: YjsConnection): void {
 }
 
 /** Register an accepted socket in the submission's Yjs room. */
-export function joinYjsRoom(ws: WebSocket, submissionId: string, identity: RoomIdentity): void {
+export function joinYjsRoom(
+  ws: WebSocket, submissionId: string, identity: RoomIdentity, options: { sessionId?: string; readOnly?: boolean } = {}
+): void {
   const room = rooms.get(submissionId) ?? createRoom(submissionId);
+  if (options.readOnly) room.readOnly = true;
   if (room.destroyTimer) {
     clearTimeout(room.destroyTimer);
     room.destroyTimer = null;
@@ -350,6 +360,7 @@ export function joinYjsRoom(ws: WebSocket, submissionId: string, identity: RoomI
   const conn: YjsConnection = {
     ws,
     identity,
+    sessionId: options.sessionId,
     state,
     pendingStateVector: null,
     sentServerStep1: false,
@@ -393,6 +404,45 @@ export function closeAllYjsRooms(code = 1001, reason = 'Server shutting down'): 
     destroyRoom(room);
   }
   rooms.clear();
+}
+
+/** The request was just sent: its open room stops taking document updates. */
+export function setYjsRoomReadOnly(submissionId: string): void {
+  const room = rooms.get(submissionId);
+  if (room) room.readOnly = true;
+}
+
+/** An open Yjs socket, for access checks after it joined (handlers/websocket.ts). */
+export interface YjsConnectionInfo {
+  ws: WebSocket;
+  submissionId: string;
+  userEmail: string;
+  sessionId?: string;
+}
+
+export function yjsConnections(): YjsConnectionInfo[] {
+  const out: YjsConnectionInfo[] = [];
+  for (const room of rooms.values()) {
+    for (const conn of room.conns.values()) {
+      out.push({ ws: conn.ws, submissionId: room.submissionId, userEmail: conn.identity.userEmail, sessionId: conn.sessionId });
+    }
+  }
+  return out;
+}
+
+/** Close one Yjs socket (its session ended or it lost access). */
+export function closeYjsConnection(ws: WebSocket, code: number, reason: string): void {
+  for (const room of rooms.values()) {
+    const conn = room.conns.get(ws);
+    if (!conn) continue;
+    removeConnection(room, conn);
+    try {
+      ws.close(code, reason);
+    } catch {
+      ws.terminate();
+    }
+    return;
+  }
 }
 
 /** Diagnostics and tests: whether a room exists for the submission. */

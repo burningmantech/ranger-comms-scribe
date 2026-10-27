@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 jest.mock('../../src/handlers/websocket', () => ({
+  recheckRoomAccess: jest.fn().mockResolvedValue(0),
   broadcastToSubmissionRoom: jest.fn().mockResolvedValue(undefined),
   broadcastToDocumentRoom: jest.fn().mockResolvedValue(undefined),
 }));

@@ -1,6 +1,6 @@
 import { canEditSubmission, isReviewer } from '../services/access';
 import { AutoRouter, json } from 'itty-router';
-import { Env, GetSession } from '../utils/sessionManager';
+import { Env, GetSession, onSessionsEnded } from '../utils/sessionManager';
 import { getUser } from '../services/userService';
 import { getObject } from '../services/cacheService';
 import { getDevUser } from '../utils/devUsers';
@@ -10,9 +10,13 @@ import {
   RoomTarget,
   WebSocketMessage,
   broadcastToRoom,
+  closeRoomConnection,
   documentRoomKey,
+  roomConnections,
   submissionRoomKey,
 } from '../realtime/rooms';
+import { closeYjsConnection, yjsConnections } from '../realtime/yjsRooms';
+import { User } from '../types';
 
 /**
  * WebSocket upgrades for /api/ws/submissions/:id and /api/ws/documents/:id are
@@ -23,8 +27,35 @@ import {
 export const router = AutoRouter({ base: '/api/ws' });
 
 export type RoomAuthResult =
-  | { ok: true; identity: RoomIdentity }
+  /** `sessionId` is set for a real session (not dev bypass); `readOnly` when the request has been sent. */
+  | { ok: true; identity: RoomIdentity; sessionId?: string; readOnly?: boolean }
   | { ok: false; status: number; body: Record<string, unknown> };
+
+type AccessResult = { ok: true; readOnly: boolean } | { ok: false; status: number; body: Record<string, unknown> };
+
+/** Whether `user` may be in the room for `target` (the same rules as REST). */
+async function roomAccess(target: RoomTarget, user: User, env: Env): Promise<AccessResult> {
+  if (target.kind === 'submission') {
+    const submission = await getObject<any>(`content_submissions/${target.id}`, env);
+    if (!submission) {
+      return { ok: false, status: 404, body: { error: 'Submission not found' } };
+    }
+    // Same rule as PUT /content/submissions/:id
+    if (!(isReviewer(user, env) || canEditSubmission(user, submission))) {
+      return { ok: false, status: 403, body: { error: 'Access denied' } };
+    }
+    return { ok: true, readOnly: submission.status === 'sent' };
+  }
+  // Same rule as GET /api/documents/:id
+  const document = await getDocument(target.id, env);
+  if (!document) {
+    return { ok: false, status: 404, body: { error: 'Document not found' } };
+  }
+  if (!canViewDocument(document, user)) {
+    return { ok: false, status: 403, body: { error: 'Access denied' } };
+  }
+  return { ok: true, readOnly: false };
+}
 
 /**
  * Session and access checks for joining a room. Same semantics as the old Worker
@@ -70,33 +101,74 @@ export async function authorizeRoomConnection(
     return { ok: false, status: 403, body: { error: 'User not found' } };
   }
 
-  if (target.kind === 'submission') {
-    const submission = await getObject<any>(`content_submissions/${target.id}`, env);
-    if (!submission) {
-      return { ok: false, status: 404, body: { error: 'Submission not found' } };
-    }
-
-    // Same rule as PUT /content/submissions/:id
-    const hasAccess = isReviewer(user, env) || canEditSubmission(user, submission);
-
-    if (!hasAccess) {
-      return { ok: false, status: 403, body: { error: 'Access denied' } };
-    }
-  } else {
-    // Same rule as GET /api/documents/:id
-    const document = await getDocument(target.id, env);
-    if (!document) {
-      return { ok: false, status: 404, body: { error: 'Document not found' } };
-    }
-    if (!canViewDocument(document, user)) {
-      return { ok: false, status: 403, body: { error: 'Access denied' } };
-    }
-  }
+  const access = await roomAccess(target, user, env);
+  if (!access.ok) return access;
 
   return {
     ok: true,
     identity: { userId: user.id || user.email, userName: user.name || userData.name, userEmail: user.email },
+    sessionId,
+    readOnly: access.readOnly,
   };
+}
+
+// Close codes for sockets the server ends (application range 4000-4999)
+export const CLOSE_SESSION_ENDED = 4401;
+export const CLOSE_ACCESS_REMOVED = 4403;
+
+/** Close every room socket (JSON and Yjs) opened with one of these sessions. */
+export function closeSessionSockets(sessionIds: string[]): number {
+  const ended = new Set(sessionIds);
+  let closed = 0;
+  for (const c of roomConnections()) {
+    if (c.sessionId && ended.has(c.sessionId)) {
+      closeRoomConnection(c.ws, CLOSE_SESSION_ENDED, 'Session ended');
+      closed += 1;
+    }
+  }
+  for (const c of yjsConnections()) {
+    if (c.sessionId && ended.has(c.sessionId)) {
+      closeYjsConnection(c.ws, CLOSE_SESSION_ENDED, 'Session ended');
+      closed += 1;
+    }
+  }
+  return closed;
+}
+
+// Sign-out, expiry, a password reset or a deleted account ends sessions: their sockets go too
+onSessionsEnded((sessionIds) => { closeSessionSockets(sessionIds); });
+
+/**
+ * Check open room sockets again after access changed: a request's approvers list
+ * (`submissionId`), or one person's access on the People page (`email`). Sockets whose
+ * session has ended or whose person may no longer be in the room are closed. Dev-bypass
+ * sockets (no session) are left alone. Returns how many were closed.
+ */
+export async function recheckRoomAccess(env: Env, filter: { submissionId?: string; email?: string }): Promise<number> {
+  const email = filter.email?.trim().toLowerCase();
+  const candidates = [
+    ...roomConnections().map((c) => ({ ws: c.ws, target: c.target, userEmail: c.userEmail, sessionId: c.sessionId, yjs: false })),
+    ...yjsConnections().map((c) => ({ ws: c.ws, target: { kind: 'submission' as const, id: c.submissionId }, userEmail: c.userEmail, sessionId: c.sessionId, yjs: true })),
+  ].filter((c) => c.sessionId &&
+    (!filter.submissionId || (c.target.kind === 'submission' && c.target.id === filter.submissionId)) &&
+    (!email || c.userEmail.toLowerCase() === email));
+
+  let closed = 0;
+  for (const c of candidates) {
+    try {
+      const session = await GetSession(c.sessionId!, env);
+      const user = session ? await getUser((session.data as { email: string }).email, env) : null;
+      const access = user ? await roomAccess(c.target, user, env) : null;
+      if (access?.ok) continue;
+      const [code, reason] = session ? [CLOSE_ACCESS_REMOVED, 'Access removed'] : [CLOSE_SESSION_ENDED, 'Session ended'];
+      if (c.yjs) closeYjsConnection(c.ws, code, reason);
+      else closeRoomConnection(c.ws, code, reason);
+      closed += 1;
+    } catch (error) {
+      console.error('Could not check a room connection again:', error);
+    }
+  }
+  return closed;
 }
 
 // Simple liveness check for the real-time endpoint.

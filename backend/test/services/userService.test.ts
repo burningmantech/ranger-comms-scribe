@@ -285,7 +285,7 @@ describe('User Service', () => {
       let oldPasswordWorkedDuringScan: boolean | undefined;
       let verifiedDuringScan: boolean | undefined;
       store.list.mockImplementation(async (prefix: string) => {
-        if (prefix === 'session/') {
+        if (prefix.startsWith('session-index/')) {
           oldPasswordWorkedDuringScan = !!(await authenticateUser('reset2@example.com', 'Old-pass-1!', env));
           verifiedDuringScan = (await getUser('reset2@example.com', env))?.verified === true;
         }

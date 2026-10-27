@@ -32,6 +32,7 @@ import {
 import { getActiveCommsCadreEmails, getCommsManagerEmails, isAdminUser, isCommsCadre, isCommsManager } from './commsCadreService';
 import { syncCalendarFromSubmission } from './commsCalendarService';
 import { notifySubmitter } from './workflowNotifications';
+import { setYjsRoomReadOnly } from '../realtime/yjsRooms';
 
 /**
  * Newsletter editions ("Black Rock Ranger News"): built by the Comms Cadre from approved
@@ -993,6 +994,7 @@ export async function sendEdition(id: string, user: User, env: Env): Promise<New
           const keys = audienceKeys(submission, changes);
           if (submission.status === 'approved' && !keys.some((k) => STANDALONE_EMAIL_AUDIENCES.has(k))) {
             submission.status = 'sent';
+            setYjsRoomReadOnly(submission.id);
             submission.sentAt = sentAt;
             submission.sentBy = userKey(user);
             if (!newlySent.some((s) => s.id === submission.id)) newlySent.push(submission);

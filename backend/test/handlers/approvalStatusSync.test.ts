@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 
 jest.mock('../../src/handlers/websocket', () => ({
+  recheckRoomAccess: jest.fn().mockResolvedValue(0),
   broadcastToSubmissionRoom: jest.fn().mockResolvedValue(undefined),
   broadcastToDocumentRoom: jest.fn().mockResolvedValue(undefined),
 }));
@@ -226,13 +227,18 @@ describe('the approval_state broadcast', () => {
 });
 
 describe('a sent submission', () => {
-  it('stays sent when a change is created, resolved or undone', async () => {
-    await seed({ status: 'sent' });
+  it("takes no new change, decision or undo, and stays sent", async () => {
+    // A change left over from review, then the request went out
+    await seed();
     const changeId = await createChange();
-    expect((await stored()).status).toBe('sent');
-    await decide(changeId, 'approved');
-    expect((await stored()).status).toBe('sent');
-    await undoChangeHandler(req(reviewer, { changeId }, { submissionId: SUB }), env);
+    await putObject(`content_submissions/${SUB}`, { ...(await stored()), status: 'sent' }, env);
+    jest.clearAllMocks();
+
+    const create = await createTrackedChangeHandler(
+      req(author, { submissionId: SUB }, { field: 'content', oldValue: 'Hello world.', newValue: 'Changed.' }), env);
+    expect(create.status).toBe(409);
+    expect((await decide(changeId, 'approved')).status).toBe(409);
+    expect((await undoChangeHandler(req(reviewer, { changeId }, { submissionId: SUB }), env)).status).toBe(409);
     expect((await stored()).status).toBe('sent');
     expect(broadcastToSubmissionRoom).not.toHaveBeenCalled();
   });

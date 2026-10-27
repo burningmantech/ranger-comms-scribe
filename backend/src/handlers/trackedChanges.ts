@@ -269,6 +269,16 @@ function isNewestActiveChange(change: TrackedChange, allChanges: TrackedChange[]
 }
 
 /**
+ * A sent request doesn't change: what went out (and its public page) stays as sent, and a new
+ * version starts from "New request from this". Every tracked-change write refuses it.
+ */
+const SENT_MESSAGE = 'This request has been sent, so it can no longer be edited. Start a new request from it instead.';
+async function refuseIfSent(submissionId: string, env: any): Promise<Response | null> {
+  const submission = await getObject<ContentSubmission>(`content_submissions/${submissionId}`, env);
+  return submission?.status === 'sent' ? new Response(SENT_MESSAGE, { status: 409 }) : null;
+}
+
+/**
  * The submission, when the signed-in person may see it ('view') or edit it ('edit', the same
  * rule as PUT /content/submissions/:id); otherwise the error response to send.
  */
@@ -386,6 +396,7 @@ export async function createTrackedChangeHandler(request: CustomRequest, env: an
   try {
     const access = await submissionFor(request, submissionId, 'edit', env);
     if ('response' in access) return access.response;
+    if (access.submission.status === 'sent') return new Response(SENT_MESSAGE, { status: 409 });
 
     const { field, oldValue, newValue, richTextOldValue, richTextNewValue, regionMap, diffAgainstOldValue } = await request.json();
 
@@ -480,6 +491,8 @@ export async function updateChangeStatusHandler(request: CustomRequest, env: any
     if (!submissionId) {
       return new Response('submissionId is required', { status: 400 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     // Update the change status
     const updatedChange = await updateChangeStatus(
@@ -650,6 +663,8 @@ export async function batchUpdateStatusHandler(request: CustomRequest, env: any)
         status: 400, headers: { 'Content-Type': 'application/json' }
       });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     const results = [];
     for (const changeId of changeIds) {
@@ -853,6 +868,8 @@ export async function undoChangeHandler(request: CustomRequest, env: any): Promi
     if (!submissionId) {
       return new Response('submissionId is required', { status: 400 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     // Undo the change
     const updatedChange = await undoChange(submissionId, changeId, env);
@@ -930,8 +947,8 @@ export async function updateProposedVersionsHandler(request: CustomRequest, env:
     // approved only reviewers change them, and once sent nobody does.
     const access = await submissionFor(request, submissionId, 'edit', env);
     if ('response' in access) return access.response;
-    const { status } = access.submission;
-    if (status === 'sent' || (status === 'approved' && !isReviewer(request.user))) {
+    if (access.submission.status === 'sent') return new Response(SENT_MESSAGE, { status: 409 });
+    if (access.submission.status === 'approved' && !isReviewer(request.user)) {
       return new Response('Forbidden', { status: 403 });
     }
 
@@ -991,6 +1008,8 @@ export async function deleteChangeHandler(request: CustomRequest, env: any): Pro
     if (!isAuthor && !hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     const result = await deleteChange(submissionId, changeId, env);
 
@@ -1024,6 +1043,8 @@ export async function deleteAllChangesHandler(request: CustomRequest, env: any):
     if (!hasElevatedPermission) {
       return new Response('Forbidden', { status: 403 });
     }
+    const sent = await refuseIfSent(submissionId, env);
+    if (sent) return sent;
 
     const { listObjects, deleteObject } = await import('../services/cacheService');
     const objects = await listObjects(`tracked-changes/submission/${submissionId}/`, env);
@@ -1083,6 +1104,7 @@ export async function batchCreateHandler(request: CustomRequest, env: any): Prom
   try {
     const access = await submissionFor(request, submissionId, 'edit', env);
     if ('response' in access) return access.response;
+    if (access.submission.status === 'sent') return new Response(SENT_MESSAGE, { status: 409 });
 
     const { changes } = await request.json();
 

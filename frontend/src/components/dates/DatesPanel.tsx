@@ -22,8 +22,10 @@ interface DatesPanelProps {
    * there any more. Without it (outside the request's own pages) out-of-date text links to `updateHref`.
    */
   onReplaceText?: (field: DateLink['field'], search: string, replacement: string, occurrence: number) => Promise<boolean>;
-  /** Where to update the text when it can't be changed here (the review page). */
+  /** Where to update the text when it can't be changed here (the review page, or a new request). */
   updateHref?: string;
+  /** The link's text (default "Update in the request"). */
+  updateLabel?: string;
   /** Scroll the text to a mention (the review editor); without it, mentions aren't clickable. */
   onShowMention?: (mention: Mention) => void;
   /** A group to bring into view and highlight (a bubble in the text was clicked). */
@@ -58,7 +60,7 @@ export const groupElementId = (key: string) => `date-group-${key.replace(/[^\w-]
  * year says it should now be a different date. Nothing changes without a click.
  */
 export const DatesPanel: React.FC<DatesPanelProps> = ({
-  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, updateHref, onShowMention,
+  sources, links, onLinksChange, referenceYmd, annualDates, onAnnualDateAdded, onReplaceText, updateHref, updateLabel, onShowMention,
   focusKey, submissionId, disabled, title = 'Dates in this request',
 }) => {
   const [tracking, setTracking] = useState<DateGroup | null>(null);
@@ -193,7 +195,7 @@ export const DatesPanel: React.FC<DatesPanelProps> = ({
                     {busy === group.key ? 'Updating…' : group.mentions.length > 1 ? `Update all ${group.mentions.length}` : 'Update text'}
                   </button>
                 ) : updateHref && (
-                  <a className="cc-btn cc-btn--small" href={updateHref}>Update in the request</a>
+                  <a className="cc-btn cc-btn--small" href={updateHref}>{updateLabel || 'Update in the request'}</a>
                 )}
               </span>
             ) : (

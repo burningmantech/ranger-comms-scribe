@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { SESv2Client } from '@aws-sdk/client-sesv2';
 jest.mock('../../src/handlers/websocket', () => ({
+  recheckRoomAccess: jest.fn().mockResolvedValue(0),
   broadcastToSubmissionRoom: jest.fn().mockResolvedValue(undefined),
   broadcastToDocumentRoom: jest.fn().mockResolvedValue(undefined),
 }));
@@ -115,7 +116,7 @@ describe('the proposed document', () => {
     expect((await updateProposedVersionsHandler(req(await asUser('member'), { submissionId: 's1' }, { proposedVersionsRichText: lexical('x') }), env)).status).toBe(403);
     expect((await updateProposedVersionsHandler(req(await asUser('cadre'), { submissionId: 's1' }, { proposedVersionsRichText: lexical('x') }), env)).status).toBe(200);
     await putObject('content_submissions/s1', request('s1', { status: 'sent' }), env);
-    expect((await updateProposedVersionsHandler(req(await asUser('cadre'), { submissionId: 's1' }, { proposedVersionsRichText: lexical('x') }), env)).status).toBe(403);
+    expect((await updateProposedVersionsHandler(req(await asUser('cadre'), { submissionId: 's1' }, { proposedVersionsRichText: lexical('x') }), env)).status).toBe(409);
   });
 });
 
@@ -145,6 +146,14 @@ describe('PUT /submissions/:id', () => {
     expect(await stored()).toMatchObject({ title: 'Request s1', content: 'Hello Rangers', status: 'approved' });
     await call('PUT', '/submissions/s1', 'cadre', { status: 'sent', sentAt: '2026-10-03' });
     expect(await stored()).toMatchObject({ status: 'sent', sentBy: 'cadre@x.org', sentAt: '2026-10-03T00:00:00.000Z' });
+  });
+});
+
+describe('a sent request', () => {
+  it("keeps its message even from the Comms Cadre (what went out doesn't change)", async () => {
+    await putObject('content_submissions/s1', request('s1', { status: 'sent' }), env);
+    await call('PUT', '/submissions/s1', 'cadre', { title: 'Rewritten', content: 'Rewritten' });
+    expect(await stored()).toMatchObject({ title: 'Request s1', content: 'Hello Rangers', status: 'sent' });
   });
 });
 
