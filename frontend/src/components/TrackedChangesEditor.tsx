@@ -4002,7 +4002,7 @@ export const TrackedChangesEditor: React.FC<TrackedChangesEditorProps> = ({
                     }}
                     placeholder="Edit the proposed version..."
                     readOnly={isSent}
-                    showToolbar={true}
+                    showToolbar={!isSent}
                     className="proposed-collaborative-editor"
                     useSubmissionWebSocket={true}
                     trackedChanges={pendingContentChanges.length > 0 ? pendingContentChanges : undefined}
