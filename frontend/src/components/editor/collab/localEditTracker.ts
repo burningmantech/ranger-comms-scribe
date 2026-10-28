@@ -34,6 +34,8 @@ export interface LocalEditSession {
   inserted: Range[];
   /** Items the local user's edits deleted. */
   deleted: Array<ReturnType<typeof Y.createDeleteSet>>;
+  /** What undo transactions (Yjs UndoManager) deleted during the session. */
+  undoDeleted: Array<ReturnType<typeof Y.createDeleteSet>>;
   active: boolean;
 }
 
@@ -227,7 +229,7 @@ function lineBreaksIn(container: Y.Item): number {
  */
 export function baselineDoc(
   doc: Y.Doc,
-  session: Pick<LocalEditSession, 'inserted' | 'deleted'>,
+  session: Pick<LocalEditSession, 'inserted' | 'deleted'> & { undoDeleted?: LocalEditSession['undoDeleted'] },
   provenance: Provenance | null = getProvenance(doc),
 ): { doc: Y.Doc; fixes: ContainerFix[] } {
   const me = doc.clientID;
@@ -306,6 +308,7 @@ export function baselineDoc(
 
   // Real deletions to restore (not moves, not replaced blocks).
   const restored = new RangeSet();
+  const undone = Y.mergeDeleteSets(session.undoDeleted || []);
   for (const ds of session.deleted) {
     ds.clients.forEach((ranges, client) => {
       const structs = doc.store.clients.get(client) as Array<Y.Item | Y.GC> | undefined;
@@ -321,6 +324,13 @@ export function baselineDoc(
             item = null;
           }
           if (item && provenance && provenance.isReplacedContainer(item)) continue;
+          // This session's own new content was never in the before-state: text this user
+          // typed (by authorship, as pass 2 hides it), and anything new an undo took out.
+          // (Typed then deleted in one transaction, e.g. typed over and undone at once, it
+          // used to come back in the before-state and be saved as a change.)
+          const isText = !!item && item.parentSub === null && item.content instanceof Y.ContentString;
+          if (isText && isMineKey(rootOf(charKey(client, clock)))) continue;
+          if (inSession(client, clock) && Y.isDeleted(undone, Y.createID(client, clock))) continue;
           restored.add(client, clock);
         }
       }
@@ -371,13 +381,14 @@ export function createLocalEditTracker(
     for (const session of sessions) {
       if (after > before) session.inserted.push({ clock: before, len: after - before });
       if (tr.deleteSet.clients.size > 0) session.deleted.push(tr.deleteSet);
+      if (tr.deleteSet.clients.size > 0 && tr.origin instanceof Y.UndoManager) session.undoDeleted.push(tr.deleteSet);
     }
   };
   doc.on('afterTransaction', onAfterTransaction);
 
   return {
     begin() {
-      const session: LocalEditSession = { inserted: [], deleted: [], active: true };
+      const session: LocalEditSession = { inserted: [], deleted: [], undoDeleted: [], active: true };
       sessions.add(session);
       return session;
     },

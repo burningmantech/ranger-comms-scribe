@@ -78,4 +78,32 @@ describe('SubmissionWebSocketClient reconnect', () => {
     expect(expired).not.toHaveBeenCalled();
     client.disconnect();
   });
+
+  it("keeps retrying when the reconnect on 'online' runs before the network is back", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new TypeError('Failed to fetch')) // the 'online' reconnect, too early
+      .mockResolvedValue({ ok: true });
+    globalThis.fetch = fetchMock as any;
+
+    const client = new SubmissionWebSocketClient('sub-1', 'user-1', 'Test User', 'test@example.com');
+    await client.connect();
+    MockWebSocket.last!.readyState = MockWebSocket.OPEN;
+    MockWebSocket.last!.onopen?.();
+    // Offline: the socket drops; then the browser says it's online again
+    MockWebSocket.last!.readyState = MockWebSocket.CLOSED;
+    MockWebSocket.last!.onclose!({ code: 1006, reason: '', wasClean: false });
+    client.reconnect();
+    await flush();
+    expect(console.error).not.toHaveBeenCalledWith('Reconnect failed:', expect.anything());
+
+    for (let i = 0; i < 3; i++) {
+      jest.advanceTimersByTime(10000);
+      await flush();
+    }
+    expect(MockWebSocket.created).toBeGreaterThanOrEqual(2);
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+    client.disconnect();
+  });
 });

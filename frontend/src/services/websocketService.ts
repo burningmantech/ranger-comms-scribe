@@ -486,7 +486,10 @@ export class SubmissionWebSocketClient {
     }
 
     this.connect().catch(err => {
-      console.error('Reconnect failed:', err);
+      // The network may not be fully back when 'online' fires. This cancelled the slow poll,
+      // so stopping here would leave the room disconnected: retry with backoff instead.
+      console.warn('Reconnect failed, retrying:', err);
+      this.scheduleReconnect();
     });
   }
 
