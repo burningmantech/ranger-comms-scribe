@@ -147,13 +147,18 @@ async function typeOver(u, index, start, end, text) {
     await (await (await card(b, 'header')).$('button[title="Reject"]')).click();
     await check('rejected header -> footer', 1, 'showed that header as the only change');
 
-    // Undo a type-over right away: the word comes back with no marker
+    // Undo a type-over right away: the word comes back with no marker, and nothing is saved
+    const idsBefore = new Set((await L.api(`/tracked-changes/submission/${sub.id}`)).changes.map((c) => c.id));
     await typeOver(a, 4, 5, 9, 'that');
     await L.sleep(300);
     await a.page.keyboard.down('Meta');
     await a.page.keyboard.press('z');
     await a.page.keyboard.up('Meta');
     await check('undo of a type-over', 4, 'undo this word please');
+    await L.sleep(4000); // past the transaction's settle
+    const stray = (await L.api(`/tracked-changes/submission/${sub.id}`)).changes.filter((c) => !idsBefore.has(c.id));
+    if (stray.length) failed++;
+    console.log(`  ${stray.length ? 'FAIL' : 'ok  '} undo of a type-over saved no change${stray.length ? `: ${JSON.stringify(stray.map((c) => [c.oldValue, c.newValue]))}` : ''}`);
 
     const after = (await L.api(`/tracked-changes/submission/${sub.id}`)).changes;
     console.log('server changes after:', JSON.stringify(after.map((c) => ({ old: c.oldValue, new: c.newValue, status: c.status }))));

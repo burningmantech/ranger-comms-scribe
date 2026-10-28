@@ -292,3 +292,122 @@ describe('localEditTracker', () => {
   });
 });
 
+
+/**
+ * Content the session itself added and then removed (typed over a word and undone at once, an
+ * Enter undone, fresh typing Backspaced) was never in the before-state. It used to come back in
+ * it, so an edit undone before its transaction settled was saved as a change ("thishat" ->
+ * "this", "word pleasethat" -> "").
+ */
+describe('localEditTracker: content added and removed in one session', () => {
+  /** As client(), with Yjs undo applied the way CollaborationPlugin does (and the binding). */
+  function undoClient() {
+    const editor = createEditor({ namespace: 'undo', nodes: NODES, onError: (e) => { throw e; } });
+    const doc = new Y.Doc({ gc: false });
+    trackProvenance(doc);
+    const binding = createBinding(editor, provider, 'room', doc, new Map([['room', doc]]));
+    binding.root.getSharedType().observeDeep((events, tr) => {
+      if (tr.origin !== binding) syncYjsChangesToLexical(binding, provider, events as any, tr.origin instanceof Y.UndoManager, () => {});
+    });
+    editor.registerUpdateListener(({ prevEditorState, editorState, dirtyElements, dirtyLeaves, normalizedNodes, tags }) => {
+      if (!tags.has('skip-collab')) {
+        syncLexicalUpdateToYjs(binding, provider, prevEditorState, editorState, dirtyElements, dirtyLeaves, normalizedNodes, tags);
+      }
+    });
+    const c = { editor, doc };
+    edit(c, () => {
+      $getRoot().append($createParagraphNode().append($createTextNode('undo this word please')));
+      $getRoot().append($createParagraphNode().append($createTextNode('second paragraph')));
+    }, 'history-merge');
+    const undoManager = new Y.UndoManager(doc.get('root', Y.XmlText), { trackedOrigins: new Set([binding]) });
+    // YjsCollaboration counts the binding's and the undo manager's transactions as local edits
+    const tracker = createLocalEditTracker(doc, NODES, (tr) => tr.origin === binding || tr.origin instanceof Y.UndoManager);
+    return { c, undoManager, tracker, session: tracker.begin() };
+  }
+  const typeChar = (c: Client, ch: string) => edit(c, () => {
+    const s = $getSelection();
+    if ($isRangeSelection(s)) s.insertText(ch);
+  });
+  const SEED = 'undo this word please\nsecond paragraph';
+
+  it('a word typed over and undone at once: the before-state is the document', () => {
+    const { c, undoManager, tracker, session } = undoClient();
+    edit(c, () => {
+      const t = $firstText(0);
+      const s = $createRangeSelection();
+      s.anchor.set(t.getKey(), 5, 'text');
+      s.focus.set(t.getKey(), 9, 'text');
+      $setSelection(s);
+      s.insertText('t');
+    });
+    for (const ch of 'hat') typeChar(c, ch);
+    expect(text(tracker.currentJson())).toBe('undo that word please\nsecond paragraph');
+    undoManager.undo();
+    edit(c, () => {});
+    expect(text(tracker.currentJson())).toBe(SEED);
+    expect(tracker.baselineJson(session)).toBe(tracker.currentJson());
+  });
+
+  it('typed over with a deletion marker and undone at once: the same', () => {
+    const { c, undoManager, tracker, session } = undoClient();
+    edit(c, () => {
+      const t = $firstText(0);
+      const [, word, rest] = t.splitText(5, 9);
+      word.insertBefore($createDeletedTextNode({ changeId: '__pending_deletion__', deletedText: 'this', authorId: 'a' }));
+      word.remove();
+      const s = $createRangeSelection();
+      s.anchor.set(rest.getKey(), 0, 'text');
+      s.focus.set(rest.getKey(), 0, 'text');
+      $setSelection(s);
+      s.insertText('t');
+    });
+    for (const ch of 'hat') typeChar(c, ch);
+    undoManager.undo();
+    edit(c, () => {});
+    expect(text(tracker.currentJson())).toBe(SEED);
+    expect(tracker.baselineJson(session)).toBe(tracker.currentJson());
+  });
+
+  it('Enter undone at once: no stray paragraph in the before-state', () => {
+    const { c, undoManager, tracker, session } = undoClient();
+    edit(c, () => {
+      const t = $firstText(0);
+      const s = $createRangeSelection();
+      s.anchor.set(t.getKey(), 5, 'text');
+      s.focus.set(t.getKey(), 5, 'text');
+      $setSelection(s);
+      s.insertParagraph();
+    });
+    undoManager.undo();
+    edit(c, () => {});
+    expect(tracker.baselineJson(session)).toBe(tracker.currentJson());
+  });
+
+  it('typing, then Backspacing some of it: the before-state is the seed', () => {
+    const { c, tracker, session } = undoClient();
+    edit(c, () => { const t = $firstText(0); t.select(t.getTextContentSize(), t.getTextContentSize()); });
+    for (const ch of ' abc') typeChar(c, ch);
+    edit(c, () => { const t = $firstText(0); t.spliceText(t.getTextContentSize() - 1, 1, '', true); });
+    expect(text(tracker.currentJson())).toBe('undo this word please ab\nsecond paragraph');
+    expect(text(tracker.baselineJson(session))).toBe(SEED);
+  });
+
+  it('Enter, then striking a word in the moved text: the struck word stays in the before-state', () => {
+    const { c, tracker, session } = undoClient();
+    edit(c, () => {
+      const t = $firstText(0);
+      const s = $createRangeSelection();
+      s.anchor.set(t.getKey(), 5, 'text');
+      s.focus.set(t.getKey(), 5, 'text');
+      $setSelection(s);
+      s.insertParagraph();
+    });
+    edit(c, () => {
+      const t = $firstText(1); // "this word please"
+      const [w] = t.splitText(4);
+      w.insertBefore($createDeletedTextNode({ changeId: '__pending_deletion__', deletedText: 'this', authorId: 'a' }));
+      w.remove();
+    });
+    expect(text(tracker.baselineJson(session))).toBe(SEED);
+  });
+});
