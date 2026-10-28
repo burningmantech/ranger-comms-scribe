@@ -461,6 +461,44 @@ export interface PlanOptions {
    * is never matched to the partner's restored copy (which the reject would then remove).
    */
   movePartner?: { before: Json; after: Json };
+  /**
+   * Snap the patch to whole words (locateChangeText only: where to highlight a change).
+   * A character diff matches a replacement's letters to the old word's ("CF" over
+   * "CloudFront" keeps C and F), leaving only removals and nothing to highlight.
+   */
+  wordLevel?: boolean;
+}
+
+const isWordUnit = (u: Unit | undefined) => !!u && u.kind === 'char' && /[\p{L}\p{N}]/u.test(u.ch!);
+const textUnits = (units: Unit[]) => units.filter((u) => !u.marker && u.kind !== 'block');
+/** A hunk that is only recorded deletions: markers in the after-state for removed text. */
+const isMarkedDeletion = (h: Hunk, N: DocUnits, O: DocUnits) =>
+  h.a1 > h.a0 && N.units.slice(h.a0, h.a1).every((u) => u.marker) && textUnits(O.units.slice(h.b0, h.b1)).length > 0;
+
+/**
+ * A character patch as whole-word edits: hunks with only word characters between them merge
+ * (not two recorded deletions: separate Backspaces stay separate), and a replacement (text on
+ * both sides) widens to the edges of the words it touches, except leftwards from a marker
+ * (typing over a selection puts the new text right after it). Pure insertions and deletions
+ * stay exact.
+ */
+function wordHunks(patch: Hunk[], N: DocUnits, O: DocUnits): Hunk[] {
+  const out: Hunk[] = [];
+  for (const h of patch) {
+    const last = out[out.length - 1];
+    if (last && N.units.slice(last.a1, h.a0).every(isWordUnit) &&
+        !(isMarkedDeletion(last, N, O) && isMarkedDeletion(h, N, O))) {
+      out[out.length - 1] = { a0: last.a0, a1: h.a1, b0: last.b0, b1: h.b1 };
+    } else out.push({ ...h });
+  }
+  for (const h of out) {
+    const ins = textUnits(N.units.slice(h.a0, h.a1));
+    const del = textUnits(O.units.slice(h.b0, h.b1));
+    if (ins.length === 0 || del.length === 0) continue; // a pure insertion or deletion stays exact
+    while (!N.units[h.a0]?.marker && h.a0 > 0 && isWordUnit(N.units[h.a0 - 1])) { h.a0--; h.b0--; }
+    while (h.a1 < N.units.length && isWordUnit(N.units[h.a1])) { h.a1++; h.b1++; }
+  }
+  return out;
 }
 
 /**
@@ -485,7 +523,7 @@ type PatchMapping =
  * locator shared by the reject (planRejectRestore) and by `locateChange`.
  */
 function mapPatch(O: DocUnits, N: DocUnits, L: DocUnits, options: PlanOptions = {}, masked: Span[] = []): PatchMapping {
-  const patch = hunksOf(diffDocs(N, O));
+  const patch = options.wordLevel ? wordHunks(hunksOf(diffDocs(N, O)), N, O) : hunksOf(diffDocs(N, O));
   const spans: Span[] = [];
   if (patch.length === 0) return { ok: true, splices: [], spans };
 
@@ -827,7 +865,7 @@ export function locateChangeText(before: Json, after: Json, liveBlocks: Json[]):
   const O = toUnits(oldBlocks, interner);
   const N = toUnits(newBlocks, interner);
   const L = toUnits(liveBlocks, interner);
-  const mapping = mapPatch(O, N, L);
+  const mapping = mapPatch(O, N, L, { wordLevel: true });
   if (!mapping.ok) return null;
   const offsets: number[] = new Array(L.units.length + 1);
   let pos = 0;

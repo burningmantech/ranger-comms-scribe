@@ -32,6 +32,13 @@ async function shown(u, index) {
   }, L.EDITOR, index);
 }
 
+/** The text of every added-text highlight (CSS highlights named tracked-addition-<change id>). */
+async function highlights(u) {
+  return u.page.evaluate(() => [...CSS.highlights]
+    .filter(([name]) => name.startsWith('tracked-addition-'))
+    .flatMap(([, h]) => [...h].map((r) => r.toString())));
+}
+
 /** The Open card whose description contains `needle`. */
 async function card(u, needle) {
   for (const el of await u.page.$$('.editor-sidebar .rp-card')) {
@@ -104,6 +111,14 @@ async function typeOver(u, index, start, end, text) {
         console.log(`  ${ok ? 'ok  ' : 'FAIL'} p${i}: ${JSON.stringify(text)}${ok ? '' : `  (expected ${JSON.stringify(expected[i])})`}`);
       }
       console.log('  markers:', JSON.stringify((await markers(u)).map(([i, t, id]) => [i, t, id && id.slice(0, 8)])));
+      // The added text of each replacement is highlighted, whole words (not "foot" of "footer")
+      const lit = await highlights(u);
+      for (const word of ['CF', 'footer', 'that']) {
+        const ok = lit.includes(word);
+        if (!ok) failed++;
+        console.log(`  ${ok ? 'ok  ' : 'FAIL'} "${word}" highlighted`);
+      }
+      console.log('  highlights:', JSON.stringify(lit));
     };
     await report(a, 'A (made 1, 3, 4)');
     await report(b, 'B (made 2)');
