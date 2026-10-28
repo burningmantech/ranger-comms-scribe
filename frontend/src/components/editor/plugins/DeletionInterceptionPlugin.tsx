@@ -37,6 +37,9 @@ import {
     DELETE_WORD_COMMAND,
     DELETE_LINE_COMMAND,
     CONTROLLED_TEXT_INSERTION_COMMAND,
+    PASTE_COMMAND,
+    INSERT_PARAGRAPH_COMMAND,
+    INSERT_LINE_BREAK_COMMAND,
     COMMAND_PRIORITY_HIGH,
     $createRangeSelection,
     $setSelection,
@@ -659,58 +662,72 @@ export default function DeletionInterceptionPlugin({
             COMMAND_PRIORITY_HIGH,
         );
 
-        // Typing (or an IME composition, a drop, a spelling replacement) over a selection:
-        // the selected text becomes a deletion marker and the new text goes right after it,
-        // so the document shows the old text struck through next to the new, as the change
-        // card does ("Replaced X with Y"). Collaborative mode only: legacy mode draws its
-        // deletions from the live baseline diff. Done in this update (not deferred like the
-        // key handlers: no later beforeinput follows a command), so the marker and the new
-        // text are one edit, and one undo. Returning false lets the rich-text handler insert
-        // the text at the caret placed after the marker.
-        const unregisterTextInsertion = editor.registerCommand(
+        /**
+         * Before text, a paste or a new line replaces a selection: the selected text becomes
+         * deletion markers and the caret goes right after them, in the replaced text's
+         * format, so the handler that runs next (the rich-text plugin's) inserts there and
+         * the document shows the old text struck through next to the new, as the change card
+         * does ("Replaced X with Y"). Collaborative mode only: legacy mode draws its
+         * deletions from the live baseline diff. Done in the command's own update (not
+         * deferred like the key handlers: no later beforeinput follows a command), so the
+         * marker and the new content are one edit, and one undo. Text typed in the open
+         * transaction is simply replaced (as Backspace deletes it).
+         */
+        const $markSelectionBeforeReplacing = (): void => {
+            if (!isCollab) return;
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection) || selection.isCollapsed()) return;
+            if (isNewlyAddedText(false)) return;
+
+            const captured = captureSelection(selection);
+            if (!captured) return;
+            const first = $getNodeByKey(captured.nodeSlices[0].key);
+            const format = first && $isTextNode(first) ? first.getFormat() : selection.format;
+            const style = first && $isTextNode(first) ? first.getStyle() : selection.style;
+
+            const lastMarker = $replaceSlicesWithMarkers(captured.nodeSlices);
+            if (!lastMarker) return;
+
+            // The caret right after the marker, typing in the replaced text's format
+            const caret = $createRangeSelection();
+            const next = lastMarker.getNextSibling();
+            if (next && $isTextNode(next) && !$isDeletedTextNode(next)) {
+                caret.anchor.set(next.getKey(), 0, 'text');
+                caret.focus.set(next.getKey(), 0, 'text');
+            } else {
+                const parent = lastMarker.getParentOrThrow();
+                const index = lastMarker.getIndexWithinParent() + 1;
+                caret.anchor.set(parent.getKey(), index, 'element');
+                caret.focus.set(parent.getKey(), index, 'element');
+            }
+            caret.format = format;
+            caret.style = style;
+            $setSelection(caret);
+
+            if (onDeletionIntercepted) {
+                onDeletionIntercepted(captured.selectedText);
+            }
+        };
+
+        // Typing (or an IME composition, a drop, a spelling replacement), a paste, Enter or
+        // Shift+Enter over a selection. Each returns false so the usual handler runs next.
+        const replacingCommands = [
             CONTROLLED_TEXT_INSERTION_COMMAND,
+            PASTE_COMMAND,
+            INSERT_PARAGRAPH_COMMAND,
+            INSERT_LINE_BREAK_COMMAND,
+        ] as const;
+        const unregisterReplacing = replacingCommands.map((command) => editor.registerCommand(
+            command as any,
             () => {
-                if (!isCollab) return false;
-                const selection = $getSelection();
-                if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
-                // Text typed in the open transaction is simply replaced (as Backspace deletes it)
-                if (isNewlyAddedText(false)) return false;
-
-                const captured = captureSelection(selection);
-                if (!captured) return false;
-                const first = $getNodeByKey(captured.nodeSlices[0].key);
-                const format = first && $isTextNode(first) ? first.getFormat() : selection.format;
-                const style = first && $isTextNode(first) ? first.getStyle() : selection.style;
-
-                const lastMarker = $replaceSlicesWithMarkers(captured.nodeSlices);
-                if (!lastMarker) return false;
-
-                // The caret right after the marker, typing in the replaced text's format
-                const caret = $createRangeSelection();
-                const next = lastMarker.getNextSibling();
-                if (next && $isTextNode(next) && !$isDeletedTextNode(next)) {
-                    caret.anchor.set(next.getKey(), 0, 'text');
-                    caret.focus.set(next.getKey(), 0, 'text');
-                } else {
-                    const parent = lastMarker.getParentOrThrow();
-                    const index = lastMarker.getIndexWithinParent() + 1;
-                    caret.anchor.set(parent.getKey(), index, 'element');
-                    caret.focus.set(parent.getKey(), index, 'element');
-                }
-                caret.format = format;
-                caret.style = style;
-                $setSelection(caret);
-
-                if (onDeletionIntercepted) {
-                    onDeletionIntercepted(captured.selectedText);
-                }
+                $markSelectionBeforeReplacing();
                 return false;
             },
             COMMAND_PRIORITY_HIGH,
-        );
+        ));
 
         return () => {
-            unregisterTextInsertion();
+            unregisterReplacing.forEach((unregister) => unregister());
             unregisterBackspace();
             unregisterDelete();
             unregisterDeleteChar();

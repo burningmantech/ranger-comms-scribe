@@ -22,7 +22,9 @@ import {
   $nodesOfType,
   $setSelection,
   CONTROLLED_TEXT_INSERTION_COMMAND,
+  INSERT_PARAGRAPH_COMMAND,
   IS_BOLD,
+  PASTE_COMMAND,
   KEY_BACKSPACE_COMMAND,
   LexicalEditor,
   TextNode,
@@ -346,6 +348,33 @@ describe('DeletionInterceptionPlugin: typing over a selection', () => {
     typeOver(editor, 'minus');
     expect(shown(editor)).toBe('owns *CloudFront*. cdk diff minus');
     expect(markers(editor)).toEqual([]);
+  });
+
+  it('Enter over a selection: the marker ends the first paragraph, the rest starts the next', () => {
+    const editor = setupRich(true);
+    seedParagraph(editor);
+    selectRange(editor, 15, 17); // ". "
+    editor.update(() => { editor.dispatchCommand(INSERT_PARAGRAPH_COMMAND, undefined); }, { discrete: true });
+    const paragraphs = editor.getEditorState().read(() => $getRoot().getChildren().map((p: any) =>
+      p.getChildren().map((n: any) => (n instanceof DeletedTextNode ? `[${n.getDeletedText()}]` : n.getTextContent())).join('')));
+    expect(paragraphs).toEqual(['owns CloudFront[. ]', 'cdk diff']);
+  });
+
+  it('a paste over a selection pastes after the marker', () => {
+    const editor = setupRich(true);
+    seedParagraph(editor);
+    selectRange(editor, 0, 4); // "owns"
+    const clipboardData = {
+      types: ['text/plain'],
+      files: [],
+      getData: (type: string) => (type === 'text/plain' ? 'has' : ''),
+    };
+    // jsdom has no DragEvent or ClipboardEvent, which Lexical's paste handler checks the event against
+    if (typeof (global as any).DragEvent === 'undefined') (global as any).DragEvent = class DragEvent extends Event {};
+    if (typeof (global as any).ClipboardEvent === 'undefined') (global as any).ClipboardEvent = class ClipboardEvent extends Event {};
+    const event = Object.assign(new Event('paste'), { clipboardData });
+    editor.update(() => { editor.dispatchCommand(PASTE_COMMAND, event as any); }, { discrete: true });
+    expect(shown(editor)).toBe('[owns]has *CloudFront*. cdk diff');
   });
 
   it('legacy mode replaces the text as before (its deletions come from the live diff)', () => {

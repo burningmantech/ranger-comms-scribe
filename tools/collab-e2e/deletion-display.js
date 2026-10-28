@@ -1,6 +1,6 @@
 // What the document body shows for deletions, in both browsers and after a reload, for the ways
 // people delete: type over a selected word (each user), Backspace over a single space, Backspace
-// character by character. Each deletion shows its deleted text, struck through, where it was
+// character by character, paste over a word, Enter over a selection. Each deletion shows its deleted text, struck through, where it was
 // (adjacent markers read as one, as they look). Then: accepting a type-over replacement leaves
 // the new word only, rejecting one brings the old word back once, and undoing a type-over at once
 // restores the word with no marker. Prints what each browser shows and fails on a mismatch.
@@ -12,6 +12,8 @@ const PARAS = [
   'remove one  space here',
   'delete these chars asAS now',
   'undo this word please',
+  'paste over this word',
+  'split it here please',
 ];
 
 /** Each deletion marker in the editor, by paragraph: [paragraph, marker text, change id]. */
@@ -69,6 +71,18 @@ async function typeOver(u, index, start, end, text) {
       await a.page.keyboard.press('Backspace');
       await L.sleep(120);
     }
+    await L.sleep(3500);
+    // 5. A pastes "that" over "this" (a real paste event, as Cmd+V sends)
+    await L.select(a, 5, 11, 15);
+    await a.page.evaluate((sel) => {
+      const data = new DataTransfer();
+      data.setData('text/plain', 'that');
+      document.querySelector(sel).dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    }, L.EDITOR);
+    await L.sleep(3500);
+    // 6. A presses Enter over " here " (paragraph 6 becomes two)
+    await L.select(a, 6, 8, 14);
+    await a.page.keyboard.press('Enter');
     await L.sleep(6000);
 
     const expected = [
@@ -77,10 +91,13 @@ async function typeOver(u, index, start, end, text) {
       'remove one[ ] space here',
       'delete these chars [asAS] now',
       'undo this word please',
+      'paste over [this]that word',
+      'split it[ here ]',
+      'please',
     ];
     const report = async (u, label) => {
       console.log(`\n${label}`);
-      for (let i = 0; i < PARAS.length; i++) {
+      for (let i = 0; i < expected.length; i++) {
         const text = await shown(u, i);
         const ok = text === expected[i];
         if (!ok) failed++;
