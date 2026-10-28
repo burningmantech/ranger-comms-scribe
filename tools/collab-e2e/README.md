@@ -25,6 +25,9 @@ RUNS=5 node matrix.js     # full scenario matrix
 node outage.js            # offline, reconnect, fresh doc after 20 s
 node remount.js           # tab switch, moving between submissions
 node undo2.js             # undo only affects your own edits
+node deletion-display.js  # what the body shows for each kind of deletion, in both browsers and after a reload:
+                          # typing over a selected word (each user), Backspace over a space, Backspace letter by
+                          # letter; then accepting and rejecting a type-over, and undoing one at once
 node legacy.js            # COLLAB_MODE unset: old behaviour unchanged (restart the backend without COLLAB_MODE)
 node review-topbar.js     # review header: Finish review menu, conditions popover, view switch, Send, save
                           # status (incl. error + Retry), saving on unmount / page hide, queue pager, author

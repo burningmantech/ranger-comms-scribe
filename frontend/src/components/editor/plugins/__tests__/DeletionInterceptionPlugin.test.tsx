@@ -6,6 +6,9 @@ import React from 'react';
 import { act, render } from '@testing-library/react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { EditorRefPlugin } from '@lexical/react/LexicalEditorRefPlugin';
+import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
+import { ContentEditable } from '@lexical/react/LexicalContentEditable';
+import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
 import { HeadingNode, QuoteNode } from '@lexical/rich-text';
 import { $createListItemNode, $createListNode, ListItemNode, ListNode } from '@lexical/list';
 import {
@@ -18,6 +21,8 @@ import {
   $isTextNode,
   $nodesOfType,
   $setSelection,
+  CONTROLLED_TEXT_INSERTION_COMMAND,
+  IS_BOLD,
   KEY_BACKSPACE_COMMAND,
   LexicalEditor,
   TextNode,
@@ -219,5 +224,136 @@ describe('DeletionInterceptionPlugin (collaborative mode)', () => {
     expect(removed).toBe(1);
     expect(markers(editor).map((m) => m.text).sort()).toEqual(['.', 'Only ']);
     expect(editor.getEditorState().read($hasOrphanPendingMarkers)).toBe(false);
+  });
+});
+
+/**
+ * Typing over a selection (the rich-text plugin inserts the text, as in the browser): the
+ * selected text becomes a marker and the new text goes right after it.
+ */
+describe('DeletionInterceptionPlugin: typing over a selection', () => {
+  beforeEach(() => resetPendingMarkers());
+
+  function setupRich(collab: boolean): LexicalEditor {
+    const ref: { current: LexicalEditor | null } = { current: null };
+    render(
+      <LexicalComposer
+        initialConfig={{
+          namespace: 'deletion-type-over-test',
+          nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, DeletedTextNode],
+          onError: (e: Error) => { throw e; },
+        }}
+      >
+        <RichTextPlugin contentEditable={<ContentEditable />} ErrorBoundary={LexicalErrorBoundary} />
+        <DeletionInterceptionPlugin
+          enabled
+          currentUserName="Alex"
+          currentUserId="author-a"
+          {...(collab ? { collabMode: 'yjs' as const } : {})}
+          getBeforeText={() => beforeText}
+        />
+        <EditorRefPlugin editorRef={ref} />
+      </LexicalComposer>,
+    );
+    return ref.current!;
+  }
+
+  /** One saved paragraph: "owns " + bold "CloudFront" + ". cdk diff". */
+  function seedParagraph(editor: LexicalEditor): void {
+    editor.update(() => {
+      const root = $getRoot();
+      root.clear();
+      root.append($createParagraphNode().append(
+        $createTextNode('owns '),
+        $createTextNode('CloudFront').toggleFormat('bold'),
+        $createTextNode('. cdk diff'),
+      ));
+    }, { discrete: true });
+    beforeText = extractTextFromLexical(JSON.stringify(editor.getEditorState()));
+  }
+
+  /** Select [start, end) of the paragraph's plain text (positions over its text nodes). */
+  function selectRange(editor: LexicalEditor, start: number, end: number): void {
+    editor.update(() => {
+      const texts = $getRoot().getFirstChildOrThrow<any>().getChildren().filter((n: any) => $isTextNode(n) && n.getType() === 'text');
+      const locate = (pos: number): [string, number] => {
+        let remaining = pos;
+        for (const t of texts) {
+          if (remaining <= t.getTextContentSize()) return [t.getKey(), remaining];
+          remaining -= t.getTextContentSize();
+        }
+        const last = texts[texts.length - 1];
+        return [last.getKey(), last.getTextContentSize()];
+      };
+      const sel = $createRangeSelection();
+      const [aKey, aOff] = locate(start);
+      const [fKey, fOff] = locate(end);
+      sel.anchor.set(aKey, aOff, 'text');
+      sel.focus.set(fKey, fOff, 'text');
+      $setSelection(sel);
+    }, { discrete: true });
+  }
+
+  function typeOver(editor: LexicalEditor, text: string): void {
+    editor.update(() => {
+      editor.dispatchCommand(CONTROLLED_TEXT_INSERTION_COMMAND, text);
+    }, { discrete: true });
+  }
+
+  /** The paragraph as shown: markers as [text], bold text as *text*. */
+  const shown = (editor: LexicalEditor) => editor.getEditorState().read(() =>
+    $getRoot().getFirstChildOrThrow<any>().getChildren().map((n: any) => {
+      if (n instanceof DeletedTextNode) return `[${n.getDeletedText()}]`;
+      return n.hasFormat?.('bold') ? `*${n.getTextContent()}*` : n.getTextContent();
+    }).join(''));
+
+  it('makes a marker with the selected saved text, the new text right after it', () => {
+    const editor = setupRich(true);
+    seedParagraph(editor);
+    selectRange(editor, 0, 4); // "owns"
+    typeOver(editor, 'runs');
+    expect(shown(editor)).toBe('[owns]runs *CloudFront*. cdk diff');
+    expect(markers(editor)).toEqual([expect.objectContaining({ text: 'owns', changeId: '__pending_deletion__', authorId: 'author-a' })]);
+    expect(markers(editor)[0].pendingKey).toEqual(expect.any(String));
+  });
+
+  it('keeps the replaced text\'s format for the new text (a bold word stays bold)', () => {
+    const editor = setupRich(true);
+    seedParagraph(editor);
+    selectRange(editor, 5, 15); // "CloudFront"
+    typeOver(editor, 'CF');
+    expect(shown(editor)).toBe('owns [CloudFront]*CF*. cdk diff');
+    expect(editor.getEditorState().read(() => {
+      const marker = $nodesOfType(DeletedTextNode)[0];
+      return (marker.exportJSON() as any).formattedSegments?.[0]?.format;
+    })).toBe(IS_BOLD);
+  });
+
+  it('a selection across nodes becomes one marker per node, the new text after the last', () => {
+    const editor = setupRich(true);
+    seedParagraph(editor);
+    selectRange(editor, 2, 17); // "ns CloudFront. "
+    typeOver(editor, 'X');
+    expect(shown(editor)).toBe('ow[ns ][CloudFront][. ]Xcdk diff');
+  });
+
+  it('text typed in the open transaction is just replaced: no marker', () => {
+    const editor = setupRich(true);
+    seedParagraph(editor);
+    selectRange(editor, 25, 25);
+    typeOver(editor, ' plus'); // typed now, not in the saved text
+    selectRange(editor, 26, 30); // "plus"
+    typeOver(editor, 'minus');
+    expect(shown(editor)).toBe('owns *CloudFront*. cdk diff minus');
+    expect(markers(editor)).toEqual([]);
+  });
+
+  it('legacy mode replaces the text as before (its deletions come from the live diff)', () => {
+    const editor = setupRich(false);
+    seedParagraph(editor);
+    selectRange(editor, 0, 4);
+    typeOver(editor, 'runs');
+    expect(shown(editor)).toBe('runs *CloudFront*. cdk diff');
+    expect(markers(editor)).toEqual([]);
   });
 });

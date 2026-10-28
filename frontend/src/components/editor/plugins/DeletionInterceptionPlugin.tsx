@@ -36,13 +36,18 @@ import {
     DELETE_CHARACTER_COMMAND,
     DELETE_WORD_COMMAND,
     DELETE_LINE_COMMAND,
+    CONTROLLED_TEXT_INSERTION_COMMAND,
     COMMAND_PRIORITY_HIGH,
+    $createRangeSelection,
+    $setSelection,
     LexicalNode,
     ElementNode,
+    RangeSelection,
 } from 'lexical';
 import {
     $createDeletedTextNode,
     $isDeletedTextNode,
+    DeletedTextNode,
     FormattedSegment,
 } from '../nodes/DeletedTextNode';
 import { CURRENT_USER_COLOR, getUserColor } from '../../../utils/userColors';
@@ -240,6 +245,109 @@ export default function DeletionInterceptionPlugin({
             return true; // truly at paragraph boundary
         };
 
+        type NodeSlice = { key: string; sliceStart: number; sliceEnd: number; text: string };
+
+        /**
+         * The text nodes a non-collapsed selection covers, each with the slice it selects
+         * (existing deletion markers are skipped), and the selected text. Null when it
+         * selects no text.
+         */
+        const captureSelection = (selection: RangeSelection): { nodeSlices: NodeSlice[]; selectedText: string } | null => {
+            const anchor = selection.anchor;
+            const focus = selection.focus;
+            const isBackwards = selection.isBackward();
+            const startPoint = isBackwards ? { key: focus.key, offset: focus.offset, type: focus.type } : { key: anchor.key, offset: anchor.offset, type: anchor.type };
+            const endPoint = isBackwards ? { key: anchor.key, offset: anchor.offset, type: anchor.type } : { key: focus.key, offset: focus.offset, type: focus.type };
+
+            // Collect the keys and text slices for each TextNode in the selection.
+            const nodeSlices: NodeSlice[] = [];
+            const nodes = selection.getNodes();
+            let isInside = false;
+            for (const node of nodes) {
+                if ($isDeletedTextNode(node)) continue;
+                if ($isTextNode(node)) {
+                    const nodeKey = node.getKey();
+                    const text = node.getTextContent();
+                    const textLen = text.length;
+                    let sliceStart = 0;
+                    let sliceEnd = textLen;
+
+                    if (nodeKey === startPoint.key) {
+                        sliceStart = startPoint.offset;
+                        isInside = true;
+                    }
+                    if (nodeKey === endPoint.key) {
+                        sliceEnd = endPoint.offset;
+                    }
+                    if (!isInside && nodeKey !== startPoint.key) continue;
+
+                    const deletedSlice = text.slice(sliceStart, sliceEnd);
+                    if (deletedSlice) {
+                        nodeSlices.push({ key: nodeKey, sliceStart, sliceEnd, text });
+                    }
+                    if (nodeKey === endPoint.key) break;
+                }
+            }
+
+            if (nodeSlices.length === 0) return null;
+            return { nodeSlices, selectedText: nodeSlices.map(sl => sl.text.slice(sl.sliceStart, sl.sliceEnd)).join('') };
+        };
+
+        /**
+         * Replace each captured slice with a deletion marker holding its text (inside an
+         * editor update). A slice whose node changed since it was captured is skipped.
+         * Returns the last marker in document order, or null if none was made.
+         */
+        const $replaceSlicesWithMarkers = (nodeSlices: NodeSlice[]): DeletedTextNode | null => {
+            let lastMarker: DeletedTextNode | null = null;
+            // Process in reverse order so earlier node offsets aren't affected
+            for (let i = nodeSlices.length - 1; i >= 0; i--) {
+                const { key, sliceStart, sliceEnd, text } = nodeSlices[i];
+                const liveNode = $getNodeByKey(key);
+                if (!liveNode || !$isTextNode(liveNode)) continue;
+
+                const currentText = liveNode.getTextContent();
+                // If the text has changed since we captured, skip
+                if (currentText !== text) continue;
+
+                const deletedSlice = text.slice(sliceStart, sliceEnd);
+                const textLen = text.length;
+
+                // Capture format from the source TextNode
+                const nodeFormat = liveNode.getFormat();
+                const nodeStyle = liveNode.getStyle();
+                const segments: FormattedSegment[] | undefined = nodeFormat
+                    ? [{ text: deletedSlice, format: nodeFormat, style: nodeStyle }]
+                    : undefined;
+
+                // The node holding exactly the selected slice (split off when needed)
+                let selectedNode: LexicalNode | undefined;
+                if (sliceStart === 0 && sliceEnd >= textLen) {
+                    selectedNode = liveNode; // entire node is selected
+                } else if (sliceEnd < textLen && sliceStart > 0) {
+                    selectedNode = liveNode.splitText(sliceStart, sliceEnd)[1]; // middle of node
+                } else if (sliceStart === 0) {
+                    selectedNode = liveNode.splitText(sliceEnd)[0]; // from start of node
+                } else {
+                    selectedNode = liveNode.splitText(sliceStart)[1]; // to end of node
+                }
+                if (!selectedNode) continue;
+
+                const deletedNode = $createDeletedTextNode({
+                    changeId: '__pending_deletion__',
+                    deletedText: deletedSlice,
+                    authorName: currentUserName,
+                    authorColor,
+                    ...markerFields(),
+                    formattedSegments: segments,
+                });
+                selectedNode.insertBefore(deletedNode);
+                selectedNode.remove();
+                if (!lastMarker) lastMarker = deletedNode; // the first made is the last in the document
+            }
+            return lastMarker;
+        };
+
         /**
          * Capture what the user intends to delete from the current editor state,
          * then schedule the tree mutation in a deferred `editor.update()`.
@@ -254,138 +362,18 @@ export default function DeletionInterceptionPlugin({
 
             // --- Case 1: Non-collapsed selection ---
             if (!selection.isCollapsed()) {
-                // Capture info we need for the deferred update.
-                // selection.getNodes() returns the Lexical nodes touched by the selection.
-                const anchor = selection.anchor;
-                const focus = selection.focus;
-                const isBackwards = selection.isBackward();
-                const startPoint = isBackwards ? { key: focus.key, offset: focus.offset, type: focus.type } : { key: anchor.key, offset: anchor.offset, type: anchor.type };
-                const endPoint = isBackwards ? { key: anchor.key, offset: anchor.offset, type: anchor.type } : { key: focus.key, offset: focus.offset, type: focus.type };
-
-                // Collect the keys and text slices for each TextNode in the selection.
-                const nodeSlices: Array<{ key: string; sliceStart: number; sliceEnd: number; text: string }> = [];
-                const nodes = selection.getNodes();
-                let isInside = false;
-                for (const node of nodes) {
-                    if ($isDeletedTextNode(node)) continue;
-                    if ($isTextNode(node)) {
-                        const nodeKey = node.getKey();
-                        const text = node.getTextContent();
-                        const textLen = text.length;
-                        let sliceStart = 0;
-                        let sliceEnd = textLen;
-
-                        if (nodeKey === startPoint.key) {
-                            sliceStart = startPoint.offset;
-                            isInside = true;
-                        }
-                        if (nodeKey === endPoint.key) {
-                            sliceEnd = endPoint.offset;
-                        }
-                        if (!isInside && nodeKey !== startPoint.key) continue;
-
-                        const deletedSlice = text.slice(sliceStart, sliceEnd);
-                        if (deletedSlice) {
-                            nodeSlices.push({ key: nodeKey, sliceStart, sliceEnd, text });
-                        }
-                        if (nodeKey === endPoint.key) break;
-                    }
-                }
-
-                if (nodeSlices.length === 0) return;
-
-                const selectedText = nodeSlices.map(s => s.text.slice(s.sliceStart, s.sliceEnd)).join('');
+                const captured = captureSelection(selection);
+                if (!captured) return;
 
                 // Defer the tree mutation
                 setTimeout(() => {
                     editor.update(() => {
-                        // Process in reverse order so earlier node offsets aren't affected
-                        for (let i = nodeSlices.length - 1; i >= 0; i--) {
-                            const { key, sliceStart, sliceEnd, text } = nodeSlices[i];
-                            const liveNode = $getNodeByKey(key);
-                            if (!liveNode || !$isTextNode(liveNode)) continue;
-
-                            const currentText = liveNode.getTextContent();
-                            // If the text has changed since we captured, skip
-                            if (currentText !== text) continue;
-
-                            const deletedSlice = text.slice(sliceStart, sliceEnd);
-                            const textLen = text.length;
-
-                            // Capture format from the source TextNode
-                            const nodeFormat = $isTextNode(liveNode) ? liveNode.getFormat() : 0;
-                            const nodeStyle = $isTextNode(liveNode) ? liveNode.getStyle() : '';
-                            const segments: FormattedSegment[] | undefined = nodeFormat
-                                ? [{ text: deletedSlice, format: nodeFormat, style: nodeStyle }]
-                                : undefined;
-
-                            if (sliceStart === 0 && sliceEnd >= textLen) {
-                                // Entire node is selected
-                                const deletedNode = $createDeletedTextNode({
-                                    changeId: '__pending_deletion__',
-                                    deletedText: deletedSlice,
-                                    authorName: currentUserName,
-                                    authorColor,
-                                    ...markerFields(),
-                                    formattedSegments: segments,
-                                });
-                                liveNode.insertBefore(deletedNode);
-                                liveNode.remove();
-                            } else if (sliceEnd < textLen && sliceStart > 0) {
-                                // Middle of node
-                                const parts = liveNode.splitText(sliceStart, sliceEnd);
-                                const selectedNode = parts[1];
-                                if (selectedNode) {
-                                    const deletedNode = $createDeletedTextNode({
-                                        changeId: '__pending_deletion__',
-                                        deletedText: deletedSlice,
-                                        authorName: currentUserName,
-                                        authorColor,
-                                        ...markerFields(),
-                                        formattedSegments: segments,
-                                    });
-                                    selectedNode.insertBefore(deletedNode);
-                                    selectedNode.remove();
-                                }
-                            } else if (sliceStart === 0) {
-                                // From start of node
-                                const parts = liveNode.splitText(sliceEnd);
-                                const selectedNode = parts[0];
-                                if (selectedNode) {
-                                    const deletedNode = $createDeletedTextNode({
-                                        changeId: '__pending_deletion__',
-                                        deletedText: deletedSlice,
-                                        authorName: currentUserName,
-                                        authorColor,
-                                        ...markerFields(),
-                                        formattedSegments: segments,
-                                    });
-                                    selectedNode.insertBefore(deletedNode);
-                                    selectedNode.remove();
-                                }
-                            } else {
-                                // To end of node
-                                const parts = liveNode.splitText(sliceStart);
-                                const selectedNode = parts[1];
-                                if (selectedNode) {
-                                    const deletedNode = $createDeletedTextNode({
-                                        changeId: '__pending_deletion__',
-                                        deletedText: deletedSlice,
-                                        authorName: currentUserName,
-                                        authorColor,
-                                        ...markerFields(),
-                                        formattedSegments: segments,
-                                    });
-                                    selectedNode.insertBefore(deletedNode);
-                                    selectedNode.remove();
-                                }
-                            }
-                        }
+                        $replaceSlicesWithMarkers(captured.nodeSlices);
                     });
                 }, 0);
 
                 if (onDeletionIntercepted) {
-                    onDeletionIntercepted(selectedText);
+                    onDeletionIntercepted(captured.selectedText);
                 }
                 return;
             }
@@ -671,7 +659,58 @@ export default function DeletionInterceptionPlugin({
             COMMAND_PRIORITY_HIGH,
         );
 
+        // Typing (or an IME composition, a drop, a spelling replacement) over a selection:
+        // the selected text becomes a deletion marker and the new text goes right after it,
+        // so the document shows the old text struck through next to the new, as the change
+        // card does ("Replaced X with Y"). Collaborative mode only: legacy mode draws its
+        // deletions from the live baseline diff. Done in this update (not deferred like the
+        // key handlers: no later beforeinput follows a command), so the marker and the new
+        // text are one edit, and one undo. Returning false lets the rich-text handler insert
+        // the text at the caret placed after the marker.
+        const unregisterTextInsertion = editor.registerCommand(
+            CONTROLLED_TEXT_INSERTION_COMMAND,
+            () => {
+                if (!isCollab) return false;
+                const selection = $getSelection();
+                if (!$isRangeSelection(selection) || selection.isCollapsed()) return false;
+                // Text typed in the open transaction is simply replaced (as Backspace deletes it)
+                if (isNewlyAddedText(false)) return false;
+
+                const captured = captureSelection(selection);
+                if (!captured) return false;
+                const first = $getNodeByKey(captured.nodeSlices[0].key);
+                const format = first && $isTextNode(first) ? first.getFormat() : selection.format;
+                const style = first && $isTextNode(first) ? first.getStyle() : selection.style;
+
+                const lastMarker = $replaceSlicesWithMarkers(captured.nodeSlices);
+                if (!lastMarker) return false;
+
+                // The caret right after the marker, typing in the replaced text's format
+                const caret = $createRangeSelection();
+                const next = lastMarker.getNextSibling();
+                if (next && $isTextNode(next) && !$isDeletedTextNode(next)) {
+                    caret.anchor.set(next.getKey(), 0, 'text');
+                    caret.focus.set(next.getKey(), 0, 'text');
+                } else {
+                    const parent = lastMarker.getParentOrThrow();
+                    const index = lastMarker.getIndexWithinParent() + 1;
+                    caret.anchor.set(parent.getKey(), index, 'element');
+                    caret.focus.set(parent.getKey(), index, 'element');
+                }
+                caret.format = format;
+                caret.style = style;
+                $setSelection(caret);
+
+                if (onDeletionIntercepted) {
+                    onDeletionIntercepted(captured.selectedText);
+                }
+                return false;
+            },
+            COMMAND_PRIORITY_HIGH,
+        );
+
         return () => {
+            unregisterTextInsertion();
             unregisterBackspace();
             unregisterDelete();
             unregisterDeleteChar();
